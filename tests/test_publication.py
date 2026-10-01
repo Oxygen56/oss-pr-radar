@@ -67,7 +67,7 @@ def prepared_request(tmp_path, *, bind_target_base=False):
     publication.CONTROL_ROOT = tmp_path
     worktree = tmp_path / "worktree"
     worktree.mkdir()
-    git("init", cwd=worktree)
+    git("init", "-b", "main", cwd=worktree)
     git("config", "user.name", "Tester", cwd=worktree)
     git("config", "user.email", "tester@example.com", cwd=worktree)
     git("commit", "--allow-empty", "-m", "chore: baseline", cwd=worktree)

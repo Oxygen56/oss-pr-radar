@@ -13786,9 +13786,11 @@ def test_legacy_result_migration_does_not_change_signed_result_digest(tmp_path):
 
 def _published_followup_store(
     tmp_path: Path,
+    *,
+    worktree: Path | None = None,
 ) -> tuple[RadarLedger, Path, str, str]:
     MODULE.ROOT = tmp_path
-    store, worktree = registered_store(tmp_path)
+    store, worktree = registered_store(tmp_path, worktree=worktree)
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
     source = worktree / "runtime.py"
@@ -14173,9 +14175,12 @@ def test_ingestion_reports_unfinished_followup_missing_worktree(tmp_path):
 
 
 def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monkeypatch, tmp_path):
-    store, worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, worktree, head_sha, pr_url = _published_followup_store(
+        tmp_path, worktree=MODULE.managed_worktree_path("intent-1", "a/b")
+    )
     candidate = store.pr_followup_candidates()[0]
     previous_context = MODULE.write_task_context(
         store,
@@ -14187,7 +14192,7 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
 
     def prepare(value):
         prepared.append(value)
-        return {"preparedHeadSha": "b" * 40}
+        return {"preparedHeadSha": head_sha}
 
     monkeypatch.setattr(MODULE, "_prepare_pr_followup", prepare)
 
@@ -14209,7 +14214,7 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
     assert "不要在当前入口目录等待 .oss-pr-radar/task-context.json" in result["prompt"]
     context = json.loads(Path(result["contextPath"]).read_text(encoding="utf-8"))
     assert context["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
-    assert context["prFollowup"]["preparedHeadSha"] == "b" * 40
+    assert context["prFollowup"]["preparedHeadSha"] == head_sha
     shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
     assert Path(result["contextPath"]).read_bytes() != previous_context
     assert shared_path.read_bytes() == Path(result["contextPath"]).read_bytes()
@@ -14246,7 +14251,7 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
             cwd=worktree,
         ).read_text(encoding="utf-8")
     )
-    assert refreshed["prFollowup"]["preparedHeadSha"] == "b" * 40
+    assert refreshed["prFollowup"]["preparedHeadSha"] == head_sha
     assert refreshed["contextDigest"] == context["contextDigest"]
     assert store.pr_followup_candidates() == []
 
@@ -34570,6 +34575,9 @@ def test_sdk_import_standins_return_to_native_validation_and_real_venv_entry(mon
     from oss_pr_radar.independent_review import review_once
 
     store, worktree, result_path = _controller_commit_result(tmp_path)
+    # Python 3.12 does not create the virtual environment's .gitignore.
+    with (worktree / ".git/info/exclude").open("a", encoding="utf-8") as excluded:
+        excluded.write(".venv/\n")
     schema = tmp_path / "schemas" / "independent_review.schema.json"
     schema.parent.mkdir()
     schema.write_text("{}", encoding="utf-8")
@@ -34740,6 +34748,7 @@ def test_sdk_import_standins_return_to_native_validation_and_real_venv_entry(mon
     )
     assert actual.returncode == 0, actual.stdout + actual.stderr
     assert actual.stdout.strip() == "2"
+    assert run_git(worktree, "status", "--porcelain") == ""
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value["tests"].append(
         {
