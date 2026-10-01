@@ -1201,6 +1201,7 @@ def test_published_terminal_missing_worktree_gate_blocks_unfinished_validation_r
         "a/b#1",
         thread_id="thread-recovered",
     )
+    assert store.active_task_count() == 1
 
 
 def test_published_terminal_missing_worktree_gate_blocks_unfinished_validation_sent(
@@ -1216,6 +1217,7 @@ def test_published_terminal_missing_worktree_gate_blocks_unfinished_validation_s
         "a/b#1",
         thread_id="thread-recovered",
     )
+    assert store.active_task_count() == 1
 
 
 def test_published_terminal_missing_worktree_gate_allows_cancelled_validation_reservation(
@@ -1278,6 +1280,147 @@ def test_published_terminal_missing_worktree_gate_allows_ingested_validation_res
         "a/b#1",
         thread_id="thread-recovered",
     )
+    assert store.active_task_count() == 0
+
+
+def test_validation_capacity_requires_the_sent_tasks_own_result(tmp_path):
+    store, _reservation = _published_terminal_with_validation_followup(tmp_path)
+    store.commit_validation_followup(
+        thread_id="thread-recovered", result_digest="validation-result"
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="foreign-intent",
+        thread_id="foreign-thread",
+        worktree_path="/tmp/foreign-worktree",
+        status="COMPLETED",
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="foreign-result",
+        stage="CI_GREEN",
+        task_id="foreign-intent",
+        thread_id="foreign-thread",
+    )
+    assert store.active_task_count() == 1
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="own-result",
+        stage="CI_GREEN",
+        task_id="recovered-intent",
+        thread_id="thread-recovered",
+    )
+    assert store.active_task_count() == 0
+
+
+@pytest.mark.parametrize("legacy_validation_result", [True, False], ids=["agentscope", "dynamo"])
+def test_completed_historical_followups_release_capacity_for_native_reservation(
+    tmp_path, legacy_validation_result
+):
+    """Replay the completed legacy PR/validation event shapes that blocked #40470."""
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.restore_task_context(published_task_context())
+    store.record_task_result_ingested("a/b#1", digest="published-result", stage="PR_OPEN")
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": "a" * 40,
+                    "actionDigest": "action",
+                    "taskActionDigest": "task-action",
+                    "checkedAt": iso_z(datetime.now(UTC)),
+                    "taskActions": ["current branch check failed"],
+                    "taskFollowupRequired": True,
+                    "evidence": {"baseIntegrationRequired": True},
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    wake = candidate["wakeDigest"]
+    store.reserve_pr_followup(
+        thread_id="thread-recovered", wake_digest=wake, prepared_head_sha="a" * 40
+    )
+    store.complete_pr_followup_reservation(thread_id="thread-recovered", wake_digest=wake)
+    store.commit_pr_followup(thread_id="thread-recovered", wake_digest=wake)
+    assert store.active_task_count() == 1
+    store.record_followup_result(
+        "a/b#1", wake_digest=wake, result_digest="pr-result", stage="PR_OPEN"
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET payload_json=?
+               WHERE event_type='PR_FOLLOWUP_RESULT_INGESTED' AND dedupe_key=?""",
+            (json.dumps({"resultDigest": "pr-result", "stage": "PR_OPEN"}), wake),
+        )
+    assert store.active_task_count() == 0
+
+    store.record_stage(
+        "a/b#1", "VALIDATION_PENDING", intent_id="recovered-intent", dedupe_key="old-validation"
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-recovered",
+        result_digest="validation-result",
+        missing=["relevant_tests_green"],
+        progress_marker="old-validation-progress",
+    )
+    store.reserve_validation_followup(
+        thread_id="thread-recovered", result_digest="validation-result", max_active=1
+    )
+    store.commit_validation_followup(
+        thread_id="thread-recovered", result_digest="validation-result"
+    )
+    assert store.active_task_count() == 1
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="post-validation-result",
+        stage="CI_GREEN",
+        task_id="recovered-intent",
+        thread_id="thread-recovered",
+    )
+    if legacy_validation_result:
+        with store.connect() as connection:
+            connection.execute(
+                """UPDATE events SET payload_json=?
+                   WHERE event_type='TASK_RESULT_INGESTED' AND dedupe_key=?""",
+                (json.dumps({"stage": "PR_OPEN"}), "post-validation-result"),
+            )
+    store.record_stage("a/b#1", "CI_GREEN", intent_id="recovered-intent")
+    if legacy_validation_result:
+        # AgentScope also has an old completed intent without a thread/worktree.
+        _insert_rollover_intent(
+            store,
+            key="a/b#1",
+            intent_id="unbound-historical-intent",
+            thread_id=None,
+            worktree_path=None,
+            status="COMPLETED",
+        )
+    assert store.published_task_result_is_terminal("a/b#1", thread_id="thread-recovered")
+    assert store.active_task_count() == 0
+
+    # An OPEN PR's genuinely new round still reserves and occupies the same slot.
+    store.record_stage(
+        "a/b#1", "VALIDATION_PENDING", intent_id="recovered-intent", dedupe_key="new-validation"
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-recovered",
+        result_digest="new-validation-result",
+        missing=["relevant_tests_green"],
+        progress_marker="new-validation-progress",
+    )
+    store.reserve_validation_followup(
+        thread_id="thread-recovered", result_digest="new-validation-result", max_active=1
+    )
+    assert store.active_task_count() == 1
+    assert not store.published_task_result_is_terminal("a/b#1", thread_id="thread-recovered")
 
 
 def test_published_terminal_missing_worktree_gate_allows_no_progress_validation_result(

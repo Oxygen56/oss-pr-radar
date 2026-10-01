@@ -5140,7 +5140,11 @@ class RadarLedger:
                          WHERE result.opportunity_key=r.opportunity_key
                            AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
                            AND result.dedupe_key=r.dedupe_key
-                           AND {_intent_event_binding_clause("i", "result")}
+                           AND result.id>r.id
+                           AND (
+                             {_intent_event_binding_clause("i", "result")}
+                             OR {_legacy_unique_unbound_event_clause("i", "result")}
+                           )
                        )
                        AND NOT EXISTS (
                          SELECT 1 FROM events abandoned
@@ -5209,6 +5213,33 @@ class RadarLedger:
                          WHERE d.opportunity_key=r.opportunity_key
                            AND d.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                          ORDER BY d.id DESC LIMIT 1
+                       )
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events sent
+                         WHERE sent.opportunity_key=r.opportunity_key
+                           AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
+                           AND (
+                             {_intent_event_binding_clause("i", "sent")}
+                             OR {_legacy_unique_unbound_event_clause("i", "sent")}
+                           )
+                           AND sent.dedupe_key=json_extract(
+                                 CASE WHEN json_valid(r.payload_json)=1
+                                      THEN r.payload_json ELSE '{{}}' END,
+                                 '$.resultDigest'
+                               )
+                           AND json_extract(sent.payload_json,'$.threadId')=
+                               json_extract(r.payload_json,'$.threadId')
+                           AND sent.id>r.id
+                           AND EXISTS (
+                             SELECT 1 FROM events result
+                             WHERE result.opportunity_key=sent.opportunity_key
+                               AND result.event_type='TASK_RESULT_INGESTED'
+                               AND (
+                                 {_intent_event_binding_clause("i", "result")}
+                                 OR {_legacy_unique_unbound_event_clause("i", "result")}
+                               )
+                               AND result.id>sent.id
+                           )
                        )
                        AND NOT EXISTS (
                          SELECT 1 FROM events abandoned
