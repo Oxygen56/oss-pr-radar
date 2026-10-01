@@ -13189,6 +13189,176 @@ def _audit_refresh_validation_result(tmp_path, *, omit_task_id=False):
     return store, worktree, result_path, old_context, current_context
 
 
+def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        controller_policy_complete=True,
+        target_base_bound=True,
+        missing_quality=("regression_test_verified", "relevant_tests_green", "independent_review_passed"),
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+    )
+    bind_validation_runtime(monkeypatch, tmp_path)
+    initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert initial["ok"] and initial["validationDeferred"] and not initial["publicationRequests"]
+    context_path = result_path.parent / "task-context.json"
+    MODULE.write_task_context(store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree)
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
+    old_context = json.loads(context_path.read_text())
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(SimpleNamespace(
+        ledger=store.path, thread_id="thread-1", result_digest=candidate["resultDigest"],
+        intent_id="intent-1", worktree_path=str(worktree),
+    ))
+    assert reserved["ok"] and not reserved.get("blocked"), reserved
+    candidate = store.unresolved_validation_followups()[0]
+    old_head = run_git(worktree, "rev-parse", "HEAD")
+    rollout = tmp_path / "incomplete-validation.jsonl"
+    rollout.write_text(json.dumps({"type": "session_meta", "payload": {"id": "thread-1"}}) + "\n")
+    thread_db = tmp_path / "incomplete-validation-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT,git_origin_url TEXT)")
+        connection.execute("INSERT INTO threads VALUES (?,?,?,?,?,?)", (
+            "thread-1", str(worktree), 0, MODULE.issue_prompt(candidate["issueUrl"]),
+            str(rollout), "https://github.com/a/b.git",
+        ))
+    process = _FakeTaskTurnProcess()
+    original_popen = subprocess.Popen
+    observed = {}
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        result = {"thread": {"id": "thread-1"}} if response_id == 1 else {"turn": {"id": "native-incomplete-validation"}}
+        return buffer, {"result": result}
+
+    def complete_validation(*_args, **_kwargs):
+        source_path = worktree / observed["worktree_input_path"]
+        source_raw = source_path.read_bytes()
+        source = json.loads(source_raw)
+        current = json.loads(context_path.read_text())
+        checks = []
+        for command_text in (
+            "./node_modules/.bin/vitest run tests/runtime.test.ts",
+            "node --import ./node_modules/tsx/dist/loader.mjs --eval 'process.exit(0)'",
+        ):
+            actual = subprocess.run(["/bin/zsh", "-lc", command_text], cwd=worktree, capture_output=True, text=True)
+            checks.append({"command": command_text, "cwd": str(worktree), "exitCode": actual.returncode, "result": actual.stdout + actual.stderr})
+        assert [check["exitCode"] for check in checks] == [127, 1]
+        value = dict(source, contextDigest=current["contextDigest"], tests=checks, reason="VALIDATION_INCOMPLETE")
+        for name in ("reproductionReceipt", "probeReceipt", "resultDigest", "independentReview"):
+            value.pop(name, None)
+        value["quality"] = dict(source["quality"], regression_test_verified=False, relevant_tests_green=False, independent_review_passed=False)
+        result_path.write_text(json.dumps(value))
+        observed.update(raw=result_path.read_bytes(), source_raw=source_raw, checks=checks, quality=value["quality"])
+        return {"turnId": "native-incomplete-validation", "status": "completed"}
+
+    def launch_worker(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        worker_args = SimpleNamespace(
+            ledger=store.path, delivery_kind="validation-followup", thread_id="thread-1",
+            delivery_token=candidate["resultDigest"], delivery_attempt_digest=None,
+            intent_id=None, worktree_path=None,
+            **{option.replace("-", "_"): argv[argv.index("--" + option) + 1] for option in (
+                "reservation-digest", "snapshot-id", "snapshot-path", "snapshot-digest",
+                "worktree-input-path", "worktree-input-digest", "receipt",
+            )},
+        )
+        observed["worktree_input_path"] = worker_args.worktree_input_path
+        completed = MODULE.task_turn_worker_entry(worker_args)
+        assert completed["ok"] and completed["turnStatus"] == "completed", completed
+        return SimpleNamespace(pid=os.getpid())
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    with monkeypatch.context() as delivery:
+        delivery.setattr(MODULE, "ledger", lambda _path: store)
+        delivery.setattr(MODULE, "_app_server_action_session", action_session)
+        delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+        delivery.setattr(MODULE, "_read_app_server_response", read_response)
+        delivery.setattr(MODULE, "_wait_for_app_server_terminal_turn", complete_validation)
+        delivery.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+        delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+        delivered = MODULE.validation_followup_deliver(SimpleNamespace(
+            ledger=store.path, thread_id="thread-1", result_digest=candidate["resultDigest"],
+        ))
+    assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
+    candidate = store.task_result_candidates_for_ingestion()[0]
+    with store.connect() as connection:
+        prior_events = [tuple(row) for row in connection.execute(
+            "SELECT id,event_type,payload_json,created_at FROM events ORDER BY id"
+        ).fetchall()]
+    old_context_raw = context_path.read_bytes()
+    pending_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert pending_sync["ok"], pending_sync
+    pending_context_raw = context_path.read_bytes()
+    # Reproduce the already-observed controller audit refresh through the same native
+    # context writer, even when pending-result protection now prevents a new one.
+    live_audit = json.loads(json.dumps(old_context["liveAudit"]))
+    live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+    live_audit["evidence"]["digest"] = "b" * 64
+    live_audit["evidence"]["complete"] = True
+    live_audit["evidence"]["completeness"] = {"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"}
+    live_audit["evidence"]["policy"] = {
+        "status": "NORMAL", "digest": "d" * 64,
+        "ai_disclosure": False, "ai_prohibited": False,
+    }
+    store.record_audit_snapshot("a/b#1", evidence={
+        "liveAudit": live_audit, "targetBase": old_context["targetBase"],
+        "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+    }, dedupe_key="intent-1:completed-validation:active-context-refresh")
+    MODULE.write_task_context(store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree)
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
+    current_context = json.loads(context_path.read_text())
+    assert current_context["contextDigest"] != old_context["contextDigest"]
+    assert current_context["targetBase"] == old_context["targetBase"]
+    assert result_path.read_bytes() == observed["raw"]
+    after = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert after["errors"] == [], after["errors"]
+    assert after["ok"], after
+    assert pending_sync["pendingResultIngestion"] == [{"key": "a/b#1", "threadId": "thread-1"}], pending_sync
+    assert pending_context_raw == old_context_raw
+    assert after["publicationRequests"] == [] and after["validationDeferred"], after
+    normalized = json.loads(result_path.read_text())
+    assert normalized["quality"] == observed["quality"]
+    assert normalized["tests"] == observed["checks"]
+    assert normalized["contextDigest"] == current_context["contextDigest"]
+    assert normalized["commitSha"] == old_head == run_git(worktree, "rev-parse", "HEAD")
+    assert (worktree / observed["worktree_input_path"]).read_bytes() == observed["source_raw"]
+    with store.connect() as connection:
+        rows = connection.execute("SELECT payload_json FROM events WHERE event_type='TASK_RESULT_CONTEXT_REFRESH_REBOUND'").fetchall()
+        assert len(rows) == 1
+        assert base64.b64decode(json.loads(rows[0][0])["sourceResultBytesBase64"]) == observed["raw"]
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+        assert [tuple(row) for row in connection.execute(
+            "SELECT id,event_type,payload_json,created_at FROM events WHERE id<=? ORDER BY id",
+            (prior_events[-1][0],),
+        ).fetchall()] == prior_events
+    replay = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert replay["ok"] and replay["errors"] == [] and replay["ingested"] == [], replay
+    consumed_raw = result_path.read_bytes()
+    next_audit = json.loads(json.dumps(live_audit))
+    next_audit["capturedAt"] = iso_z(datetime.now(UTC))
+    next_audit["evidence"]["digest"] = "c" * 64
+    store.record_audit_snapshot("a/b#1", evidence={
+        "liveAudit": next_audit, "targetBase": current_context["targetBase"],
+        "authorization": {"status": "ALLOW", "evidence_digest": "c" * 64},
+    }, dedupe_key="intent-1:consumed-validation:active-context-refresh")
+    MODULE.write_task_context(store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree)
+    assert json.loads(context_path.read_text())["contextDigest"] != normalized["contextDigest"]
+    replay = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert replay["ok"] and replay["errors"] == [] and replay["ingested"] == [], replay
+    consumed_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert consumed_sync["ok"] and consumed_sync["pendingResultIngestion"] == [], consumed_sync
+    assert result_path.read_bytes() == consumed_raw
+    assert run_git(worktree, "rev-parse", "HEAD") == old_head
+
+
 def test_ingestion_replays_completed_validation_after_authenticated_audit_refresh(
     monkeypatch, tmp_path
 ):

@@ -2420,6 +2420,7 @@ def _validation_result_context_refresh_proof(
     context: dict[str, Any],
     value: dict[str, Any],
     worktree: Path,
+    raw: bytes | None = None,
 ) -> dict[str, Any] | None:
     """Recognize only an audit refresh of an already-sent validation task.
 
@@ -2440,11 +2441,13 @@ def _validation_result_context_refresh_proof(
         or value.get("handoffMode") != "controller_commit_complete"
         or value.get("followupDigest")
         or not isinstance(value.get("quality"), dict)
-        or not assess_submit_ready(value["quality"]).ready
         or _controller_policy_verification(context) is None
         or _publication_block_reason(context, value)
         or _task_live_audit_refresh_due(context)
     ):
+        return None
+    ready = assess_submit_ready(value["quality"]).ready
+    if not ready and (raw is None or _active_task_turn_for_result(candidate) is not None):
         return None
     binding = {
         "intentId": str(candidate.get("intentId") or ""),
@@ -2546,15 +2549,22 @@ def _validation_result_context_refresh_proof(
             if row["event_type"] == "VALIDATION_FOLLOWUP_RESERVED"
             and p.get("resultDigest") == sent[1].get("resultDigest")
             and row["id"] < sent[0]["id"]
+            and (
+                not sent[1].get("reservationDigest")
+                or p.get("reservationDigest") == sent[1]["reservationDigest"]
+            )
         ),
         None,
     )
-    if reserved is None or not (
-        parse_time(deferred[0]["created_at"])
-        <= parse_time(prior[1]["authorityObservedAt"])
-        <= parse_time(reserved[0]["created_at"])
-        <= parse_time(sent[0]["created_at"])
-    ):
+    if reserved is None:
+        return None
+    authority_time = parse_time(prior[1]["authorityObservedAt"])
+    deferred_time = parse_time(deferred[0]["created_at"])
+    reserved_time = parse_time(reserved[0]["created_at"])
+    sent_time = parse_time(sent[0]["created_at"])
+    if not (authority_time <= reserved_time <= sent_time and deferred_time <= reserved_time):
+        return None
+    if ready and deferred_time > authority_time:
         return None
     expected_reservation = sha256_text(
         f"{candidate['key']}|{binding['intentId']}|{binding['threadId']}|"
@@ -2597,7 +2607,7 @@ def _validation_result_context_refresh_proof(
         or not evidence.get("completeness")
     ) or any(status != "COMPLETE" for status in evidence["completeness"].values()):
         return None
-    return {
+    proof = {
         **binding,
         "previousContextDigest": old_digest,
         "contextDigest": current_digest,
@@ -2609,6 +2619,34 @@ def _validation_result_context_refresh_proof(
         "validationResultDigest": sent[1]["resultDigest"],
         "commitSha": value["commitSha"],
     }
+    if not ready:
+        try:
+            with _task_worktree_private_descriptor(candidate) as opened:
+                context_raw = _read_task_context_bytes_from_private(opened)
+                if _read_task_result_bytes_from_private(opened) != raw:
+                    return None
+                completion: dict[str, Any] = {}
+                task_id = _completed_validation_input_task_id(
+                    store,
+                    ManagedLedger(store.path, ensure_schema=False),
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    result_access=opened,
+                    context_raw=context_raw,
+                    validation_context_digest=old_digest,
+                    completion_proof=completion,
+                )
+            if task_id != binding["intentId"]:
+                return None
+        except (OSError, RuntimeError, ValueError, KeyError):
+            return None
+        proof.update(
+            reservationDigest=completion["reservation"]["reservationDigest"],
+            turnId=completion["receipt"]["turnId"],
+            sourceResultBytesBase64=base64.b64encode(raw).decode("ascii"),
+        )
+    return proof
 
 
 def _controller_parent_drift(
@@ -15134,8 +15172,21 @@ def _completed_validation_input_task_id(
     expired_publication: dict[str, Any] | None = None,
     allow_expired_context_mismatch: bool = False,
     completion_proof: dict[str, Any] | None = None,
+    validation_context_digest: str | None = None,
 ) -> str | None:
-    """Prove a completed validation against its controller-owned immutable input."""
+    """Prove a completed validation against its controller-owned immutable input.
+
+    Audit-only intake supplies the exact historical context digest after
+    proving its unchanged task binding, or the current digest before refresh.
+    In that path the reservation's source is resolved by its immutable key.
+    """
+
+    if validation_context_digest is not None and (
+        re.fullmatch(r"[0-9a-f]{64}", validation_context_digest) is None
+        or expired_publication is not None
+    ):
+        return None
+    expected_context_digest = validation_context_digest or context.get("contextDigest")
 
     if (
         candidate.get("stage") != "VALIDATION_PENDING"
@@ -15147,7 +15198,11 @@ def _completed_validation_input_task_id(
         or value.get("handoffMode")
         not in {"controller_commit_complete", "controller_commit_required"}
         or (
-            value.get("contextDigest") != context.get("contextDigest")
+            validation_context_digest is not None
+            and value.get("handoffMode") != "controller_commit_complete"
+        )
+        or (
+            value.get("contextDigest") != expected_context_digest
             and not (expired_publication and allow_expired_context_mismatch)
         )
     ):
@@ -15166,8 +15221,11 @@ def _completed_validation_input_task_id(
     if "taskId" in value and value["taskId"] != task_id:
         return None
     managed_task = managed_ledger.read_task(task_id)
-    historical = managed_ledger.latest_authenticated_fix_ready_result_for_task(
-        task_id, issue_url=str(candidate["issueUrl"])
+    historical = (
+        None if validation_context_digest is not None
+        else managed_ledger.latest_authenticated_fix_ready_result_for_task(
+            task_id, issue_url=str(candidate["issueUrl"])
+        )
     )
     if (
         not isinstance(managed_task, dict)
@@ -15181,7 +15239,7 @@ def _completed_validation_input_task_id(
             if expired_publication
             else {"IMPLEMENTATION_READY"}
         )
-        or historical is None
+        or (historical is None and validation_context_digest is None)
     ):
         return None
     if value.get("handoffMode") == "controller_commit_required" and (
@@ -15191,6 +15249,16 @@ def _completed_validation_input_task_id(
     ):
         return None
     with store.connect() as connection:
+        if validation_context_digest is not None and connection.execute(
+            """SELECT 1 FROM publication_requests request
+               JOIN publication_permits permit ON permit.request_id=request.request_id
+               JOIN publication_effects effect ON effect.permit_id=permit.permit_id
+               WHERE request.opportunity_key=? AND request.thread_id=?
+                 AND request.worktree_path=?
+                 AND json_extract(request.request_json,'$.intentId')=? LIMIT 1""",
+            (candidate["key"], binding["threadId"], binding["worktreePath"], task_id),
+        ).fetchone() is not None:
+            return None
         rows = connection.execute(
             """SELECT id,event_type,payload_json FROM events
                WHERE opportunity_key=? AND event_type IN
@@ -15203,7 +15271,35 @@ def _completed_validation_input_task_id(
         (item for item in reversed(events) if item[0]["event_type"] == "VALIDATION_FOLLOWUP_SENT"),
         None,
     )
-    if sent is None or sent[1].get("resultDigest") != historical["result_digest"]:
+    if sent is None:
+        return None
+    if validation_context_digest is not None:
+        # Native reservations outlive the mutable managed projection. Resolve
+        # their exact authenticated source, including a superseded result.
+        source_head = str(value.get("commitSha") or "")
+        source_digest = str(sent[1].get("resultDigest") or "")
+        historical = managed_ledger.read_result(f"{task_id}||{source_head}|{source_digest}")
+        if historical is None:
+            return None
+        provenance = json.loads(historical.get("provenance_json") or "{}")
+        validation = historical.get("validation") or {}
+        if (
+            historical.get("task_id") != task_id
+            or historical.get("pr_key") is not None
+            or historical.get("result_type") is not None
+            or historical.get("source") != "dispatch-result"
+            or str(historical.get("worker_state") or "").casefold() != "patched"
+            or provenance.get("stage") != "FIX_READY"
+            or provenance.get("issueUrl") != candidate["issueUrl"]
+            or re.fullmatch(r"[0-9a-f]{40}", source_head) is None
+            or historical.get("head_sha") != source_head
+            or historical.get("commit_sha") != source_head
+            or historical.get("result_digest") != source_digest
+            or re.fullmatch(r"[0-9a-f]{64}", source_digest) is None
+            or validation.get("reproductionReceiptAuthenticated") is not True
+        ):
+            return None
+    if sent[1].get("resultDigest") != historical["result_digest"]:
         return None
     if expired_publication is not None:
         if historical["result_digest"] != expired_publication["resultDigest"]:
@@ -15265,7 +15361,7 @@ def _completed_validation_input_task_id(
         snapshot != projected
         or source.get("taskId") != task_id
         or (
-            source.get("contextDigest") != context.get("contextDigest")
+            source.get("contextDigest") != expected_context_digest
             and expired_publication is None
         )
         or source.get("commitSha") != historical["head_sha"]
@@ -15273,6 +15369,10 @@ def _completed_validation_input_task_id(
         or any(
             source.get(k) != value.get(k) for k in ("key", "issueUrl", "threadId", "worktreePath")
         )
+    ):
+        return None
+    if validation_context_digest is not None and (
+        _task_result_digest(source, snapshot) != historical["result_digest"]
     ):
         return None
     if expired_publication is not None and (
@@ -17010,7 +17110,46 @@ def _controller_commit_result_pending_ingestion(
     worktree: Path,
 ) -> bool:
     """Preserve the bound context until a completed native handoff is ingested."""
-    return _completed_controller_handoff_evidence(store, candidate, worktree=worktree) is not None
+    if _completed_controller_handoff_evidence(store, candidate, worktree=worktree) is not None:
+        return True
+    if (
+        candidate.get("stage") != "VALIDATION_PENDING"
+        or not _is_managed_worktree(worktree)
+        or _active_task_turn_for_result(candidate) is not None
+    ):
+        return False
+    try:
+        with _task_worktree_private_descriptor(candidate) as opened:
+            raw = _read_task_result_bytes_from_private(opened)
+            value = json.loads(raw)
+            context_raw = _read_task_context_bytes_from_private(opened)
+            context = json.loads(context_raw)
+            if (
+                not isinstance(value, dict)
+                or not isinstance(context, dict)
+                or not isinstance(value.get("quality"), dict)
+                or assess_submit_ready(value["quality"]).ready
+                or value.get("commitSha") != command(["git", "rev-parse", "HEAD"], cwd=worktree)
+                or _local_changed_files(worktree)
+                or store.task_result_digest_seen(
+                    candidate["key"],
+                    _task_result_digest(value, raw),
+                    **_ledger_binding_kwargs(candidate),
+                )
+            ):
+                return False
+            return _completed_validation_input_task_id(
+                store,
+                ManagedLedger(store.path, ensure_schema=False),
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=opened,
+                context_raw=context_raw,
+                validation_context_digest=str(context.get("contextDigest") or ""),
+            ) == candidate.get("intentId")
+    except (OSError, RuntimeError, ValueError, KeyError):
+        return False
 
 
 def _implementation_result_context_refresh_proof(
@@ -21963,7 +22102,17 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             )
             if (
                 digest_seen
-                and candidate["stage"] != "VALIDATION_PENDING"
+                and (
+                    candidate["stage"] != "VALIDATION_PENDING"
+                    or (
+                        value.get("stage") == "FIX_READY"
+                        and value.get("handoffMode") == "controller_commit_complete"
+                        and isinstance(receipt, dict)
+                        and receipt.get("resultDigest") == initial_digest
+                        and isinstance(initial_quality, dict)
+                        and not assess_submit_ready(initial_quality, task_result=value).ready
+                    )
+                )
                 and not possible_policy_recovery
                 and not initial_review_recoverable
                 and not published_managed_backfill_required
@@ -22337,6 +22486,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     context=context,
                     value=value,
                     worktree=result_access.worktree,
+                    raw=raw,
                 )
                 implementation_context_rebind = _implementation_result_context_refresh_proof(
                     store,
@@ -22729,7 +22879,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             iso_z(datetime.now(UTC)),
                         )
                     validation_context_rebindings.append(
-                        {"key": candidate["key"], **validation_context_rebind}
+                        {
+                            "key": candidate["key"],
+                            **{
+                                key: item for key, item in validation_context_rebind.items()
+                                if key != "sourceResultBytesBase64"
+                            },
+                        }
                     )
                 quality = value.get("quality")
                 assert isinstance(quality, dict)
