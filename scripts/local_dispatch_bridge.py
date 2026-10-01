@@ -1569,18 +1569,29 @@ def github_git_command(
     cwd: Path | None = None,
     timeout: int = 300,
     before_retry: Callable[[], None] | None = None,
+    total_timeout: float | None = None,
 ) -> str:
-    """Retry bounded GitHub git transport failures without hiding hard errors."""
+    """Retry bounded GitHub transport failures without hiding hard errors."""
 
+    deadline = None if total_timeout is None else monotonic() + total_timeout
     for attempt in range(len(GITHUB_GIT_RETRY_DELAYS) + 1):
+        call_timeout: int | float = timeout
+        if deadline is not None:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(args, total_timeout)
+            call_timeout = min(call_timeout, remaining)
         try:
-            return command(args, cwd=cwd, timeout=timeout)
+            return command(args, cwd=cwd, timeout=call_timeout)
         except (RuntimeError, subprocess.TimeoutExpired) as exc:
             if attempt >= len(GITHUB_GIT_RETRY_DELAYS) or not is_transient_github_error(exc):
                 raise
+            delay = GITHUB_GIT_RETRY_DELAYS[attempt]
+            if deadline is not None and monotonic() + delay >= deadline:
+                raise subprocess.TimeoutExpired(args, total_timeout) from exc
             if before_retry is not None:
                 before_retry()
-            sleep(GITHUB_GIT_RETRY_DELAYS[attempt])
+            sleep(delay)
     raise AssertionError("unreachable")
 
 
@@ -24015,7 +24026,7 @@ def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
     for item in store.tracked_pull_requests():
         try:
             value = json.loads(
-                command(
+                github_git_command(
                     [
                         "gh",
                         "pr",
@@ -24025,9 +24036,10 @@ def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
                         "state,isDraft,mergedAt,reviewDecision,statusCheckRollup,url",
                     ],
                     timeout=45,
+                    total_timeout=45,
                 )
             )
-        except (RuntimeError, json.JSONDecodeError) as exc:
+        except (RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
             errors.append({"key": item["key"], "error": str(exc)[:200]})
             continue
         stage = pr_lifecycle_stage(value)

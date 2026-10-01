@@ -4116,6 +4116,137 @@ def test_refresh_pull_requests_downgrades_green_pr_that_became_draft(monkeypatch
     assert recorded[0][1]["evidence"]["remote"]["isDraft"] is True
 
 
+@pytest.fixture
+def published_pr_refresh(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    store, _worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "_refresh_followup_projections",
+        lambda *_args, **_kwargs: ({"covered": 1}, []),
+    )
+    clock = [0.0]
+    delays = []
+
+    def retry_sleep(delay):
+        clock[0] += delay
+        delays.append(delay)
+
+    monkeypatch.setattr(MODULE, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(MODULE, "sleep", retry_sleep)
+    return SimpleNamespace(store=store, pr_url=pr_url, clock=clock, delays=delays)
+
+
+@pytest.mark.parametrize("error", ["EOF", "unexpected EOF"])
+def test_refresh_pull_requests_retries_eof_and_records_real_lifecycle_update(
+    monkeypatch, published_pr_refresh, error
+):
+    refresh = published_pr_refresh
+    calls = []
+
+    def read_pr(args, **kwargs):
+        calls.append((args, kwargs["timeout"]))
+        refresh.clock[0] += 2
+        if len(calls) == 1:
+            raise RuntimeError(f'Post "https://api.github.com/graphql": {error}')
+        return json.dumps(
+            {
+                "state": "MERGED",
+                "isDraft": False,
+                "mergedAt": "2026-10-01T04:30:00Z",
+                "reviewDecision": "APPROVED",
+                "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                "url": refresh.pr_url,
+            }
+        )
+
+    monkeypatch.setattr(MODULE, "command", read_pr)
+    result = MODULE.refresh_pull_requests(SimpleNamespace(ledger=refresh.store.path))
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["updates"] == [{"key": "a/b#1", "stage": "MERGED", "prUrl": refresh.pr_url}]
+    with refresh.store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[0]
+            == "MERGED"
+        )
+    assert refresh.delays == [1.0]
+    assert [timeout for _args, timeout in calls] == [45.0, 42.0]
+    assert all(
+        args
+        == [
+            "gh",
+            "pr",
+            "view",
+            refresh.pr_url,
+            "--json",
+            "state,isDraft,mergedAt,reviewDecision,statusCheckRollup,url",
+        ]
+        for args, _timeout in calls
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "attempts", "delays"),
+    [("HTTP 403: Resource not accessible", 1, []), ("EOF", 3, [1.0, 3.0])],
+)
+def test_refresh_pull_requests_keeps_permanent_and_exhausted_errors(
+    monkeypatch, published_pr_refresh, error, attempts, delays
+):
+    refresh = published_pr_refresh
+    calls = []
+
+    def failed_read(args, **kwargs):
+        calls.append((args, kwargs["timeout"]))
+        refresh.clock[0] += 1
+        raise RuntimeError(error)
+
+    monkeypatch.setattr(MODULE, "command", failed_read)
+    result = MODULE.refresh_pull_requests(SimpleNamespace(ledger=refresh.store.path))
+
+    assert result["ok"] is False
+    assert result["updates"] == []
+    assert result["errors"] == [{"key": "a/b#1", "error": error}]
+    with refresh.store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[0]
+            == "PR_OPEN"
+        )
+    assert len(calls) == attempts
+    assert refresh.delays == delays
+
+
+def test_refresh_pull_requests_timeout_retries_share_original_budget(
+    monkeypatch, published_pr_refresh
+):
+    refresh = published_pr_refresh
+    timeouts = []
+
+    def timed_out_read(args, **kwargs):
+        timeout = kwargs["timeout"]
+        timeouts.append(timeout)
+        refresh.clock[0] += min(20.0 if len(timeouts) == 1 else 24.0, timeout)
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(MODULE, "command", timed_out_read)
+    result = MODULE.refresh_pull_requests(SimpleNamespace(ledger=refresh.store.path))
+
+    assert result["ok"] is False
+    assert result["updates"] == []
+    assert result["errors"][0]["key"] == "a/b#1"
+    assert "timed out" in result["errors"][0]["error"]
+    with refresh.store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[0]
+            == "PR_OPEN"
+        )
+    assert timeouts == [45.0, 24.0]
+    assert refresh.delays == [1.0]
+    assert refresh.clock[0] == 45.0
+
+
 def test_local_refresh_projects_newer_live_snapshot_into_managed_and_legacy_tables(
     monkeypatch, tmp_path
 ):
