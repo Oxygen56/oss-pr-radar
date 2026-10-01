@@ -1268,6 +1268,39 @@
     ],
     "why": "The issue provides a detailed traceback, environment, and a code-grounded root-cause hypothesis from a commenter, identifying data-dependent NCCL collectives inside a non-reentrant checkpointed region as the likely cause. This is a concrete distributed-training invariant violation with a clear validation path via targeted tests."
   },
+  "03701595546ea241d48aab314119bb7fc632456557162828c34840f254958a31": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mlx/distributed/ring backend socket exchange / all_sum collective",
+      "chunking or rendezvous logic in average_gradients path"
+    ],
+    "risks": [
+      "Deadlock is probabilistic (~3-4%), so a fix may be hard to validate deterministically",
+      "Requires multi-host Apple Silicon hardware to reproduce",
+      "Root cause not yet pinpointed to a specific code line"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run cpu_stream_loop_repro.py at >=3 ranks for many iterations and confirm no hang",
+      "Run gpu_stream_repro.py with injected skew and confirm no watchdog timeout",
+      "Add a regression test looping all_sum on large payloads across >=3 ranks"
+    ],
+    "unknowns": [
+      "Exact code location of the race in the ring backend",
+      "Whether the GPU-stream watchdog kill and CPU-stream deadlock share one root cause"
+    ],
+    "why": "Issue reports a reproducible probabilistic deadlock (~3-4%/collective) in the ring backend's socket-level all_sum exchange for large payloads, with two self-contained repro scripts, a ruled-out list, and independent py-spy stack traces confirming both ranks parked inside all_sum. This is a concrete distributed-training invariant failure with a clear validation path (loop collectives at >=3 ranks, detect hang)."
+  },
   "0372ac6ae221d017da5a945cc9a9dc0a93e36a714fb240925bd7c66c8eea58a3": {
     "confidence": 0.55,
     "contradictions": [
@@ -8610,6 +8643,42 @@
       "Availability of test environment matching the reported stack"
     ],
     "why": "Issue provides a clear root cause: the nemotron_h sample-packing monkeypatch is incompatible with transformers 5.14.1 and 5.15.0 due to removed symbols and changed kernel path behavior. The issue includes a concrete validation path (run with sample_packing true on the specified stack) and references an open PR (#3945) that claims to fix it but lacks tests. This is a valuable, actionable algorithm bug fix opportunity."
+  },
+  "140cbd24cb23cfdfa4154efe734a3b73674f92d00c147d98277885287449fb9d": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/service/dataset/helpers.go: bridge or reject flat parser_config.delimiter instead of silent drop",
+      "internal/ingestion/component/chunker/general.go: mergeDOCXUnits/hasCustomDelim semantics so a custom delimiter can group paragraphs up to the next occurrence",
+      "internal/ingestion/component/chunker/token.go: hasCustomDelim behavior",
+      "web/src/hooks/parser-config-utils.ts: emit delimiter in the component-scoped form"
+    ],
+    "risks": [
+      "Changing delimiter semantics from hard-split to grouping is a user-visible behavior change that may need maintainer design sign-off",
+      "Potential overlap with open PRs #18556/#18637 on the naive_merge path and #17692 on the DOCX token-cap path",
+      "Issue #20496 appears to describe the same behavior and may be a duplicate"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing Go test asserting a flat parser_config.delimiter is either persisted onto GeneralChunker:SixApplesFall.delimiters or rejected with an error, not silently dropped",
+      "Add a DOCX chunker test with a leading-marker delimiter (e.g. 问：) over a multi-paragraph record asserting one chunk per record rather than one chunk per paragraph",
+      "Run targeted chunker package tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the delimiter grouping semantics a desired behavior change or out of scope",
+      "Whether issue #20496 is a true duplicate that should be consolidated before implementation"
+    ],
+    "why": "Issue documents two concrete, code-anchored defects in the built-in general chunker: (1) flat parser_config.delimiter is silently dropped by DropUnscopedParserConfigKeys/ValidateParserConfig with no bridge to GeneralChunker:SixApplesFall, and (2) mergeDOCXUnits bypasses token-size merging whenever hasCustomDelim is true, so a custom delimiter can only split between paragraphs and never group a multi-paragraph record. Bot comment corroborates both against main with specific file/line anchors and notes no open PR changes the delimiter from hard-split to grouping semantics."
   },
   "140f7f2dc95929353172cc2a9a1db38ab539745a9f878235781fb4c02fef0730": {
     "confidence": 0.6,
@@ -29866,6 +29935,36 @@
     ],
     "why": "Issue clearly identifies a user-visible streaming bug with a concrete root cause in the GenericStreamingChunk path, provides a reproduction via proxy, and references related fixes. The candidate is actionable and technically valuable despite an existing open PR that lacks complete root-cause coverage."
   },
+  "432a6e0839aa30c31989f5dfb6de941c0912f2d497947170e8b3a232394ea4d5": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/litellm_pre_call_utils.py: stop team-level empty-list opted_out_global_guardrails from overwriting key-level opt-out; enforce key-level precedence in the metadata merge",
+      "litellm/integrations/custom_guardrail.py: ensure _get_admin_metadata / get_opted_out_global_guardrails_from_metadata / should_run_guardrail consume the merged value with key-level precedence"
+    ],
+    "risks": [
+      "Changing merge precedence could alter intended team-level guardrail enforcement semantics; maintainer may prefer a different precedence rule",
+      "Fix must not regress disable_global_guardrails handling or team-level opt-out behavior when the team list is non-empty"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that creates a team with empty opted_out_global_guardrails and a key with team_id plus key-level opt-out, then asserts should_run_guardrail returns False for a default_on guardrail",
+      "Add a control test for a key without a team and the same key-level opt-out to confirm the opt-out is honored",
+      "Run targeted proxy unit tests around litellm_pre_call_utils metadata merge and custom_guardrail should_run_guardrail"
+    ],
+    "unknowns": [
+      "Exact runtime execution order of team-level vs key-level metadata assignment in v1.93.0 is not confirmed by debug logging, though the static code anchors make the mechanism concrete enough to test"
+    ],
+    "why": "Issue provides a controlled 4-key experiment isolating team membership as the only variable, plus concrete code anchors (litellm_pre_call_utils.py team-level assignment ~1549-1552 vs. key-level add_key_level_controls ~1028-1068, and custom_guardrail.py merge/consume paths). The asymmetry between team and key metadata handling is a specific, testable mechanism, and the issue explicitly flags the root cause as a static-review hypothesis, which is normal implementation uncertainty rather than a blocker. No duplicate or merged fix covers this path; the only overlapping PR (#43978) is keyword-only with no code-path overlap."
+  },
   "43488bb5afd8160a29f6b723707d806539ec9a3f199fac6f1f8af0d38454883c": {
     "confidence": 0.85,
     "contradictions": [
@@ -36848,6 +36947,42 @@
       "Whether maintainers want the minimal fix or the structural mixin refactor"
     ],
     "why": "The issue itself is a well-evidenced, concrete bug (borrowed Gemma4 methods read `_enable_mm_lora`, which DiffusionGemma never sets), but the supplied evidence shows an open PR #54309 that already implements the exact fix ('Set _enable_mm_lora on DiffusionGemma to fix image-input engine crash') with overlapping path `vllm/model_executor/models/diffusion_gemma.py` and distinctive overlap on `enable_mm_lora`/`gemma4`. A maintainer-adjacent contributor comment confirms the root cause and points to #54309 as the existing fix. This unresolved duplicate/merged-fix coverage is a materially blocking unknown: it is unclear whether any new code work is actionable or would merely duplicate #54309. Additionally, the repository policy status is `ai_disclosure_conflict`, which is a disclosure requirement that must be resolved before public action."
+  },
+  "51bb3503794af88215e5f291ff2684d8213da6229ee3269c2979696c5308e7d3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.algorithm_evidence claims formula_signal and experiment_signal true, but the issue body contains no formula or controlled experiment, only a quantization script and a garbled-output curl",
+      "candidate.actionability_evidence lists code_anchors as collect_env.py, which is unrelated to the quantization/inference failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "CPU W4A8/INT4 weight dequantization or INT8 activation quantization kernel path",
+      "gpt-oss MoE/MLP quantization handling on ARM (svei8mm/i8mm/bf16 paths)"
+    ],
+    "risks": [
+      "Garbled output could stem from quantization recipe/llmcompressor rather than vLLM, making the issue out of scope",
+      "ARM-specific kernel selection (svei8mm/i8mm) may be the cause but is not evidenced",
+      "No maintainer confirmation or assignment; repository has an AI disclosure conflict policy"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the provided llmcompressor W4A8 recipe and vllm serve on ARM64 CPU, comparing BF16 vs W4A8 logits/tokens on a fixed prompt",
+      "Add a numerical regression comparing quantized CPU kernel output against a reference dequantized BF16 computation with fixed seed and tolerance"
+    ],
+    "unknowns": [
+      "Whether the root cause is in vLLM CPU quantization kernels or in the llmcompressor-produced checkpoint",
+      "Which specific kernel/operator produces incorrect numerics on ARM",
+      "Whether the issue is reproducible on non-ARM or with a smaller model for a controlled test"
+    ],
+    "why": "Issue reports garbled output for W4A8 gpt-oss-20b on ARM CPU, but the supplied evidence contains no root-cause analysis, no code anchors in the quantization/CPU kernel path, and no maintainer confirmation. The only code anchors are collect_env.py, which is environment reporting, not the failing inference path. The candidate's own algorithm_evidence claims formula/experiment signals, but the issue body provides only a quantization script and a serving command, not a reference-vs-implementation numerical comparison or a concrete failing kernel/mechanism."
   },
   "51bf6ffb62b46b2059eb5499a842a746dc31b592f4131d66a9a4fcf224642298": {
     "confidence": 0.55,
@@ -54059,6 +54194,35 @@
       "Assignment status, since the repository policy requires assignment before contribution"
     ],
     "why": "The issue documents a real API asymmetry with a deterministic reproduction, but the required change is an API design decision (removal keyed by session, user, or memory entry) that the reporter explicitly declines to propose, and the repository policy requires assignment before work. Without an agreed API shape, the code work is not actionable."
+  },
+  "7395d5be26bcb443b1b23ca620e889adbd9b2b6c4f8d8d42a74b64599b9a01a3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels this a LlamaFactory bug with code anchor modeling.py, but the traceback frames are entirely in peft/accelerate."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Determine whether the fix belongs in LlamaFactory's adapter-loading path (e.g. how no_split_module_classes is passed) or is an upstream accelerate/peft bug requiring a version pin or report."
+    ],
+    "risks": [
+      "Fixing in LlamaFactory may mask an upstream accelerate bug or conflict with a future upstream patch.",
+      "Version-specific dev torch/CUDA 12.8 environment may not reproduce in CI."
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the Chat adapter-load failure with the reported versions, then bisect accelerate/peft versions to confirm whether the TypeError originates upstream before writing a LlamaFactory regression test."
+    ],
+    "unknowns": [
+      "Whether the root cause is in LlamaFactory code or an upstream accelerate/peft version incompatibility.",
+      "Whether a maintainer has already identified this as an upstream issue or has a preferred fix location."
+    ],
+    "why": "The traceback points into accelerate's get_balanced_memory (set(no_split_children.keys())), not into LlamaFactory code; the candidate's only code anchor is a generic 'modeling.py' and root_cause_signal is false. The failure is plausibly an upstream accelerate/peft version incompatibility, so the actionable fix location is unresolved."
   },
   "739aeca31cb37d96b88eca749779aa8921e24cafe2c75dce84f339d9c4ea0b3c": {
     "confidence": 0.8,
@@ -76789,6 +76953,42 @@
     ],
     "why": "Issue identifies a clear performance bug: a class-level threading.Lock serializes all LLM calls, causing severe GPU idle time for local models. Root cause is precisely located in code, with concrete proposed solutions and a reproducible scenario. No competing PR or issue found, and the fix is localized and testable."
   },
+  "a5491e78eb8a5ab23440f31e6191ed98d375fe1ec8492ed31f8df2ad76a17b57": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/datasource/connector/notion/connector.go: split database records into per-record FetchedItems with configurable aggregation mode",
+      "internal/models/embedding/batch.go: persist successful sub-batch results and retry only failed batches",
+      "internal/application/service/retriever/keywords_vector_hybrid_indexer.go: TPM-aware pacing and Retry-After handling instead of full contentList replay",
+      "UI/error surface: expose provider error, failure stage, and suggested action instead of generic parse failure"
+    ],
+    "risks": [
+      "Behavior change in Notion connector output shape may affect downstream indexing assumptions",
+      "TPM pacing changes could regress throughput for small documents",
+      "Scope spans connector, embedding, and retriever layers, increasing review surface",
+      "Overlap with #2533 may cause duplicate or conflicting fixes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that feeds a large multi-record Notion database fixture through buildDatabaseItem and asserts per-record FetchedItem output",
+      "Add a unit test for BatchEmbedWithPool that injects a 429 on a later sub-batch and asserts previously successful batches are not re-embedded",
+      "Add a test for batchEmbedWithBackoff verifying Retry-After is honored and only failed batches are retried",
+      "Run targeted package tests and static checks for the touched packages"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer per-record default vs configurable option for Notion database import",
+      "Whether #2533 already covers the embedding pacing/retry portion, leaving only the connector split as novel work"
+    ],
+    "why": "Issue provides a concrete, reproducible failure with quantified evidence (4.75MB single Markdown, 5,647 chunks, ~1.13M tokens vs 1M TPM) and names specific code paths (buildDatabaseItem, BatchEmbedWithPool, batchEmbedWithBackoff). Root cause is well-articulated: Notion database aggregation into one oversized FetchedItem plus non-persisted partial embedding batches causing full-document retry and parse_status=failed. A claimant has already proposed a scoped fix plan with tests."
+  },
   "a55076b244e5ea904272effa08606eb076e0ad9d784cdc0e4648c9ed155ee5c7": {
     "confidence": 0.85,
     "contradictions": [],
@@ -78226,6 +78426,44 @@
       "Exact code location where the model name is forwarded (not specified in issue)."
     ],
     "why": "Issue provides a clear root cause: lemonade launches vLLM with --served-model-name user.<model> but forwards requests using the bare model name, causing vLLM 404 and silent stream failure. Multiple user reports confirm the mismatch. The fix is a straightforward name alignment in the router/backend, with a concrete reproduction path via chat completion request."
+  },
+  "a8c7d2fd3452a3f4d2f3ab4f7f2bf3d52b64a594baf24bf67da40d45e7b8ab43": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment says PR #38430 semantically overlaps and adds the GLM-5.3 classes to the SM120 allowlist, while the candidate is still presented as an actionable bug fix",
+      "algorithm_evidence claims parameter_efficient_finetuning/distributed_training/numerics_quantization mechanisms, but the issue is an attention-kernel architecture-support crash, not a PEFT or training-semantics problem"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/attention/flash_mla_sm120.py: extend the SM120 model-arch allowlist / route Glm5Next through the NoPE layout",
+      "python/sglang/srt/layers/attention/dsa_backend.py: backend selection for trtllm DSA on SM120 when the arch is unsupported"
+    ],
+    "risks": [
+      "Open PR #38430 may already fix the same root cause, making a new contribution duplicative",
+      "flashinfer version pin may not expose the glm53_nope layout, so the fix may require a dependency bump",
+      "SM120/SM121 hardware is required to validate; triton is reported as the only currently working backend, so a partial fix could still leave fa4 broken (#42012)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the launch command on SM120 (or SM121) with GLM-5.3-Flash, --dsa-prefill-backend trtllm, --dsa-decode-backend trtllm, TP=4, and confirm the TllmGenFmhaRunner 'Unsupported architecture' error at fmhaRunner.cuh:37",
+      "After the change, verify the server passes FlashInfer autotune and serves a request; add a regression test asserting the SM120 arch allowlist includes the GLM-5.3 model classes and that the NoPE layout path is selected",
+      "Cross-check the flashinfer version pin (python/pyproject.toml) supports the glm53_nope layout, since 0.6.18 reportedly requires kv_lora_rank=512/qk_rope_head_dim=64 while GLM-5.3-Flash has qk_rope_head_dim=0"
+    ],
+    "unknowns": [
+      "Whether PR #38430 actually resolves this issue's root cause or only partially covers it",
+      "Whether the fix requires a flashinfer version bump beyond the pinned 0.6.18",
+      "Whether the issue is a duplicate of #40286/#42012 and should be consolidated rather than fixed independently"
+    ],
+    "why": "The issue is a concrete SM120 crash in TllmGenFmhaRunner (fmhaRunner.cuh:37, unsupported architecture) with a full repro command and traceback, and comment evidence points to a specific fix surface (_GLM_DSA_MODEL_ARCHS allowlist in flash_mla_sm120.py plus a glm53_nope layout). However, the supplied evidence also states PR #38430 already adds Glm5NextForConditionalGeneration/NextN to that allowlist and routes them through glm53_nope, i.e. an open PR appears to cover the same root cause, and the duplicate assessment is 'semantic_overlap_requires_review' with no direct issue link. Whether code work is actionable therefore depends on an unresolved duplicate/coverage question, which is a materially blocking unknown."
   },
   "a8cab21fa326146ef04a22286e366ff04eccc3ceded02ebb71e9814027e47c56": {
     "confidence": 0.8,
@@ -103906,6 +104144,41 @@
       "Maintainer preference on the suggested fix approach"
     ],
     "why": "Issue reports a concrete bug with clear root cause and reproduction, but open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer approval is absent, and the suggested fix involves design choices (capability-driven dispatch vs. minimal mapping) that need maintainer input."
+  },
+  "df6d6f7778d5b9053c5eb8a30fb0271912611ca0ff7f89e796b2adae248f6c67": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Codex coding-agent run/session lifecycle completion-event handling",
+      "runWaiter resolution on run.completed/run.failed",
+      "streamOutput() EOF/terminal event handling and timeout path",
+      "sessionMap.isWorking clearing / markExternalRunCompleted()"
+    ],
+    "risks": [
+      "Root cause is suspected, not confirmed; fix may require deeper runtime investigation",
+      "Bundled dist/server/index.js is minified, so source-level anchors may not map cleanly",
+      "Avoid broad API behavior changes while fixing timeout/completion handling"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with minimal prompt '只回复 OK' through Ekko Codex Coding Agent and measure latency vs native Codex CLI",
+      "Add regression test asserting run waiter resolves promptly on completion event rather than hitting 120000ms deadline",
+      "Verify sessionMap.isWorking is cleared immediately after codex exec exits"
+    ],
+    "unknowns": [
+      "Exact code-level defect in completion-event/runWaiter path is not confirmed",
+      "Whether maintainers have a preferred fix location or design constraint"
+    ],
+    "why": "Issue reports a concrete, reproducible user-visible latency bug (~120s vs ~5s) with ordered reproduction steps, expected/actual behavior, isolation tests ruling out config and MCP servers, and static code anchors pointing to 120000ms waits in runAndWait()/streamOutput() and completion-event handling. No open PR or duplicate issue covers it. Root cause is suspected rather than confirmed, but the evidence supports a concrete reference-vs-implementation validation path (native Codex ~5s vs Ekko ~120s) and targeted code investigation."
   },
   "df9dfc48a70eee0386c16a471c8471fca4c204f105633de04b7d0785ce5981fb": {
     "confidence": 0.6,
