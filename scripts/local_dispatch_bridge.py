@@ -15087,7 +15087,8 @@ def _validation_result_omitted_task_id(
         or context.get("prFollowup") is not None
         or context.get("publicationReceipt") is not None
         or value.get("stage") != "FIX_READY"
-        or value.get("handoffMode") != "controller_commit_complete"
+        or value.get("handoffMode")
+        not in {"controller_commit_complete", "controller_commit_required"}
         or value.get("contextDigest") != context.get("contextDigest")
     ):
         return None
@@ -15114,6 +15115,12 @@ def _validation_result_omitted_task_id(
         or managed_task.get("worktree_path") != binding["worktreePath"]
         or managed_task.get("state") != "IMPLEMENTATION_READY"
         or historical is None
+    ):
+        return None
+    if value.get("handoffMode") == "controller_commit_required" and (
+        value.get("previousControllerCommitSha") != historical["head_sha"]
+        or command(["git", "rev-parse", "HEAD"], cwd=result_access.worktree)
+        != historical["head_sha"]
     ):
         return None
     with store.connect() as connection:

@@ -29019,15 +29019,28 @@ def _completed_validation_result_with_omitted_task_id(tmp_path, monkeypatch):
     return store, worktree, result_path, source_path
 
 
+@pytest.mark.parametrize("handoff", ["controller_commit_complete", "controller_commit_required"])
 def test_native_completed_validation_normalizes_omitted_task_id_before_parent_check(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, handoff
 ):
     store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
         tmp_path, monkeypatch
     )
+    head = run_git(worktree, "rev-parse", "HEAD")
+    if handoff == "controller_commit_required":
+        value = json.loads(result_path.read_text())
+        value.update(handoffMode=handoff, commitSha=None, previousControllerCommitSha=head)
+        value.pop("headSha", None)
+        value.pop("codePaths", None)
+        runtime = worktree / "runtime.py"
+        runtime.write_text(runtime.read_text() + "\nassert 'value' in globals()\n")
+        check = subprocess.run(
+            [sys.executable, "runtime.py"], cwd=worktree, capture_output=True, text=True
+        )
+        assert check.returncode == 0, check.stderr
+        result_path.write_text(json.dumps(value))
     original = result_path.read_bytes()
     original_input = input_path.read_bytes()
-    head = run_git(worktree, "rev-parse", "HEAD")
     identity = MODULE._validation_result_omitted_task_id
     monkeypatch.setattr(MODULE, "_validation_result_omitted_task_id", lambda *a, **kw: None)
     before = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
@@ -29051,7 +29064,13 @@ def test_native_completed_validation_normalizes_omitted_task_id_before_parent_ch
     assert normalized["taskId"] == "intent-1"
     assert normalized["quality"]["independent_review_passed"] is False
     assert normalized["reproductionReceipt"]["taskId"] == "intent-1"
-    assert run_git(worktree, "rev-parse", "HEAD") == head
+    if handoff == "controller_commit_complete":
+        assert run_git(worktree, "rev-parse", "HEAD") == head
+    else:
+        assert normalized["handoffMode"] == "controller_commit_complete"
+        assert run_git(worktree, "rev-parse", "HEAD") != head
+        assert run_git(worktree, "rev-parse", "HEAD^") == head
+        assert run_git(worktree, "status", "--porcelain") == ""
     assert input_path.read_bytes() == original_input
     with store.connect() as connection:
         block = connection.execute(
@@ -29095,11 +29114,13 @@ def test_native_completed_validation_normalizes_omitted_task_id_before_parent_ch
         assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
 
 
-@pytest.mark.parametrize("mismatch", ["task_id", "context", "input"])
+@pytest.mark.parametrize(
+    "mismatch", ["task_id", "context", "input", "previous_head", "precommit_head", "handoff_mode"]
+)
 def test_native_completed_validation_does_not_normalize_conflicting_identity_or_input(
     tmp_path, monkeypatch, mismatch
 ):
-    store, _worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
         tmp_path, monkeypatch
     )
     value = json.loads(result_path.read_text())
@@ -29107,12 +29128,30 @@ def test_native_completed_validation_does_not_normalize_conflicting_identity_or_
         value["taskId"] = "foreign-task"
     elif mismatch == "context":
         value["contextDigest"] = "f" * 64
-    else:
+    elif mismatch == "input":
         source = json.loads(input_path.read_text())
         source["taskId"] = "foreign-task"
         input_path.chmod(0o600)
         input_path.write_text(json.dumps(source))
         input_path.chmod(0o400)
+    elif mismatch == "previous_head":
+        value.update(
+            handoffMode="controller_commit_required",
+            commitSha=None,
+            previousControllerCommitSha="f" * 40,
+        )
+    elif mismatch == "precommit_head":
+        value.update(
+            handoffMode="controller_commit_required",
+            commitSha=None,
+            previousControllerCommitSha=run_git(worktree, "rev-parse", "HEAD"),
+        )
+        runtime = worktree / "runtime.py"
+        runtime.write_text(runtime.read_text() + "\nassert 'value' in globals()\n")
+        run_git(worktree, "add", "runtime.py")
+        run_git(worktree, "commit", "-m", "test: foreign validation head")
+    else:
+        value["handoffMode"] = "unknown-controller-mode"
     result_path.write_text(json.dumps(value))
     before = result_path.read_bytes()
 
