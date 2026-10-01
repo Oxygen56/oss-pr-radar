@@ -17612,6 +17612,10 @@ def _upstream_remote(worktree: Path, repo: str) -> str:
     for remote in command(["git", "remote"], cwd=worktree).splitlines():
         current = command(["git", "remote", "get-url", remote], cwd=worktree)
         if normalize_origin(current) == repo.casefold():
+            try:
+                command(["git", "check-ref-format", f"refs/remotes/{remote}/HEAD"], cwd=worktree)
+            except RuntimeError:
+                continue
             return remote
     raise RuntimeError("managed worktree has no upstream remote")
 

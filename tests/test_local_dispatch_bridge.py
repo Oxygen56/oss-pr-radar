@@ -15028,7 +15028,19 @@ def test_prepare_pr_followup_refreshes_fast_forwarded_base_before_integration(
     live_base = run_git(worktree, "rev-parse", "HEAD")
     run_git(worktree, "push", "origin", f"{live_base}:refs/heads/main")
     run_git(worktree, "switch", "fix/1-runtime")
-    monkeypatch.setattr(MODULE, "_upstream_remote", lambda *_args: "origin")
+    official_url = "https://github.com/a/b.git"
+    run_git(worktree, "remote", "set-url", "origin", official_url)
+    run_git(worktree, "config", f"remote.{official_url}.url", official_url)
+    native_command = MODULE.command
+
+    def local_github_git(argv, *, cwd, timeout=120):
+        return native_command(
+            ["git", "-c", f"url.{remote}.insteadOf={official_url}", *argv[1:]],
+            cwd=cwd,
+            timeout=timeout,
+        )
+
+    monkeypatch.setattr(MODULE, "github_git_command", local_github_git)
 
     preparation = MODULE._prepare_pr_followup(
         {
@@ -16395,7 +16407,7 @@ def _controller_commit_result(
     return store, worktree, result_path
 
 
-@pytest.mark.parametrize("upstream_fixed", [True, False])
+@pytest.mark.parametrize("upstream_fixed", [True, False, None])
 def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     monkeypatch, tmp_path, upstream_fixed
 ):
@@ -16422,17 +16434,17 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     old_head = request["commitSha"]
     old_branch = request["branch"]
     run_git(worktree, "switch", "--detach", old_base)
-    (worktree / "runtime.py").write_text(
+    upstream_path = "runtime.py" if upstream_fixed is not None else "unrelated.py"
+    (worktree / upstream_path).write_text(
         "# latest upstream changes\nvalue = 2\nassert value == 2\n"
         if upstream_fixed
         else "# latest upstream changes\nvalue = 1\n",
         encoding="utf-8",
     )
-    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "add", upstream_path)
     run_git(worktree, "commit", "-m", "fix: current upstream runtime")
     live_base = run_git(worktree, "rev-parse", "HEAD")
     run_git(worktree, "branch", "-f", "main", live_base)
-    run_git(worktree, "update-ref", "refs/remotes/origin/main", live_base)
     run_git(worktree, "switch", old_branch)
     remote = tmp_path / "upstream.git"
     subprocess.run(
@@ -16463,6 +16475,8 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         def related_open_prs(self, *_args, **_kwargs):
             return []
 
+    official_url = "https://github.com/a/b.git"
+    run_git(worktree, "config", f"remote.{official_url}.url", official_url)
     client = Client()
     evidence = EvidenceBundle(
         repo="a/b",
@@ -16500,14 +16514,23 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         publication,
         "_github_git_command",
         lambda argv, *, cwd, timeout: publication.command(
-            [str(remote) if item == "origin" else item for item in argv], cwd=cwd, timeout=timeout
+            ["git", "-c", f"url.{remote}.insteadOf={official_url}", *argv[1:]],
+            cwd=cwd,
+            timeout=timeout,
         ),
     )
     monkeypatch.setattr(MODULE, "source_repo", lambda _repo, **_kwargs: worktree)
     monkeypatch.setattr(MODULE, "managed_worktree_path", lambda *_args: worktree)
     audited = publication.audit_publication_request(store, request_id, client=client)
+    if upstream_fixed is None:
+        assert audited.status == "ALLOW", audited
+        assert run_git(worktree, "rev-parse", "refs/remotes/origin/main") == live_base
+        assert result_path.read_bytes() == source_bytes
+        assert store.publication_request(request_id)["status"] == "PENDING"
+        return
     assert audited.status == "DEFER", audited
-    assert audited.reason == "LATEST_TARGET_REVALIDATION_REQUIRED"
+    assert audited.reason == "LATEST_TARGET_REVALIDATION_REQUIRED", audited
+    assert run_git(worktree, "rev-parse", "refs/remotes/origin/main") == live_base
 
     advanced = MODULE.run_publication_queue(SimpleNamespace(ledger=store.path))
     assert advanced["ok"], advanced["errors"]

@@ -283,6 +283,8 @@ def test_up_to_date_upstream_branch_skips_fetch(monkeypatch, tmp_path):
             return "origin"
         if args[:3] == ["git", "remote", "get-url"]:
             return "https://github.com/example/project.git"
+        if args[:2] == ["git", "check-ref-format"]:
+            return ""
         if args[:3] == ["git", "ls-remote", "--exit-code"]:
             return f"{sha}\trefs/heads/main"
         if args[:3] == ["git", "rev-parse", "--verify"]:
@@ -310,6 +312,8 @@ def test_changed_upstream_branch_fetches_exact_tracking_ref(monkeypatch, tmp_pat
             return "origin"
         if args[:3] == ["git", "remote", "get-url"]:
             return "https://github.com/example/project.git"
+        if args[:2] == ["git", "check-ref-format"]:
+            return ""
         if args[:3] == ["git", "ls-remote", "--exit-code"]:
             return f"{live_sha}\trefs/heads/main"
         if args[:2] == ["git", "fetch"]:
@@ -345,6 +349,8 @@ def test_refresh_upstream_branch_retries_transient_ls_remote_errors(monkeypatch,
             return "origin"
         if args[:3] == ["git", "remote", "get-url"]:
             return "https://github.com/example/project.git"
+        if args[:2] == ["git", "check-ref-format"]:
+            return ""
         if args[:3] == ["git", "ls-remote", "--exit-code"]:
             ls_remote_calls += 1
             if ls_remote_calls < 3:
@@ -375,6 +381,8 @@ def test_refresh_upstream_branch_retries_transient_fetch_error(monkeypatch, tmp_
             return "origin"
         if args[:3] == ["git", "remote", "get-url"]:
             return "https://github.com/example/project.git"
+        if args[:2] == ["git", "check-ref-format"]:
+            return ""
         if args[:3] == ["git", "ls-remote", "--exit-code"]:
             return f"{live_sha}\trefs/heads/main"
         if args[:2] == ["git", "fetch"]:
@@ -409,6 +417,8 @@ def test_refresh_upstream_branch_retries_subprocess_timeout(monkeypatch, tmp_pat
             return "origin"
         if args[:3] == ["git", "remote", "get-url"]:
             return "https://github.com/example/project.git"
+        if args[:2] == ["git", "check-ref-format"]:
+            return ""
         if args[:3] == ["git", "ls-remote", "--exit-code"]:
             ls_remote_calls += 1
             if ls_remote_calls == 1:
@@ -437,6 +447,8 @@ def test_refresh_upstream_branch_does_not_retry_hard_error(monkeypatch, tmp_path
             return "origin"
         if args[:3] == ["git", "remote", "get-url"]:
             return "https://github.com/example/project.git"
+        if args[:2] == ["git", "check-ref-format"]:
+            return ""
         if args[:3] == ["git", "ls-remote", "--exit-code"]:
             ls_remote_calls += 1
             raise publication.PublicationError("fatal: repository not found")
@@ -462,6 +474,8 @@ def test_refresh_upstream_branch_stops_after_two_transient_retries(monkeypatch, 
             return "origin"
         if args[:3] == ["git", "remote", "get-url"]:
             return "https://github.com/example/project.git"
+        if args[:2] == ["git", "check-ref-format"]:
+            return ""
         if args[:3] == ["git", "ls-remote", "--exit-code"]:
             ls_remote_calls += 1
             raise publication.PublicationError("unexpected EOF while reading")

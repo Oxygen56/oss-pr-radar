@@ -357,6 +357,10 @@ def _upstream_remote(worktree: Path, repo: str) -> str:
     for remote in remotes:
         url = command(["git", "remote", "get-url", remote], cwd=worktree)
         if _normalize_origin(url) == repo.casefold():
+            try:
+                command(["git", "check-ref-format", f"refs/remotes/{remote}/HEAD"], cwd=worktree)
+            except PublicationError:
+                continue
             return remote
     raise PublicationError("worktree has no remote for the upstream repository")
 
