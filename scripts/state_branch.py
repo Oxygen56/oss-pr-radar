@@ -216,6 +216,7 @@ def fetch_state_ref(root: Path, branch: str) -> tuple[str, subprocess.CompletedP
     result = git(
         "fetch",
         "--no-write-fetch-head",
+        "--depth=1",
         "origin",
         f"+refs/heads/{branch}:{ref}",
         cwd=root,

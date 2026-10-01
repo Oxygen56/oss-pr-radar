@@ -297,7 +297,7 @@ jobs:
       always() && vars.RADAR_MAINTENANCE_PAUSED != 'true' &&
       needs.build-state.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: write
     env:
@@ -368,7 +368,7 @@ jobs:
       always() && vars.RADAR_MAINTENANCE_PAUSED != 'true' &&
       (needs.notify.result == 'success' || needs.notify.result == 'failure')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: write
     env:
