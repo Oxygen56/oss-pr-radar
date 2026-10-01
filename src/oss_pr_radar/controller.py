@@ -396,9 +396,7 @@ def _freshly_created_pull_requests(
 
     if publication.get("paused") is True:
         return []
-    published = [
-        item for item in (publication.get("published") or []) if isinstance(item, dict)
-    ]
+    published = [item for item in (publication.get("published") or []) if isinstance(item, dict)]
     if not published:
         return []
     created: list[dict[str, Any]] = []
@@ -1112,11 +1110,7 @@ def compact_controller_result(
     if desktop_handoff is not None:
         compact["desktopHandoff"] = desktop_handoff
     publication_notice = next(
-        (
-            item
-            for item in new_pull_requests
-            if isinstance(item, dict) and item.get("prUrl")
-        ),
+        (item for item in new_pull_requests if isinstance(item, dict) and item.get("prUrl")),
         None,
     )
     if publication_notice is not None:

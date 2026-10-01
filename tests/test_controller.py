@@ -1460,7 +1460,7 @@ def test_compact_controller_result_does_not_label_a_historical_notice_as_a_new_p
                     "prUrl": "https://github.com/a/b/pull/9",
                     "publishedAt": "2026-08-31T00:00:00Z",
                 },
-            }
+            },
         },
     }
 
