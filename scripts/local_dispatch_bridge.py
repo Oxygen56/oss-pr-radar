@@ -15004,6 +15004,156 @@ def _merge_parents(worktree: Path, revision: str = "HEAD") -> list[str]:
     return values[1:]
 
 
+def _validation_result_omitted_task_id(
+    store: RadarLedger,
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    result_access: _ValidationWorktreeDirectory,
+    context_raw: bytes,
+) -> str | None:
+    """Recover an omitted controller identity from the exact completed validation input."""
+
+    if (
+        "taskId" in value
+        or candidate.get("stage") != "VALIDATION_PENDING"
+        or context.get("stage") != "VALIDATION_PENDING"
+        or context.get("taskStage") != "IMPLEMENTATION_READY"
+        or context.get("prFollowup") is not None
+        or context.get("publicationReceipt") is not None
+        or value.get("stage") != "FIX_READY"
+        or value.get("handoffMode") != "controller_commit_complete"
+        or value.get("contextDigest") != context.get("contextDigest")
+    ):
+        return None
+    binding = {
+        "intentId": candidate.get("intentId"),
+        "threadId": candidate.get("threadId"),
+        "worktreePath": str(result_access.worktree),
+    }
+    if not all(binding.values()) or any(context.get(k) != v for k, v in binding.items()):
+        return None
+    for name in ("key", "issueUrl", "threadId", "worktreePath"):
+        if context.get(name) != candidate.get(name) or value.get(name) != context.get(name):
+            return None
+    task_id = str(binding["intentId"])
+    managed_task = managed_ledger.read_task(task_id)
+    historical = managed_ledger.latest_authenticated_fix_ready_result_for_task(
+        task_id, issue_url=str(candidate["issueUrl"])
+    )
+    if (
+        not isinstance(managed_task, dict)
+        or managed_task.get("readSource") != "managed"
+        or managed_task.get("opportunity_key") != candidate["key"]
+        or managed_task.get("thread_id") != binding["threadId"]
+        or managed_task.get("worktree_path") != binding["worktreePath"]
+        or managed_task.get("state") != "IMPLEMENTATION_READY"
+        or historical is None
+    ):
+        return None
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT id,event_type,payload_json FROM events
+               WHERE opportunity_key=? AND event_type IN
+                 ('VALIDATION_FOLLOWUP_RESERVED','VALIDATION_FOLLOWUP_SENT') ORDER BY id""",
+            (candidate["key"],),
+        ).fetchall()
+    events = [(dict(row), json.loads(row["payload_json"])) for row in rows]
+    events = [(r, p) for r, p in events if all(p.get(k) == v for k, v in binding.items())]
+    sent = next(
+        (item for item in reversed(events) if item[0]["event_type"] == "VALIDATION_FOLLOWUP_SENT"),
+        None,
+    )
+    if sent is None or sent[1].get("resultDigest") != historical["result_digest"]:
+        return None
+    reserved = next(
+        (
+            item
+            for item in reversed(events)
+            if item[0]["event_type"] == "VALIDATION_FOLLOWUP_RESERVED"
+            and item[1].get("resultDigest") == sent[1]["resultDigest"]
+            and item[0]["id"] < sent[0]["id"]
+        ),
+        None,
+    )
+    if reserved is None:
+        return None
+    reservation = str(reserved[1].get("reservationDigest") or "")
+    source_candidate = candidate | {"resultDigest": historical["result_digest"]}
+    delivery = store.validation_followup_delivery_binding(
+        thread_id=str(binding["threadId"]),
+        result_digest=historical["result_digest"],
+        reservation_digest=reservation,
+        **_ledger_binding_kwargs(candidate),
+    )
+    if not isinstance(delivery, dict):
+        return None
+    snapshot = _validation_snapshot_bytes(
+        candidate=source_candidate,
+        reservation_digest=reservation,
+        snapshot_id=str(delivery.get("snapshotId") or ""),
+        snapshot_path=str(delivery.get("snapshotPath") or ""),
+        snapshot_digest=str(delivery.get("snapshotDigest") or ""),
+    )
+    projected = _validation_worktree_input_bytes(
+        candidate=source_candidate,
+        reservation_digest=reservation,
+        worktree_input_path=str(delivery.get("worktreeInputPath") or ""),
+        worktree_input_digest=str(delivery.get("worktreeInputDigest") or ""),
+    )
+    source = json.loads(snapshot)
+    if (
+        snapshot != projected
+        or source.get("taskId") != task_id
+        or source.get("contextDigest") != context.get("contextDigest")
+        or source.get("commitSha") != historical["head_sha"]
+        or source.get("headSha") != historical["head_sha"]
+        or any(
+            source.get(k) != value.get(k) for k in ("key", "issueUrl", "threadId", "worktreePath")
+        )
+    ):
+        return None
+    receipt_key = _task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id=str(binding["threadId"]),
+        delivery_token=historical["result_digest"],
+        validation_reservation_digest=reservation,
+    )
+    receipt = json.loads(
+        _read_owned_regular_file(
+            STATE / "task_turn_receipts" / f"{receipt_key}.json",
+            label="completed validation task-turn receipt",
+            reject_dangerous_writes=True,
+        )
+    )
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("ok") is not True
+        or receipt.get("deliveryKind") != "validation-followup"
+        or receipt.get("threadId") != binding["threadId"]
+        or receipt.get("deliveryToken") != historical["result_digest"]
+        or receipt.get("reservationDigest") != reservation
+        or receipt.get("turnStatus") != "completed"
+        or not isinstance(receipt.get("turnId"), str)
+        or not receipt["turnId"]
+    ):
+        return None
+    context_stat = os.stat(
+        "task-context.json", dir_fd=result_access.private_fd, follow_symlinks=False
+    )
+    verified, _ = _verified_private_context_with_singleton_guard(
+        store,
+        result_access.worktree,
+        context_raw,
+        context_stat,
+    )
+    if verified != context or not _private_context_matches_current_ledger(store, context):
+        return None
+    return task_id
+
+
 def _non_pr_validation_parent(
     *,
     candidate: dict[str, Any],
@@ -20788,6 +20938,23 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             binding_gate = getattr(store, "task_result_binding_gate", None)
             if binding_gate is None or not binding_gate(candidate, value):
                 raise RuntimeError("task result identity binding mismatch")
+            try:
+                omitted_validation_task_id = _validation_result_omitted_task_id(
+                    store,
+                    managed_ledger,
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    result_access=result_access,
+                    context_raw=context_raw,
+                )
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise TaskResultEvidenceBlocked(
+                    VALIDATION_PARENT_BINDING_INVALID,
+                    detail="validation delivery input binding is unavailable",
+                ) from exc
+            if omitted_validation_task_id is not None:
+                value = dict(value, taskId=omitted_validation_task_id)
             base_refresh = store.publication_target_base_refresh(candidate)
             if (
                 base_refresh is not None
@@ -20856,6 +21023,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             if (
                 previous_evidence_block is not None
                 and previous_evidence_block.get("event_type") == "TASK_RESULT_EVIDENCE_BLOCKED"
+                and not (
+                    omitted_validation_task_id is not None
+                    and json.loads(previous_evidence_block.get("payload_json") or "{}").get(
+                        "reason"
+                    )
+                    == VALIDATION_PARENT_BINDING_INVALID
+                )
             ):
                 previous_payload = json.loads(previous_evidence_block.get("payload_json") or "{}")
                 work_blocked.append(

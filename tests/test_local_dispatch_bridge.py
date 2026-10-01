@@ -28486,6 +28486,219 @@ def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_pa
     assert repeated == finalized
 
 
+def _completed_validation_result_with_omitted_task_id(tmp_path, monkeypatch):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+        missing_quality=("independent_review_passed",),
+        controller_policy_complete=True,
+    )
+    initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert initial["validationDeferred"]
+    bind_validation_runtime(monkeypatch, tmp_path)
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserved["ok"] and not reserved.get("blocked"), reserved
+    candidate = store.unresolved_validation_followups()[0]
+    reservation = reserved["reservationDigest"]
+    snapshot = MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation)
+    binding = {
+        "reservationDigest": reservation,
+        **snapshot,
+        **MODULE._validation_worktree_input_binding(
+            candidate=candidate,
+            reservation_digest=reservation,
+            snapshot_digest=snapshot["snapshotDigest"],
+        ),
+    }
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id=candidate["threadId"],
+        delivery_token=candidate["resultDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        reservation_digest=reservation,
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    MODULE._ensure_validation_worktree_input(
+        candidate=candidate,
+        reservation_digest=reservation,
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    committed = MODULE.validation_followup_commit(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            reservation_digest=reservation,
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert committed["ok"]
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id=candidate["threadId"],
+        delivery_token=candidate["resultDigest"],
+        validation_reservation_digest=reservation,
+    )
+    MODULE._atomic_private_json(
+        tmp_path / "state" / "task_turn_receipts" / f"{receipt_key}.json",
+        {
+            "ok": True,
+            "deliveryKind": "validation-followup",
+            "threadId": candidate["threadId"],
+            "deliveryToken": candidate["resultDigest"],
+            "reservationDigest": reservation,
+            "turnId": "completed-validation-turn",
+            "turnStatus": "completed",
+        },
+    )
+    source_path = worktree / binding["worktreeInputPath"]
+    source = json.loads(source_path.read_text())
+    assert source["taskId"] == "intent-1"
+    context = json.loads((result_path.parent / "task-context.json").read_text())
+    value = dict(source, contextDigest=context["contextDigest"])
+    for field in (
+        "taskId",
+        "reproductionReceipt",
+        "probeReceipt",
+        "resultDigest",
+        "independentReview",
+    ):
+        value.pop(field, None)
+    value["quality"] = {field: True for field in QUALITY_FIELDS}
+    value["tests"] = [
+        {"command": "pytest tests/runtime", "exitCode": 0, "result": "validation passed"}
+    ]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    return store, worktree, result_path, source_path
+
+
+def test_native_completed_validation_normalizes_omitted_task_id_before_parent_check(
+    tmp_path, monkeypatch
+):
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path, monkeypatch
+    )
+    original = result_path.read_bytes()
+    original_input = input_path.read_bytes()
+    head = run_git(worktree, "rev-parse", "HEAD")
+    identity = MODULE._validation_result_omitted_task_id
+    monkeypatch.setattr(MODULE, "_validation_result_omitted_task_id", lambda *a, **kw: None)
+    before = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert before["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "VALIDATION_PARENT_BINDING_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert result_path.read_bytes() == original
+    monkeypatch.setattr(MODULE, "_validation_result_omitted_task_id", identity)
+
+    resumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+
+    assert resumed["ok"] and resumed["errors"] == [], resumed
+    assert resumed.get("workBlocked", []) == []
+    assert resumed["publicationRequests"] == []
+    assert resumed["validationDeferred"], resumed
+    normalized = json.loads(result_path.read_text())
+    assert normalized["taskId"] == "intent-1"
+    assert normalized["quality"]["independent_review_passed"] is False
+    assert normalized["reproductionReceipt"]["taskId"] == "intent-1"
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    assert input_path.read_bytes() == original_input
+    with store.connect() as connection:
+        block = connection.execute(
+            "SELECT payload_json FROM managed_lifecycle_events WHERE event_type='TASK_RESULT_EVIDENCE_BLOCKED'"
+        ).fetchone()
+    assert json.loads(block[0])["reason"] == "VALIDATION_PARENT_BINDING_INVALID"
+    schema = tmp_path / "schemas" / "independent_review.schema.json"
+    schema.parent.mkdir()
+    shutil.copyfile(SCRIPT.parent.parent / "schemas" / schema.name, schema)
+    native_review = MODULE.review_once
+
+    def reviewer(review_worktree, _schema, _prompt, _timeout):
+        assert review_worktree == worktree
+        check = subprocess.run(
+            [sys.executable, "runtime.py"], cwd=worktree, capture_output=True, text=True
+        )
+        assert check.returncode == 0, check.stderr
+        assert (
+            run_git(worktree, "diff", "--name-only", f"{normalized['selectedBaseSha']}..HEAD")
+            == "runtime.py"
+        )
+        return {
+            "verdict": "PASS",
+            "summary": "Verified exact runtime change and local check.",
+            "findings": [],
+            "evidence": ["runtime.py", "python runtime.py exited 0"],
+        }
+
+    monkeypatch.setattr(
+        MODULE,
+        "review_once",
+        lambda *args, **kwargs: native_review(*args, reviewer=reviewer, **kwargs),
+    )
+    review = MODULE.independent_review_run(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert review["ok"] and review["updated"][0]["verdict"] == "PASS", review
+    reviewed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert reviewed["ok"] and reviewed["errors"] == [], reviewed
+    assert reviewed["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(reviewed["publicationRequests"]) == 1, reviewed
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("mismatch", ["task_id", "context", "input"])
+def test_native_completed_validation_does_not_normalize_conflicting_identity_or_input(
+    tmp_path, monkeypatch, mismatch
+):
+    store, _worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path, monkeypatch
+    )
+    value = json.loads(result_path.read_text())
+    if mismatch == "task_id":
+        value["taskId"] = "foreign-task"
+    elif mismatch == "context":
+        value["contextDigest"] = "f" * 64
+    else:
+        source = json.loads(input_path.read_text())
+        source["taskId"] = "foreign-task"
+        input_path.chmod(0o600)
+        input_path.write_text(json.dumps(source))
+        input_path.chmod(0o400)
+    result_path.write_text(json.dumps(value))
+    before = result_path.read_bytes()
+
+    rejected = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+
+    assert rejected["ingested"] == []
+    assert rejected["publicationRequests"] == []
+    assert rejected["errors"] or rejected.get("workBlocked"), rejected
+    if mismatch == "input":
+        assert rejected["ok"] and rejected["errors"] == []
+        assert rejected["workBlocked"][0]["reason"] == "VALIDATION_PARENT_BINDING_INVALID"
+    assert result_path.read_bytes() == before
+
+
 def _stale_context_validation_parent_fixture(tmp_path: Path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
