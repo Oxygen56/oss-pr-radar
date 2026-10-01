@@ -3,6 +3,7 @@ import hashlib
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -1578,3 +1579,26 @@ def test_expired_permit_cannot_finalize_new_pr_effect(tmp_path):
             pr_url="https://github.com/example/project/pull/8",
             result={"ok": True},
         )
+
+
+def test_publication_request_rejects_a_green_claim_with_unavailable_pytest(tmp_path):
+    store, original, evidence_path = prepared_request(tmp_path)
+    value = json.loads(evidence_path.read_text(encoding="utf-8"))
+    value["tests"] = [
+        {
+            "command": "python3 -m pytest focused.py",
+            "exitCode": 1,
+            "result": "No module named pytest before collection; delegated to CI.",
+        }
+    ]
+    assert value["quality"]["relevant_tests_green"] is True
+    evidence_path.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(publication.PublicationError, match="not submit-ready"):
+        request_publication(
+            store,
+            issue_url=value["issueUrl"],
+            thread_id="thread-1",
+            worktree=Path(value["worktreePath"]),
+            evidence_path=evidence_path,
+        )
+    assert store.publication_request(original["request_id"])["status"] == "PENDING"

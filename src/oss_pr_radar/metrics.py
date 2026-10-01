@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -64,9 +65,99 @@ class SubmitReadyAssessment:
         return asdict(self)
 
 
-def assess_submit_ready(evidence: dict[str, Any]) -> SubmitReadyAssessment:
-    missing = tuple(field for field in QUALITY_FIELDS if evidence.get(field) is not True)
-    return SubmitReadyAssessment(not missing, missing, dict(evidence))
+VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
+    "offline",
+    "not cached",
+    "uncached dependencies",
+    "uncached packages",
+    "incomplete cached environment",
+    "incomplete local dependency tree",
+    "lacks locked dependency",
+    "locked but absent",
+    "module lookup disabled",
+    "goproxy=off",
+    "node_modules",
+    "vitest was unavailable",
+    "prettier was unavailable",
+    "eslint was unavailable",
+    "next.js was unavailable",
+    "pytest is not installed",
+    "could not find pytest",
+    "no pytest executable",
+    "no pre-commit executable",
+    "no module named pytest",
+    "no module named",
+    "modulenotfounderror",
+    "is not installed",
+    "missing numpy",
+    "missing torch",
+    "executable is unavailable",
+    "not on path",
+    "absent from path",
+    "was not present",
+    "no worktree-local prefetched executable",
+    "required_gate_unavailable",
+)
+
+
+def is_validation_dependency_failure(item: dict[str, Any]) -> bool:
+    text = (
+        f"{item.get('command', '')}\n{item.get('summary', '')}\n{item.get('outcome', '')}\n{item.get('result', '')}"
+    ).casefold()
+    if any(marker in text for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS):
+        return True
+    return "locked" in text and any(
+        marker in text for marker in (" is absent", " are absent", " missing", "differs from")
+    )
+
+
+def unresolved_current_test_failures(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Find explicit current check failures, retaining legitimate before-fix evidence.
+
+    Historical result files may omit tests or describe them without exit codes.
+    This only contradicts a green claim with an explicit failed/unavailable run;
+    a later successful run of the same command and working directory resolves it.
+    """
+
+    tests = result.get("tests")
+    if not isinstance(tests, list):
+        return []
+    pending: dict[tuple[str, str], dict[str, Any]] = {}
+    for index, item in enumerate(tests):
+        if not isinstance(item, dict):
+            continue
+        phase = str(item.get("phase") or "").casefold().replace("-", "_").replace(" ", "_")
+        text = "\n".join(
+            str(item.get(field) or "") for field in ("command", "summary", "outcome", "result")
+        )
+        if phase in {
+            "before_fix",
+            "pre_fix",
+            "before_patch",
+            "pre_patch",
+            "baseline",
+            "reproduction",
+        } or re.search(r"\b(?:before|pre)[ _-](?:the[ _-])?(?:fix|patch)\b", text, re.IGNORECASE):
+            continue
+        command = str(item.get("command") or "").strip()
+        cwd = str(item.get("workingDirectory") or item.get("cwd") or "").strip()
+        key = (command or f"<unnamed-check-{index}>", cwd)
+        code = item.get("exitCode")
+        if code == 0:
+            pending.pop(key, None)
+        elif code is not None or is_validation_dependency_failure(item):
+            pending[key] = item
+    return list(pending.values())
+
+
+def assess_submit_ready(
+    evidence: dict[str, Any], *, task_result: dict[str, Any] | None = None
+) -> SubmitReadyAssessment:
+    effective = dict(evidence)
+    if task_result is not None and unresolved_current_test_failures(task_result):
+        effective["relevant_tests_green"] = False
+    missing = tuple(field for field in QUALITY_FIELDS if effective.get(field) is not True)
+    return SubmitReadyAssessment(not missing, missing, effective)
 
 
 def rolling_quality(path: Path, *, days: int = 30) -> dict[str, Any]:

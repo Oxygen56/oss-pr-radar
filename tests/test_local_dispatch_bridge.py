@@ -22274,10 +22274,13 @@ def test_failed_controller_review_remains_an_actionable_followup(monkeypatch, tm
     ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
     listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
-    assert ingested["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    assert ingested["validationDeferred"][0]["missing"] == [
+        "relevant_tests_green",
+        "independent_review_passed",
+    ]
     assert listed["controllerReviewPending"] == []
-    assert listed["candidates"][0]["missing"] == ["independent_review_passed"]
-    assert listed["environmentBlocked"] == []
+    assert listed["candidates"] == []
+    assert listed["environmentBlocked"][0]["reason"] == "DEPENDENCY_ENVIRONMENT_UNAVAILABLE"
 
 
 def test_existing_fix_ready_result_accepts_later_controller_review(monkeypatch, tmp_path):
@@ -32411,3 +32414,166 @@ def test_implementation_result_is_not_deduped_as_its_reproduction_result(tmp_pat
             ).fetchone()[0]
             == 1
         )
+
+
+def test_contradictory_unavailable_pytest_enters_native_validation_before_review(tmp_path):
+    from oss_pr_radar.independent_review import review_once
+
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    schema = tmp_path / "schemas" / "independent_review.schema.json"
+    schema.parent.mkdir()
+    schema.write_text("{}", encoding="utf-8")
+    check = worktree / ".oss-pr-radar" / "test_current_fix.py"
+    check.write_text(
+        "import runpy\nfrom pathlib import Path\n"
+        "def test_current_fix():\n"
+        "    assert runpy.run_path(str(Path(__file__).parents[1] / 'runtime.py'))['value'] == 2\n",
+        encoding="utf-8",
+    )
+    unavailable_env = worktree / ".oss-pr-radar" / "unavailable-env"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", str(unavailable_env)], check=True
+    )
+    command = ["python3", "-m", "pytest", "-q", "-c", "/dev/null", str(check)]
+    missing = subprocess.run(
+        command,
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        env=os.environ | {"PATH": str(unavailable_env / "bin") + os.pathsep + os.environ["PATH"]},
+    )
+    assert missing.returncode == 1
+    assert "No module named pytest" in missing.stderr
+    failed_check = {
+        "command": " ".join(command),
+        "exitCode": missing.returncode,
+        "result": missing.stderr.strip(),
+    }
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["tests"] = [
+        {
+            "command": "focused get_optional_params probe after patch",
+            "exitCode": 0,
+            "result": "Eight provider/model combinations preserved the parameter.",
+        },
+        {
+            "command": "ast.parse changed files",
+            "exitCode": 0,
+            "result": "All changed Python files parsed successfully.",
+        },
+        failed_check,
+    ]
+    assert all(value["quality"][field] is True for field in QUALITY_FIELDS)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path, store=store)
+    reviewed = []
+
+    def reviewer(cwd, _schema, prompt, _timeout):
+        reviewed.append(prompt)
+        assert cwd == worktree
+        assert "assert value == 2" in run_git(worktree, "show", "HEAD:runtime.py")
+        return {
+            "verdict": "PASS",
+            "summary": "The current committed fix preserves value 2.",
+            "findings": [],
+            "evidence": ["runtime.py at current HEAD", "current focused pytest passed"],
+        }
+
+    before = review_once(tmp_path, store.path, reviewer=reviewer)
+    assert before["errors"] == []
+    assert before["updated"] == []
+    assert reviewed == []
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["errors"] == [], ingested
+    assert ingested["publicationRequests"] == []
+    assert ingested["validationDeferred"][0]["missing"] == [
+        "relevant_tests_green",
+        "independent_review_passed",
+    ]
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    assert managed.read_task("intent-1")["state"] == "IMPLEMENTATION_READY"
+    with store.connect() as connection:
+        validation = json.loads(
+            connection.execute(
+                "SELECT validation_json FROM managed_results WHERE task_id='intent-1' AND is_current=1"
+            ).fetchone()[0]
+        )
+    assert validation["passed"] is False
+    assert validation["relevant_tests_green"] is False
+    assert (
+        store.task_context(issue_url=value["issueUrl"], thread_id="thread-1")["stage"]
+        == "VALIDATION_PENDING"
+    )
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["controllerReviewPending"] == []
+    assert listed["environmentBlocked"][0]["reason"] == "DEPENDENCY_ENVIRONMENT_UNAVAILABLE"
+    assert (
+        "No module named pytest"
+        in listed["environmentBlocked"][0]["dependencyFailures"][0]["summary"]
+    )
+
+    passed = subprocess.run(
+        command,
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {"PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"]},
+    )
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    assert "1 passed" in passed.stdout
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["tests"].append(
+        {
+            "command": " ".join(command),
+            "exitCode": passed.returncode,
+            "result": passed.stdout.strip(),
+        }
+    )
+    value["quality"]["relevant_tests_green"] = True
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path, store=store)
+    pending = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert pending["errors"] == [], pending
+    assert pending["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["environmentBlocked"] == []
+    assert len(listed["controllerReviewPending"]) == 1
+    reviewed_result = review_once(tmp_path, store.path, reviewer=reviewer)
+    assert reviewed_result["errors"] == [], reviewed_result
+    assert len(reviewed_result["updated"]) == 1
+    ready = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ready["errors"] == [], ready
+    assert ready["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(ready["publicationRequests"]) == 1
+    assert managed.read_task("intent-1")["state"] == "PORTFOLIO_READY"
+
+
+def test_explicit_before_fix_failure_does_not_block_current_passing_fix(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    actual = subprocess.run(
+        [sys.executable, "runtime.py"], cwd=worktree, capture_output=True, text=True
+    )
+    assert actual.returncode == 0
+    value["tests"] = [
+        {
+            "command": "python runtime.py",
+            "phase": "before_fix",
+            "exitCode": 1,
+            "result": "The selected base did not preserve value 2 before fix.",
+        },
+        {
+            "command": "python runtime.py",
+            "phase": "after_fix",
+            "exitCode": actual.returncode,
+            "result": "The fixed current HEAD preserved value 2.",
+        },
+    ]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path, store=store)
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["errors"] == [], ingested
+    assert ingested["validationDeferred"] == []
+    assert ingested["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(ingested["publicationRequests"]) == 1

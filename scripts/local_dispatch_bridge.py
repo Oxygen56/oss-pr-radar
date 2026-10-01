@@ -79,7 +79,12 @@ from oss_pr_radar.managed_lifecycle import (  # noqa: E402
     pr_key_from_url,
     reconcile_managed_pr_states,
 )
-from oss_pr_radar.metrics import assess_submit_ready, rolling_quality  # noqa: E402
+from oss_pr_radar.metrics import (  # noqa: E402
+    assess_submit_ready,
+    is_validation_dependency_failure,
+    rolling_quality,
+    unresolved_current_test_failures,
+)
 from oss_pr_radar.notifier import FeishuClient, NotificationError, candidate_card  # noqa: E402
 from oss_pr_radar.operational_auth import (  # noqa: E402
     read_operational_authorization_status,
@@ -17845,50 +17850,8 @@ def _nearest_manifest_root(path: Path, *, stop: Path, manifest: str) -> Path | N
     return None
 
 
-VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
-    "offline",
-    "not cached",
-    "uncached dependencies",
-    "uncached packages",
-    "incomplete cached environment",
-    "incomplete local dependency tree",
-    "lacks locked dependency",
-    "locked but absent",
-    "module lookup disabled",
-    "goproxy=off",
-    "node_modules",
-    "vitest was unavailable",
-    "prettier was unavailable",
-    "eslint was unavailable",
-    "next.js was unavailable",
-    "pytest is not installed",
-    "could not find pytest",
-    "no pytest executable",
-    "no pre-commit executable",
-    "no module named pytest",
-    "no module named",
-    "modulenotfounderror",
-    "is not installed",
-    "missing numpy",
-    "missing torch",
-    "executable is unavailable",
-    "not on path",
-    "absent from path",
-    "was not present",
-    "no worktree-local prefetched executable",
-    "required_gate_unavailable",
-)
-
-
 def _is_validation_dependency_failure(item: dict[str, Any]) -> bool:
-    text = (
-        f"{item.get('command', '')}\n{item.get('summary', '')}\n{item.get('outcome', '')}"
-    ).casefold()
-    if any(marker in text for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS):
-        return True
-    return "locked" in text and any(
-        marker in text for marker in (" is absent", " are absent", " missing", "differs from")
-    )
+    return is_validation_dependency_failure(item)
 
 
 def _unresolved_validation_dependency_failures(
@@ -17934,7 +17897,9 @@ def _unresolved_validation_dependency_failures(
 def _validation_dependency_failure_summary(item: dict[str, Any]) -> dict[str, str]:
     return {
         "command": str(item.get("command") or "")[:300],
-        "summary": str(item.get("summary") or item.get("outcome") or "")[:300],
+        "summary": str(item.get("summary") or item.get("outcome") or item.get("result") or "")[
+            :300
+        ],
     }
 
 
@@ -17982,9 +17947,7 @@ def _validation_prefetch_plan(
     tests = result.get("tests") if isinstance(result, dict) else None
     if not isinstance(tests, list):
         return [], []
-    failed = [
-        item for item in tests if isinstance(item, dict) and item.get("exitCode") not in {None, 0}
-    ]
+    failed = unresolved_current_test_failures(result)
     evidence = result.get("evidence") if isinstance(result, dict) else None
     unverified = evidence.get("unverifiedGates") if isinstance(evidence, dict) else None
     if isinstance(unverified, list):
@@ -18006,7 +17969,8 @@ def _validation_prefetch_plan(
     commands: list[dict[str, Any]] = []
     combined = "\n".join(str(item.get("command") or "") for item in dependency_failures)
     failure_text = "\n".join(
-        f"{item.get('command', '')}\n{item.get('summary', '')}" for item in dependency_failures
+        f"{item.get('command', '')}\n{item.get('summary', '')}\n{item.get('outcome', '')}\n{item.get('result', '')}"
+        for item in dependency_failures
     )
     if "cargo " in combined and (worktree / "Cargo.lock").is_file():
         commands.append(
@@ -18494,8 +18458,13 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             } and not _local_changed_files(worktree):
                 authenticated = _read_authenticated_validation_result_if_present(candidate)
                 value = authenticated[0] if authenticated is not None else {}
+                test_failures = unresolved_current_test_failures(value)
+                if test_failures:
+                    candidate = candidate | {
+                        "missing": ["relevant_tests_green", "independent_review_passed"]
+                    }
                 review = _controller_review_result(args, value)
-                if review and review.get("verdict") in {"FAIL", "HOLD"}:
+                if not test_failures and review and review.get("verdict") in {"FAIL", "HOLD"}:
                     candidates.append(
                         candidate
                         | {
@@ -18505,7 +18474,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                         }
                     )
                     continue
-                if not review or review.get("verdict") == "PASS":
+                if not test_failures and (not review or review.get("verdict") == "PASS"):
                     controller_review_pending.append(
                         candidate
                         | {
@@ -21738,6 +21707,15 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")
+            if stage == "FIX_READY" and isinstance(quality, dict):
+                effective_quality = assess_submit_ready(quality, task_result=value).evidence
+                if effective_quality != quality:
+                    value = dict(value, quality=effective_quality)
+                    quality = effective_quality
+                    # The old digest may describe a contradictory green result.
+                    # Rebind the corrected evidence through the existing native
+                    # finalizer, then enqueue ordinary validation below.
+                    digest_seen = False
             if (
                 stage == "FIX_READY"
                 and value.get("handoffMode") == "controller_commit_complete"
@@ -21959,7 +21937,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 assert isinstance(quality, dict)
                 digest = _task_result_digest(value, raw)
                 publication_blocked = _publication_block_reason(context, value)
-                assessment = assess_submit_ready(quality)
+                assessment = assess_submit_ready(quality, task_result=value)
                 if (
                     policy_followup_exhausted
                     and not publication_blocked

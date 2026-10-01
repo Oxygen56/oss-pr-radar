@@ -843,10 +843,12 @@ class ManagedAdapter:
         if isinstance(explicit_validation, dict):
             validation = dict(explicit_validation)
         elif any(field in quality for field in QUALITY_FIELDS):
-            assessment = assess_submit_ready(quality)
-            validation = dict(quality) | {
+            assessment = assess_submit_ready(quality, task_result=value)
+            validation = assessment.evidence | {
                 "passed": assessment.ready,
-                "evidence": [field for field in QUALITY_FIELDS if quality.get(field) is True],
+                "evidence": [
+                    field for field in QUALITY_FIELDS if assessment.evidence.get(field) is True
+                ],
             }
         else:
             validation = dict(quality)

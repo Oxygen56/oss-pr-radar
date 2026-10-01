@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .ledger import RadarLedger
-from .metrics import QUALITY_FIELDS
+from .metrics import QUALITY_FIELDS, assess_submit_ready
 from .repo_probe import verify_merge_resolution_scope_receipt
 from .util import atomic_write_json, sha256_json
 
@@ -1400,7 +1400,8 @@ def _candidate_result(
     quality = value.get("quality")
     if value.get("stage") != "FIX_READY" or not isinstance(quality, dict):
         return None
-    if any(quality.get(field) is not True for field in REVIEW_PREREQUISITE_FIELDS):
+    assessment = assess_submit_ready(quality, task_result=value)
+    if any(field in assessment.missing for field in REVIEW_PREREQUISITE_FIELDS):
         return None
     commit_sha = str(value.get("commitSha") or "")
     if value.get("handoffMode") not in {

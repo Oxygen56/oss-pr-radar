@@ -313,6 +313,9 @@ def request_publication(
     for key, value in expected.items():
         if evidence.get(key) != value:
             raise PublicationError(f"publication evidence mismatch: {key}")
+    quality = evidence.get("quality")
+    if isinstance(quality, dict) and not assess_submit_ready(quality, task_result=evidence).ready:
+        raise PublicationError("publication evidence is not submit-ready")
     publication = _publication_payload(evidence, issue_url)
     target_base = None
     if evidence.get("targetBase") is not None:
@@ -596,7 +599,7 @@ def audit_publication_request(
     if evidence_file.get("targetBase") != request.get("targetBase"):
         return PublicationAudit("BLOCK", "TARGET_BASE_EVIDENCE_DRIFT", request_id, {})
     quality = request.get("quality") or {}
-    assessment = assess_submit_ready(quality)
+    assessment = assess_submit_ready(quality, task_result=evidence_file)
     if not assessment.ready or evidence_file.get("quality") != quality:
         return PublicationAudit(
             "BLOCK", "SUBMIT_READY_EVIDENCE_INCOMPLETE", request_id, assessment.as_dict()
