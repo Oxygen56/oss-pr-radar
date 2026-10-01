@@ -646,6 +646,44 @@ def test_deadline_deferral_preserves_notification_identity(tmp_path):
     assert radar.seen[key]["notification_scanner_version"] == "scanner-at-notification"
 
 
+def test_search_retry_budget_keeps_partial_pr_lookup_unknown(tmp_path, monkeypatch):
+    clock = [0.0]
+    radar = Radar(
+        datetime(2026, 8, 9, tzinfo=UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        notify=False,
+        monotonic_fn=lambda: clock[0],
+        sleep_fn=lambda _delay: pytest.fail("rate-limit wait exceeds remaining scan budget"),
+        deep_inspection_deadline_seconds=5,
+    )
+    radar.shortlist({})
+    calls = []
+
+    def rate_limited(args, timeout):
+        calls.append((args, timeout))
+        clock[0] += 4
+        return None, "API rate limit exceeded"
+
+    def partial_hits(*_args):
+        _data, error = radar.search_issues("repo:example/project is:pr", 20)
+        radar._last_open_pr_lookup_errors.append(error)
+        return [{"number": 9, "html_url": "https://github.com/example/project/pull/9"}]
+
+    monkeypatch.setattr(scanner, "gh", rate_limited)
+    monkeypatch.setattr(radar, "open_pr_hits", partial_hits)
+    monkeypatch.setattr(
+        radar, "assess_single_pr", lambda *_args: pytest.fail("incomplete search is not an audit")
+    )
+    result = radar.assess_open_prs("example/project", 7, "A public issue")
+    assert result["status"] == "lookup_failed"
+    assert result["errors"] == ["scan_deadline_deferred"]
+    assert len(calls) == 1
+    assert calls[0][1] == 5
+    assert clock[0] == 4
+
+
 def test_notification_digest_ignores_llm_wording_and_age_churn():
     candidate = {
         "repo": "google/adk-python",
