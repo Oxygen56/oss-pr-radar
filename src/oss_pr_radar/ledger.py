@@ -5087,14 +5087,17 @@ class RadarLedger:
                      SELECT i.opportunity_key FROM intents i
                      JOIN opportunities o ON o.key=i.opportunity_key
                      WHERE i.status IN ('LEASED','CREATING','DISPATCHED')
+                       AND o.stage NOT IN ('CLOSED','MERGED','AUDIT_NO_GO')
                        AND (i.status IN ('CREATING','DISPATCHED') OR i.lease_until>?)
                        {intent_filter}
                        AND NOT ({_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE})
                      UNION
                      SELECT r.opportunity_key FROM events r
+                     JOIN opportunities o ON o.key=r.opportunity_key
                      JOIN intents i ON i.opportunity_key=r.opportunity_key
                        AND {_intent_event_binding_clause("i", "r")}
                      WHERE r.event_type='PR_FOLLOWUP_RESERVED'
+                       AND o.stage NOT IN ('CLOSED','MERGED','AUDIT_NO_GO')
                        {event_filter}
                        AND NOT EXISTS (
                          SELECT 1 FROM task_quarantines quarantine

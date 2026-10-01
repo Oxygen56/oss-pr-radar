@@ -372,6 +372,50 @@ def test_canary_wip_limit_is_transactional_and_released_by_outcome(tmp_path):
     assert store.claim("intent-2", "worker-b", max_active=1)
 
 
+@pytest.mark.parametrize("stage", ["PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "CLOSED", "MERGED"])
+def test_pr_followup_capacity_releases_only_after_terminal_outcome(tmp_path, stage):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store)
+    followup = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=followup["wakeDigest"],
+        prepared_head_sha="d" * 40,
+    )
+    store.complete_pr_followup_reservation(
+        thread_id="thread-1", wake_digest=followup["wakeDigest"]
+    )
+    store.enqueue(
+        intent(
+            intentId="intent-2",
+            key="a/b#2",
+            issueNumber=2,
+            issueUrl="https://github.com/a/b/issues/2",
+        )
+    )
+    assert store.active_task_count() == 1
+    assert store.claim("intent-2", "worker-b", max_active=1) is None
+    with store.connect() as connection:
+        retained_events = connection.execute(
+            "SELECT id,event_type,dedupe_key,payload_json FROM events WHERE opportunity_key=?",
+            (key,),
+        ).fetchall()
+
+    store.record_stage(key, stage)
+
+    terminal = stage in {"CLOSED", "MERGED"}
+    assert store.active_task_count() == (0 if terminal else 1)
+    assert bool(store.claim("intent-2", "worker-b", max_active=1)) is terminal
+    with store.connect() as connection:
+        for event in retained_events:
+            assert tuple(
+                connection.execute(
+                    "SELECT id,event_type,dedupe_key,payload_json FROM events WHERE id=?",
+                    (event["id"],),
+                ).fetchone()
+            ) == tuple(event)
+
+
 def test_pending_prioritizes_publishable_normal_work(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     now = datetime.now(UTC)
