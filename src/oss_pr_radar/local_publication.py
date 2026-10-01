@@ -41,6 +41,7 @@ from .scheduler_watchdog import WATCHDOG_LABEL
 LAUNCH_AGENT_LABEL = "com.oss-pr-radar.local-publication"
 SLOW_WORKER_LABEL = "com.oss-pr-radar.local-publication-slow"
 SERVICE_PATH = (
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS:"
     "/Applications/ChatGPT.app/Contents/Resources:"
     "/Applications/Codex.app/Contents/Resources:"
     "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:"

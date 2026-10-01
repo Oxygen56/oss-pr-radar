@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .ledger import RadarLedger
 from .managed_adapter import GitHubAbsenceQueries, ManagedAdapter
 from .managed_snapshot import export_snapshot, import_snapshot
 from .operational_auth import (
@@ -269,7 +270,14 @@ def controller_cycle(
             "--min-age-minutes",
             "30",
         )
+        publication_started_at = datetime.now(UTC)
         publication = bridge("publication", "publication-run", timeout=1800)
+        publication["newPullRequests"] = _freshly_created_pull_requests(
+            root,
+            publication,
+            started_at=publication_started_at,
+            completed_at=datetime.now(UTC),
+        )
         bridge("publicationAdmissionFeedbackAfterPublication", "publish-publication-feedback")
         bridge("contextSync", "context-sync")
         publication_terminalized = any(
@@ -370,6 +378,69 @@ def controller_cycle(
         "finalBlockers": final_blockers,
         "summary": _compact_summary(stages),
     }
+
+
+def _freshly_created_pull_requests(
+    root: Path,
+    publication: dict[str, Any],
+    *,
+    started_at: datetime,
+    completed_at: datetime,
+) -> list[dict[str, Any]]:
+    """Prove new creation from this publication run, not a pending old notice.
+
+    ``published`` also includes updates and reconciliation. Only a successful
+    create receipt whose effect began and finished during this invocation can
+    establish a new PR here. Older ambiguous attempts are conservatively omitted.
+    """
+
+    if publication.get("paused") is True:
+        return []
+    published = [
+        item for item in (publication.get("published") or []) if isinstance(item, dict)
+    ]
+    if not published:
+        return []
+    created: list[dict[str, Any]] = []
+    try:
+        with RadarLedger(runtime_ledger_path(root), read_only=True).connect() as connection:
+            for item in published:
+                rows = connection.execute(
+                    """SELECT r.opportunity_key,p.pr_url,e.created_at,e.updated_at,e.result_json
+                       FROM publication_requests r
+                       JOIN publication_permits p ON p.request_id=r.request_id
+                       JOIN publication_effects e ON e.permit_id=p.permit_id
+                       WHERE r.request_id=?
+                         AND json_extract(r.request_json,'$.publicationKind')='PR_CREATE'
+                         AND e.action='create_pr' AND e.status='SUCCEEDED'""",
+                    (item.get("requestId"),),
+                ).fetchall()
+                for row in rows:
+                    receipt = json.loads(row["result_json"])
+                    if (
+                        not isinstance(receipt, dict)
+                        or receipt.get("ok") is not True
+                        or receipt.get("created") is not True
+                        or row["opportunity_key"] != item.get("key")
+                        or row["pr_url"] != item.get("prUrl")
+                        or receipt.get("prUrl") != item.get("prUrl")
+                        or not started_at
+                        <= _controller_timestamp(row["created_at"])
+                        <= _controller_timestamp(row["updated_at"])
+                        <= completed_at
+                    ):
+                        continue
+                    notice = {
+                        "key": item["key"],
+                        "prUrl": item["prUrl"],
+                        "publishedAt": row["updated_at"],
+                    }
+                    if notice not in created:
+                        created.append(notice)
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        # An unavailable or ambiguous receipt cannot prove new publication.
+        return []
+    return created
 
 
 def _disk_pressure_health_blocked(value: object) -> bool:
@@ -1008,7 +1079,7 @@ def compact_controller_result(
     ):
         local_disk_blocker = _disk_pressure_blocker_queue(stages.get("diskPressureGate"))
     desktop_handoff = _pending_desktop_handoff(stages)
-    publication_notice = (stages.get("controllerPublicationNotice") or {}).get("notice")
+    new_pull_requests = publication.get("newPullRequests") or []
     summary = dict(result.get("summary") or {})
     if "finalLocalAgentStatus" in stages:
         # The final status stage is authoritative; do not preserve an optimistic
@@ -1040,7 +1111,15 @@ def compact_controller_result(
     }
     if desktop_handoff is not None:
         compact["desktopHandoff"] = desktop_handoff
-    if isinstance(publication_notice, dict) and publication_notice.get("prUrl"):
+    publication_notice = next(
+        (
+            item
+            for item in new_pull_requests
+            if isinstance(item, dict) and item.get("prUrl")
+        ),
+        None,
+    )
+    if publication_notice is not None:
         compact["newPullRequest"] = {
             key: publication_notice[key]
             for key in ("key", "prUrl", "publishedAt")

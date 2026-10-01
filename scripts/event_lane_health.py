@@ -382,6 +382,7 @@ def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
         "expectedProgramArguments": None,
         "programArgumentsOk": False,
         "launchConfigOk": False,
+        "runAtLoad": False,
     }
     try:
         metadata = path.lstat()
@@ -447,6 +448,7 @@ def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
     result.update(
         {
             "observedLabel": value.get("Label"),
+            "runAtLoad": value.get("RunAtLoad") is True,
             "releaseId": release_id or None,
             "releaseManifestSha256": manifest.get("manifestSha256"),
             "eventManifestSha256": event_manifest.get("sha256"),
@@ -802,6 +804,7 @@ def _binding_fingerprint(snapshot: dict[str, Any]) -> dict[str, tuple[Any, ...]]
             value.get("mode"),
             value.get("ownerUid"),
             value.get("observedLabel"),
+            value.get("runAtLoad"),
             value.get("worker"),
             value.get("codeRoot"),
             value.get("releaseId"),
@@ -848,6 +851,10 @@ def _lane_repair_actions(plist: dict[str, Any], poll: dict[str, Any]) -> list[st
 
     launch = plist.get("launch") if isinstance(plist.get("launch"), dict) else {}
     if launch.get("available") is not True:
+        # Bootstrap already starts RunAtLoad workers.  A forced kickstart here
+        # kills that first run and can stall launchd before any poll completes.
+        if plist.get("runAtLoad") is True:
+            return ["bootstrap"]
         return ["bootstrap", "kickstart"]
     if plist.get("launchConfigOk") is not True:
         return ["reload", "bootstrap", "kickstart"]

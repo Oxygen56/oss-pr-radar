@@ -10420,7 +10420,7 @@ def test_app_server_watchdog_uses_persisted_terminal_probe_when_read_stalls(monk
     assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
 
 
-def test_app_server_watchdog_uses_bounded_live_probe_when_rollout_lacks_abort(monkeypatch):
+def test_app_server_watchdog_waits_for_persisted_terminal_without_cold_probe(monkeypatch):
     class FakeStdin:
         def __init__(self):
             self.writes: list[bytes] = []
@@ -10458,13 +10458,22 @@ def test_app_server_watchdog_uses_bounded_live_probe_when_rollout_lacks_abort(mo
             self.value += 1.0
             return self.value
 
+    clock = StepClock()
     live_calls: list[set[str]] = []
-    monkeypatch.setattr(MODULE, "monotonic", StepClock())
+    persisted_probe_times: list[float] = []
+    monkeypatch.setattr(MODULE, "monotonic", clock)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 0.0)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 0.0)
-    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_LIVE_PROBE_SECONDS", 0.0)
-    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _thread_id: None)
+
+    def persisted_probe(thread_id):
+        assert thread_id == "thread-1"
+        persisted_probe_times.append(clock.value)
+        if clock.value < 90.0:
+            return None
+        return {"turnId": "turn-1", "status": "interrupted"}
+
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", persisted_probe)
 
     def live_probe(thread_ids):
         live_calls.append(thread_ids)
@@ -10489,11 +10498,12 @@ def test_app_server_watchdog_uses_bounded_live_probe_when_rollout_lacks_abort(mo
     )
 
     assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
-    assert live_calls == [{"thread-1"}]
+    assert persisted_probe_times[-1] >= 90.0
+    assert live_calls == []
     assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
 
 
-def test_app_server_watchdog_uses_live_probe_when_owner_reports_stale_nonterminal(monkeypatch):
+def test_app_server_watchdog_keeps_active_owner_past_cold_interrupted_read(monkeypatch):
     class FakeStdin:
         def __init__(self):
             self.writes: list[bytes] = []
@@ -10532,19 +10542,22 @@ def test_app_server_watchdog_uses_live_probe_when_owner_reports_stale_nontermina
             return self.value
 
     process = FakeProcess()
+    clock = StepClock()
     live_calls: list[set[str]] = []
     owner_nonterminal_reads: list[int] = []
-    monkeypatch.setattr(MODULE, "monotonic", StepClock())
+    owner_nonterminal_times: list[float] = []
+    monkeypatch.setattr(MODULE, "monotonic", clock)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 15.0)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 0.0)
-    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_LIVE_PROBE_SECONDS", 1.0)
-    monkeypatch.setattr(MODULE, "APP_SERVER_TASK_TURN_MAX_SECONDS", 10.0)
     monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _thread_id: None)
 
     def responsive_nonterminal_read(_fd, _size):
         request_id = json.loads(process.stdin.writes[-1])["id"]
-        owner_nonterminal_reads.append(request_id)
+        status = "completed" if clock.value >= 90.0 else "inProgress"
+        if status == "inProgress":
+            owner_nonterminal_reads.append(request_id)
+            owner_nonterminal_times.append(clock.value)
         return (
             json.dumps(
                 {
@@ -10552,7 +10565,7 @@ def test_app_server_watchdog_uses_live_probe_when_owner_reports_stale_nontermina
                     "result": {
                         "thread": {
                             "id": "thread-1",
-                            "turns": [{"id": "turn-1", "status": "inProgress"}],
+                            "turns": [{"id": "turn-1", "status": status}],
                         }
                     },
                 }
@@ -10583,9 +10596,10 @@ def test_app_server_watchdog_uses_live_probe_when_owner_reports_stale_nontermina
         turn_id="turn-1",
     )
 
-    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
-    assert live_calls == [{"thread-1"}]
+    assert result == {"turnId": "turn-1", "status": "completed", "error": None}
+    assert live_calls == []
     assert owner_nonterminal_reads
+    assert owner_nonterminal_times[-1] > 60.0
 
 
 def test_app_server_watchdog_times_out_without_opening_second_app_server(monkeypatch):

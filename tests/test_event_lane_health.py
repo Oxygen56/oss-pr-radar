@@ -370,6 +370,7 @@ def _valid_event_plist_fixture(tmp_path, monkeypatch):
         "Label": "com.oss-pr-radar.agentscope-events",
         "ProgramArguments": [str(interpreter), str(worker), "--root", str(root)],
         "WorkingDirectory": str(release),
+        "RunAtLoad": True,
     }
     plist_path.write_bytes(plistlib.dumps(value))
     os.chmod(plist_path, 0o600)
@@ -417,6 +418,7 @@ def test_plist_health_requires_loaded_plist_path_and_records_digest(tmp_path, mo
     assert result["launchConfigOk"] is True
     assert result["launchPathOk"] is True
     assert result["plistSha256"] == hashlib.sha256(raw).hexdigest()
+    assert result["runAtLoad"] is True
     assert result["expectedProgramArguments"] == [
         str(interpreter),
         str(worker),
@@ -504,6 +506,10 @@ def test_binding_fingerprint_covers_plist_and_loaded_launch_configuration(tmp_pa
     changed_launch["plists"]["agentscope"]["launch"]["programArguments"][0] = "/tmp/python"
     assert MODULE._binding_fingerprint(changed_launch) != baseline
 
+    changed_startup = json.loads(json.dumps(snapshot))
+    changed_startup["plists"]["agentscope"]["runAtLoad"] = True
+    assert MODULE._binding_fingerprint(changed_startup) != baseline
+
 
 def test_reconcile_bootstraps_unloaded_lane_and_requires_fresh_poll(monkeypatch, tmp_path):
     before = _reconcile_snapshot(
@@ -543,6 +549,110 @@ def test_reconcile_bootstraps_unloaded_lane_and_requires_fresh_poll(monkeypatch,
     assert observed[0][0][0] == "bootstrap"
     assert observed[0][0][1].startswith("gui/")
     assert observed[1][0][0:2] == ("kickstart", "-k")
+
+
+def test_reconcile_preserves_run_at_load_workers_until_fresh_poll(monkeypatch, tmp_path):
+    unloaded = {
+        "launch": {"available": False, "lastExitCode": None},
+        "launchConfigOk": False,
+        "runAtLoad": True,
+    }
+    bootstrapped = set()
+    poll_complete = False
+    observed = []
+    delays = []
+    monkeypatch.setattr(
+        MODULE,
+        "require_operational_authorization",
+        lambda _root: {"state": "ACTIVE"},
+    )
+
+    def audit(*_args, **_kwargs):
+        snapshot = _reconcile_snapshot(
+            tmp_path,
+            agentscope=unloaded,
+            nanobot=unloaded,
+            healthy=poll_complete and len(bootstrapped) == 2,
+        )
+        for namespace in bootstrapped:
+            snapshot["plists"][namespace].update(
+                {
+                    "launch": {
+                        "available": True,
+                        "lastExitCode": 0 if poll_complete else None,
+                    },
+                    "launchConfigOk": True,
+                }
+            )
+            if poll_complete:
+                snapshot["pollStates"][namespace]["lastAttemptAt"] = "1970-01-01T00:16:40Z"
+        return snapshot
+
+    def launchctl(*args, **_kwargs):
+        observed.append(args)
+        if args[0] == "kickstart":
+            raise subprocess.TimeoutExpired(["launchctl", *args], 15)
+        assert args[0] == "bootstrap"
+        bootstrapped.add(Path(args[2]).stem)
+        return subprocess.CompletedProcess(["launchctl", *args], 0, "", "")
+
+    def finish_poll(delay):
+        nonlocal poll_complete
+        delays.append(delay)
+        poll_complete = True
+
+    result = MODULE.reconcile(
+        tmp_path,
+        now=1000.0,
+        audit_reader=audit,
+        launchctl_runner=launchctl,
+        sleeper=finish_poll,
+        timeout_seconds=1,
+    )
+
+    assert result["ok"] is True
+    assert result["freshPoll"] is True
+    assert result["errors"] == []
+    assert bootstrapped == {"agentscope", "nanobot"}
+    assert [args[0] for args in observed] == ["bootstrap", "bootstrap"]
+    assert delays == [MODULE.EVENT_RECONCILE_POLL_INTERVAL_SECONDS]
+
+
+def test_run_at_load_bootstrap_does_not_accept_old_poll(monkeypatch, tmp_path):
+    before = _reconcile_snapshot(
+        tmp_path,
+        agentscope={
+            "launch": {"available": False, "lastExitCode": None},
+            "launchConfigOk": False,
+            "runAtLoad": True,
+        },
+        healthy=False,
+    )
+    after = _reconcile_snapshot(tmp_path, healthy=True)
+    snapshots = iter((before, before, after))
+    observed = []
+    monkeypatch.setattr(
+        MODULE,
+        "require_operational_authorization",
+        lambda _root: {"state": "ACTIVE"},
+    )
+
+    def launchctl(*args, **_kwargs):
+        observed.append(args)
+        return subprocess.CompletedProcess(["launchctl", *args], 0, "", "")
+
+    result = MODULE.reconcile(
+        tmp_path,
+        now=1000.0,
+        audit_reader=lambda *_args, **_kwargs: next(snapshots),
+        launchctl_runner=launchctl,
+        timeout_seconds=0,
+    )
+
+    assert result["ok"] is False
+    assert result["freshPoll"] is False
+    assert result["errors"] == ["EVENT_LANE_FRESH_POLL_TIMEOUT"]
+    assert [args[0] for args in observed] == ["bootstrap"]
 
 
 def test_poll_health_new_window_keeps_one_transient_failure_recoverable(tmp_path):

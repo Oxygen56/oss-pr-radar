@@ -179,8 +179,6 @@ CLOUD_PR_FOLLOWUP_MAX_AGE_MINUTES = 150
 APP_SERVER_WATCHDOG_INTERVAL_SECONDS = 5.0
 APP_SERVER_WATCHDOG_STALE_SECONDS = 15.0
 APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS = 30.0
-APP_SERVER_WATCHDOG_LIVE_PROBE_SECONDS = 60.0
-APP_SERVER_WATCHDOG_LIVE_RETRY_SECONDS = 120.0
 APP_SERVER_EVENT_DRAIN_SLICE_SECONDS = 1.0
 APP_SERVER_TASK_TURN_MAX_SECONDS = 45 * 60.0
 DESKTOP_BATCH_ERROR_KEY = "__batchError__"
@@ -8794,17 +8792,15 @@ def _wait_for_app_server_terminal_turn(
     turn_id: str,
     next_request_id: int = 3,
 ) -> dict[str, Any] | None:
-    """Keep an app-server owner alive while independently polling turn state."""
+    """Keep the turn owner alive until it or the rollout reports a terminal state."""
 
     if process.stdin is None or process.stdout is None:
         return None
     read_request_id: int | None = None
     read_requested_at: float | None = None
-    read_ever_requested = False
     watch_started_at = monotonic()
     next_read_at = watch_started_at + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
     next_external_probe_at = watch_started_at + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
-    next_live_probe_at = watch_started_at + APP_SERVER_WATCHDOG_LIVE_PROBE_SECONDS
     task_deadline = watch_started_at + APP_SERVER_TASK_TURN_MAX_SECONDS
     while True:
         # A very short turn can finish in the same read that returned the
@@ -8844,6 +8840,9 @@ def _wait_for_app_server_terminal_turn(
             and now - read_requested_at >= APP_SERVER_WATCHDOG_STALE_SECONDS
         )
         if now >= next_external_probe_at:
+            # A separate app-server reconstructs an unfinished rollout as
+            # interrupted even while this owner is running it. Only this
+            # owner's responses or a persisted terminal event can end the wait.
             independently_observed = persisted_thread_turn_state(thread_id)
             next_external_probe_at = monotonic() + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
             if (
@@ -8856,19 +8855,6 @@ def _wait_for_app_server_terminal_turn(
                     "status": independently_observed["status"],
                     "error": independently_observed.get("error"),
                 }
-            if now >= next_live_probe_at and read_ever_requested:
-                live_observed = live_thread_turn_states({thread_id}).get(thread_id)
-                next_live_probe_at = monotonic() + APP_SERVER_WATCHDOG_LIVE_RETRY_SECONDS
-                if (
-                    live_observed
-                    and live_observed.get("turnId") == turn_id
-                    and live_observed.get("status") in {"completed", "interrupted", "failed"}
-                ):
-                    return {
-                        "turnId": turn_id,
-                        "status": live_observed["status"],
-                        "error": live_observed.get("error"),
-                    }
         if now >= next_read_at and (read_request_id is None or request_stale):
             read_request_id = next_request_id
             next_request_id += 1
@@ -8886,7 +8872,6 @@ def _wait_for_app_server_terminal_turn(
                 ).encode("utf-8")
             )
             process.stdin.flush()
-            read_ever_requested = True
             next_read_at = now + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
 
         timeout = min(

@@ -1444,14 +1444,15 @@ def test_compact_controller_result_exposes_one_desktop_handoff():
     assert "startupBlocker" not in compact
 
 
-def test_compact_controller_result_exposes_one_new_pull_request_notice():
+def test_compact_controller_result_does_not_label_a_historical_notice_as_a_new_pr():
     result = {
         "ok": True,
-        "checkedAt": "2026-08-31T00:00:00Z",
+        "checkedAt": "2026-10-01T00:00:00Z",
         "summary": {"drainAction": "none"},
         "failures": [],
         "finalBlockers": [],
         "stages": {
+            "publication": {"ok": True, "paused": True, "published": []},
             "controllerPublicationNotice": {
                 "ok": True,
                 "notice": {
@@ -1465,10 +1466,102 @@ def test_compact_controller_result_exposes_one_new_pull_request_notice():
 
     compact = compact_controller_result(result)
 
+    assert "newPullRequest" not in compact
+
+
+@pytest.mark.parametrize(
+    ("kind", "was_created", "attempt_age", "receipt_age", "receipt_url", "reported"),
+    [
+        ("PR_CREATE", True, 0, 0, "https://github.com/a/b/pull/9", True),
+        ("PR_UPDATE", True, 0, 0, "https://github.com/a/b/pull/9", False),
+        ("PR_CREATE", False, 0, 0, "https://github.com/a/b/pull/9", False),
+        ("PR_CREATE", True, 30, 30, "https://github.com/a/b/pull/9", False),
+        ("PR_CREATE", True, 30, 0, "https://github.com/a/b/pull/9", False),
+        ("PR_CREATE", True, 0, 0, "https://github.com/a/b/pull/10", False),
+    ],
+    ids=["fresh-create", "update", "existing-pr", "replayed-receipt", "late-reconcile", "wrong-pr"],
+)
+def test_controller_requires_a_fresh_creation_receipt_for_a_new_pr(
+    tmp_path, kind, was_created, attempt_age, receipt_age, receipt_url, reported
+):
+    store = RadarLedger(tmp_path / "state" / "radar_ledger.sqlite3")
+    pr_url = "https://github.com/a/b/pull/9"
+    receipt_time = None
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        nonlocal receipt_time
+        if stage != "publication":
+            if stage == "controllerPublicationNotice":
+                # A pending historical notice must not hide a genuine fresh PR.
+                return {
+                    "ok": True,
+                    "notice": {
+                        "key": "old/repo#1",
+                        "prUrl": "https://github.com/old/repo/pull/2",
+                        "publishedAt": "2026-09-01T18:30:49.455851Z",
+                    },
+                }
+            return healthy_response(stage)
+        now = datetime.now(UTC)
+        attempted_at = (now - timedelta(days=attempt_age)).isoformat()
+        receipt_time = (now - timedelta(days=receipt_age)).isoformat()
+        with store.connect() as connection:
+            connection.execute(
+                """INSERT INTO opportunities
+                   (key,repo,issue_number,issue_url,title,stage,first_seen,updated_at)
+                   VALUES ('a/b#1','a/b',1,'https://github.com/a/b/issues/1',
+                           'Test','PR_OPEN',?,?)""",
+                (attempted_at, receipt_time),
+            )
+            connection.execute(
+                """INSERT INTO publication_requests
+                   (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                    evidence_digest,status,request_json,created_at,updated_at)
+                   VALUES ('request-1','a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                           'evidence','CONSUMED',?,?,?)""",
+                ("b" * 40, json.dumps({"publicationKind": kind}), attempted_at, receipt_time),
+            )
+            connection.execute(
+                """INSERT INTO publication_permits
+                   (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,
+                    pr_url,evidence_json,created_at,updated_at)
+                   VALUES ('permit-1','request-1','https://github.com/a/b/issues/1',?,
+                           'fix/runtime','CONSUMED',?,?,'{}',?,?)""",
+                ("b" * 40, receipt_time, pr_url, attempted_at, receipt_time),
+            )
+            connection.execute(
+                """INSERT INTO publication_effects
+                   (effect_id,permit_id,action,request_digest,status,result_json,created_at,updated_at)
+                   VALUES ('effect-1','permit-1','create_pr','digest','SUCCEEDED',?,?,?)""",
+                (
+                    json.dumps({"ok": True, "created": was_created, "prUrl": receipt_url}),
+                    attempted_at,
+                    receipt_time,
+                ),
+            )
+        return {
+            "ok": True,
+            "published": [{"requestId": "request-1", "key": "a/b#1", "prUrl": pr_url}],
+        }
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+    compact = compact_controller_result(result)
+
+    assert result["ok"] is True
+    if not reported:
+        assert result["stages"]["publication"]["newPullRequests"] == []
+        assert "newPullRequest" not in compact
+        return
     assert compact["newPullRequest"] == {
         "key": "a/b#1",
-        "prUrl": "https://github.com/a/b/pull/9",
-        "publishedAt": "2026-08-31T00:00:00Z",
+        "prUrl": pr_url,
+        "publishedAt": receipt_time,
     }
 
 
