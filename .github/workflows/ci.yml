@@ -40,7 +40,7 @@ jobs:
           python-version: "3.12"
       - name: Install pytest
         run: python -m pip install pytest==9.1.1
-      - name: Linux watcher tests
-        run: PYTHONPATH=src pytest -q tests/test_host_radar_watcher.py
+      - name: Linux watcher and HTTP deadline tests
+        run: PYTHONPATH=src pytest -q tests/test_host_radar_watcher.py tests/test_llm_http_deadline.py
       - name: Compile watcher
         run: python -m compileall -q scripts/host_radar_watcher.py

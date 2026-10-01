@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .contracts import contract_digest
 from .opportunity import normalize_semantic_signal
@@ -114,6 +114,7 @@ class DeepSeekEvaluator:
     base_url: str
     cache_path: Path
     timeout: float = 90.0
+    remaining_seconds: Callable[[], float] | None = field(default=None, repr=False)
     rejected_candidates: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
 
     @classmethod
@@ -164,6 +165,7 @@ class DeepSeekEvaluator:
                 continue
             else:
                 try:
+                    self._request_timeout()
                     review = self._request(payload)
                     cache[digest] = review
                     changed = True
@@ -299,16 +301,28 @@ class DeepSeekEvaluator:
                 evidence_ids.update(DeepSeekEvaluator._payload_evidence_ids(item))
         return evidence_ids
 
+    def _request_timeout(self) -> float:
+        remaining = self.timeout
+        if self.remaining_seconds is not None:
+            remaining = min(remaining, self.remaining_seconds())
+        if remaining <= 0:
+            raise DeepSeekRequestError("scan_deadline", retryable=False)
+        return remaining
+
     def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
         last_error: Exception | None = None
         for attempt in range(3):
+            self._request_timeout()
             try:
                 return self._request_once(payload, attempt)
             except (DeepSeekRequestError, KeyError, TypeError, ValueError) as exc:
                 last_error = exc
                 retryable = not isinstance(exc, DeepSeekRequestError) or exc.retryable
                 if retryable and attempt < 2:
-                    time.sleep(1.0 + attempt)
+                    delay = 1.0 + attempt
+                    if self.remaining_seconds is not None and self.remaining_seconds() <= delay:
+                        raise DeepSeekRequestError("scan_deadline", retryable=False) from exc
+                    time.sleep(delay)
                     continue
                 raise
         raise RuntimeError("DeepSeek returned invalid JSON after retries") from last_error
@@ -345,10 +359,24 @@ class DeepSeekEvaluator:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
+            timeout = self._request_timeout()
+            deadline = time.monotonic() + timeout
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                chunks = []
+                # DeepSeek can send empty keep-alive lines while inference is
+                # queued. A socket inactivity timeout alone never expires then.
+                while response.fp is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("semantic review deadline exceeded")
+                    response.fp.raw._sock.settimeout(remaining)
+                    chunk = response.read1(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                data = json.loads(b"".join(chunks).decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            exc.read()
+            exc.close()
             raise DeepSeekRequestError(
                 "http_error",
                 status_code=exc.code,

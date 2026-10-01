@@ -2367,6 +2367,7 @@ class Radar:
         self.scan_started_at = self.monotonic_fn()
         self.deep_inspection_deadline_seconds = max(0.0, float(deep_inspection_deadline_seconds))
         self.scan_deadline_reached = False
+        self._deep_inspection_active = False
         self.pending_rechecks = pending_rechecks or {}
         self.notify = notify
         self.forced_recheck_keys: set[str] = set()
@@ -2391,11 +2392,14 @@ class Radar:
         self.capacity_allocation: dict[str, Any] = {}
 
     def deep_inspection_deadline_reached(self) -> bool:
-        reached = (
-            self.monotonic_fn() - self.scan_started_at >= self.deep_inspection_deadline_seconds
+        return self.deep_inspection_seconds_remaining() <= 0
+
+    def deep_inspection_seconds_remaining(self) -> float:
+        remaining = self.deep_inspection_deadline_seconds - (
+            self.monotonic_fn() - self.scan_started_at
         )
-        self.scan_deadline_reached = self.scan_deadline_reached or reached
-        return reached
+        self.scan_deadline_reached = self.scan_deadline_reached or remaining <= 0
+        return max(0.0, remaining)
 
     @property
     def analyzed(self) -> str:
@@ -2416,10 +2420,21 @@ class Radar:
         data: Any | None = None
         err: str | None = None
         for attempt in range(len(SEARCH_RETRY_DELAYS_SECONDS) + 1):
+            remaining = (
+                self.deep_inspection_seconds_remaining()
+                if self._deep_inspection_active
+                else float("inf")
+            )
+            if remaining < 1:
+                return None, "scan_deadline_deferred"
             if self._last_search_at is not None:
                 elapsed = self.monotonic_fn() - self._last_search_at
                 if elapsed < SEARCH_MIN_INTERVAL_SECONDS:
-                    self.sleep_fn(SEARCH_MIN_INTERVAL_SECONDS - elapsed)
+                    delay = SEARCH_MIN_INTERVAL_SECONDS - elapsed
+                    if remaining <= delay:
+                        return None, "scan_deadline_deferred"
+                    self.sleep_fn(delay)
+                    remaining -= delay
             data, err = gh(
                 [
                     "api",
@@ -2435,7 +2450,7 @@ class Radar:
                     "-f",
                     f"per_page={per_page}",
                 ],
-                timeout=timeout,
+                timeout=min(timeout, remaining),
             )
             self._last_search_at = self.monotonic_fn()
             if not err:
@@ -2443,7 +2458,10 @@ class Radar:
             is_rate_limit = "rate limit" in err.lower() or "abuse detection" in err.lower()
             if not is_rate_limit or attempt >= len(SEARCH_RETRY_DELAYS_SECONDS):
                 break
-            self.sleep_fn(SEARCH_RETRY_DELAYS_SECONDS[attempt])
+            delay = SEARCH_RETRY_DELAYS_SECONDS[attempt]
+            if self._deep_inspection_active and self.deep_inspection_seconds_remaining() <= delay:
+                return None, "scan_deadline_deferred"
+            self.sleep_fn(delay)
         return data, err
 
     def add_search(
@@ -3730,6 +3748,16 @@ class Radar:
         self._last_open_pr_lookup_errors = []
         hits = self.open_pr_hits(repo, num, title, issue_context)
         lookup_errors = list(getattr(self, "_last_open_pr_lookup_errors", []))
+        if self._deep_inspection_active and (
+            self.deep_inspection_deadline_reached()
+            or any("scan_deadline_deferred" in error for error in lookup_errors)
+        ):
+            return {
+                "status": "lookup_failed",
+                "prs": [],
+                "summary": "open PR 审计时间已用尽，等待下轮完成审核",
+                "errors": ["scan_deadline_deferred"],
+            }
         if not hits:
             if lookup_errors:
                 return {
@@ -3740,7 +3768,16 @@ class Radar:
                 }
             return {"status": "none", "prs": [], "summary": "未发现相关 open PR"}
 
-        assessments = [self.assess_single_pr(repo, num, title, hit, issue_context) for hit in hits]
+        assessments = []
+        for hit in hits:
+            if self._deep_inspection_active and self.deep_inspection_deadline_reached():
+                return {
+                    "status": "lookup_failed",
+                    "prs": assessments,
+                    "summary": "open PR 审计时间已用尽，等待下轮完成审核",
+                    "errors": ["scan_deadline_deferred"],
+                }
+            assessments.append(self.assess_single_pr(repo, num, title, hit, issue_context))
         assessments = [item for item in assessments if item.get("url")]
         if not assessments:
             return {
@@ -4373,6 +4410,7 @@ class Radar:
         }, None
 
     def shortlist(self, items: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], int, int]:
+        self._deep_inspection_active = True
         known = set(KNOWN_REPOS)
         bases: list[dict[str, Any]] = []
         rejection_counts: Counter[str] = Counter()
@@ -5077,6 +5115,11 @@ class Radar:
         run_started = self.monotonic_fn()
         items = self.collect_items()
         collect_finished = self.monotonic_fn()
+        print(
+            f"Radar collection completed in {collect_finished - run_started:.3f}s",
+            file=sys.stderr,
+            flush=True,
+        )
         shortlist_finished = collect_finished
         llm_finished = collect_finished
         if self.search_failed:
@@ -5090,9 +5133,21 @@ class Radar:
         else:
             candidates, qualified_repos, inspected = self.shortlist(items)
             shortlist_finished = self.monotonic_fn()
+            print(
+                f"Radar candidate checks completed in {shortlist_finished - collect_finished:.3f}s; "
+                f"semantic reviews starting for {len(candidates)} candidates",
+                file=sys.stderr,
+                flush=True,
+            )
             evaluator = DeepSeekEvaluator.from_environment(BASE_DIR / "state" / "llm_cache.json")
+            evaluator.remaining_seconds = self.deep_inspection_seconds_remaining
             candidates = evaluator.evaluate_candidates(candidates)
             llm_finished = self.monotonic_fn()
+            print(
+                f"Radar semantic reviews completed in {llm_finished - shortlist_finished:.3f}s",
+                file=sys.stderr,
+                flush=True,
+            )
             # The first pass pins deterministic evidence before semantic review.
             # Re-run the same gate after review so model uncertainty can only
             # remove eligibility, never manufacture it.
