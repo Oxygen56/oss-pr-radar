@@ -9349,7 +9349,10 @@ class RadarLedger:
         try:
             from .managed_lifecycle import ManagedLedger
 
-            managed_ledger = ManagedLedger(self.path, ensure_schema=True)
+            # This projection also runs while a single opportunity guard is held.
+            # Schema migration takes every historical quarantine guard; it belongs
+            # to initialization, not to this read under an existing task guard.
+            managed_ledger = ManagedLedger(self.path, ensure_schema=False)
             managed_task = managed_ledger.read_task(str(row["intent_id"] or ""))
             managed_provenance = json.loads((managed_task or {}).get("provenance_json") or "{}")
             managed_receipt = managed_provenance.get("probeReceipt")

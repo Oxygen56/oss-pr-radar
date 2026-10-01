@@ -5,7 +5,9 @@ import fcntl
 import gc
 import hashlib
 import importlib.util
+import inspect
 import json
+import multiprocessing
 import os
 import re
 import shutil
@@ -4634,6 +4636,130 @@ def test_authenticated_private_context_wins_over_a_stale_same_binding_singleton(
     assert result["restored"][0]["stage"] == "FIX_READY"
     assert result["collisions"][0]["reason"] == "SHARED_CONTEXT_SPLIT_MIRROR"
     assert shared_path.read_bytes() == context_path.read_bytes()
+
+
+def test_native_concurrent_sync_keeps_context_projection_out_of_migration_guards(
+    monkeypatch, tmp_path
+):
+    repository, _ref, _sha, _queue, _outbox = _radar_state_fetch_fixture(monkeypatch, tmp_path)
+    followup = {"version": "pr_followup_v2", "items": []}
+    followup["digest"] = sha256_json(followup)
+    (repository / "pr_followup.json").write_text(json.dumps(followup), encoding="utf-8")
+    run_git(repository, "add", "pr_followup.json")
+    run_git(repository, "commit", "-m", "state: empty follow-up snapshot")
+    run_git(repository, "push", "origin", "radar-state")
+
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    context_path = MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    stale_shared = shared_path.read_bytes()
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    MODULE._atomic_private_bytes(shared_path, stale_shared)
+    private_raw = context_path.read_bytes()
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    for key in ("0/upstream#1", "a/b#1"):
+        managed.record_event(
+            event_type="PR_FOLLOWUP_REBIND_REQUIRED",
+            state="READY",
+            opportunity_key=key,
+            idempotency_key=f"historical:{key}",
+            payload={"historical": True},
+        )
+        managed.record_event(
+            event_type="TASK_QUARANTINE_CLEARED",
+            state="READY",
+            opportunity_key=key,
+            idempotency_key=f"cleared:{key}",
+            payload={"reason": "PR_FOLLOWUP_REBIND_REQUIRED", "dedupeKey": f"historical:{key}"},
+        )
+
+    processes = multiprocessing.get_context("fork")
+    task_guard_held = processes.Event()
+    migration_guard_held = processes.Event()
+    release = processes.Event()
+    completed = processes.Queue()
+    guard_source, guard_start = inspect.getsourcelines(MODULE.opportunity_action_guard)
+    acquired_line = guard_start + next(
+        index for index, line in enumerate(guard_source) if "held_keys.add(opportunity_key)" in line
+    )
+
+    def sync(role):
+        paused = False
+
+        def observe(frame, event, _arg):
+            nonlocal paused
+            if paused or event != "line" or frame.f_code.co_name != "opportunity_action_guard":
+                return observe
+            # Observe the existing native flock after it acquired its real lock.
+            if frame.f_lineno != acquired_line:
+                return observe
+            callers = []
+            caller = frame.f_back
+            while caller is not None:
+                callers.append(caller.f_code.co_name)
+                caller = caller.f_back
+            key = frame.f_locals.get("opportunity_key")
+            if (
+                role == "slow"
+                and key == "a/b#1"
+                and "_refresh_current_task_shared_mirror" in callers
+            ):
+                paused = True
+                task_guard_held.set()
+            elif (
+                role == "heartbeat"
+                and key == "0/upstream#1"
+                and "backfill_from_managed_events" in callers
+            ):
+                paused = True
+                migration_guard_held.set()
+            else:
+                return observe
+            if not release.wait(10):
+                raise RuntimeError("native sync scheduling barrier timed out")
+            return observe
+
+        sys.settrace(observe)
+        try:
+            completed.put((role, MODULE.sync_queue(store.path)))
+        except BaseException as exc:
+            completed.put((role, {"ok": False, "error": str(exc)}))
+        finally:
+            sys.settrace(None)
+
+    slow = processes.Process(target=sync, args=("slow",))
+    heartbeat = processes.Process(target=sync, args=("heartbeat",))
+    try:
+        slow.start()
+        assert task_guard_held.wait(10), "slow sync did not reach its native task guard"
+        heartbeat.start()
+        assert migration_guard_held.wait(10), "heartbeat did not reach its native migration guard"
+        release.set()
+        slow.join(5)
+        heartbeat.join(5)
+        assert not slow.is_alive() and not heartbeat.is_alive(), (
+            "native sync opportunity lock cycle"
+        )
+        results = [completed.get(timeout=2), completed.get(timeout=2)]
+        assert all(result["ok"] is True for _role, result in results), results
+        assert {role for role, _result in results} == {"slow", "heartbeat"}
+        assert context_path.read_bytes() == private_raw
+        assert shared_path.read_bytes() == private_raw
+    finally:
+        release.set()
+        for process in (slow, heartbeat):
+            if process.pid is not None:
+                if process.is_alive():
+                    process.terminate()
+                process.join(5)
+        completed.close()
 
 
 def _reproduction_only_split_mirror_fixture(monkeypatch, tmp_path):
