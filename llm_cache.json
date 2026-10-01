@@ -10493,6 +10493,40 @@
     ],
     "why": "Issue reports a reproducible probabilistic deadlock (~3-4%/collective) in the ring backend's socket-level all_sum exchange for large payloads, with two self-contained repro scripts, ruled-out variables, and independent py-spy stack traces confirming both ranks blocked inside all_sum. This is a concrete distributed-training invariant failure with a clear reference-vs-implementation validation path."
   },
+  "17e070a415102ab781039eb57a8516b3709c223d8257d8b107bca7af575764a0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body provides a reproduction, but preTaskEvidence reports reproduction_or_validation_missing and candidate evidence reports public_repro_signals=0"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "skill discovery/frontmatter parsing path",
+      "goose skills list warning output",
+      "plugin install/update frontmatter rewrite behavior"
+    ],
+    "risks": [
+      "Repository assignment required before contribution",
+      "No confirmed code anchor or root cause in repo",
+      "Behavior change to discovery/listing may need maintainer design input"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create a SKILL.md with invalid YAML frontmatter and assert goose skills list emits a warning and/or lists a broken placeholder",
+      "Regression test that valid frontmatter still parses and namespacing rewrite preserves original fields"
+    ],
+    "unknowns": [
+      "Exact code path responsible for silent drop",
+      "Whether maintainers want warning vs placeholder skill behavior",
+      "Assignment status"
+    ],
+    "why": "Issue describes a plausible silent-drop bug with a concrete repro, but the pre-task evidence marks reproduction_or_validation_missing and no_code_surface, and the candidate's own actionability evidence shows public_repro_signals=0, root_cause_signal=false, probe_ready=false. The issue body gives a repro but no confirmed code path or root cause in the repository, and assignment is required."
+  },
   "17edebe2db9b8f7d122490300d67409747506addd30d0ea70ac17bec14de1b00": {
     "confidence": 0.8,
     "contradictions": [],
@@ -11283,6 +11317,40 @@
       "Whether the all-zero lora_B initialization naturally triggers the tie bug within the first relora_steps interval in production"
     ],
     "why": "Issue identifies two concrete, separable algorithm defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the frozen base, so the learned function is discarded rather than restarted, contradicting the module docstring's ReLoRA/Axolotl conformance claim; (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both factors and permanently killing the branch's gradients. Maintainer confirmed both halves with measured evidence (base weight delta 0, effective-map MSE 142.12 vs 8.77e-13 control; nonzero A/B = 0 with grad-norm 0.0). This is a genuine PEFT/training-objective mechanism with a clear reference-vs-implementation test path."
+  },
+  "19e4161573cdbf70d5d760fc67b68a633eb0d0c05106b94e01f1eae26adf5fb5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body says root cause is not yet established, while candidate scoring claims a verifiable LLM algorithm mechanism",
+      "Checkpoint-resume replay passes exact validation in all retained executions, yet stored-reference comparison fails"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Muon optimizer update path or BF16 cast/rounding boundary in checkpoint-resume tests",
+      "Golden reference values or tolerance policy for gb200/moe.yaml Muon cases"
+    ],
+    "risks": [
+      "Distinguishing a genuine numerical/algorithmic defect from expected floating-point or hardware-dependent variation",
+      "Changing golden references without identifying the root cause could mask a real regression"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay saved checkpoint-resume steps 51-100 with the original exact validator on the affected topology",
+      "Compare the first divergent step's preceding optimizer update and BF16 cast against a high-precision reference"
+    ],
+    "unknowns": [
+      "Which gradient coordinates or tensors drive the zero-count drift",
+      "Whether the mismatch is a rounding-boundary change or a concentrated gradient discrepancy",
+      "Whether the intended action is to update golden references or to fix an optimizer/numerical path"
+    ],
+    "why": "The issue reports reproducible golden-reference mismatches for Muon checkpoint-resume tests, but explicitly states the root cause is not established and no code path or affected gradient coordinates are identified. The supplied evidence is a tracker-style bug report with extensive numerical observations, not a concrete algorithm defect or fix target."
   },
   "19e4d7c368b26009edabd932a1a5b1af696ab5f0c6fde95a6c3a546fa43544e8": {
     "confidence": 0.7,
@@ -40338,6 +40406,36 @@
     ],
     "why": "Issue provides a clear root cause (wiki eligibility requires compilation template resolution, absent for Built-in datasets) and a concrete reproduction path. The candidate is actionable: improve error messaging and pre-validation. Existing PR #18691 partially addresses the misleading message but does not cover the root cause, leaving room for a more complete fix."
   },
+  "574d2dcbf5af024701a0b3fd41047fc8de091e0a5bb886a36d10894a65dda25c": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/litellm_pre_call_utils.py: stop team-level empty opted_out_global_guardrails from overwriting key-level value; enforce key-level precedence",
+      "litellm/integrations/custom_guardrail.py: verify merged metadata precedence in _get_admin_metadata/should_run_guardrail"
+    ],
+    "risks": [
+      "Changing merge precedence could alter intended team-level guardrail opt-out semantics for other fields",
+      "Issue's root cause is static-review hypothesis, not runtime-confirmed; fix must be validated against actual merge order"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: key with team_id and key-level opted_out_global_guardrails must skip a default_on guardrail, mirroring the issue's Key 3 vs Key 4 comparison",
+      "Add unit test for metadata merge precedence when team metadata has opted_out_global_guardrails: [] and key metadata has a non-empty list",
+      "Run targeted proxy pre-call-utils and custom_guardrail unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Exact runtime merge order in v1.93.0 not confirmed by debug logging, but the reproduction and code anchors are sufficient to build a failing test"
+    ],
+    "why": "Issue provides a controlled 4-key reproduction isolating team membership as the sole variable, plus concrete code anchors in litellm_pre_call_utils.py and custom_guardrail.py showing an asymmetric team-vs-key metadata merge for opted_out_global_guardrails. Root cause is a plausible, testable precedence bug; no duplicate or merged fix covers it."
+  },
   "5754c8a955d38adc9f5830ca287790d00d79c773f451748793d5e1272b02fd63": {
     "confidence": 0.8,
     "contradictions": [
@@ -68940,6 +69038,39 @@
     ],
     "why": "Issue provides a concrete, framework-agnostic reproduction and pinpoints the root cause: ' '.join(result_parts) in process_task_state() and identical fallbacks in StreamingHandler.execute() and wrapper.py::_handle_max_turns_exceeded, violating A2A append semantics. Fix is a minimal, well-scoped change to concatenation."
   },
+  "934a1402b20a87eefa06aedbec96c767d100bbe5be6064a8a9a0cbd5d6c4a912": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go request construction to select Responses API or force reasoning_effort=none when tools are enabled",
+      "response parsing and streaming/tool-call continuation for Responses API",
+      "pre-execution validation and actionable error for unsupported model/endpoint/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API migration touches request construction, response parsing, streaming, and tool-call continuation, so a partial fix could break existing Chat Completions users",
+      "The issue does not confirm that reasoning_effort=none actually succeeds in this deployment, so the fallback path is unverified",
+      "Maintainer preference between Responses API support and explicit reasoning_effort=none validation is not stated"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test that configures gpt-6-luna with tools and reasoning enabled and asserts the adapter does not emit an unsupported chat/completions request",
+      "Add a test for explicit reasoning_effort=none with tools through Chat Completions",
+      "Add a test for the Responses API path including streaming and tool-call continuation",
+      "Run targeted Go unit tests for internal/entity/models and the Agent node runtime"
+    ],
+    "unknowns": [
+      "Whether the maintainers prefer Responses API support or a validation-only fix for unsupported combinations",
+      "Whether reasoning_effort=none has been confirmed to work in this deployment"
+    ],
+    "why": "Issue reports a concrete, reproducible HTTP 400 from OpenAI when function tools are combined with reasoning_effort on /v1/chat/completions for gpt-6-luna in the Agent node. The Go adapter at internal/entity/models/openai.go is identified as the request-construction path, and the issue explicitly notes that supporting Responses requires request construction, response parsing, streaming, and tool-call continuation changes. This is an actionable agent/inference runtime bug with a clear expected-vs-actual pair and a validation path, not a docs/CLI/plumbing task."
+  },
   "934ade83a761a2a50932467919c7c77dce8e2de91fa409d7311d1d6883c4461f": {
     "confidence": 0.9,
     "contradictions": [
@@ -74234,6 +74365,41 @@
       "Whether existing PRs fully resolve the issue or need extension"
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool calls. Root cause is partially established (finish_reason logic) and a validation path exists via the provided loop script and payload variations."
+  },
+  "9e11b538d0889861c571db6d377901d099b033688b01686ab6e16d7594755823": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body says no downstream patches and clean reproduction, while recent comment states a fix PR is already up for both surfaces"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "OpenAI GPT-5/6 family detection in litellm/llms/openai/chat/gpt_5_transformation.py",
+      "Chat Completions reasoning_effort drop/reject gate for none/minimal",
+      "Responses API reasoning.effort drop/reject path in litellm/llms/openai/responses/transformation.py"
+    ],
+    "risks": [
+      "Duplicating open PR #43935 which already claims the same fix and regression coverage",
+      "Broadening model-family detection could affect other gpt-5/gpt-6 models",
+      "Cost-map lag may make a model-specific guard brittle"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against current main to confirm the five failing assertions",
+      "Add regression tests asserting none/minimal are dropped when drop_params=True and rejected with 400 when dropping is disabled",
+      "Verify both Chat Completions and Responses surfaces for gpt-6.1-sol"
+    ],
+    "unknowns": [
+      "Whether PR #43935 already fully covers the root cause and both surfaces",
+      "Whether maintainers consider the existing PR sufficient or want an independent implementation"
+    ],
+    "why": "Issue provides a concrete reproduction and root-cause hypothesis for gpt-6.1-sol reasoning-effort forwarding, but an open PR #43935 already claims to fix both Chat Completions and Responses surfaces with regression coverage, and the supplied evidence marks root-cause coverage as absent and duplicate status as weak_pr_competition_possible. Whether the existing PR already covers the actionable fix is a materially blocking unknown for deciding independent code work."
   },
   "9e52c5effae05aed5b2afe1dac9ef639d8e14042616605a378c795b5633638c0": {
     "confidence": 0.7,
@@ -98165,6 +98331,40 @@
       "Whether a PR would be accepted without explicit maintainer approval"
     ],
     "why": "Issue provides a clear root cause (O(n²) re-parse in legacy bundle) and a workaround, but the maintainer has not confirmed the fix direction and the legacy bundle may be deprecated. The issue is actionable but requires maintainer confirmation on whether to fix legacy or focus on next."
+  },
+  "d28a4da11bfadf9c8030e641836b0bf2b2a42b5c9d0f8629db613ef91e9dafc0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes eviction in closeSessionAdmission, but triage states closeSessionAdmission is provider-route-only and the raw path never signals release to the executor"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/managed-runtime-tool-executor.ts: add eviction of settled/released Session entries or drop input/inputJson after settle",
+      "packages/cli/src/serve/managed-runtime-tool-executor.ts: keep hasActiveSession/claimProviderSession scans bounded"
+    ],
+    "risks": [
+      "Eviction point must be chosen so status/cancel/acknowledgeV3 late lookups still work; wrong placement could break polling",
+      "Raw path never signals Session release to the executor, so a new release signal or settle-time eviction is required",
+      "Scope creep into #13042's provider-route retirement concerns"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: execute N raw-path calls across released Sessions and assert entries Map size stays bounded",
+      "Regression test: after settle/release, status/cancel still answer for retained window",
+      "Memory probe mirroring s3b-retention-raw.mjs: 300 Sessions x 200 KiB write_file, assert RSS does not grow ~+325 KiB per released Session"
+    ],
+    "unknowns": [
+      "Exact required retention window for status/cancel/acknowledgeV3 after settle is not specified",
+      "Behavior for many calls within one Session and results larger than inputs was not measured"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: ManagedToolExecutor.entries is append-only (set at :314/:416, no delete/clear), retaining input, inputJson and result per call for the worker lifetime; confirmed independently by two collaborators at the cited commit e263741eb0. Measured RSS growth (~+325 KiB per released 200 KiB write_file Session) on the raw path, with provider route flat, and O(n) scans in hasActiveSession/claimProviderSession. Triage notes the proposed eviction point (closeSessionAdmission) is provider-route-only, but the issue itself already offers two viable shapes (drop entries on release with bounded retention, or drop input/inputJson post-settle), so a concrete fix path exists."
   },
   "d29503515e0eb342a72df3230eba57ddf9c89b307c475ee66f55def744cf6a4d": {
     "confidence": 0.6,
