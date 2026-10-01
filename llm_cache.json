@@ -18146,6 +18146,41 @@
     ],
     "why": "Issue provides a minimal standalone type reproduction with exact expected errors, identifies the root cause as a type-surface inconsistency in processor modelSettings declarations, and includes runtime evidence that timeout.stepMs is consumed. The fix is a concrete type change with a clear validation path."
   },
+  "28a5be0cff50a72e1d6f6289153b431d2524796b52d4738eb08ec49ab226b022": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue proposes eviction in closeSessionAdmission, but triage and verifier show that path is provider-route-only and never signals raw-path Session release"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/managed-runtime-tool-executor.ts: evict or trim JournalEntry (input/inputJson/result) on settle/release, or bound entries with a ring",
+      "packages/cli/src/serve/managed-runtime-tool-executor.ts: keep hasActiveSession/claimProviderSession O(active) after eviction"
+    ],
+    "risks": [
+      "Eviction point must be chosen so status/cancel/acknowledgeV3 late lookups still work; closeSessionAdmission is provider-route-only and does not cover the raw path",
+      "Dropping input/inputJson too early could break status/cancel responses",
+      "Large Shell results (not measured in the report) may dominate retention"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that executes N raw-path calls across released Sessions and asserts entries size / retained payload is bounded",
+      "Regression test that status/cancel still resolve for recently released Sessions after eviction",
+      "Assert hasActiveSession/claimProviderSession do not scan evicted entries"
+    ],
+    "unknowns": [
+      "Exact retention window required for status/cancel/acknowledgeV3 after Session release",
+      "Whether maintainers prefer entry eviction vs payload trimming (need-discussion label)"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: ManagedToolExecutor.entries is append-only (set at :314/:416, no delete/clear), JournalEntry retains input/inputJson/result payloads, and closeSessionAdmission only adds to closedSessions. Two independent verifications (triage bot and doudouOUC) confirm at e263741eb0, with measured RSS growth (~325 KiB per released Session) and a provider-route control showing no growth. Triage notes the proposed eviction point (closeSessionAdmission) is provider-route-only, but this is a design-choice detail, not a blocker: the reporter already offers two viable shapes and the verifier sketches concrete delete sites."
+  },
   "28a8564c15f4c5bff106ed9c21d06090a10c61e93fafdbae3eca14cac507cdf1": {
     "confidence": 0.82,
     "contradictions": [],
@@ -112936,6 +112971,41 @@
       "Whether the repository's AI disclosure policy permits the required public submission action."
     ],
     "why": "Issue provides a concrete distributed-training invariant failure: dense DP reconfiguration resets data_parallel_rank to 0, so payload selection uses data_parallel_rank * world_size + rank and DP1 workers pick DP0's CUDA IPC handles. The issue names the exact code expression, the preserved data_parallel_index alternative, a DP=2/TP=2 slot mapping, and an executable reproduction with expected/actual UUID mismatch and HTTP 500. This is a distributed weight-transfer correctness bug with a reference-vs-implementation validation path, not mere plumbing."
+  },
+  "ef3e9db58c05c8cab86d3266fac59cd66f480ac4d8732ea397c505b1ad9ef081": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Open PR #43935 claims to fix both surfaces, while duplicate assessment reports rootCauseCoverage=false and keyPathCoverage=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "OpenAI GPT-5/6 family detection for gpt-6.1-sol",
+      "Chat Completions reasoning_effort drop/reject for none/minimal",
+      "Responses reasoning.effort drop/reject for none/minimal"
+    ],
+    "risks": [
+      "Duplicating PR #43935 if it already covers the same paths",
+      "Expanding API behavior beyond the reported model",
+      "Cost-map lag may make model-specific guards brittle"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against current main to confirm failures",
+      "Compare against PR #43935's test coverage to identify uncovered paths",
+      "Add regression tests for drop_params=True and local 400 rejection when dropping is disabled"
+    ],
+    "unknowns": [
+      "Whether PR #43935 already covers the Chat Completions and Responses drop/reject paths",
+      "Whether the existing PR's failing proxy-behavior check indicates an incomplete fix"
+    ],
+    "why": "Issue describes a concrete user-visible bug with a reproduction script and root-cause anchors, but the supplied evidence shows an open PR #43935 that already references the issue and claims to fix both Chat Completions and Responses paths. The duplicate assessment marks rootCauseCoverage=false and keyPathCoverage=false, so it is unresolved whether the existing PR already covers the actionable fix or leaves a genuine gap. That coverage question materially determines whether independent code work is actionable."
   },
   "ef77f8295c787bf49e33f63bad38fb6def781bb5c23f4d175598a105d026949d": {
     "confidence": 0.7,
