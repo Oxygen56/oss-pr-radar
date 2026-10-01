@@ -14177,6 +14177,12 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     candidate = store.pr_followup_candidates()[0]
+    previous_context = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    ).read_bytes()
     prepared = []
 
     def prepare(value):
@@ -14204,6 +14210,15 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
     context = json.loads(Path(result["contextPath"]).read_text(encoding="utf-8"))
     assert context["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
     assert context["prFollowup"]["preparedHeadSha"] == "b" * 40
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    assert Path(result["contextPath"]).read_bytes() != previous_context
+    assert shared_path.read_bytes() == Path(result["contextPath"]).read_bytes()
+    assert MODULE._private_context_matches_current_ledger(store, context) is True
+    wrong_head = {
+        **context,
+        "prFollowup": {**context["prFollowup"], "preparedHeadSha": "c" * 40},
+    }
+    assert MODULE._private_context_matches_current_ledger(store, wrong_head) is False
     assert context["prFollowup"]["resultContract"] == {
         "schemaVersion": "pr-followup-result-contract-v3",
         "requiredWakeDigestField": "followupDigest",

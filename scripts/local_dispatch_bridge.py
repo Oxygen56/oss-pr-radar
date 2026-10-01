@@ -3076,11 +3076,11 @@ def _private_context_matches_current_ledger(
     for field, value in current.items():
         observed = context.get(field)
         if field == "prFollowup" and isinstance(observed, dict) and isinstance(value, dict):
-            # ``preparedHeadSha`` is a controller-local preparation marker;
-            # older ledger projections intentionally omit it while retaining
-            # the authenticated snapshot fields.
+            # Older projections omit this preparation marker; bound follow-up
+            # snapshots now include it and must retain their exact head match.
             observed = dict(observed)
-            observed.pop("preparedHeadSha", None)
+            if "preparedHeadSha" not in value:
+                observed.pop("preparedHeadSha", None)
         if observed != value:
             return False
     return True

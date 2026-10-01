@@ -555,7 +555,64 @@ def test_failed_check_only_wakes_task_when_evidence_matches_changed_file():
     assert rerun_state["items"][0]["taskActionDigest"] != item["taskActionDigest"]
 
 
-def test_unrelated_test_failure_is_retained_without_notification_or_task_wake():
+def test_reusable_workflow_run_tests_failures_request_diagnosis():
+    names = [
+        "All Other Providers / Run tests",
+        "enterprise-routing / Run tests",
+        "misc / Run tests",
+        "schema-migration",
+    ]
+
+    class CheckClient(Client):
+        def pull_reviews(self, repo, number):
+            return []
+
+        def pull_files(self, repo, number):
+            return [
+                {"filename": "litellm/llms/azure/chat/gpt_transformation.py"},
+                {"filename": "litellm/llms/openai/chat/gpt_transformation.py"},
+                {"filename": "tests/llm_translation/test_optional_params.py"},
+            ]
+
+        def check_runs(self, repo, ref):
+            return [
+                {
+                    "id": check_id,
+                    "name": name,
+                    "status": "completed",
+                    "conclusion": "failure",
+                }
+                for check_id, name in enumerate(names, start=1)
+            ]
+
+        def check_annotations(self, repo, check_run_id):
+            return [
+                {
+                    "path": ".github",
+                    "annotation_level": "failure",
+                    "message": "Process completed with exit code 1.",
+                }
+            ]
+
+        def compare(self, repo, base, head):
+            assert (repo, base, head) == ("a/b", "base", "head")
+            return {"status": "ahead", "merge_base_commit": {"sha": "base"}}
+
+    state, report = collect_followup(
+        CheckClient(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+
+    item = state["items"][0]
+    assert item["ciStatus"] == "FAILED"
+    assert item["taskActions"] == ["当前分支检查失败"]
+    assert item["evidence"]["actionableCheckNames"] == names[:3]
+    assert [check["name"] for check in item["evidence"]["failingChecks"]] == names
+    assert item["evidence"]["baseIntegrationRequired"] is False
+    assert report["candidate_details"][0]["why"] == "当前分支检查失败"
+
+
+@pytest.mark.parametrize("check_name", ["Playwright Shard 47/70", "enterprise-routing / Run tests"])
+def test_unrelated_test_failure_is_retained_without_notification_or_task_wake(check_name):
     class CheckClient(Client):
         def pull_reviews(self, repo, number):
             return []
@@ -564,7 +621,7 @@ def test_unrelated_test_failure_is_retained_without_notification_or_task_wake():
             return [
                 {
                     "id": 12,
-                    "name": "Playwright Shard 47/70",
+                    "name": check_name,
                     "status": "completed",
                     "conclusion": "failure",
                     "details_url": "https://example.test/checks/12",
