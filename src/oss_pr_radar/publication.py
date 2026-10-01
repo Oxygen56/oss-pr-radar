@@ -444,6 +444,32 @@ def _changed_files(worktree: Path, repo: str, default_branch: str) -> list[str]:
     return sorted(line for line in value.splitlines() if line)
 
 
+def _changed_probe_paths(
+    worktree: Path,
+    *,
+    selected_base_sha: str,
+    live_base_sha: str,
+    code_paths: list[str],
+) -> list[str]:
+    """Compare the authenticated reproduction scope against the live Git objects."""
+
+    command(["git", "merge-base", "--is-ancestor", selected_base_sha, live_base_sha], cwd=worktree)
+    value = command(
+        [
+            "git",
+            "diff",
+            "--name-only",
+            "--no-renames",
+            selected_base_sha,
+            live_base_sha,
+            "--",
+            *code_paths,
+        ],
+        cwd=worktree,
+    )
+    return sorted(line for line in value.splitlines() if line)
+
+
 def _changed_files_since(worktree: Path, previous_commit: str) -> list[str]:
     command(["git", "merge-base", "--is-ancestor", previous_commit, "HEAD"], cwd=worktree)
     value = command(["git", "diff", "--name-only", f"{previous_commit}..HEAD"], cwd=worktree)
@@ -794,7 +820,7 @@ def audit_publication_request(
             return PublicationAudit("BLOCK", "BASE_BRANCH_MISMATCH", request_id, live)
         if "targetBase" in request:
             try:
-                _revalidate_legacy_target_base(
+                observed_sha = _revalidate_legacy_target_base(
                     github,
                     repo,
                     default_branch,
@@ -802,6 +828,12 @@ def audit_publication_request(
                         request.get("selectedBaseSha") or evidence_file.get("selectedBaseSha") or ""
                     ),
                 )
+                live_target_base = {
+                    "branch": default_branch,
+                    "sha": observed_sha,
+                    "defaultBranch": default_branch,
+                    "source": "repository_default",
+                }
             except PublicationError as exc:
                 return PublicationAudit(
                     "BLOCK", "TARGET_BASE_DRIFT", request_id, live | {"error": str(exc)[:200]}
@@ -850,6 +882,41 @@ def audit_publication_request(
             )
         if not dco_valid:
             return PublicationAudit("BLOCK", "DCO_SIGNOFF_MISSING", request_id, live)
+    selected_base = str(receipt.get("baseSha") or "")
+    if (
+        publication_kind == "PR_CREATE"
+        and live_target_base is not None
+        and live_target_base["sha"] != selected_base
+    ):
+        try:
+            changed_probe_paths = _changed_probe_paths(
+                worktree,
+                selected_base_sha=selected_base,
+                live_base_sha=live_target_base["sha"],
+                code_paths=code_paths,
+            )
+        except PublicationError as exc:
+            return PublicationAudit(
+                "DEFER",
+                "DIFF_REVALIDATION_FAILED",
+                request_id,
+                live | {"error": str(exc)[:200]},
+            )
+        if changed_probe_paths:
+            return PublicationAudit(
+                "DEFER",
+                "LATEST_TARGET_REVALIDATION_REQUIRED",
+                request_id,
+                live
+                | {
+                    "targetBase": target_base_value,
+                    "liveTargetBase": live_target_base,
+                    "selectedBaseSha": selected_base,
+                    "changedProbePaths": changed_probe_paths,
+                    "resultDigest": result_digest,
+                    "probeReceiptDigest": receipt["receiptDigest"],
+                },
+            )
     return PublicationAudit(
         "ALLOW",
         "LIVE_PUBLICATION_GATES_PASSED",

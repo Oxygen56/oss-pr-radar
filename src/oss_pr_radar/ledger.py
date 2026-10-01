@@ -7948,6 +7948,12 @@ class RadarLedger:
                     "deferredAt": row["created_at"],
                 }
             )
+            refresh = self.publication_target_base_refresh(candidates[-1])
+            if (
+                refresh is not None
+                and refresh["sourceResultDigest"] == candidates[-1]["resultDigest"]
+            ):
+                candidates[-1]["targetBaseRefresh"] = refresh
         return candidates
 
     def validation_no_progress(self) -> list[dict[str, Any]]:
@@ -8355,7 +8361,7 @@ class RadarLedger:
                          AND cancelled.id>r.id
                      ) ORDER BY r.created_at"""
             ).fetchall()
-        return [
+        candidates = [
             {
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
@@ -8370,6 +8376,11 @@ class RadarLedger:
             }
             for row in rows
         ]
+        for candidate in candidates:
+            refresh = self.publication_target_base_refresh(candidate)
+            if refresh is not None and refresh["sourceResultDigest"] == candidate["resultDigest"]:
+                candidate["targetBaseRefresh"] = refresh
+        return candidates
 
     def abandon_validation_followup_delivery(
         self,
@@ -12779,6 +12790,301 @@ class RadarLedger:
                 },
                 now,
             )
+
+    def _refresh_publication_target_base_unlocked(
+        self,
+        *,
+        expected_request: dict[str, Any],
+        source_raw_digest: str,
+        target_base: dict[str, str],
+        audit_evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Replace one private task's current base under its opportunity action guard.
+
+        The controller has authenticated the retained source result, checked for
+        active owners, and prepared the pinned target in the same guard. Historical
+        receipts/results remain immutable; only their current projections retire.
+        """
+
+        from .target_branch import validate_target_base
+
+        target = validate_target_base(target_base)
+        now = iso_z(datetime.now(UTC))
+        request_id = str(expected_request.get("requestId") or "")
+        with self.transaction() as connection:
+            request_row = connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?", (request_id,)
+            ).fetchone()
+            if request_row is None or request_row["status"] != "PENDING":
+                raise LedgerError("target refresh source request is not pending")
+            binding, request = _resolve_publication_request_binding(connection, request_row)
+            key = str(binding["opportunity_key"])
+            intent_id = str(binding["intent_id"])
+            if request != expected_request or request.get("publicationKind") != "PR_CREATE":
+                raise LedgerError("target refresh source request changed")
+            newest = connection.execute(
+                "SELECT intent_id FROM intents WHERE opportunity_key=? ORDER BY rowid DESC LIMIT 1",
+                (key,),
+            ).fetchone()
+            stage = connection.execute(
+                "SELECT stage FROM opportunities WHERE key=?", (key,)
+            ).fetchone()
+            if (
+                newest is None
+                or newest[0] != intent_id
+                or stage[0] != "FIX_READY"
+                or binding["status"] not in {"DISPATCHED", "COMPLETED"}
+                or request_row["reason"] != "LATEST_TARGET_REVALIDATION_REQUIRED"
+                or source_raw_digest != request_row["evidence_digest"]
+            ):
+                raise LedgerError("target refresh task generation is stale")
+            require_quarantine_clear(
+                connection, opportunity_key=key, operation="target base refresh"
+            )
+            if (
+                connection.execute(
+                    """SELECT 1 FROM publication_effects effect JOIN publication_permits permit
+                   ON permit.permit_id=effect.permit_id WHERE permit.request_id=? LIMIT 1""",
+                    (request_id,),
+                ).fetchone()
+                or connection.execute(
+                    "SELECT 1 FROM publication_permits WHERE request_id=? AND status IN ('ACTIVE','CONSUMED')",
+                    (request_id,),
+                ).fetchone()
+                or connection.execute(
+                    "SELECT 1 FROM managed_publication_reservations WHERE request_id=? AND state<>'RELEASED'",
+                    (request_id,),
+                ).fetchone()
+            ):
+                raise LedgerError("target refresh has publication effects or authority")
+            receipt = request.get("probeReceipt")
+            paths = sorted(request.get("codePaths") or [])
+            old_base = str(request.get("selectedBaseSha") or "")
+            match = ISSUE_URL_RE.fullmatch(str(request.get("issueUrl") or ""))
+            if (
+                match is None
+                or not isinstance(receipt, dict)
+                or not verify_probe_receipt(
+                    receipt,
+                    repo=match.group(1),
+                    base_sha=old_base,
+                    code_paths=paths,
+                    required_level=REPRODUCED_VALIDATED,
+                    issue_url=request["issueUrl"],
+                    task_id=intent_id,
+                    thread_id=str(binding["thread_id"]),
+                    head_sha=str(request.get("headSha") or ""),
+                    commit_sha=str(request.get("commitSha") or ""),
+                    result_digest=str(request.get("resultDigest") or ""),
+                )
+            ):
+                raise LedgerError("target refresh source receipt is invalid")
+            authorization = audit_evidence.get("authorization") or {}
+            digest = str(audit_evidence.get("evidenceDigest") or "")
+            probe = _live_audit_probe_receipt(audit_evidence)
+            if (
+                target["sha"] == old_base
+                or target["branch"] != request["publication"]["baseBranch"]
+                or not digest
+                or authorization.get("status") != "ALLOW"
+                or (authorization.get("evidence_digest") or authorization.get("evidenceDigest"))
+                != digest
+                or probe is None
+                or not verify_probe_receipt(
+                    probe,
+                    repo=match.group(1),
+                    base_sha=target["sha"],
+                    code_paths=paths,
+                    required_level=PATHS_VERIFIED,
+                )
+            ):
+                raise LedgerError("target refresh live path authorization is invalid")
+            payload = json.loads(binding["payload_json"])
+            task = connection.execute(
+                "SELECT * FROM managed_tasks WHERE task_id=?", (intent_id,)
+            ).fetchone()
+            opportunity = connection.execute(
+                "SELECT * FROM managed_opportunities WHERE opportunity_key=?", (key,)
+            ).fetchone()
+            if (
+                str(
+                    payload.get("selectedBaseSha")
+                    or (payload.get("preTaskEvidence") or {}).get("baseSha")
+                    or ""
+                )
+                != old_base
+                or task is None
+                or opportunity is None
+                or task["opportunity_key"] != key
+                or task["thread_id"] != binding["thread_id"]
+                or not _resolved_path_equal(
+                    str(task["worktree_path"] or ""), str(binding["worktree_path"])
+                )
+                or task["state"] not in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
+            ):
+                raise LedgerError("target refresh managed task binding changed")
+            metadata = json.loads(opportunity["metadata_json"] or "{}")
+            provenance = json.loads(task["provenance_json"] or "{}")
+            if str(metadata.get("selectedBaseSha") or metadata.get("baseSha") or "") != old_base:
+                raise LedgerError("target refresh managed opportunity base changed")
+            durable = provenance.get("probeReceipt")
+            if (
+                not isinstance(durable, dict)
+                or not verify_probe_receipt(
+                    durable,
+                    repo=match.group(1),
+                    base_sha=old_base,
+                    code_paths=sorted(durable.get("codePaths") or []),
+                    required_level=REPRODUCED_VALIDATED,
+                    issue_url=request["issueUrl"],
+                    task_id=intent_id,
+                    thread_id=str(binding["thread_id"]),
+                    head_sha=str(durable.get("headSha") or ""),
+                    commit_sha=str(durable.get("commitSha") or ""),
+                    result_digest=str(durable.get("resultDigest") or ""),
+                    enforce_freshness=False,
+                )
+                or provenance.get("probeReceiptDigest") != durable.get("receiptDigest")
+            ):
+                raise LedgerError("target refresh managed reproduction authority is invalid")
+            history = {
+                "intentPayload": payload,
+                "managedProvenance": provenance,
+                "managedOpportunityMetadata": metadata,
+            }
+            refresh = {
+                "requestId": request_id,
+                "intentId": intent_id,
+                "threadId": str(binding["thread_id"]),
+                "worktreePath": str(binding["worktree_path"]),
+                "sourceResultDigest": str(request["resultDigest"]),
+                "sourceRawDigest": source_raw_digest,
+                "previousBaseSha": old_base,
+                "previousCommitSha": request["commitSha"],
+                "previousBranch": request["branch"],
+                "targetBase": target,
+            }
+            refresh_key = sha256_json(refresh)
+            payload = dict(payload) | {
+                "selectedBaseSha": target["sha"],
+                "defaultBranch": target["defaultBranch"],
+                "taskStage": "REPRODUCTION_REQUIRED",
+                "probeLevel": PATHS_VERIFIED,
+                "probeReceiptDigest": probe["receiptDigest"],
+                "codePaths": paths,
+                "headSha": target["sha"],
+                "commitSha": target["sha"],
+                "resultDigest": refresh_key,
+                "preTaskEvidence": dict(payload.get("preTaskEvidence") or {})
+                | {
+                    "baseSha": target["sha"],
+                    "defaultBranch": target["defaultBranch"],
+                    "codePathsPlan": paths,
+                },
+            }
+            payload.pop("recoveredReproductionReceipt", None)
+            provenance = dict(provenance) | {
+                "selectedBaseSha": target["sha"],
+                "taskStage": "REPRODUCTION_REQUIRED",
+                "probeLevel": PATHS_VERIFIED,
+                "probeReceiptDigest": probe["receiptDigest"],
+                "probeReceipt": None,
+                "headSha": target["sha"],
+                "commitSha": target["sha"],
+                "resultDigest": refresh_key,
+                "codePaths": paths,
+            }
+            metadata = dict(metadata) | {"selectedBaseSha": target["sha"], "codePaths": paths}
+            if "baseSha" in metadata:
+                metadata["baseSha"] = target["sha"]
+            connection.execute(
+                "UPDATE intents SET payload_json=?,status='DISPATCHED',updated_at=? WHERE intent_id=?",
+                (canonical_json(payload), now, intent_id),
+            )
+            connection.execute(
+                "UPDATE managed_tasks SET state='REPRODUCTION_REQUIRED',provenance_json=?,observed_at=? WHERE task_id=?",
+                (canonical_json(provenance), now, intent_id),
+            )
+            connection.execute(
+                "UPDATE managed_opportunities SET metadata_json=?,state='REPRODUCTION_REQUIRED',observed_at=? WHERE opportunity_key=?",
+                (canonical_json(metadata), now, key),
+            )
+            connection.execute(
+                "UPDATE managed_results SET is_current=0 WHERE task_id=? AND pr_key IS NULL AND is_current=1",
+                (intent_id,),
+            )
+            connection.execute(
+                "UPDATE opportunities SET stage='VALIDATION_PENDING',updated_at=? WHERE key=?",
+                (now, key),
+            )
+            connection.execute(
+                "UPDATE outcomes SET quality_json='{}',submit_ready_at=NULL WHERE opportunity_key=?",
+                (key,),
+            )
+            connection.execute(
+                "UPDATE publication_requests SET status='BLOCKED',reason='LATEST_TARGET_REVALIDATION_REQUIRED',updated_at=? WHERE request_id=?",
+                (now, request_id),
+            )
+            bound_audit = dict(audit_evidence) | {
+                "intentId": intent_id,
+                "threadId": binding["thread_id"],
+                "worktreePath": binding["worktree_path"],
+                "targetBase": target,
+            }
+            self._event(
+                connection, key, "AUDIT_SNAPSHOT", f"{intent_id}:{refresh_key}", bound_audit, now
+            )
+            self._event(
+                connection,
+                key,
+                "PUBLICATION_TARGET_BASE_REFRESHED",
+                refresh_key,
+                refresh | {"history": history},
+                now,
+            )
+            self._event(
+                connection,
+                key,
+                "TASK_RESULT_VALIDATION_DEFERRED",
+                request["resultDigest"],
+                {
+                    "intentId": intent_id,
+                    "threadId": binding["thread_id"],
+                    "worktreePath": binding["worktree_path"],
+                    "resultDigest": request["resultDigest"],
+                    "missing": ["reproduction_verified"],
+                    "progressMarker": refresh_key,
+                    "targetBaseRefresh": refresh,
+                },
+                now,
+            )
+            return refresh
+
+    def publication_target_base_refresh(self, candidate: dict[str, Any]) -> dict[str, Any] | None:
+        """Read the exact latest-target continuation for the current task binding."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT payload_json FROM events WHERE opportunity_key=?
+                   AND event_type='PUBLICATION_TARGET_BASE_REFRESHED'
+                   AND json_extract(payload_json,'$.intentId')=?
+                   AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (candidate["key"], candidate["intentId"], candidate["threadId"]),
+            ).fetchone()
+            current = connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id=? AND opportunity_key=? AND thread_id=?",
+                (candidate["intentId"], candidate["key"], candidate["threadId"]),
+            ).fetchone()
+        if row is None or current is None:
+            return None
+        value = json.loads(row[0])
+        current_payload = json.loads(current[0])
+        if not _resolved_path_equal(
+            str(value.get("worktreePath") or ""), str(candidate["worktreePath"])
+        ) or current_payload.get("selectedBaseSha") != value.get("targetBase", {}).get("sha"):
+            return None
+        return {key: item for key, item in value.items() if key != "history"}
 
     def block_publication_request(
         self,

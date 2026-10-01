@@ -15829,6 +15829,7 @@ def _controller_commit_result(
     reported_code_paths: tuple[str, ...] | None = None,
     probe_code_paths: tuple[str, ...] = ("runtime.py",),
     omit_reported_code_paths: bool = False,
+    target_base_bound: bool = False,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -15915,6 +15916,8 @@ def _controller_commit_result(
                 "commitSha": head_sha,
             }
         )
+        if target_base_bound:
+            payload["category"] = "BUG_FIX"
         connection.execute(
             "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
             (json.dumps(payload, sort_keys=True),),
@@ -15922,12 +15925,24 @@ def _controller_commit_result(
     store.record_audit_snapshot(
         "a/b#1",
         evidence={
+            **(
+                {
+                    "targetBase": {
+                        "branch": "main",
+                        "sha": base_sha,
+                        "source": "repository_default",
+                        "defaultBranch": "main",
+                    }
+                }
+                if target_base_bound
+                else {}
+            ),
             "liveAudit": {
                 "evidence": {
                     "issue": {"state": "open"},
                     "repoProbeReceipt": probe,
                 }
-            }
+            },
         },
         dedupe_key="intent-1:repository-probe",
     )
@@ -15955,12 +15970,16 @@ def _controller_commit_result(
             },
             dedupe_key="controller-policy-complete",
         )
+    if target_base_bound:
+        run_git(worktree, "switch", "--detach", base_sha)
     context_path = MODULE.write_task_context(
         store,
         issue_url="https://github.com/a/b/issues/1",
         thread_id="thread-1",
         cwd=worktree,
     )
+    if target_base_bound:
+        run_git(worktree, "switch", "fix/1-runtime-boundary")
     context = json.loads(context_path.read_text(encoding="utf-8"))
     body_path = worktree / ".oss-pr-radar" / "pr-body.md"
     body_path.write_text("Fixes #1\n\nCorrect the runtime boundary.\n", encoding="utf-8")
@@ -16009,6 +16028,8 @@ def _controller_commit_result(
             "bodyFile": str(body_path.resolve()),
         },
     }
+    if target_base_bound:
+        result["targetBase"] = context["targetBase"]
     if omit_reported_code_paths:
         result.pop("codePaths")
     if publication_blocked_reason:
@@ -16117,6 +16138,15 @@ def _controller_commit_result(
             "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
             (json.dumps(payload, sort_keys=True),),
         )
+    if target_base_bound:
+        store.record_stage(
+            "a/b#1",
+            "FIX_READY",
+            evidence=quality,
+            intent_id="intent-1",
+            thread_id="thread-1",
+            worktree_path=str(worktree),
+        )
     context = json.loads(
         MODULE.write_task_context(
             store,
@@ -16167,6 +16197,290 @@ def _controller_commit_result(
             review_value["quality"] = review_quality
             _write_explicit_controller_review(tmp_path, review_value)
     return store, worktree, result_path
+
+
+@pytest.mark.parametrize("upstream_fixed", [True, False])
+def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
+    monkeypatch, tmp_path, upstream_fixed
+):
+    from oss_pr_radar import publication
+    from oss_pr_radar.evidence import EvidenceBundle
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    managed_path = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_path,
+        controller_policy_complete=True,
+        target_base_bound=True,
+    )
+    bind_validation_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(MODULE, "THREAD_DB", tmp_path / "absent-thread-db")
+    initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert initial["ok"], initial
+    assert len(initial["publicationRequests"]) == 1
+    request_id = initial["publicationRequests"][0]["requestId"]
+    request = store.publication_request(request_id)["request"]
+    source_bytes = result_path.read_bytes()
+    old_base = request["selectedBaseSha"]
+    old_head = request["commitSha"]
+    old_branch = request["branch"]
+    run_git(worktree, "switch", "--detach", old_base)
+    (worktree / "runtime.py").write_text(
+        "# latest upstream changes\nvalue = 2\nassert value == 2\n"
+        if upstream_fixed
+        else "# latest upstream changes\nvalue = 1\n",
+        encoding="utf-8",
+    )
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: current upstream runtime")
+    live_base = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "branch", "-f", "main", live_base)
+    run_git(worktree, "update-ref", "refs/remotes/origin/main", live_base)
+    run_git(worktree, "switch", old_branch)
+    remote = tmp_path / "upstream.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(worktree), str(remote)],
+        check=True,
+        capture_output=True,
+    )
+
+    class Client:
+        def repository(self, _repo):
+            return {"default_branch": "main"}
+
+        def branch(self, _repo, _branch):
+            return {"commit": {"sha": live_base}}
+
+        def compare(self, _repo, base, head):
+            return {
+                "status": "ahead",
+                "merge_base_commit": {"sha": run_git(worktree, "merge-base", base, head)},
+            }
+
+        def repository_tree(self, _repo, ref):
+            return [
+                {"path": path, "type": "blob"}
+                for path in run_git(worktree, "ls-tree", "-r", "--name-only", ref).splitlines()
+            ]
+
+        def related_open_prs(self, *_args, **_kwargs):
+            return []
+
+    client = Client()
+    evidence = EvidenceBundle(
+        repo="a/b",
+        issue_number=1,
+        complete=True,
+        completeness={"repositoryPolicy": "COMPLETE"},
+        issue={
+            "number": 1,
+            "state": "open",
+            "title": "Runtime should return value 2",
+            "body": "Runtime currently returns value 1.",
+            "assignees": [],
+        },
+        comments=(),
+        timeline=(),
+        claims=(),
+        maintainer_approvals=(),
+        policy={"status": "NORMAL", "digest": "d" * 64, "dco": False},
+        pull_relations=(),
+        hardware={"compatible": True},
+        digest="c" * 64,
+    )
+
+    def decision(_candidate, bundle):
+        return AuthorizationDecision("ALLOW", "LIVE_EVIDENCE_PASSED", {}, bundle.digest)
+
+    monkeypatch.setattr(publication, "collect_evidence", lambda *_args, **_kwargs: evidence)
+    monkeypatch.setattr(MODULE, "collect_evidence", lambda *_args, **_kwargs: evidence)
+    monkeypatch.setattr(publication, "authorize", decision)
+    monkeypatch.setattr(MODULE, "authorize", decision)
+    monkeypatch.setattr(publication, "GitHubClient", lambda: client)
+    monkeypatch.setattr(MODULE, "GitHubClient", lambda: client)
+    monkeypatch.setattr(publication, "CONTROL_ROOT", tmp_path)
+    monkeypatch.setattr(
+        publication,
+        "_github_git_command",
+        lambda argv, *, cwd, timeout: publication.command(
+            [str(remote) if item == "origin" else item for item in argv], cwd=cwd, timeout=timeout
+        ),
+    )
+    monkeypatch.setattr(MODULE, "source_repo", lambda _repo, **_kwargs: worktree)
+    monkeypatch.setattr(MODULE, "managed_worktree_path", lambda *_args: worktree)
+    audited = publication.audit_publication_request(store, request_id, client=client)
+    assert audited.status == "DEFER", audited
+    assert audited.reason == "LATEST_TARGET_REVALIDATION_REQUIRED"
+
+    advanced = MODULE.run_publication_queue(SimpleNamespace(ledger=store.path))
+    assert advanced["ok"], advanced["errors"]
+    assert advanced["pending"][0]["targetBaseRefresh"]["refreshed"] is True
+    assert result_path.read_bytes() == source_bytes
+    assert run_git(worktree, "rev-parse", old_branch) == old_head
+    assert run_git(worktree, "rev-parse", "HEAD") == live_base
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    current = json.loads((result_path.parent / "task-context.json").read_text())
+    managed = ManagedLedger(store.path, ensure_schema=False)
+    assert current["selectedBaseSha"] == live_base
+    assert managed.opportunity_identity("a/b#1")["selectedBaseSha"] == live_base
+    assert current["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert current["childMayEditFiles"] is False
+    assert current["reproductionReceipt"] is None
+    assert managed.read_task("intent-1")["state"] == "REPRODUCTION_REQUIRED"
+    retained = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert retained["ok"], retained["errors"]
+    assert retained["ignored"] == [{"key": "a/b#1", "reason": "LATEST_TARGET_RETAINED_INPUT"}]
+    assert store.active_task_quarantine("a/b#1") is None
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["ok"], listed
+    candidate = listed["candidates"][0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    candidate = store.unresolved_validation_followups()[0]
+    snapshot = MODULE._ensure_validation_snapshot(
+        candidate, reservation_digest=reserved["reservationDigest"]
+    )
+    binding = {
+        "reservationDigest": reserved["reservationDigest"],
+        **snapshot,
+        **MODULE._validation_worktree_input_binding(
+            candidate=candidate,
+            reservation_digest=reserved["reservationDigest"],
+            snapshot_digest=snapshot["snapshotDigest"],
+        ),
+    }
+    authorized = store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=candidate["resultDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        reservation_digest=binding["reservationDigest"],
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    assert authorized["intentId"] == "intent-1"
+    MODULE._ensure_validation_worktree_input(
+        candidate=candidate,
+        reservation_digest=binding["reservationDigest"],
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    assert (worktree / binding["worktreeInputPath"]).read_bytes() == source_bytes
+    prompt = MODULE._task_turn_prompt("validation-followup", candidate | binding)
+    assert "只读复现" in prompt and live_base in prompt
+    MODULE.validation_followup_commit(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            reservation_digest=reserved["reservationDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    behavior = subprocess.run(
+        [sys.executable, "-B", "-c", "from runtime import value; assert value == 2"],
+        cwd=worktree,
+        capture_output=True,
+    )
+    assert behavior.returncode == (0 if upstream_fixed else 1)
+    current = json.loads((result_path.parent / "task-context.json").read_text())
+    fresh = {
+        "schemaVersion": "radar-task-result-v1",
+        "key": "a/b#1",
+        "taskId": "intent-1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree),
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "contextDigest": current["contextDigest"],
+        "selectedBaseSha": live_base,
+        "codePaths": ["runtime.py"],
+        "stage": "AUDIT_NO_GO" if upstream_fixed else "REPRODUCED_VALIDATED",
+        "reason": "ALREADY_FIXED_ON_BASE" if upstream_fixed else "REPRODUCTION_CONFIRMED",
+        "evidence": {
+            "summary": f"Latest base {live_base}: actual value-2 check exit={behavior.returncode}"
+        },
+        "tests": [
+            {
+                "command": "python -c 'from runtime import value; assert value == 2'",
+                "exitCode": behavior.returncode,
+            }
+        ],
+    }
+    if not upstream_fixed:
+        reproduced = subprocess.run(
+            [sys.executable, "-B", "-c", "from runtime import value; assert value == 1"],
+            cwd=worktree,
+            capture_output=True,
+        )
+        assert reproduced.returncode == 0
+        fresh["reproductionVerified"] = True
+        fresh["tests"].append(
+            {
+                "command": "python -c 'from runtime import value; assert value == 1'",
+                "exitCode": reproduced.returncode,
+            }
+        )
+    result_path.write_text(json.dumps(fresh), encoding="utf-8")
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["ok"], ingested["errors"]
+    assert store.publication_request(request_id)["status"] == "BLOCKED"
+    if upstream_fixed:
+        assert ingested["ingested"] == [
+            {"key": "a/b#1", "stage": "AUDIT_NO_GO", "reason": "ALREADY_FIXED_ON_BASE"}
+        ]
+        assert (
+            store.task_context(issue_url=fresh["issueUrl"], thread_id="thread-1")["stage"]
+            == "AUDIT_NO_GO"
+        )
+        assert store.implementation_followup_candidates() == []
+        assert store.publication_work_items() == []
+        assert MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))["ok"]
+        assert store.publication_request(request_id)["status"] == "BLOCKED"
+        return
+    assert ingested["ingested"] == [{"key": "a/b#1", "stage": "IMPLEMENTATION_READY"}]
+    assert _intent_statuses(store.path)["intent-1"] == "DISPATCHED"
+    implementation = store.implementation_followup_candidates()[0]
+    assert implementation["intentId"] == "intent-1"
+    assert implementation["threadId"] == "thread-1"
+    resumed = MODULE.implementation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=implementation["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    implementation_authorized = store.authorize_task_turn_delivery(
+        delivery_kind="implementation-followup",
+        thread_id="thread-1",
+        delivery_token=implementation["resultDigest"],
+        delivery_attempt_digest=resumed["implementationFollowupAttemptDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    assert implementation_authorized["intentId"] == "intent-1"
+    current = json.loads((result_path.parent / "task-context.json").read_text())
+    assert current["stage"] == "DISPATCHED" and current["childMayEditFiles"] is True
+    assert current["reproductionReceipt"]["baseSha"] == live_base
+    assert run_git(worktree, "rev-parse", old_branch) == old_head
 
 
 def _bind_published_pr_authority_fixture(

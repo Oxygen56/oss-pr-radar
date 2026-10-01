@@ -91,6 +91,7 @@ from oss_pr_radar.outbound_pause import (  # noqa: E402
 )
 from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest  # noqa: E402
 from oss_pr_radar.publication import (  # noqa: E402
+    _changed_probe_paths,
     broker_publication_request,
     public_branch_is_safe,
     public_text_is_safe,
@@ -18564,6 +18565,24 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "当前 `.oss-pr-radar/result.json` 仅用于完成本轮时原子替换为新输出，"
         "不能作为本轮输入。\n\n"
     )
+    refresh = candidate.get("targetBaseRefresh")
+    if isinstance(refresh, dict):
+        return (
+            "系统续跑：在最新目标基线上只读复现同一个问题。不要实施旧补丁，也不要创建新任务。"
+            "读取并验证当前任务上下文，只在已绑定工作区继续。\n\n"
+            + input_note
+            + f"当前目标提交为 {refresh['targetBase']['sha']}；旧提交 {refresh['previousCommitSha']} "
+            f"及旧分支 {refresh['previousBranch']} 已保留，仅作为历史证据。"
+            "旧输入中的测试和源码断言不能证明最新目标仍有问题；必须核实 issue 描述的实际行为。"
+            "保持工作树干净、HEAD 不变，不改源码，不切换分支、不提交、不安装依赖、不执行公开操作。"
+            "若最新基线已修复，输出 AUDIT_NO_GO，reason=ALREADY_FIXED_ON_BASE，并给出真实证据；"
+            "若仍能复现，输出 REPRODUCED_VALIDATED、reproductionVerified=true 和本轮真实检查证据；"
+            "环境无法验证则诚实输出 REPRODUCTION_REQUIRED。新输出必须使用当前 contextDigest。"
+            "不得复制旧 receipt、resultDigest、quality、handoffMode、commitSha、publication 或 changedFiles；"
+            "复现签名与后续实施授权由系统生成。"
+            + END_RESULT_TURN_PROMPT
+            + PLAIN_LANGUAGE_STATUS_PROMPT
+        )
     return (
         "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
         "读取当前任务文件，并只在已绑定的工作区继续。\n\n"
@@ -20626,6 +20645,28 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             binding_gate = getattr(store, "task_result_binding_gate", None)
             if binding_gate is None or not binding_gate(candidate, value):
                 raise RuntimeError("task result identity binding mismatch")
+            base_refresh = store.publication_target_base_refresh(candidate)
+            if (
+                base_refresh is not None
+                and value.get("stage") == "FIX_READY"
+                and hashlib.sha256(raw).hexdigest() == base_refresh["sourceRawDigest"]
+                and _task_result_digest(value, raw) == base_refresh["sourceResultDigest"]
+                and context.get("selectedBaseSha") == base_refresh["targetBase"]["sha"]
+                and candidate["stage"] == "VALIDATION_PENDING"
+                and context.get("taskStage") == "REPRODUCTION_REQUIRED"
+            ):
+                context_stat = os.stat(
+                    "task-context.json", dir_fd=result_access.private_fd, follow_symlinks=False
+                )
+                verified_context, _ = _verified_private_context_with_singleton_guard(
+                    store, result_access.worktree, context_raw, context_stat
+                )
+                if verified_context != context or not _private_context_matches_current_ledger(
+                    store, verified_context
+                ):
+                    raise RuntimeError("target refresh input context is not current")
+                ignored.append({"key": candidate["key"], "reason": "LATEST_TARGET_RETAINED_INPUT"})
+                continue
             if _superseded_merge_resolution_scope_request(
                 store,
                 candidate=candidate,
@@ -21327,6 +21368,25 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         task_id=str(candidate.get("intentId") or candidate["threadId"]),
                         thread_id=str(candidate["threadId"]),
                     )
+                    if (
+                        base_refresh is not None
+                        and context.get("selectedBaseSha") == base_refresh["targetBase"]["sha"]
+                        and candidate["stage"] == "VALIDATION_PENDING"
+                    ):
+                        with opportunity_action_guard(
+                            ledger_action_guard_root(store.path), str(candidate["key"])
+                        ):
+                            store.record_stage(
+                                candidate["key"],
+                                "DISPATCHED",
+                                evidence={
+                                    "reason": "LATEST_TARGET_REPRODUCTION_CONFIRMED",
+                                    "resultDigest": result_digest,
+                                    "requestId": base_refresh["requestId"],
+                                },
+                                dedupe_key=f"target-reproduction:{result_digest}",
+                                **_ledger_binding_kwargs(candidate),
+                            )
                     ingested.append({"key": candidate["key"], "stage": "IMPLEMENTATION_READY"})
                     continue
             if value.get("contextDigest") != context.get("contextDigest"):
@@ -22029,6 +22089,129 @@ def run_publication_queue(args: argparse.Namespace) -> dict[str, Any]:
         return _run_publication_queue_unlocked(args)
 
 
+def _prepare_publication_target_refresh(
+    store: RadarLedger,
+    request: dict[str, Any],
+    audit: dict[str, Any],
+    *,
+    client: GitHubClient | None = None,
+) -> dict[str, Any]:
+    """Continue one still-private PR creation on its freshly audited target."""
+
+    key = str(request["opportunityKey"])
+    candidate = {
+        "key": key,
+        "issueUrl": request["issueUrl"],
+        "intentId": request["intentId"],
+        "threadId": request["threadId"],
+        "worktreePath": request["worktreePath"],
+        "resultDigest": request["resultDigest"],
+    }
+    github = client or GitHubClient()
+    with opportunity_action_guard(ledger_action_guard_root(store.path), key):
+        _require_task_action_clear(store, key)
+        if _active_task_turn_for_result(candidate) is not None:
+            return {"refreshed": False, "reason": "ACTIVE_TASK_TURN"}
+        row = store.publication_request(str(request["requestId"]))
+        if row is None or row["status"] != "PENDING" or row["request"] != request:
+            raise RuntimeError("target refresh source request changed")
+        value, raw = _read_authenticated_validation_result(candidate)
+        if (
+            not store.task_result_binding_gate(candidate, value)
+            or value.get("stage") != "FIX_READY"
+            or hashlib.sha256(raw).hexdigest() != row["evidence_digest"]
+        ):
+            raise RuntimeError("target refresh source result changed")
+        old_snapshot = _publication_git_snapshot(Path(candidate["worktreePath"]))
+        if old_snapshot != {
+            "commitSha": request["commitSha"],
+            "branch": request["branch"],
+            "status": "",
+        }:
+            raise RuntimeError("target refresh source worktree changed")
+        target = validate_target_base(audit["evidence"]["liveTargetBase"])
+        match = ISSUE_URL.fullmatch(str(request["issueUrl"]))
+        if match is None:
+            raise RuntimeError("target refresh issue identity is invalid")
+        repo, number = match.groups()
+        evidence = collect_evidence(
+            github,
+            repo,
+            int(number),
+            current_actor=os.environ.get("GITHUB_ACTOR", "Oxygen56"),
+            hardware_inventory=_hardware_inventory(),
+        )
+        if resolve_target_base(github, repo, evidence.issue) != target:
+            return {"refreshed": False, "reason": "TARGET_CHANGED_DURING_REVALIDATION"}
+        paths = sorted(request["codePaths"])
+        probe = run_repo_probe(
+            github,
+            repo=repo,
+            default_branch=target["defaultBranch"],
+            selected_base_sha=target["sha"],
+            code_paths=paths,
+        )
+        if not verify_probe_receipt(
+            probe,
+            repo=repo,
+            base_sha=target["sha"],
+            code_paths=paths,
+            required_level=PATHS_VERIFIED,
+        ):
+            return {"refreshed": False, "reason": "LATEST_TARGET_PATHS_UNVERIFIED"}
+        evidence = replace(
+            evidence,
+            default_branch=target["defaultBranch"],
+            selected_base_sha=target["sha"],
+            live_base_sha=target["sha"],
+            repo_probe_receipt=probe,
+            probe_level=PATHS_VERIFIED,
+        )
+        verdict = authorize(_candidate(request["intent"]), evidence)
+        if verdict.status != "ALLOW":
+            return {"refreshed": False, "reason": verdict.reason_code}
+        source = source_repo(repo, target_base=target)
+        if _active_task_turn_for_result(candidate) is not None:
+            return {"refreshed": False, "reason": "ACTIVE_TASK_TURN"}
+        worktree = Path(request["worktreePath"]).resolve()
+        if not _changed_probe_paths(
+            worktree,
+            selected_base_sha=str(request["selectedBaseSha"]),
+            live_base_sha=target["sha"],
+            code_paths=paths,
+        ):
+            raise RuntimeError("target refresh has no authenticated path overlap")
+        if managed_worktree_path(request["intentId"], repo).resolve() != worktree:
+            raise RuntimeError("target refresh worktree is not the managed task path")
+        prepared = prepare_managed_worktree(
+            source,
+            intent_id=request["intentId"],
+            repo=repo,
+            target_base=target,
+            code_paths=paths,
+        )
+        if prepared != worktree:
+            raise RuntimeError("target refresh prepared worktree binding changed")
+        try:
+            refresh = store._refresh_publication_target_base_unlocked(
+                expected_request=request,
+                source_raw_digest=hashlib.sha256(raw).hexdigest(),
+                target_base=target,
+                audit_evidence=_audit_payload(evidence, verdict, target),
+            )
+        except Exception:
+            command(["git", "switch", request["branch"]], cwd=worktree)
+            raise
+        write_task_context(
+            store,
+            issue_url=request["issueUrl"],
+            thread_id=request["threadId"],
+            cwd=worktree,
+            _opportunity_guard_held=True,
+        )
+        return {"refreshed": True, **refresh}
+
+
 def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     runtime_root = getattr(args, "runtime_root", None)
@@ -22180,10 +22363,15 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                         review_context=review_context,
                     )
                 if broker.get("pending"):
+                    audit = broker.get("audit") or {}
+                    refreshed = None
+                    if audit.get("reason") == "LATEST_TARGET_REVALIDATION_REQUIRED":
+                        refreshed = _prepare_publication_target_refresh(store, request, audit)
                     pending.append(
                         {
                             "requestId": request_id,
                             "reason": (broker.get("audit") or {}).get("reason"),
+                            **({"targetBaseRefresh": refreshed} if refreshed is not None else {}),
                         }
                     )
                     continue

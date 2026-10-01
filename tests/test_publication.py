@@ -62,7 +62,7 @@ def dispatch_intent(worktree):
     }
 
 
-def prepared_request(tmp_path):
+def prepared_request(tmp_path, *, bind_target_base=False):
     publication.CONTROL_ROOT = tmp_path
     worktree = tmp_path / "worktree"
     worktree.mkdir()
@@ -135,6 +135,18 @@ def prepared_request(tmp_path):
                     "title": "Fix streaming tool arguments",
                     "bodyFile": str(body_path),
                 },
+                **(
+                    {
+                        "targetBase": {
+                            "branch": "main",
+                            "sha": commit,
+                            "source": "repository_default",
+                            "defaultBranch": "main",
+                        }
+                    }
+                    if bind_target_base
+                    else {}
+                ),
             },
             sort_keys=True,
         ),
@@ -509,6 +521,141 @@ class Client:
 
     def related_open_prs(self, repo, number, **kwargs):
         return []
+
+
+class AdvancedTargetClient(Client):
+    def __init__(self, worktree, selected_base_sha, live_base_sha):
+        self.worktree = worktree
+        self.selected_base_sha = selected_base_sha
+        self.live_base_sha = live_base_sha
+
+    def branch(self, repo, branch):
+        assert (repo, branch) == ("example/project", "main")
+        return {"commit": {"sha": self.live_base_sha}}
+
+    def compare(self, repo, base, head):
+        assert (repo, base, head) == (
+            "example/project",
+            self.selected_base_sha,
+            self.live_base_sha,
+        )
+        return {
+            "status": "ahead",
+            "merge_base_commit": {"sha": git("merge-base", base, head, cwd=self.worktree)},
+        }
+
+    def repository_tree(self, repo, ref):
+        assert repo == "example/project"
+        return [
+            {"path": path, "type": "blob"}
+            for path in git("ls-tree", "-r", "--name-only", ref, cwd=self.worktree).splitlines()
+        ]
+
+
+def advance_publication_target(worktree, selected_base_sha, files):
+    branch = git("symbolic-ref", "--short", "HEAD", cwd=worktree)
+    git("switch", "--detach", selected_base_sha, cwd=worktree)
+    for relative, contents in files.items():
+        path = worktree / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents, encoding="utf-8")
+    git("add", "--", *files, cwd=worktree)
+    git("commit", "-m", "Advance upstream target", cwd=worktree)
+    live_base_sha = git("rev-parse", "HEAD", cwd=worktree)
+    git("update-ref", "refs/remotes/origin/main", live_base_sha, cwd=worktree)
+    git("switch", branch, cwd=worktree)
+    assert git("merge-base", selected_base_sha, live_base_sha, cwd=worktree) == selected_base_sha
+    return live_base_sha
+
+
+@pytest.mark.parametrize(
+    ("upstream_path", "expected_status", "expected_reason"),
+    [
+        ("file.txt", "DEFER", "LATEST_TARGET_REVALIDATION_REQUIRED"),
+        ("other.py", "ALLOW", "LIVE_PUBLICATION_GATES_PASSED"),
+    ],
+)
+def test_broker_revalidates_only_changed_signed_probe_paths(
+    monkeypatch, tmp_path, upstream_path, expected_status, expected_reason
+):
+    store, request, _evidence_path = prepared_request(tmp_path, bind_target_base=True)
+    worktree = tmp_path / "worktree"
+    selected_base_sha = request["request"]["selectedBaseSha"]
+    live_base_sha = advance_publication_target(
+        worktree, selected_base_sha, {upstream_path: 'assert "new" == "new"\n'}
+    )
+    client = AdvancedTargetClient(worktree, selected_base_sha, live_base_sha)
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
+
+    audit = publication.audit_publication_request(store, request["request_id"], client=client)
+    result = broker_publication_request(store, request["request_id"], client=client)
+
+    assert audit.status == expected_status, audit.as_dict()
+    assert audit.reason == expected_reason
+    assert result["audit"]["status"] == expected_status, result
+    assert result["audit"]["reason"] == expected_reason
+    assert result["granted"] is (expected_status == "ALLOW")
+    if expected_status == "DEFER":
+        assert result["pending"] is True
+        assert store.publication_request(request["request_id"])["status"] == "PENDING"
+        assert store.publication_request(request["request_id"])["permit_id"] is None
+
+
+def test_broker_revalidates_upstream_fix_despite_remaining_ast_test(monkeypatch, tmp_path):
+    store, first_request, evidence_path = prepared_request(tmp_path, bind_target_base=True)
+    worktree = tmp_path / "worktree"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    selected_base_sha = evidence["selectedBaseSha"]
+    production_fix = 'response_format = "url"\noutput_format = "mp4"\n'
+    (worktree / "file.txt").write_text(production_fix, encoding="utf-8")
+    tests = worktree / "tests"
+    tests.mkdir()
+    ast_test_path = "tests/test_response_format_static.py"
+    (worktree / ast_test_path).write_text(
+        "import ast\n"
+        "from pathlib import Path\n\n"
+        "def test_response_format_assignments():\n"
+        "    tree = ast.parse(Path('file.txt').read_text())\n"
+        "    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}\n"
+        "    assert {'response_format', 'output_format'} <= names\n",
+        encoding="utf-8",
+    )
+    git("add", "file.txt", ast_test_path, cwd=worktree)
+    git("commit", "-m", "Fix response format with AST regression coverage", cwd=worktree)
+    commit_sha = git("rev-parse", "HEAD", cwd=worktree)
+    refresh_reproduction_evidence(
+        evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=commit_sha
+    )
+    evidence["changedFiles"] = ["file.txt", ast_test_path]
+    evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+    write_explicit_review_receipt(evidence, tmp_path=tmp_path)
+    request = request_publication(
+        store,
+        issue_url="https://github.com/example/project/issues/7",
+        thread_id="thread-1",
+        worktree=worktree,
+        evidence_path=evidence_path,
+    )
+    assert request["request_id"] != first_request["request_id"]
+    live_base_sha = advance_publication_target(
+        worktree, selected_base_sha, {"file.txt": production_fix}
+    )
+    assert git("diff", "--name-only", f"{live_base_sha}..HEAD", cwd=worktree) == ast_test_path
+    assert git("show", f"{live_base_sha}:file.txt", cwd=worktree) == production_fix.strip()
+    client = AdvancedTargetClient(worktree, selected_base_sha, live_base_sha)
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt", ast_test_path])
+
+    audit = publication.audit_publication_request(store, request["request_id"], client=client)
+    result = broker_publication_request(store, request["request_id"], client=client)
+
+    assert audit.status == "DEFER", audit.as_dict()
+    assert audit.reason == "LATEST_TARGET_REVALIDATION_REQUIRED"
+    assert result["granted"] is False
+    assert result["pending"] is True
+    assert result["audit"]["reason"] == "LATEST_TARGET_REVALIDATION_REQUIRED"
+    row = store.publication_request(request["request_id"])
+    assert row["status"] == "PENDING"
+    assert row["permit_id"] is None
 
 
 def test_legacy_null_target_revalidation_allows_forward_only_and_rejects_fork():
