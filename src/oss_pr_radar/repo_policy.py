@@ -165,6 +165,12 @@ NONSTANDARD_AGREEMENT_RE = re.compile(
 AI_AGENT_SCOPE_RE = re.compile(
     r"(?:contribution policy for ai agents|if you are an ai agent)", re.I
 )
+AUTOMATED_SUBMISSION_RE = re.compile(
+    r"\b(?:forbids?|prohibits?)\s+automated\s+submissions?\b|"
+    r"\b(?:do not|don['’]?t|must not)\s+run\s+[`'\"]?git\s+push[`'\"]?\s+or\s+"
+    r"create\s+(?:an?\s+)?(?:pull request|pr)\s+on\s+behalf\s+of\s+(?:the\s+)?user\b",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -257,6 +263,10 @@ def select_policy_entries(tree: list[dict[str, Any]], limit: int = 24) -> list[d
 
 
 def _global_submission_blocked(text: str) -> bool:
+    # Agent submission bans block Radar's automated PR path without declaring
+    # private AI coding assistance itself prohibited.
+    if AUTOMATED_SUBMISSION_RE.search(text):
+        return True
     for pattern in (NO_UNSOLICITED_RE, ISSUES_ONLY_RE):
         for match in pattern.finditer(text):
             prefix = text[max(0, match.start() - 600) : match.start()]

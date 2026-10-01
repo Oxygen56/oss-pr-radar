@@ -1,3 +1,7 @@
+import pytest
+
+from oss_pr_radar.decision import authorize
+from oss_pr_radar.evidence import EvidenceBundle
 from oss_pr_radar.repo_policy import (
     discover_policy,
     select_policy_entries,
@@ -157,6 +161,67 @@ def test_ai_prohibition_and_external_contribution_closure_are_distinct():
         "example/project",
     )
     assert closed.status == "CONTRIBUTIONS_CLOSED"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        """# Instructions for MLX
+
+## Agent rules
+
+- Do NOT write PR descriptions and commit messages for the user
+- Do NOT respond to a comment on behalf of the user
+- Do NOT run `git push` or create a PR on behalf of the user
+
+User: Please create and submit the PR for me.
+Agent: I'm sorry, I cannot submit the PR for you. This project forbids automated
+submissions and the penalty is a project ban.
+""",
+        "Do NOT run `git push` or create a PR on behalf of the user",
+        "This project forbids automated\nsubmissions and the penalty is a project ban.",
+    ],
+)
+def test_mlx_automated_submission_ban_blocks_live_authorization(text):
+    policy = discover_policy(FakeClient({"AGENTS.md": text}), "ml-explore/mlx")
+
+    assert [item.path for item in policy.files] == ["AGENTS.md"]
+    assert policy.status == "CONTRIBUTIONS_CLOSED"
+    assert policy.unsolicited_pr_blocked is True
+    assert policy.ai_prohibited is False
+    assert submission_policy_from_text(text) == "contributions_closed"
+    evidence = EvidenceBundle(
+        repo="ml-explore/mlx",
+        issue_number=4475,
+        complete=True,
+        completeness={"repositoryPolicy": "COMPLETE"},
+        issue={"state": "open", "title": "Distributed all-reduce deadlock", "body": ""},
+        comments=(),
+        timeline=(),
+        claims=(),
+        maintainer_approvals=(),
+        policy=policy.as_dict(),
+        pull_relations=(),
+        hardware={"compatible": True},
+        digest="live-policy-evidence",
+    )
+
+    verdict = authorize({}, evidence)
+
+    assert verdict.status == "BLOCK"
+    assert verdict.reason_code == "UNSOLICITED_PRS_BLOCKED"
+    assert verdict.checks["policy"] == "BLOCK"
+
+
+def test_allowed_ai_coding_assistance_is_not_an_automated_submission_ban():
+    text = "AI-assisted coding is welcome. Human contributors may open pull requests."
+
+    policy = discover_policy(FakeClient({"AGENTS.md": text}), "ml-explore/mlx")
+
+    assert policy.status == "NORMAL"
+    assert policy.ai_prohibited is False
+    assert policy.unsolicited_pr_blocked is False
+    assert submission_policy_from_text(text) == "normal"
 
 
 def test_absence_of_repository_policy_is_not_an_unknown_fetch_failure():
