@@ -4485,7 +4485,8 @@ def test_authenticated_private_context_wins_over_a_stale_same_binding_singleton(
         cwd=worktree,
     )
     assert context_path.read_bytes() != stale_shared_raw
-    assert shared_path.read_bytes() == stale_shared_raw
+    assert shared_path.read_bytes() == context_path.read_bytes()
+    MODULE._atomic_private_bytes(shared_path, stale_shared_raw)
 
     result = MODULE.recover_shared_task_contexts(store)
 
@@ -4493,7 +4494,158 @@ def test_authenticated_private_context_wins_over_a_stale_same_binding_singleton(
     assert result["verified"] == 1
     assert result["restored"][0]["stage"] == "FIX_READY"
     assert result["collisions"][0]["reason"] == "SHARED_CONTEXT_SPLIT_MIRROR"
-    assert shared_path.read_bytes() == stale_shared_raw
+    assert shared_path.read_bytes() == context_path.read_bytes()
+
+
+def _reproduction_only_split_mirror_fixture(monkeypatch, tmp_path):
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        payload.update({"probeLevel": "PATHS_VERIFIED", "taskStage": "REPRODUCTION_REQUIRED"})
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload),),
+        )
+    local_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    historical_raw = shared_path.read_bytes()
+    now = datetime.now(UTC)
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "current-live-evidence",
+            "liveAudit": {
+                "capturedAt": iso_z(now),
+                "evidence": {"digest": "current-live-evidence", "issue": {"state": "open"}},
+            },
+        },
+        dedupe_key="current-live-evidence",
+    )
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    # Recreate the old writer's actual split after a legitimate audit refresh.
+    MODULE._atomic_private_bytes(shared_path, historical_raw)
+    context = json.loads(local_path.read_bytes())
+    return store, worktree, shared_path, local_path, context
+
+
+def test_reproduction_only_mirror_matches_writer_authorization_projection(monkeypatch, tmp_path):
+    store, worktree, _shared_path, local_path, context = _reproduction_only_split_mirror_fixture(
+        monkeypatch, tmp_path
+    )
+    current = store.task_context(
+        issue_url=context["issueUrl"],
+        thread_id=context["threadId"],
+        worktree_path=context["worktreePath"],
+    )
+    assert current["probeLevel"] == "PATHS_VERIFIED"
+    MODULE._verified_private_task_context(worktree, local_path.read_bytes(), local_path.stat())
+
+    assert MODULE._private_context_matches_current_ledger(store, context) is True
+    assert context["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert context["probeLevel"] == "UNVERIFIED"
+    assert context["childMayEditFiles"] is False
+    assert context["childMayCommit"] is False
+    assert context["childMayPush"] is False
+    assert context["childMayCreatePR"] is False
+
+
+def test_context_recovery_repairs_exact_stale_reproduction_only_mirror_gate(monkeypatch, tmp_path):
+    store, _worktree, shared_path, local_path, context = _reproduction_only_split_mirror_fixture(
+        monkeypatch, tmp_path
+    )
+    MODULE._quarantine_shared_context(
+        store, shared_path, RuntimeError("shared and worktree task context mirrors disagree")
+    )
+    private_raw = local_path.read_bytes()
+
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert recovered["ok"] is True
+    assert recovered["verified"] == 1
+    assert recovered["quarantined"] == []
+    assert store.active_task_quarantines(context["key"]) == []
+    assert shared_path.read_bytes() == local_path.read_bytes() == private_raw
+    assert json.loads(private_raw)["childMayEditFiles"] is False
+    repeated = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert repeated["ok"] is True
+    assert repeated["quarantined"] == []
+    assert shared_path.read_bytes() == private_raw
+
+
+def test_context_sync_updates_same_binding_reproduction_only_mirrors(monkeypatch, tmp_path):
+    store, _worktree, shared_path, local_path, _context = _reproduction_only_split_mirror_fixture(
+        monkeypatch, tmp_path
+    )
+
+    result = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True
+    assert shared_path.read_bytes() == local_path.read_bytes()
+    assert MODULE.write_task_context.last_collision is None
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "private-edit-permission",
+        "private-probe-level",
+        "shared-damage",
+        "artifact-bytes",
+        "active-owner",
+    ],
+)
+def test_stale_reproduction_only_mirror_repair_keeps_unproven_gate(monkeypatch, tmp_path, tamper):
+    store, _worktree, shared_path, local_path, context = _reproduction_only_split_mirror_fixture(
+        monkeypatch, tmp_path
+    )
+    quarantined = MODULE._quarantine_shared_context(
+        store, shared_path, RuntimeError("shared and worktree task context mirrors disagree")
+    )
+    if tamper.startswith("private-"):
+        changed = dict(context)
+        if tamper == "private-edit-permission":
+            changed["childMayEditFiles"] = True
+        else:
+            changed["probeLevel"] = "REPRODUCED_VALIDATED"
+        MODULE._atomic_json(local_path, changed)
+    elif tamper == "shared-damage":
+        MODULE._atomic_private_bytes(shared_path, b"{}\n")
+    elif tamper == "artifact-bytes":
+        artifact_path = Path(quarantined["artifactPath"])
+        artifact = json.loads(artifact_path.read_bytes())
+        artifact["originalBytesBase64"] = base64.b64encode(b"{}\n").decode("ascii")
+        MODULE._atomic_private_json(artifact_path, artifact)
+    else:
+        monkeypatch.setattr(
+            MODULE, "_active_task_turn_for_result", lambda _candidate: {"turnId": "active-turn"}
+        )
+    shared_raw = shared_path.read_bytes()
+    private_raw = local_path.read_bytes()
+    gates = store.active_task_quarantines(context["key"])
+
+    MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert shared_path.read_bytes() == shared_raw
+    assert local_path.read_bytes() == private_raw
+    assert store.active_task_quarantines(context["key"]) == gates
 
 
 def test_historical_private_context_does_not_supersede_a_newer_pending_intent(
@@ -19571,7 +19723,9 @@ def test_merged_pr_authority_overrides_stale_published_or_followup_result(
     assert store.validation_followup_candidates() == []
 
 
-def _refresh_reproduction_certificate(result_path: Path) -> str:
+def _refresh_reproduction_certificate(
+    result_path: Path, *, store: RadarLedger | None = None
+) -> str:
     """Re-sign a legal fixture after its controller-owned result fields change."""
 
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
@@ -19630,7 +19784,7 @@ def _refresh_reproduction_certificate(result_path: Path) -> str:
     # Keep the controller context bound to the newly issued receipt.  Follow-up
     # fixtures intentionally rebuild this binding instead of relying on a
     # global test bypass.
-    store = RadarLedger(worktree.parent / "ledger.sqlite3")
+    store = store or RadarLedger(worktree.parent / "ledger.sqlite3")
     store.update_intent_probe_metadata(
         str(value.get("taskId") or "intent-1"),
         probe_level="REPRODUCED_VALIDATED",
@@ -20116,8 +20270,11 @@ def test_repaired_implementation_context_rearms_same_result_once(tmp_path, prior
     assert recovery["followupDigest"] == attempt_digest
 
 
-def test_implementation_followup_reserve_repairs_context_before_delivery(tmp_path):
-    store, worktree, _result_path = _controller_commit_result(tmp_path)
+def test_implementation_followup_reserve_repairs_context_before_delivery(monkeypatch, tmp_path):
+    store, worktree, _result_path = _controller_commit_result(
+        tmp_path, worktree=MODULE.managed_worktree_path("intent-1", "a/b")
+    )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
     managed = ManagedLedger(store.path, ensure_schema=True)
     provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
     result_digest = str(provenance["probeReceipt"]["resultDigest"])
@@ -20141,6 +20298,8 @@ def test_implementation_followup_reserve_repairs_context_before_delivery(tmp_pat
     )
     stale.pop("reproductionReceipt", None)
     MODULE._atomic_json(context_path, stale)
+    shared_path = MODULE._atomic_shared_context_json(stale["issueUrl"], stale)
+    MODULE._verified_shared_task_context(shared_path)
 
     reserved = MODULE.implementation_followup_reserve(
         SimpleNamespace(
@@ -20156,6 +20315,10 @@ def test_implementation_followup_reserve_repairs_context_before_delivery(tmp_pat
     assert refreshed["probeLevel"] == "REPRODUCED_VALIDATED"
     assert refreshed["childMayEditFiles"] is True
     assert refreshed["resultDigest"] == candidate["resultDigest"]
+    assert (
+        MODULE.shared_context_path(refreshed["issueUrl"]).read_bytes() == context_path.read_bytes()
+    )
+    assert MODULE.write_task_context.last_collision is None
 
 
 def test_implementation_followup_reserve_forwards_exact_identity(monkeypatch, tmp_path):
@@ -28709,7 +28872,9 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tm
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         missing_quality=("regression_test_verified", "relevant_tests_green"),
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
     )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
     ui_root = worktree / "ui"
     ui_root.mkdir()
     (ui_root / "package-lock.json").write_text("{}\n", encoding="utf-8")
@@ -28725,7 +28890,7 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tm
     ]
     raw = json.dumps(value).encode()
     result_path.write_bytes(raw)
-    digest = _refresh_reproduction_certificate(result_path)
+    digest = _refresh_reproduction_certificate(result_path, store=store)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -28759,6 +28924,10 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tm
     assert [item["kind"] for item in executed] == ["npm_locked_install"]
     assert reserved["prefetch"][0]["kind"] == "npm_locked_install"
     assert "系统已按项目锁文件补齐缺失依赖" in reserved["prompt"]
+    context_path = worktree / ".oss-pr-radar" / "task-context.json"
+    context = json.loads(context_path.read_bytes())
+    assert MODULE.shared_context_path(context["issueUrl"]).read_bytes() == context_path.read_bytes()
+    assert MODULE.write_task_context.last_collision is None
 
 
 def test_validation_followup_prefetch_failure_is_blocked_without_delivery(monkeypatch, tmp_path):

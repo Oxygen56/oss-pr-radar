@@ -2924,6 +2924,29 @@ def _verified_private_task_context(
     return _verified_shared_task_context_from_raw(bootstrap, raw, source_stat)
 
 
+def _task_context_authorization_projection(
+    verified_receipt: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Serialize the existing child boundary from controller-verified reproduction."""
+
+    reproduction_only = verified_receipt is None
+    return {
+        "taskStage": "REPRODUCTION_REQUIRED" if reproduction_only else "IMPLEMENTATION_READY",
+        "probeLevel": "UNVERIFIED" if reproduction_only else REPRODUCED_VALIDATED,
+        "allowedActions": (
+            ["read_issue", "read_repo", "run_reproduction_probe", "write_structured_result"]
+            if reproduction_only
+            else ["read_issue", "read_repo", "edit_files", "run_tests", "write_structured_result"]
+        ),
+        "taskMode": "reproduction_only" if reproduction_only else "implementation",
+        "childMayEditFiles": not reproduction_only,
+        "childMayCommit": False,
+        "childMayPush": False,
+        "childMayCreatePR": False,
+        "childMayComment": False,
+    }
+
+
 def _private_context_matches_current_ledger(
     store: RadarLedger,
     context: dict[str, Any],
@@ -2938,6 +2961,9 @@ def _private_context_matches_current_ledger(
     )
     if current is None or not _task_context_has_exact_ledger_binding(store, context):
         return False
+    current = dict(current) | _task_context_authorization_projection(
+        current.get("reproductionReceipt")
+    )
     for field, value in current.items():
         observed = context.get(field)
         if field == "prFollowup" and isinstance(observed, dict) and isinstance(value, dict):
@@ -3911,6 +3937,9 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
         try:
             verify_orphan_identity(context)
             if shared_cleanup_path is not None:
+                _refresh_current_task_shared_mirror(
+                    store, path=shared_cleanup_path, context=context
+                )
                 cleared = _clear_exact_missing_publication_receipt_quarantine(
                     store,
                     path=shared_cleanup_path,
@@ -6986,6 +7015,152 @@ def _quarantine_shared_context(
     }
 
 
+def _refresh_current_task_shared_mirror(
+    store: RadarLedger,
+    *,
+    path: Path,
+    context: dict[str, Any],
+    _opportunity_guard_held: bool = False,
+) -> bool:
+    """Refresh only a verified current task's stale, same-binding singleton."""
+
+    key = str(context.get("key") or "")
+    issue_url = str(context.get("issueUrl") or "")
+    binding = _task_context_binding(context)
+    if (
+        binding is None
+        or _normalized_system_path(path) != _normalized_system_path(shared_context_path(issue_url))
+        or _active_task_turn_for_result(context) is not None
+    ):
+        return False
+    try:
+        with ExitStack() as guard:
+            if not _opportunity_guard_held:
+                guard.enter_context(
+                    opportunity_action_guard(ledger_action_guard_root(store.path), key)
+                )
+            current = store.task_context(
+                issue_url=issue_url,
+                thread_id=str(context.get("threadId") or ""),
+                worktree_path=str(context.get("worktreePath") or ""),
+            )
+            if current is None or _task_context_binding(current) != binding:
+                return False
+            with _task_worktree_private_descriptor(context) as opened:
+                private_raw = _read_task_context_bytes_from_private(opened)
+                private_stat = os.stat(
+                    "task-context.json", dir_fd=opened.private_fd, follow_symlinks=False
+                )
+                private_context, _updated_at = _verified_private_task_context(
+                    opened.worktree, private_raw, private_stat
+                )
+                if private_context != context or not _private_context_matches_current_ledger(
+                    store, private_context
+                ):
+                    return False
+                shared_raw, shared_stat, shared_path = _read_shared_context_file(path)
+                shared_context, _updated_at = _verified_shared_task_context_from_raw(
+                    shared_path, shared_raw, shared_stat, require_matching_private_mirror=False
+                )
+                if _task_context_binding(shared_context) != binding:
+                    return False
+                gates = store.active_task_quarantines(key)
+                gate = None
+                source_digest = hashlib.sha256(shared_raw).hexdigest()
+                if gates:
+                    if len(gates) != 1:
+                        return False
+                    gate = gates[0]
+                    payload = gate.get("payload")
+                    if (
+                        gate.get("reason") != "SHARED_CONTEXT_INVALID"
+                        or not isinstance(payload, dict)
+                        or payload.get("error")
+                        != "shared and worktree task context mirrors disagree"
+                        or payload.get("issueUrl") != issue_url
+                        or payload.get("originalPath") != str(path)
+                    ):
+                        return False
+                    source_digest = str(payload.get("originalBytesSha256") or "")
+                    artifact_identity = sha256_json(
+                        {
+                            "key": key,
+                            "reason": "SHARED_CONTEXT_INVALID",
+                            "originalPath": str(path),
+                            "originalBytesSha256": source_digest,
+                        }
+                    )
+                    artifact_path = shared_context_quarantine_root() / f"q-{artifact_identity}.json"
+                    if payload.get("artifactPath") != str(artifact_path):
+                        return False
+                    artifact_fd, _artifact_root, handles = (
+                        _open_shared_context_quarantine_directory(create=False)
+                    )
+                    try:
+                        artifact, _artifact_raw = _read_context_quarantine_artifact_at(
+                            artifact_fd, artifact_path
+                        )
+                    finally:
+                        for fd in reversed(handles):
+                            os.close(fd)
+                    if any(
+                        artifact.get(name) != expected
+                        for name, expected in {
+                            "schemaVersion": "shared-context-quarantine-v1",
+                            "key": key,
+                            "issueUrl": issue_url,
+                            "reason": "SHARED_CONTEXT_INVALID",
+                            "originalPath": str(path),
+                            "originalBytesSha256": source_digest,
+                            "error": payload["error"],
+                        }.items()
+                    ):
+                        return False
+                    historical_raw = base64.b64decode(
+                        str(artifact.get("originalBytesBase64") or ""), validate=True
+                    )
+                    if hashlib.sha256(
+                        historical_raw
+                    ).hexdigest() != source_digest or shared_raw not in (
+                        historical_raw,
+                        private_raw,
+                    ):
+                        return False
+                    historical, _updated_at = _verified_shared_task_context_from_raw(
+                        path, historical_raw, shared_stat, require_matching_private_mirror=False
+                    )
+                    if _task_context_binding(historical) != binding:
+                        return False
+                if (
+                    _active_task_turn_for_result(context) is not None
+                    or _read_task_context_bytes_from_private(opened) != private_raw
+                    or not _private_context_matches_current_ledger(store, private_context)
+                    or _read_shared_context_file(path)[0] != shared_raw
+                ):
+                    return False
+                if shared_raw != private_raw:
+                    _atomic_shared_context_json(issue_url, private_context)
+                _verified_shared_task_context(path)
+                if gate is not None:
+                    store.clear_task_quarantine_exact(
+                        key,
+                        reason="SHARED_CONTEXT_INVALID",
+                        dedupe_key=str(gate["dedupeKey"]),
+                        evidence={
+                            "revalidated": True,
+                            "repair": "CURRENT_TASK_SHARED_MIRROR_REFRESHED",
+                            "taskId": context.get("intentId"),
+                            "threadId": context.get("threadId"),
+                            "contextDigest": context.get("contextDigest"),
+                            "originalBytesSha256": source_digest,
+                            "privateBytesSha256": hashlib.sha256(private_raw).hexdigest(),
+                        },
+                    )
+                return True
+    except (OSError, RuntimeError, ValueError, TypeError, sqlite3.Error):
+        return False
+
+
 def _clear_exact_superseded_missing_worktree_quarantines(
     store: RadarLedger,
     *,
@@ -8265,6 +8440,7 @@ def write_task_context(
     thread_id: str,
     cwd: Path,
     prepared_followup_head: str | None = None,
+    _opportunity_guard_held: bool = False,
 ) -> Path:
     context = store.task_context(
         issue_url=issue_url,
@@ -8325,8 +8501,6 @@ def write_task_context(
             prior_context = prior_value
     managed = _is_managed_worktree(cwd)
     project_root = GITHUB_ROOT.resolve() if managed else cwd.resolve()
-    raw_task_stage = str(context.get("taskStage") or "REPRODUCTION_REQUIRED")
-    raw_probe_level = str(context.get("probeLevel") or "UNVERIFIED")
     tombstone_continuation_bound = context.get("codePathTombstoneContinuationHeadSha") is not None
     context_authorization_active = (
         context.get("intentStatus") in {"DISPATCHED", "COMPLETED"}
@@ -8405,12 +8579,8 @@ def write_task_context(
         context.pop("codePathTombstoneContinuationHeadSha", None)
     if verified_receipt is not None:
         context["reproductionReceipt"] = verified_receipt
-        raw_task_stage = "IMPLEMENTATION_READY"
-        raw_probe_level = REPRODUCED_VALIDATED
-    else:
-        raw_task_stage = "REPRODUCTION_REQUIRED"
-        raw_probe_level = "UNVERIFIED"
-    task_stage = raw_task_stage
+    authorization_projection = _task_context_authorization_projection(verified_receipt)
+    task_stage = authorization_projection["taskStage"]
     reproduction_only = task_stage == "REPRODUCTION_REQUIRED"
     tombstone_continuation_head = context.pop("codePathTombstoneContinuationHeadSha", None)
     if "codePathTombstoneReceipt" in context:
@@ -8488,11 +8658,6 @@ def write_task_context(
                 context.pop("codePathTombstoneReceipt", None)
         else:
             context["codePaths"] = _prepare_indexable_worktree_paths(cwd, declared_code_paths)
-    allowed_actions = (
-        ["read_issue", "read_repo", "run_reproduction_probe", "write_structured_result"]
-        if reproduction_only
-        else ["read_issue", "read_repo", "edit_files", "run_tests", "write_structured_result"]
-    )
     payload = {
         "schemaVersion": TASK_CONTEXT_SCHEMA,
         **context,
@@ -8507,15 +8672,7 @@ def write_task_context(
         "networkPolicy": "controller_snapshot_only",
         "childMayRequestApproval": False,
         "childMayWriteGitMetadata": False,
-        "taskStage": task_stage,
-        "probeLevel": raw_probe_level,
-        "allowedActions": allowed_actions,
-        "taskMode": "reproduction_only" if reproduction_only else "implementation",
-        "childMayEditFiles": not reproduction_only,
-        "childMayCommit": False,
-        "childMayPush": False,
-        "childMayCreatePR": False,
-        "childMayComment": False,
+        **authorization_projection,
     }
     payload["contextDigest"] = _task_context_digest(context, effective_prepared_head)
     bootstrap_path = None
@@ -8560,7 +8717,12 @@ def write_task_context(
                 )
             elif existing is not None:
                 existing_path, existing_raw = existing
-                if existing_raw != payload_raw:
+                if existing_raw != payload_raw and not _refresh_current_task_shared_mirror(
+                    store,
+                    path=existing_path,
+                    context=payload,
+                    _opportunity_guard_held=_opportunity_guard_held,
+                ):
                     try:
                         existing_value = json.loads(existing_raw)
                     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -12346,6 +12508,7 @@ def implementation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
             issue_url=str(candidate["issueUrl"]),
             thread_id=str(candidate["threadId"]),
             cwd=Path(candidate["worktreePath"]),
+            _opportunity_guard_held=True,
         )
         context = json.loads(context_path.read_text(encoding="utf-8"))
         if (
@@ -18406,6 +18569,7 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
                 issue_url=enriched["issueUrl"],
                 thread_id=enriched["threadId"],
                 cwd=Path(enriched["worktreePath"]),
+                _opportunity_guard_held=True,
             )
             _validation_result_digest(enriched)
             reserved = store.reserve_validation_followup(
