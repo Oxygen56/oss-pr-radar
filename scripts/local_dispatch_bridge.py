@@ -16106,23 +16106,25 @@ def _completed_implementation_followup_attempt_digest(
     return None
 
 
-def _controller_commit_result_pending_ingestion(
+def _completed_controller_handoff_evidence(
     store: RadarLedger,
     candidate: dict[str, Any],
     *,
     worktree: Path,
-) -> bool:
-    """Recognize an exact completed commit without rewriting its bound context."""
+    result_context_digest: str | None = None,
+) -> dict[str, Any] | None:
+    """Authenticate one completed native implementation handoff without writing."""
 
     if (
         candidate.get("stage") != "DISPATCHED"
         or not _is_managed_worktree(worktree)
         or _active_task_turn_for_result(candidate)
     ):
-        return False
+        return None
     try:
         with _task_worktree_private_descriptor(candidate) as opened:
-            value = json.loads(_read_task_result_bytes_from_private(opened))
+            result_raw = _read_task_result_bytes_from_private(opened)
+            value = json.loads(result_raw)
             context_raw = _read_task_context_bytes_from_private(opened)
             context = json.loads(context_raw)
             context_stat = os.stat(
@@ -16131,7 +16133,7 @@ def _controller_commit_result_pending_ingestion(
                 follow_symlinks=False,
             )
         if not isinstance(value, dict) or not isinstance(context, dict):
-            return False
+            return None
         task_id = str(candidate.get("intentId") or "")
         issue_url = str(candidate.get("issueUrl") or "")
         thread_id = str(candidate.get("threadId") or "")
@@ -16143,15 +16145,16 @@ def _controller_commit_result_pending_ingestion(
             "worktreePath": str(worktree),
         }
         if any(value.get(key) != expected_value for key, expected_value in expected.items()):
-            return False
+            return None
         if any(
             context.get(key) != expected_value
             for key, expected_value in expected.items()
             if key != "schemaVersion"
         ):
-            return False
-        if value.get("contextDigest") != context.get("contextDigest"):
-            return False
+            return None
+        expected_digest = result_context_digest or context.get("contextDigest")
+        if value.get("contextDigest") != expected_digest:
+            return None
         if (
             ("taskId" in value and value.get("taskId") != task_id)
             or context.get("intentId") != task_id
@@ -16160,8 +16163,9 @@ def _controller_commit_result_pending_ingestion(
             or context.get("stage") != "DISPATCHED"
             or context.get("intentStatus") != "DISPATCHED"
             or context.get("prFollowup") is not None
+            or context.get("publicationReceipt") is not None
         ):
-            return False
+            return None
 
         managed_ledger = ManagedLedger(store.path, ensure_schema=False)
         managed_task = managed_ledger.read_task(task_id)
@@ -16173,11 +16177,11 @@ def _controller_commit_result_pending_ingestion(
             or managed_task.get("worktree_path") != str(worktree)
             or managed_task.get("state") != "IMPLEMENTATION_READY"
         ):
-            return False
+            return None
         issue_match = ISSUE_URL.fullmatch(issue_url)
         reproduction_receipt = context.get("reproductionReceipt")
         if issue_match is None or not isinstance(reproduction_receipt, dict):
-            return False
+            return None
         receipt_digest = str(reproduction_receipt.get("receiptDigest") or "")
         durable_receipt = (
             managed_ledger.implementation_authorization_receipt(
@@ -16192,7 +16196,7 @@ def _controller_commit_result_pending_ingestion(
             else None
         )
         if not receipt_digest or durable_receipt is None or reproduction_receipt != durable_receipt:
-            return False
+            return None
 
         verified_context, _verified_at = _verified_private_context_with_singleton_guard(
             store,
@@ -16201,7 +16205,11 @@ def _controller_commit_result_pending_ingestion(
             context_stat,
         )
         if verified_context != context:
-            return False
+            return None
+        if result_context_digest is not None and not _private_context_matches_current_ledger(
+            store, context
+        ):
+            return None
 
         delivery_token = str(context.get("resultDigest") or "")
         delivery_attempt_digest = _completed_implementation_followup_attempt_digest(
@@ -16211,7 +16219,7 @@ def _controller_commit_result_pending_ingestion(
             worktree=worktree,
         )
         if delivery_attempt_digest is None:
-            return False
+            return None
         delivery_kind = "implementation-followup"
         turn_receipt_key = _task_turn_delivery_file_key(
             delivery_kind=delivery_kind,
@@ -16236,44 +16244,209 @@ def _controller_commit_result_pending_ingestion(
             or not isinstance(turn_receipt.get("turnId"), str)
             or not turn_receipt["turnId"]
         ):
-            return False
-        if (
-            value.get("stage") != "FIX_READY"
-            or value.get("handoffMode") != "controller_commit_complete"
-        ):
-            return False
-        commit_sha = str(value.get("commitSha") or "")
-        if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
-            return False
+            return None
+        if value.get("stage") != "FIX_READY":
+            return None
+        handoff_mode = value.get("handoffMode")
         head_sha = command(["git", "rev-parse", "HEAD"], cwd=worktree)
-        if commit_sha != head_sha or command(["git", "status", "--porcelain"], cwd=worktree):
-            return False
-        actual_commit_files = _validated_changed_files(
-            [
-                line
-                for line in command(
-                    ["git", "show", "--pretty=format:", "--name-only", "HEAD"],
-                    cwd=worktree,
-                ).splitlines()
-                if line
-            ]
-        )
-        if actual_commit_files != _validated_changed_files(
-            value.get("controllerCommitChangedFiles")
-        ):
-            return False
-        if actual_commit_files != _validated_changed_files(value.get("changedFiles")):
-            return False
+        changed_files = _validated_changed_files(value.get("changedFiles"))
         target_base = context.get("targetBase")
-        if target_base is not None:
+        if handoff_mode == "controller_commit_required":
+            if (
+                target_base is None
+                or value.get("commitSha") is not None
+                or value.get("controllerCommitChangedFiles") is not None
+                or value.get("validationInput")
+                or value.get("followupDigest")
+                or not isinstance(value.get("quality"), dict)
+                or not changed_files
+            ):
+                return None
             validated_base = validate_target_base(target_base)
-            command(
-                ["git", "merge-base", "--is-ancestor", validated_base["sha"], head_sha],
-                cwd=worktree,
+            if (
+                head_sha != validated_base["sha"]
+                or context.get("selectedBaseSha") != head_sha
+                or reproduction_receipt.get("baseSha") != head_sha
+                or _local_changed_files(worktree) != changed_files
+            ):
+                return None
+            branch = str(value.get("branch") or "").strip()
+            commit_message = str(value.get("commitMessage") or "").strip()
+            if (
+                not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{2,119}", branch)
+                or not public_branch_is_safe(branch)
+                or not commit_message
+                or "\n" in commit_message
+                or len(commit_message) > 120
+                or not public_text_is_safe(commit_message, "")
+            ):
+                return None
+        elif handoff_mode == "controller_commit_complete":
+            commit_sha = str(value.get("commitSha") or "")
+            if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+                return None
+            if commit_sha != head_sha or command(["git", "status", "--porcelain"], cwd=worktree):
+                return None
+            actual_commit_files = _validated_changed_files(
+                [
+                    line
+                    for line in command(
+                        ["git", "show", "--pretty=format:", "--name-only", "HEAD"],
+                        cwd=worktree,
+                    ).splitlines()
+                    if line
+                ]
             )
-        return True
+            if (
+                actual_commit_files
+                != _validated_changed_files(value.get("controllerCommitChangedFiles"))
+                or actual_commit_files != changed_files
+            ):
+                return None
+            if target_base is not None:
+                validated_base = validate_target_base(target_base)
+                command(
+                    ["git", "merge-base", "--is-ancestor", validated_base["sha"], head_sha],
+                    cwd=worktree,
+                )
+        else:
+            return None
+        return {
+            "intentId": task_id,
+            "threadId": thread_id,
+            "worktreePath": str(worktree),
+            "previousContextDigest": value["contextDigest"],
+            "contextDigest": context["contextDigest"],
+            "sourceRawDigest": hashlib.sha256(result_raw).hexdigest(),
+            "headSha": head_sha,
+            "targetBase": target_base,
+            "changedFiles": changed_files,
+            "handoffMode": handoff_mode,
+            "reproductionReceiptDigest": receipt_digest,
+            "deliveryToken": delivery_token,
+            "deliveryAttemptDigest": delivery_attempt_digest,
+            "turnId": turn_receipt["turnId"],
+        }
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
-        return False
+        return None
+
+
+def _controller_commit_result_pending_ingestion(
+    store: RadarLedger,
+    candidate: dict[str, Any],
+    *,
+    worktree: Path,
+) -> bool:
+    """Preserve the bound context until a completed native handoff is ingested."""
+    return _completed_controller_handoff_evidence(store, candidate, worktree=worktree) is not None
+
+
+def _implementation_result_context_refresh_proof(
+    store: RadarLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    worktree: Path,
+    raw: bytes,
+) -> dict[str, Any] | None:
+    """Recover only the completed RAW handoff invalidated by active audit refresh."""
+    if (
+        value.get("handoffMode") != "controller_commit_required"
+        or context.get("codePathTombstoneReceipt") is not None
+        or _controller_policy_verification(context) is None
+        or _task_live_audit_refresh_due(context)
+    ):
+        return None
+    old_digest = str(value.get("contextDigest") or "")
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", old_digest) is None
+        or old_digest == context.get("contextDigest")
+        or context.get("contextDigest") != _task_context_digest(context, None)
+    ):
+        return None
+    handoff = _completed_controller_handoff_evidence(
+        store, candidate, worktree=worktree, result_context_digest=old_digest
+    )
+    if (
+        handoff is None
+        or handoff["sourceRawDigest"] != hashlib.sha256(raw).hexdigest()
+        or handoff["contextDigest"] != context.get("contextDigest")
+        or handoff["targetBase"] != context.get("targetBase")
+        or json.loads(raw) != value
+    ):
+        return None
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT id,event_type,dedupe_key,payload_json,created_at FROM events
+               WHERE opportunity_key=? AND event_type IN (
+                 'AUDIT_PASS','AUDIT_SNAPSHOT','IMPLEMENTATION_FOLLOWUP_SENT')
+               ORDER BY id""",
+            (candidate["key"],),
+        ).fetchall()
+    events = [(dict(row), json.loads(row["payload_json"])) for row in rows]
+    sent = next(
+        (
+            (row, payload)
+            for row, payload in reversed(events)
+            if row["event_type"] == "IMPLEMENTATION_FOLLOWUP_SENT"
+            and payload.get("intentId") == handoff["intentId"]
+            and payload.get("threadId") == handoff["threadId"]
+            and payload.get("worktreePath") == handoff["worktreePath"]
+            and payload.get("attemptDigest") == handoff["deliveryAttemptDigest"]
+            and payload.get("resultDigest") == handoff["deliveryToken"]
+        ),
+        None,
+    )
+    if sent is None:
+        return None
+    audits = [
+        (row, payload)
+        for row, payload in events
+        if row["event_type"] != "IMPLEMENTATION_FOLLOWUP_SENT"
+    ]
+    previous = next(
+        (
+            (row, payload)
+            for row, payload in reversed(audits)
+            if row["id"] < sent[0]["id"]
+            and payload.get("targetBase") == context.get("targetBase")
+            and isinstance(payload.get("liveAudit"), dict)
+            and _task_context_digest(dict(context, liveAudit=payload["liveAudit"]), None)
+            == old_digest
+        ),
+        None,
+    )
+    current = audits[-1] if audits else None
+    if (
+        previous is None
+        or current is None
+        or current[0]["id"] <= sent[0]["id"]
+        or not str(current[0]["dedupe_key"]).startswith(f"{handoff['intentId']}:")
+        or not str(current[0]["dedupe_key"]).endswith(":active-context-refresh")
+        or current[1].get("liveAudit") != context.get("liveAudit")
+        or current[1].get("targetBase") != context.get("targetBase")
+    ):
+        return None
+    evidence = context["liveAudit"]["evidence"]
+    authorization = current[1].get("authorization")
+    if (
+        not isinstance(authorization, dict)
+        or authorization.get("status") != "ALLOW"
+        or authorization.get("evidence_digest") != evidence.get("digest")
+        or evidence.get("complete") is not True
+        or not evidence.get("completeness")
+        or any(status != "COMPLETE" for status in evidence["completeness"].values())
+    ):
+        return None
+    return {
+        **handoff,
+        "reason": "COMPLETED_IMPLEMENTATION_ACTIVE_AUDIT_REFRESH",
+        "previousAuditEventId": previous[0]["id"],
+        "auditEventId": current[0]["id"],
+        "implementationFollowupEventId": sent[0]["id"],
+        "sourceResultBytesBase64": base64.b64encode(raw).decode("ascii"),
+    }
 
 
 def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
@@ -20531,6 +20704,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     validation_deferred: list[dict[str, Any]] = []
     legacy_context_digest_migrations: list[str] = []
     validation_context_rebindings: list[dict[str, Any]] = []
+    implementation_context_rebindings: list[dict[str, Any]] = []
     quarantined: list[dict[str, Any]] = []
     quarantined_already_recorded: list[dict[str, Any]] = []
     work_blocked: list[dict[str, Any]] = []
@@ -21397,7 +21571,53 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     value=value,
                     worktree=result_access.worktree,
                 )
-                if digest_seen and possible_policy_recovery:
+                implementation_context_rebind = _implementation_result_context_refresh_proof(
+                    store,
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    worktree=result_access.worktree,
+                    raw=raw,
+                )
+                if implementation_context_rebind is not None:
+                    with opportunity_action_guard(
+                        ledger_action_guard_root(store.path), str(candidate["key"])
+                    ):
+                        repeated_proof = _implementation_result_context_refresh_proof(
+                            store,
+                            candidate=candidate,
+                            context=context,
+                            value=value,
+                            worktree=result_access.worktree,
+                            raw=raw,
+                        )
+                        if repeated_proof != implementation_context_rebind:
+                            raise RuntimeError("completed implementation handoff changed")
+                        with store.transaction() as connection:
+                            store._event(
+                                connection,
+                                candidate["key"],
+                                "TASK_RESULT_CONTEXT_REFRESH_REBOUND",
+                                sha256_json(implementation_context_rebind),
+                                implementation_context_rebind,
+                                iso_z(datetime.now(UTC)),
+                            )
+                        value = dict(
+                            value,
+                            contextDigest=context["contextDigest"],
+                            taskId=context["intentId"],
+                        )
+                    implementation_context_rebindings.append(
+                        {
+                            "key": candidate["key"],
+                            **{
+                                key: item
+                                for key, item in implementation_context_rebind.items()
+                                if key != "sourceResultBytesBase64"
+                            },
+                        }
+                    )
+                elif digest_seen and possible_policy_recovery:
                     if controller_policy is None:
                         continue
                     value = dict(value)
@@ -22011,6 +22231,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
         result["legacyContextDigestMigrations"] = legacy_context_digest_migrations
     if validation_context_rebindings:
         result["validationContextRebindings"] = validation_context_rebindings
+    if implementation_context_rebindings:
+        result["implementationContextRebindings"] = implementation_context_rebindings
     if work_blocked:
         result["workBlocked"] = work_blocked
     if active_turn_deferred:

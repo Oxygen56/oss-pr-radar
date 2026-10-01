@@ -21450,6 +21450,182 @@ def _record_completed_implementation_followup(
     return attempt_digest
 
 
+def _completed_raw_implementation_result(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+        controller_policy_complete=True,
+        missing_quality=("independent_review_passed",),
+        additional_changed_files=("tests/test_runtime.py",),
+        additional_baseline_files=("tests/test_runtime.py",),
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    selected_base = value["selectedBaseSha"]
+    run_git(worktree, "reset", "--mixed", selected_base)
+    target = {
+        "branch": "main",
+        "defaultBranch": "main",
+        "source": "repository_default",
+        "sha": selected_base,
+    }
+
+    def refresh(digest):
+        audit = {
+            "capturedAt": iso_z(datetime.now(UTC)),
+            "evidence": {
+                "digest": digest,
+                "repo": "a/b",
+                "complete": True,
+                "issue": {"number": 1, "state": "open"},
+                "completeness": {"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
+                "policy": {
+                    "status": "NORMAL",
+                    "digest": digest,
+                    "ai_disclosure": False,
+                    "ai_prohibited": False,
+                },
+            },
+        }
+        store.record_audit_snapshot(
+            "a/b#1",
+            evidence={
+                "liveAudit": audit,
+                "targetBase": target,
+                "authorization": {"status": "ALLOW", "evidence_digest": digest},
+            },
+            dedupe_key="intent-1:" + digest + ":active-context-refresh",
+        )
+        return json.loads(
+            MODULE.write_task_context(
+                store,
+                issue_url="https://github.com/a/b/issues/1",
+                thread_id="thread-1",
+                cwd=worktree,
+            ).read_text(encoding="utf-8")
+        )
+
+    old_context = refresh("a" * 64)
+    assert old_context["reproductionReceipt"]["codePaths"] == ["runtime.py"]
+    value.update(
+        {
+            "contextDigest": old_context["contextDigest"],
+            "targetBase": target,
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "headSha": selected_base,
+        }
+    )
+    value.pop("controllerCommitChangedFiles", None)
+    value.pop("codePaths")
+    result_path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(MODULE, "THREAD_DB", tmp_path / "absent-thread-db")
+    attempt_digest = _record_completed_implementation_followup(store, context=old_context)
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=old_context,
+        attempt_digest=attempt_digest,
+    )
+    return store, worktree, result_path, old_context, refresh
+
+
+def test_context_sync_preserves_completed_raw_implementation_pending_ingestion(
+    monkeypatch, tmp_path
+):
+    store, worktree, result_path, old_context, _refresh = _completed_raw_implementation_result(
+        monkeypatch, tmp_path
+    )
+    result_raw = result_path.read_bytes()
+    context_path = result_path.parent / "task-context.json"
+    context_raw = context_path.read_bytes()
+    selected_base = old_context["targetBase"]["sha"]
+    assert run_git(worktree, "rev-parse", "HEAD") == selected_base
+    assert MODULE._local_changed_files(worktree) == ["runtime.py", "tests/test_runtime.py"]
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True, synced
+    assert synced["errors"] == []
+    assert synced["pendingResultIngestion"] == [{"key": "a/b#1", "threadId": "thread-1"}]
+    assert result_path.read_bytes() == result_raw
+    assert context_path.read_bytes() == context_raw
+    assert run_git(worktree, "rev-parse", "HEAD") == selected_base
+
+
+def test_ingestion_replays_completed_raw_implementation_after_authenticated_audit_refresh(
+    monkeypatch, tmp_path
+):
+    store, worktree, result_path, old_context, refresh = _completed_raw_implementation_result(
+        monkeypatch, tmp_path
+    )
+    raw = result_path.read_bytes()
+    assert "codePaths" not in json.loads(raw)
+    current_context = refresh("b" * 64)
+    assert current_context["contextDigest"] != old_context["contextDigest"]
+    assert result_path.read_bytes() == raw
+    assert current_context["targetBase"] == old_context["targetBase"]
+    proof = MODULE._implementation_result_context_refresh_proof
+    monkeypatch.setattr(
+        MODULE, "_implementation_result_context_refresh_proof", lambda *a, **k: None
+    )
+
+    before = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+
+    assert before["errors"] == [{"key": "a/b#1", "error": "task result context digest mismatch"}]
+    assert before["ingested"] == []
+    assert result_path.read_bytes() == raw
+    monkeypatch.setattr(MODULE, "_implementation_result_context_refresh_proof", proof)
+
+    after = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+
+    assert after["ok"] is True, after
+    assert after["errors"] == []
+    assert after.get("workBlocked", []) == []
+    assert after.get("quarantined", []) == []
+    assert after["ingested"] == [
+        {
+            "key": "a/b#1",
+            "stage": "VALIDATION_PENDING",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+        }
+    ]
+    assert after["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    assert after["publicationRequests"] == []
+    rebind = after["implementationContextRebindings"][0]
+    assert rebind["previousContextDigest"] == old_context["contextDigest"]
+    assert rebind["contextDigest"] == current_context["contextDigest"]
+    assert rebind["sourceRawDigest"] == hashlib.sha256(raw).hexdigest()
+    assert rebind["turnId"] == "turn-implementation-1"
+    assert rebind["changedFiles"] == ["runtime.py", "tests/test_runtime.py"]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["contextDigest"] == current_context["contextDigest"]
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py", "tests/test_runtime.py"]
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py", "tests/test_runtime.py"]
+    assert finalized["quality"]["independent_review_passed"] is False
+    assert finalized["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert run_git(worktree, "rev-parse", "HEAD^") == current_context["targetBase"]["sha"]
+    assert run_git(worktree, "status", "--porcelain") == ""
+    with store.connect() as connection:
+        events = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='TASK_RESULT_CONTEXT_REFRESH_REBOUND'"
+        ).fetchall()
+        assert len(events) == 1
+        recorded = json.loads(events[0][0])
+        assert recorded["sourceRawDigest"] == hashlib.sha256(raw).hexdigest()
+        assert base64.b64decode(recorded["sourceResultBytesBase64"]) == raw
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+    replay = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert replay["ok"] is True, replay
+    assert replay["ingested"] == []
+    assert "implementationContextRebindings" not in replay
+
+
 def test_context_sync_preserves_exact_completed_result_pending_ingestion(monkeypatch, tmp_path):
     managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
     store, _worktree, result_path = _controller_commit_result(
