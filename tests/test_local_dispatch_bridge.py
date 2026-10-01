@@ -1533,7 +1533,15 @@ def test_event_drain_holds_new_issue_when_pr_snapshot_needs_refresh(monkeypatch,
     ]
 
 
-@pytest.mark.parametrize("path_error", ["CODE_PATH_MISSING", "CODE_PATH_SYMLINK"])
+@pytest.mark.parametrize(
+    "path_error",
+    [
+        "CODE_PATH_MISSING",
+        "CODE_PATH_SYMLINK",
+        "SOURCE_DEFAULT_BRANCH_UNAVAILABLE",
+        "PR_FOLLOWUP_BRANCH_IN_USE",
+    ],
+)
 def test_event_drain_isolates_pr_followup_path_error_and_dispatches_next_candidate(
     monkeypatch, tmp_path, path_error
 ):
@@ -8462,6 +8470,75 @@ def test_default_branch_fetch_rejects_non_origin_symbolic_ref(monkeypatch, tmp_p
         MODULE.fetch_default_branch(tmp_path)
 
 
+def test_source_repo_confirms_remote_default_when_origin_head_is_missing(monkeypatch, tmp_path):
+    repository = tmp_path / "repository"
+    remote = tmp_path / "remote.git"
+    repository.mkdir()
+    run_git(repository, "init", "-b", "release/runtime")
+    run_git(repository, "config", "user.name", "Radar Test")
+    run_git(repository, "config", "user.email", "radar@example.com")
+    (repository / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(repository, "add", ".")
+    run_git(repository, "commit", "-m", "chore: baseline")
+    head = run_git(repository, "rev-parse", "HEAD")
+    run_git(tmp_path, "init", "--bare", str(remote))
+    run_git(remote, "symbolic-ref", "HEAD", "refs/heads/release/runtime")
+    run_git(repository, "remote", "add", "origin", "https://github.com/a/b.git")
+    run_git(repository, "config", f"url.{remote}.insteadOf", "https://github.com/a/b.git")
+    run_git(repository, "push", "origin", "HEAD:refs/heads/release/runtime")
+    # get-url expands insteadOf. Keep only identity lookup canonical; every
+    # remote HEAD read, fetch, archive, and checkout below runs real Git.
+    real_command = MODULE.command
+
+    def canonical_origin(args, **kwargs):
+        if args == ["git", "remote", "get-url", "origin"]:
+            return "https://github.com/a/b.git"
+        return real_command(args, **kwargs)
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "command", canonical_origin)
+
+    assert MODULE.source_repo("a/b") == repository
+    assert run_git(repository, "rev-parse", "refs/remotes/origin/release/runtime") == head
+    assert MODULE._target_ref(repository) == "refs/remotes/origin/release/runtime"
+    missing = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+    )
+    assert missing.returncode == 1
+    assert run_git(repository, "status", "--porcelain") == ""
+
+
+@pytest.mark.parametrize(
+    "remote_error",
+    ["fatal: Authentication failed", "fatal: unable to read repository configuration"],
+)
+def test_missing_origin_head_keeps_remote_git_errors_hard(monkeypatch, tmp_path, remote_error):
+    run_git(tmp_path, "init")
+    real_command = MODULE.command
+
+    def failing_remote(args, **kwargs):
+        if args[:2] == ["git", "ls-remote"]:
+            raise RuntimeError(remote_error)
+        return real_command(args, **kwargs)
+
+    monkeypatch.setattr(MODULE, "command", failing_remote)
+
+    with pytest.raises(RuntimeError, match=re.escape(remote_error)) as failure:
+        MODULE.fetch_default_branch(tmp_path)
+    assert MODULE._isolatable_pr_followup_path_error(failure.value) is None
+
+
+def test_missing_origin_head_without_remote_symbolic_head_is_isolatable(monkeypatch, tmp_path):
+    run_git(tmp_path, "init")
+    monkeypatch.setattr(MODULE, "github_git_command", lambda *_args, **_kwargs: "a" * 40 + "\tHEAD")
+
+    with pytest.raises(RuntimeError, match="SOURCE_DEFAULT_BRANCH_UNAVAILABLE"):
+        MODULE.fetch_default_branch(tmp_path)
+
+
 def test_existing_repo_ignores_linked_worktree_candidates(monkeypatch, tmp_path):
     linked = tmp_path / "a-linked"
     linked.mkdir()
@@ -14748,6 +14825,124 @@ def test_prepare_pr_followup_retries_transient_pr_head_fetch(monkeypatch, tmp_pa
     assert len(fetch_attempts) == 2
 
 
+@pytest.mark.parametrize("workspace_missing", [True, False])
+def test_drain_isolates_foreign_branch_during_real_followup_restore_and_continues_validation(
+    monkeypatch, tmp_path, workspace_missing
+):
+    store, expected, head, _pr_url = _published_followup_store(tmp_path / "ledger")
+    github_root = MODULE.GITHUB_ROOT
+    source = github_root / "source"
+    expected.rename(source)
+    remote = tmp_path / "remote.git"
+    run_git(tmp_path, "init", "--bare", str(remote))
+    run_git(source, "config", f"url.{remote}.insteadOf", "https://github.com/a/b.git")
+    run_git(source, "push", "origin", "main:refs/heads/main")
+    run_git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+    run_git(remote, "update-ref", "refs/pull/9/head", head)
+    run_git(source, "switch", "--detach", "main")
+    foreign = github_root / "manual-pr"
+    run_git(source, "worktree", "add", str(foreign), "fix/1-runtime")
+    (foreign / "manual-notes.txt").write_text("keep this manual work\n", encoding="utf-8")
+    if not workspace_missing:
+        run_git(source, "worktree", "add", "--detach", str(expected), head)
+        private = expected / ".oss-pr-radar"
+        private.mkdir(mode=0o700)
+        (private / "task-context.json").write_text("preserve previous input\n", encoding="utf-8")
+    run_git(source, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+    foreign_before = (
+        run_git(foreign, "rev-parse", "HEAD"),
+        run_git(foreign, "branch", "--show-current"),
+        run_git(foreign, "status", "--porcelain"),
+        (foreign / "manual-notes.txt").read_bytes(),
+    )
+    original_failure = subprocess.run(
+        ["git", "branch", "-f", "fix/1-runtime", head],
+        cwd=source,
+        capture_output=True,
+        text=True,
+    )
+    assert original_failure.returncode != 0
+    assert "used by worktree at" in original_failure.stderr
+    assert str(foreign) in original_failure.stderr
+    candidate = store.pr_followup_candidates()[0]
+    real_command = MODULE.command
+
+    def canonical_origin(args, **kwargs):
+        if args == ["git", "remote", "get-url", "origin"]:
+            return "https://github.com/a/b.git"
+        return real_command(args, **kwargs)
+
+    monkeypatch.setattr(MODULE, "command", canonical_origin)
+    monkeypatch.setattr(MODULE, "managed_worktree_path", lambda *_args: expected)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {"candidates": [candidate], "unresolved": [], "restoreRequired": []},
+    )
+    validation = {"key": "a/b#2", "threadId": "validation-thread", "resultDigest": "result"}
+    monkeypatch.setattr(
+        MODULE, "validation_followup_list", lambda _args: {"candidates": [validation]}
+    )
+    monkeypatch.setattr(MODULE, "validation_followup_reserve", lambda _args: {"ok": True})
+    delivered = []
+
+    def deliver(args):
+        delivered.append(args.thread_id)
+        return {"ok": True, "threadId": args.thread_id}
+
+    monkeypatch.setattr(MODULE, "validation_followup_deliver", deliver)
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_deliver",
+        lambda _args: pytest.fail("foreign branch candidate must not be dispatched"),
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(ledger=store.path, project_id="github", owner="test-drain")
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "validation_followup_dispatched"
+    assert result["key"] == validation["key"]
+    assert delivered == [validation["threadId"]]
+    assert result["isolatedFollowups"] == [
+        {"key": candidate["key"], "reason": "PR_FOLLOWUP_BRANCH_IN_USE"}
+    ]
+    assert store.unresolved_pr_followups() == []
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == candidate["wakeDigest"]
+    assert (
+        run_git(foreign, "rev-parse", "HEAD"),
+        run_git(foreign, "branch", "--show-current"),
+        run_git(foreign, "status", "--porcelain"),
+        (foreign / "manual-notes.txt").read_bytes(),
+    ) == foreign_before
+    if workspace_missing:
+        assert not expected.exists()
+    else:
+        assert run_git(expected, "rev-parse", "HEAD") == head
+        assert run_git(expected, "branch", "--show-current") == ""
+        assert (expected / ".oss-pr-radar" / "task-context.json").read_text() == (
+            "preserve previous input\n"
+        )
+
+
+def test_pr_followup_branch_ownership_git_failure_is_not_isolated(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE,
+        "command",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("fatal: bad worktree config")),
+    )
+
+    with pytest.raises(RuntimeError, match="bad worktree config") as failure:
+        MODULE._require_pr_followup_branch_available(tmp_path, "fix/1-runtime", tmp_path)
+
+    assert MODULE._isolatable_pr_followup_path_error(failure.value) is None
+
+
 def test_pr_followup_recreates_a_missing_controller_workspace(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
@@ -14759,6 +14954,7 @@ def test_pr_followup_recreates_a_missing_controller_workspace(monkeypatch, tmp_p
     monkeypatch.setattr(
         MODULE, "source_repo", lambda repo: calls.append(("source", repo)) or source
     )
+    monkeypatch.setattr(MODULE, "_require_pr_followup_branch_available", lambda *_args: None)
 
     def prepare(source_path, *, intent_id, repo):
         calls.append(("prepare", source_path, intent_id, repo))

@@ -256,6 +256,8 @@ PR_FOLLOWUP_ISOLATABLE_PATH_ERRORS = frozenset(
         "CODE_PATH_TOMBSTONE_SYMLINK",
         "CODE_PATH_TOMBSTONE_PARENT_NOT_DIRECTORY",
         "CODE_PATH_TOMBSTONE_PRESENT",
+        "SOURCE_DEFAULT_BRANCH_UNAVAILABLE",
+        "PR_FOLLOWUP_BRANCH_IN_USE",
     }
 )
 
@@ -1658,15 +1660,48 @@ def quiet_command(args: list[str], *, cwd: Path, timeout: int = 300) -> None:
         raise RuntimeError((completed.stderr or "command failed")[:800])
 
 
+def _origin_default_ref(path: Path) -> str:
+    try:
+        return command(
+            ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+            cwd=path,
+            timeout=15,
+        )
+    except RuntimeError as exc:
+        if str(exc) != "command failed":
+            raise
+        # Empty exit 1 can mean a missing alias. Confirm that case before
+        # consulting the remote; repository/transport failures stay hard.
+        missing = subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", "refs/remotes/origin/HEAD"],
+            cwd=path,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if missing.returncode != 1 or missing.stdout or missing.stderr:
+            raise
+    remote_head = github_git_command(
+        ["git", "ls-remote", "--symref", "origin", "HEAD"], cwd=path, timeout=30
+    )
+    branches = [
+        match.group(1)
+        for line in remote_head.splitlines()
+        if (match := re.fullmatch(r"ref: refs/heads/([^\t\r\n]+)\tHEAD", line))
+    ]
+    if len(branches) != 1:
+        raise RuntimeError("SOURCE_DEFAULT_BRANCH_UNAVAILABLE: remote HEAD is not symbolic")
+    branch = branches[0]
+    command(["git", "check-ref-format", f"refs/heads/{branch}"], cwd=path, timeout=15)
+    return f"refs/remotes/origin/{branch}"
+
+
 def _target_ref(path: Path, target_base: dict[str, Any] | None = None) -> str:
     if target_base is not None:
         target = validate_target_base(target_base)
         return f"refs/remotes/origin/{target['branch']}"
-    return command(
-        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
-        cwd=path,
-        timeout=15,
-    )
+    return _origin_default_ref(path)
 
 
 def prewarm_source_repo(path: Path, target_base: dict[str, Any] | None = None) -> None:
@@ -1688,11 +1723,7 @@ def prewarm_source_repo(path: Path, target_base: dict[str, Any] | None = None) -
 def fetch_default_branch(path: Path) -> None:
     """Refresh only the branch used to seed managed task worktrees."""
 
-    default_ref = command(
-        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
-        cwd=path,
-        timeout=15,
-    )
+    default_ref = _origin_default_ref(path)
     prefix = "refs/remotes/origin/"
     if not default_ref.startswith(prefix):
         raise RuntimeError("origin/HEAD does not target an origin branch")
@@ -17421,6 +17452,23 @@ def _upstream_remote(worktree: Path, repo: str) -> str:
     raise RuntimeError("managed worktree has no upstream remote")
 
 
+def _require_pr_followup_branch_available(source: Path, branch: str, worktree: Path) -> None:
+    if not public_branch_is_safe(branch):
+        raise RuntimeError("PR follow-up branch is unsafe")
+    registered = command(["git", "worktree", "list", "--porcelain", "-z"], cwd=source)
+    for record in registered.split("\0\0"):
+        fields = record.split("\0")
+        if f"branch refs/heads/{branch}" not in fields:
+            continue
+        owners = [
+            field.removeprefix("worktree ") for field in fields if field.startswith("worktree ")
+        ]
+        if len(owners) != 1:
+            raise RuntimeError("Git worktree branch ownership is invalid")
+        if Path(owners[0]).resolve() != worktree.resolve():
+            raise RuntimeError(f"PR_FOLLOWUP_BRANCH_IN_USE: {owners[0]}")
+
+
 def _ensure_pr_followup_worktree(candidate: dict[str, Any]) -> Path:
     worktree = Path(candidate["worktreePath"]).resolve()
     if worktree.is_dir():
@@ -17433,6 +17481,7 @@ def _ensure_pr_followup_worktree(candidate: dict[str, Any]) -> Path:
     if worktree != expected:
         raise RuntimeError("PR follow-up missing workspace path is not controller-managed")
     source = source_repo(repo)
+    _require_pr_followup_branch_available(source, str(candidate.get("branch") or ""), worktree)
     recovered = prepare_managed_worktree(source, intent_id=intent_id, repo=repo)
     if recovered != expected:
         raise RuntimeError("PR follow-up workspace recovery path mismatch")
@@ -17643,6 +17692,7 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
     branch = str(candidate.get("branch") or "")
     if not public_branch_is_safe(branch):
         raise RuntimeError("PR follow-up branch is unsafe")
+    _require_pr_followup_branch_available(worktree, branch, worktree)
     remote = _upstream_remote(worktree, repo)
     evidence = candidate.get("evidence") or {}
     needs_base_snapshot = (
@@ -25492,6 +25542,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "threadId": candidate.get("threadId"),
             "delivery": delivered,
             "deferredFollowups": deferred_followups,
+            "isolatedFollowups": isolated_followups,
             "restored": restored_items,
             "rearmed": rearmed,
             "recoveryRetryExhausted": recovery_exhausted,
