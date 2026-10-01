@@ -4,6 +4,7 @@ import gzip
 import importlib.util
 import json
 import os
+import shlex
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -195,6 +196,135 @@ def test_publish_and_restore_verify_manifest(tmp_path):
         == "oss-pr-radar.war-room-outbox.v1"
     )
     assert (restored / "state" / "base_sha.txt").read_text().strip()
+
+
+def state_cli(root: Path, operation: str, *, check: bool = True):
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), operation, "--root", str(root)],
+        cwd=root,
+        check=check,
+        capture_output=True,
+        text=True,
+    )
+
+
+def state_history_repo(tmp_path):
+    root, origin = initialized_repo(tmp_path)
+    git("checkout", "--orphan", "main", cwd=root)
+    (root / "README.md").write_text("main checkout\n", encoding="utf-8")
+    git("add", "README.md", cwd=root)
+    git(
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "main",
+        cwd=root,
+    )
+    git("push", "origin", "main", cwd=root)
+    for generation in range(8):
+        (root / "state" / "seen.json").write_text(
+            json.dumps({"generation": generation}) + "\n", encoding="utf-8"
+        )
+        state_cli(root, "publish")
+        state_cli(root, "restore")
+    return root, origin
+
+
+def shallow_main_checkout(tmp_path: Path, origin: Path, name: str) -> Path:
+    root = tmp_path / name
+    git(
+        "clone",
+        "--depth=1",
+        "--single-branch",
+        "--branch",
+        "main",
+        origin.as_uri(),
+        str(root),
+        cwd=tmp_path,
+    )
+    return root
+
+
+def test_shallow_main_checkout_restores_and_publishes_without_state_history(tmp_path):
+    _seed, origin = state_history_repo(tmp_path)
+    history = MODULE.git("rev-list", "radar-state", cwd=origin).stdout.splitlines()
+    assert len(history) == 8
+    old_blob = MODULE.git("rev-parse", f"{history[-1]}:seen.json", cwd=origin).stdout.strip()
+    root = shallow_main_checkout(tmp_path, origin, "fresh-main")
+    main_head = MODULE.git("rev-parse", "HEAD", cwd=root).stdout.strip()
+    fetch_head = root / ".git" / "FETCH_HEAD"
+    fetch_head.write_bytes(b"unrelated fetch remains intact\n")
+
+    state_cli(root, "restore")
+
+    assert (root / "state" / "seen.json").read_bytes() == b'{"generation": 7}\n'
+    assert (root / "state" / "base_sha.txt").read_text() == history[0]
+    ref = MODULE.isolated_state_ref("radar-state")
+    assert MODULE.git("rev-parse", ref, cwd=root).stdout.strip() == history[0]
+    assert MODULE.git("rev-list", ref, cwd=root).stdout.splitlines() == [history[0]]
+    for old_object in (*history[1:], old_blob):
+        assert MODULE.git("cat-file", "-e", old_object, cwd=root, check=False).returncode != 0
+    assert fetch_head.read_bytes() == b"unrelated fetch remains intact\n"
+
+    (root / "state" / "seen.json").write_text('{"generation": 8}\n', encoding="utf-8")
+    state_cli(root, "publish")
+
+    remote_history = MODULE.git("rev-list", "radar-state", cwd=origin).stdout.splitlines()
+    assert remote_history[1:] == history
+    assert MODULE.git("rev-parse", f"{remote_history[0]}^", cwd=origin).stdout.strip() == history[0]
+    assert MODULE.git("show", "radar-state:seen.json", cwd=origin).stdout == '{"generation": 8}\n'
+    manifest = json.loads(MODULE.git("show", f"radar-state:{MODULE.MANIFEST}", cwd=origin).stdout)
+    raw = b'{"generation": 8}\n'
+    assert manifest["files"]["seen.json"] == {"sha256": MODULE.digest_bytes(raw), "bytes": len(raw)}
+    assert not (origin / "shallow").exists()
+    assert MODULE.git("rev-parse", "HEAD", cwd=root).stdout.strip() == main_head
+    assert fetch_head.read_bytes() == b"unrelated fetch remains intact\n"
+
+
+def test_shallow_state_publish_rejects_stale_restore_and_concurrent_push(tmp_path):
+    _seed, origin = state_history_repo(tmp_path)
+    first = shallow_main_checkout(tmp_path, origin, "first")
+    stale = shallow_main_checkout(tmp_path, origin, "stale")
+    for root in (first, stale):
+        state_cli(root, "restore")
+    (first / "state" / "seen.json").write_text('{"winner": "first"}\n', encoding="utf-8")
+    (stale / "state" / "seen.json").write_text('{"winner": "stale"}\n', encoding="utf-8")
+    state_cli(first, "publish")
+    first_tip = MODULE.git("rev-parse", "radar-state", cwd=origin).stdout.strip()
+
+    result = state_cli(stale, "publish", check=False)
+
+    assert result.returncode != 0
+    assert "state branch changed since restore" in result.stderr
+    assert MODULE.git("rev-parse", "radar-state", cwd=origin).stdout.strip() == first_tip
+
+    state_cli(first, "restore")
+    state_cli(stale, "restore")
+    (first / "state" / "seen.json").write_text('{"winner": "concurrent"}\n', encoding="utf-8")
+    (stale / "state" / "seen.json").write_text('{"winner": "racing"}\n', encoding="utf-8")
+    hook = stale / ".git" / "hooks" / "pre-push"
+    hook.write_text(
+        "#!/bin/sh\n"
+        "unset $(git rev-parse --local-env-vars)\n"
+        f"exec {shlex.quote(sys.executable)} {shlex.quote(str(SCRIPT))} "
+        f"publish --root {shlex.quote(str(first))}\n",
+        encoding="utf-8",
+    )
+    hook.chmod(0o755)
+
+    result = state_cli(stale, "publish", check=False)
+
+    assert result.returncode != 0
+    concurrent_tip = MODULE.git("rev-parse", "radar-state", cwd=origin).stdout.strip()
+    assert concurrent_tip != first_tip
+    assert MODULE.git("rev-parse", f"{concurrent_tip}^", cwd=origin).stdout.strip() == first_tip
+    assert (
+        MODULE.git("show", "radar-state:seen.json", cwd=origin).stdout
+        == '{"winner": "concurrent"}\n'
+    )
 
 
 def test_controller_feedback_uses_an_independent_integrity_branch(tmp_path):
