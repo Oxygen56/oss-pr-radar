@@ -115,7 +115,13 @@ def _check_action_basis(check: dict[str, Any], changed_files: set[str]) -> str |
         term in name for suffix in changed_suffixes for term in LANGUAGE_CHECK_TERMS.get(suffix, ())
     ):
         return "unattributed_language_check"
-    if name in GENERIC_CODE_CHECK_NAMES and any(
+    # Reusable workflows prefix the test job with the calling workflow name.
+    # Keep this as an unattributed diagnosis request, like a plain test job.
+    workflow_name, _, job_name = str(check.get("name") or "").rpartition("/")
+    reusable_test_job = bool(
+        workflow_name.strip() and _normalized_check_name({"name": job_name}) == "run tests"
+    )
+    if (name in GENERIC_CODE_CHECK_NAMES or reusable_test_job) and any(
         suffix in LANGUAGE_CHECK_TERMS for suffix in changed_suffixes
     ):
         return "unattributed_code_check"
