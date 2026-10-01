@@ -28230,6 +28230,39 @@
     ],
     "why": "Issue provides detailed reproduction steps, log evidence, and a suspected root cause (automatic agent-team initialization) with a workaround flag. The leak occurs during startup with no user input, making it a clear performance bug in the CLI initialization path."
   },
+  "400849ec12b3bc77fc825d9c88b0f450803e27849adbf0912bf7b2baed48b622": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "services/sarvam/stt.py: pass through non-Language language strings as language_code in constructor and _with_derived_language_code (or warn)",
+      "services/sarvam/stt.py: add base-language entries (e.g. Language.HI -> hi-IN, Language.OR -> od-IN legacy / or-IN realtime) to language_to_sarvam_language and language_to_sarvam_realtime_language"
+    ],
+    "risks": [
+      "Behavior change for unmapped strings could send invalid codes to Sarvam; server-side rejection is acceptable per issue but should be verified",
+      "Odia code differs between legacy (od-IN) and realtime (or-IN) endpoints; must not conflate",
+      "Maintainer may prefer warning-only over pass-through for unrecognized strings"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting SarvamRealtimeSTTService(language='ne-IN') builds ws URL with language_code=ne-IN",
+      "Add test asserting runtime _update_settings(STTSettings(language='ne-IN')) sends config.update with language_code=ne-IN",
+      "Add test asserting Language.HI -> hi-IN and Language.OR -> od-IN (legacy) / or-IN (realtime) in both maps",
+      "Run targeted sarvam STT unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer pass-through vs warning-only for unrecognized language strings"
+    ],
+    "why": "Issue provides a concrete, reproducible defect with exact code anchors (services/sarvam/stt.py constructor and _with_derived_language_code), expected vs actual output, and a no-network stub reproduction. Root cause is clear: SarvamRealtimeSTTService only derives language_code via _as_language(), dropping unrecognized strings, and both STT maps omit base-language entries. No open PR or duplicate issue covers it."
+  },
   "400dc6f1cd2d64c4d8a5feb5d6b0fd21a1eabd639953ff2cf1b646bab7cad336": {
     "confidence": 0.8,
     "contradictions": [
@@ -68001,6 +68034,38 @@
     ],
     "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced stream=true in transform_responses_api_request and incomplete aggregation in the streaming iterator, with a suggested fix location. This is actionable and technically valuable."
   },
+  "91946916506ba84ef9f558769bc75c210a7ceeb5ca93850b9a76c57c97e4ebc7": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate score 9 and category WAIT_MAINTAINER imply high actionability, but actionability_evidence reports root_cause_signal=false, code_anchors=[], probe_ready=false, and pre-review gate failed on no_code_surface and reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "remote_executors.py: send_tools / tool-code generation must not emit references to undefined names like allow_pickle_setting on repeated runs",
+      "CodeAgent.run() tool re-registration path for RemotePythonExecutor"
+    ],
+    "risks": [
+      "Fix may require changing generated tool-code template, affecting all RemotePythonExecutor subclasses",
+      "Unclear whether allow_pickle_setting is a stale/renamed symbol or a scoping bug in generated code"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test that runs the same CodeAgent twice with a mocked RemotePythonExecutor and asserts final_answer succeeds on both runs",
+      "Run the issue's minimal repro under pytest and assert no NameError on run 2"
+    ],
+    "unknowns": [
+      "Exact source location emitting allow_pickle_setting",
+      "Whether the failure is in send_tools code generation or in executor state persistence across runs",
+      "Whether a maintainer has already identified the root cause or preferred fix"
+    ],
+    "why": "Issue reports a concrete reproducible failure (NameError: allow_pickle_setting on second run) with a minimal repro, but the supplied actionability evidence shows no code anchors, no root-cause signal, and no reproduction evidence captured; the pre-review gate explicitly failed with no_code_surface and reproduction_or_validation_missing, so the actionable code surface and exact fix location are not established."
+  },
   "9198bbf0122bf7b108ce9e850ac185c5d18f94006e7647c07bec475112a3c891": {
     "confidence": 0.7,
     "contradictions": [],
@@ -73604,6 +73669,43 @@
     ],
     "why": "Issue reports CUDA illegal memory access in GDN kernel with multiple reproductions, but root cause is unclear and multiple PRs overlap semantically. Gate says HUMAN_REVIEW, and existing PRs may already address the issue."
   },
+  "9d0704f4cb28bad7af56bd7009938919f2c0f6101a79a7d491ab414f957e858f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states root cause is not established while candidate.algorithm_evidence marks a qualified algorithm mechanism",
+      "All six retained executions preserve checkpoint-resume equality despite stored-reference mismatch, suggesting the mismatch may be in the stored reference rather than the code"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Muon optimizer update path",
+      "BF16 cast / gradient-zero counting path",
+      "checkpoint-resume golden comparison logic"
+    ],
+    "risks": [
+      "Numerical drift may be benign floating-point/rounding variation rather than a code defect",
+      "Golden-reference replacement could mask a real regression",
+      "Hardware-specific behavior (GB200 vs H100) may not share one cause"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay the first divergent step with a focused comparison of the preceding optimizer update and BF16 cast",
+      "Compare per-tensor gradient coordinates between old and new references to localize the zero-count drift",
+      "Run the existing gpt3_moe_mcore_te_ep8_resume_torch_dist_muon and torch_dist_dist_muon recipes with fixed seed and tolerance"
+    ],
+    "unknowns": [
+      "Which gradient coordinates or tensors drive the zero-count drift",
+      "Whether the divergence originates in the optimizer update, BF16 cast, or golden-reference generation",
+      "Whether a code change is required or the stored references should be updated"
+    ],
+    "why": "The issue reports repeatable golden-reference mismatches in Muon checkpoint-resume tests, but explicitly states the root cause is not established and no affected gradient coordinates are identified. The evidence is a numerical drift in loss/zero-count aggregates, not a concrete training objective, model mechanism, or kernel algorithm defect. Without a root cause or a reference-vs-implementation test that isolates the divergence, the code work is not actionable."
+  },
   "9d15012cd782a1372690774e0367b510a6a4e416d6b291a00db8c35f5ac4cd82": {
     "confidence": 0.8,
     "contradictions": [],
@@ -75137,6 +75239,40 @@
     ],
     "why": "The issue presents a concrete, code-anchored root-cause hypothesis (logical_topk_ready recorded inside a piecewise-capture segment, then waited on after eager_break_during_capture ends the segment) with a bisected regression bracket and a plausible validation path. However, the supplied evidence contains a materially blocking unknown: the repository's submission policy is flagged as ai_disclosure_conflict, and the issue itself states it was drafted with AI assistance. This disclosure/authorization requirement determines whether code work is actionable and cannot be resolved from the supplied evidence. Additionally, the open-PR assessment shows semantic overlap with PR #56686 and PR #56752 (including a maintainer-owned PR touching breakable_cudagraph.py), which requires human comparison before any duplicate work is attempted."
   },
+  "a0e205f0c6b988e9e3a7ee4d52acdd4e58335b44dd3ba438651edc971b92f154": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: accept and default reconnect_on_error=True instead of rejecting it",
+      "src/pipecat/services/sarvam/stt.py: complete in-flight utterance on reconnect/drop",
+      "src/pipecat/services/sarvam/stt.py: classify permanent closes (4000, 1003 non-rate-limit) and report them immediately",
+      "src/pipecat/services/sarvam/stt.py: give failed first connect bounded retry or mark permanent so ServiceSwitcher can react"
+    ],
+    "risks": [
+      "Changing reconnect defaults may alter behavior for existing Sarvam users",
+      "Permanent-close classification (1003 vs rate limit) depends on close reason text and may be brittle",
+      "Reconnect/utterance-completion changes could interact with QuickFailureTracker and _try_reconnect retry caps"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.py drop scenario and assert 2 handshakes, transcripts from both connections, and is_usable True",
+      "Run the issue's repro.py connect scenario and assert retry/transcription or unusable state when connection cannot be established",
+      "Add regression tests for 1006 TCP drop and 1003 rate-limit close behavior",
+      "Run targeted pipecat service/websocket unit tests and static checks"
+    ],
+    "unknowns": [
+      "No maintainer design preference is recorded for the reconnect default change",
+      "No open PR or duplicate fix was found, but coverage was only checked against supplied evidence"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: SarvamRealtimeSTTService forces reconnect_on_error=False, its receive-loop override marks the service unusable on any close, and a failed first connect is never retried while the service stays usable. Reproduction is executable with a local websocket server and expected/actual outputs are given, so the fix is actionable."
+  },
   "a0ecccf6d35d950881a09a71277aef7ab8ddb82371dfd6fcaad684b9ecd3fa3f": {
     "confidence": 0.6,
     "contradictions": [
@@ -76008,6 +76144,43 @@
       "Whether maintainers prefer the exact fix shape in PR #41139 or a different delegation approach"
     ],
     "why": "Issue provides a concrete minimal reproduction, expected/actual pair, and a specific root cause: user_api_key_auth_websocket() unconditionally rejects a missing key before delegating to shared user_api_key_auth(), which already implements keyless behavior when master_key is None. This is a proxy auth-path bug with a clear reference-vs-implementation validation path. Open PR #41139 is directly related but lacks root-cause coverage evidence, so competition remains possible."
+  },
+  "a27152739030fa63a4a14b63cf94573909c63709420b8cf35bfa7d1e4e10bed8": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: implement _do_reconnect() as _disconnect()+_connect() raising when no socket returns",
+      "src/pipecat/services/sarvam/stt.py: detect start_listening() returning/raising outside intentional disconnect in _receive_task_handler",
+      "src/pipecat/services/sarvam/stt.py: run reconnect in a separate task bounded by QuickFailureTracker and exponential_backoff_time, pushing force_treat_as_permanent=True on give-up",
+      "src/pipecat/services/sarvam/stt.py: apply the same bounded retry to a failed initial connect"
+    ],
+    "risks": [
+      "Reconnect task lifecycle: _disconnect() cancels the receive task, so reconnect must run in a separate task to avoid self-cancellation",
+      "Unbounded retry could spin; must be bounded by QuickFailureTracker/exponential_backoff_time",
+      "Behavior change for initial-connect failure path may affect existing error-frame expectations",
+      "Maintainer may prefer a shared base-class reconnect path rather than a Sarvam-local implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's repro.py as a regression test: fake local websocket server drops connection 1 after one transcript; assert connections == 2 and transcripts == ['hello from connection 1', 'hello from connection 2']",
+      "Assert zero ErrorFrame emissions after the drop in the reconnect-success case",
+      "Assert a single permanent ErrorFrame (force_treat_as_permanent=True) when reconnect is exhausted",
+      "Assert bounded retry on initial-connect failure (HTTP 503 handshake refusal) instead of silent audio drop",
+      "Run targeted unit tests for the sarvam service plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a Sarvam-local _do_reconnect or a generalized STTService reconnect helper (design preference, not a blocker)"
+    ],
+    "why": "Issue provides a concrete, self-contained reproduction (local websocket stand-in, no API key), a precise root-cause chain (SarvamSTTService lacks _do_reconnect, start_listening swallows the close, _socket_client stays dead, run_stt emits per-chunk ErrorFrames), and a named in-repo precedent (DeepgramSTTService._connection_handler / _do_reconnect). The reconnect half of #3699 is explicitly still open on main, and no duplicate open PR/issue was found."
   },
   "a285a2bb32c6dc1fe09174e5c782f44836870d3017c65207756341d4b34d8045": {
     "confidence": 0.8,
@@ -115115,6 +115288,40 @@
       "Whether the all-zero lora_B initialization actually triggers the tie bug in ordinary training runs is unmeasured"
     ],
     "why": "Issue identifies a concrete algorithm-conformance defect in ReLoRA restart logic: _prune_and_reset() prunes lora_A/lora_B without merging B@A into the base weight, and strict thresholding (abs(t) > threshold) can zero both factors on ties, producing a dead zero-gradient branch. Maintainer independently reproduced both claims with measured MSE (142.12 vs 8.77e-13 control) and zero gradient norms, and confirmed the module docstring claims paper/Axolotl conformance. This is a parameter-efficient-finetuning mechanism with a clear reference-vs-implementation validation path."
+  },
+  "f500d9d7cc57f1c4bc8e1dce511cb1db7803acee3da328f1347c457d1924b783": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no downstream patch and clean reproduction, while open PR #43935 already implements the fix with tests"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "OpenAIGPT5Config.is_model_gpt_5_model family detection for gpt-6.1-sol",
+      "Chat Completions reasoning_effort drop/reject for none/minimal",
+      "Responses reasoning.effort drop/reject for none/minimal"
+    ],
+    "risks": [
+      "Duplicating open PR #43935",
+      "Expanding API behavior beyond the reported model",
+      "Unclear whether maintainers prefer a model-specific guard or cost-map-driven gate"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against current main to confirm failures",
+      "Add regression tests for drop_params=True and drop_params=False 400 behavior on both Chat Completions and Responses"
+    ],
+    "unknowns": [
+      "Whether PR #43935 fully resolves the issue or leaves a root-cause gap worth independent work",
+      "Maintainer preference on model-specific guard vs cost-map-driven support"
+    ],
+    "why": "Issue provides a concrete reproduction and root-cause hypothesis for gpt-6.1-sol reasoning-effort forwarding, but an open PR #43935 already directly covers the same fix with tests, and the supplied evidence marks root-cause coverage as missing and the PR as technically complete. The remaining actionable gap (root-cause coverage) is not established by supplied evidence, so it is unclear whether independent code work is still needed."
   },
   "f50541de650f6aa2a105b5927f5311eaf21393ede9104cc0652225750b358bf6": {
     "confidence": 0.6,
