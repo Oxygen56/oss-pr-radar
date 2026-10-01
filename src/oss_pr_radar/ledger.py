@@ -8054,6 +8054,157 @@ class RadarLedger:
             )
         return True
 
+    def record_expired_validation_correction(
+        self,
+        candidate: dict[str, Any],
+        *,
+        source: dict[str, Any],
+        failed_raw: bytes,
+        completion: dict[str, Any],
+        prompt_revision: str,
+        reason: str,
+    ) -> bool:
+        """Retain an exact failed expiry turn and rearm only a changed expiry prompt."""
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=candidate["key"],
+                intent_id=candidate["intentId"],
+                thread_id=candidate["threadId"],
+                worktree_path=candidate["worktreePath"],
+            )
+            if (
+                binding is None
+                or self._expired_publication_validation_source(connection, binding) != source
+            ):
+                raise LedgerError("expired validation correction source changed")
+            reservation = completion["reservation"]
+            receipt = completion["receipt"]
+            rows = connection.execute(
+                f"""SELECT r.id,r.payload_json FROM events r JOIN intents i
+                    ON i.opportunity_key=r.opportunity_key AND {_intent_event_binding_clause("i", "r")}
+                    WHERE i.intent_id=? AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                      AND json_extract(r.payload_json,'$.resultDigest')=? ORDER BY r.id DESC""",
+                (candidate["intentId"], source["resultDigest"]),
+            ).fetchall()
+            if (
+                not rows
+                or json.loads(rows[0]["payload_json"]) != reservation
+                or receipt.get("reservationDigest") != reservation.get("reservationDigest")
+                or receipt.get("threadId") != candidate["threadId"]
+                or receipt.get("deliveryToken") != source["resultDigest"]
+                or receipt.get("turnStatus") != "completed"
+                or receipt.get("ok") is not True
+            ):
+                raise LedgerError("expired validation correction completion changed")
+            sent_key = (
+                reservation["reservationDigest"]
+                if reservation.get("expiryPromptRevision")
+                else source["resultDigest"]
+            )
+            if (
+                connection.execute(
+                    """SELECT 1 FROM events WHERE opportunity_key=? AND event_type='VALIDATION_FOLLOWUP_SENT'
+                   AND dedupe_key=? AND id>?""",
+                    (candidate["key"], sent_key, rows[0]["id"]),
+                ).fetchone()
+                is None
+            ):
+                raise LedgerError("expired validation correction has no matching SENT")
+            correction = {
+                "requestId": source["requestId"],
+                "promptRevision": prompt_revision,
+                "failedEvidenceDigest": hashlib.sha256(failed_raw).hexdigest(),
+                "failedRawBase64": base64.b64encode(failed_raw).decode("ascii"),
+                "sourceRawBase64": source["evidenceRawBase64"],
+                "completion": receipt,
+                "reservationDigest": reservation["reservationDigest"],
+                "reason": reason,
+            }
+            payload = {
+                "intentId": candidate["intentId"],
+                "threadId": candidate["threadId"],
+                "worktreePath": candidate["worktreePath"],
+                "resultDigest": source["resultDigest"],
+                "missing": ["fresh_state_verified"],
+                "reason": reason,
+                "expiryCorrection": correction,
+            }
+            self._event(
+                connection,
+                candidate["key"],
+                "VALIDATION_FOLLOWUP_NO_PROGRESS",
+                source["resultDigest"],
+                payload,
+                now,
+            )
+            if reservation.get("expiryPromptRevision") == prompt_revision:
+                return False
+            dedupe = "expiry-correction:" + source["requestId"] + ":" + prompt_revision
+            if (
+                connection.execute(
+                    "SELECT 1 FROM events WHERE opportunity_key=? AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED' AND dedupe_key=?",
+                    (candidate["key"], dedupe),
+                ).fetchone()
+                is not None
+            ):
+                return False
+            self._event(
+                connection,
+                candidate["key"],
+                "VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED",
+                dedupe,
+                payload,
+                now,
+            )
+            return True
+
+    def _expired_validation_correction(self, candidate: dict[str, Any]) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=candidate["key"],
+                intent_id=candidate["intentId"],
+                thread_id=candidate["threadId"],
+                worktree_path=candidate["worktreePath"],
+            )
+            opportunity = connection.execute(
+                "SELECT stage FROM opportunities WHERE key=?", (candidate["key"],)
+            ).fetchone()
+            if (
+                binding is None
+                or opportunity is None
+                or opportunity["stage"] != "VALIDATION_PENDING"
+            ):
+                return None
+            source = self._expired_publication_validation_source(connection, binding)
+            rows = connection.execute(
+                """SELECT payload_json FROM events WHERE opportunity_key=?
+                   AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                   AND json_extract(payload_json,'$.intentId')=?
+                   AND json_extract(payload_json,'$.threadId')=?
+                   AND json_extract(payload_json,'$.worktreePath')=?
+                   AND json_extract(payload_json,'$.resultDigest')=? ORDER BY id DESC LIMIT 1""",
+                (
+                    candidate["key"],
+                    candidate["intentId"],
+                    candidate["threadId"],
+                    candidate["worktreePath"],
+                    candidate["resultDigest"],
+                ),
+            ).fetchall()
+        correction = json.loads(rows[0]["payload_json"]).get("expiryCorrection") if rows else None
+        if not isinstance(correction, dict):
+            return None
+        if (
+            source is None
+            or source["requestId"] != correction.get("requestId")
+            or source["evidenceRawBase64"] != correction.get("sourceRawBase64")
+        ):
+            return None
+        return correction
+
     def validation_followup_candidates(self) -> list[dict[str, Any]]:
         """Return validation-pending tasks that have not been resumed for this result."""
 
@@ -8154,6 +8305,10 @@ class RadarLedger:
                 }
             )
             refresh = self.publication_target_base_refresh(candidates[-1])
+            if candidates[-1].get("expiredPublication"):
+                correction = self._expired_validation_correction(candidates[-1])
+                if correction is not None:
+                    candidates[-1]["expiryCorrection"] = correction
             if (
                 refresh is not None
                 and refresh["sourceResultDigest"] == candidates[-1]["resultDigest"]
@@ -8326,6 +8481,7 @@ class RadarLedger:
         exclude_intent_id: str | None = None,
         intent_id: str | None = None,
         worktree_path: str | None = None,
+        expiry_prompt_revision: str | None = None,
     ) -> dict[str, Any]:
         candidates = [
             item
@@ -8404,6 +8560,16 @@ class RadarLedger:
                         if isinstance(candidate.get("expiredPublication"), dict)
                         else {}
                     ),
+                    **(
+                        {"expiryPromptRevision": expiry_prompt_revision}
+                        if candidate.get("expiredPublication") and expiry_prompt_revision
+                        else {}
+                    ),
+                    **(
+                        {"expiryCorrection": candidate["expiryCorrection"]}
+                        if candidate.get("expiryCorrection")
+                        else {}
+                    ),
                 },
                 now,
             )
@@ -8434,7 +8600,7 @@ class RadarLedger:
                        SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                          AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {_intent_event_binding_clause("i", "s")}
-                         AND s.dedupe_key=?
+                         AND s.dedupe_key=CASE WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
@@ -8456,7 +8622,7 @@ class RadarLedger:
                          AND cancelled.id>r.id
                      )
                    ORDER BY r.id DESC""",
-                (result_digest, reservation_digest, reservation_digest, thread_id, result_digest),
+                (result_digest, reservation_digest, reservation_digest, thread_id),
             ).fetchall()
             filtered_rows: list[sqlite3.Row] = []
             for row in rows:
@@ -8484,7 +8650,7 @@ class RadarLedger:
                        JOIN events s ON s.opportunity_key=r.opportunity_key
                         AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                         AND {_intent_event_binding_clause("i", "s")}
-                        AND s.dedupe_key=?
+                        AND s.dedupe_key=CASE WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
                        WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                          AND json_extract(r.payload_json,'$.threadId')=i.thread_id
                          AND json_extract(r.payload_json,'$.resultDigest')=?
@@ -8492,7 +8658,6 @@ class RadarLedger:
                        ORDER BY r.id DESC""",
                     (
                         thread_id,
-                        result_digest,
                         result_digest,
                         reservation_digest,
                         reservation_digest,
@@ -8524,12 +8689,19 @@ class RadarLedger:
                 connection,
                 row["key"],
                 "VALIDATION_FOLLOWUP_SENT",
-                result_digest,
+                reservation_payload["reservationDigest"]
+                if reservation_payload.get("expiryPromptRevision")
+                else result_digest,
                 {
                     "intentId": reservation_payload.get("intentId"),
                     "threadId": thread_id,
                     "worktreePath": reservation_payload.get("worktreePath"),
                     "resultDigest": result_digest,
+                    **(
+                        {"reservationDigest": reservation_payload["reservationDigest"]}
+                        if reservation_payload.get("expiryPromptRevision")
+                        else {}
+                    ),
                 },
                 now,
             )
@@ -8549,7 +8721,7 @@ class RadarLedger:
                      SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                        AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                        AND {_intent_event_binding_clause("i", "s")}
-                       AND s.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
+                       AND s.dedupe_key=CASE WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
                    )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
@@ -8592,6 +8764,10 @@ class RadarLedger:
             for row in rows
         ]
         for candidate in candidates:
+            if candidate.get("expiredPublication"):
+                correction = self._expired_validation_correction(candidate)
+                if correction is not None:
+                    candidate["expiryCorrection"] = correction
             refresh = self.publication_target_base_refresh(candidate)
             if refresh is not None and refresh["sourceResultDigest"] == candidate["resultDigest"]:
                 candidate["targetBaseRefresh"] = refresh
@@ -20097,7 +20273,13 @@ class RadarLedger:
                             opportunity_key=str(candidate_row["opportunity_key"]),
                             event_type="VALIDATION_FOLLOWUP_SENT",
                             binding=binding,
-                            dedupe_key=delivery_token,
+                            dedupe_key=(
+                                str(candidate_row["dedupe_key"])
+                                if json.loads(candidate_row["payload_json"]).get(
+                                    "expiryPromptRevision"
+                                )
+                                else delivery_token
+                            ),
                         )
                         and not bound_event_exists(
                             connection,

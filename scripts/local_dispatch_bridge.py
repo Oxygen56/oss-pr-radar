@@ -207,6 +207,7 @@ VALIDATION_PREFETCH_TIMEOUTS = {
     "pnpm_locked_install": 600,
 }
 VALIDATION_POLICY_REVISION = "ci_delegation_v1"
+EXPIRED_PUBLICATION_PROMPT_REVISION = "expired_publication_real_commands_v2"
 TRANSIENT_PUBLICATION_AUDIT_REASONS = {
     "DCO_REVALIDATION_FAILED",
     "DEFAULT_BRANCH_UNKNOWN",
@@ -13646,6 +13647,21 @@ def _read_authenticated_validation_result(
 
     raw = _read_controlled_validation_result(candidate)
     expected = str(candidate["resultDigest"])
+    correction = candidate.get("expiryCorrection")
+    if isinstance(correction, dict) and hashlib.sha256(raw).hexdigest() == correction.get(
+        "failedEvidenceDigest"
+    ):
+        source_raw = base64.b64decode(correction["sourceRawBase64"], validate=True)
+        source_value = json.loads(source_raw)
+        expiry = candidate.get("expiredPublication") or {}
+        if (
+            correction.get("promptRevision") == EXPIRED_PUBLICATION_PROMPT_REVISION
+            and correction.get("requestId") == expiry.get("requestId")
+            and hashlib.sha256(source_raw).hexdigest() == expiry.get("evidenceDigest")
+            and _task_result_digest(source_value, source_raw) == expected
+        ):
+            return source_value, source_raw
+        raise ValidationResultChanged(expected=expected, observed=hashlib.sha256(raw).hexdigest())
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -15116,6 +15132,8 @@ def _completed_validation_input_task_id(
     result_access: _ValidationWorktreeDirectory,
     context_raw: bytes,
     expired_publication: dict[str, Any] | None = None,
+    allow_expired_context_mismatch: bool = False,
+    completion_proof: dict[str, Any] | None = None,
 ) -> str | None:
     """Prove a completed validation against its controller-owned immutable input."""
 
@@ -15128,7 +15146,10 @@ def _completed_validation_input_task_id(
         or value.get("stage") != "FIX_READY"
         or value.get("handoffMode")
         not in {"controller_commit_complete", "controller_commit_required"}
-        or value.get("contextDigest") != context.get("contextDigest")
+        or (
+            value.get("contextDigest") != context.get("contextDigest")
+            and not (expired_publication and allow_expired_context_mismatch)
+        )
     ):
         return None
     binding = {
@@ -15207,6 +15228,10 @@ def _completed_validation_input_task_id(
             if item[0]["event_type"] == "VALIDATION_FOLLOWUP_RESERVED"
             and item[1].get("resultDigest") == sent[1]["resultDigest"]
             and item[0]["id"] < sent[0]["id"]
+            and (
+                not sent[1].get("reservationDigest")
+                or item[1].get("reservationDigest") == sent[1]["reservationDigest"]
+            )
         ),
         None,
     )
@@ -15291,7 +15316,88 @@ def _completed_validation_input_task_id(
     )
     if verified != context or not _private_context_matches_current_ledger(store, context):
         return None
+    if completion_proof is not None:
+        completion_proof.update(receipt=receipt, reservation=reserved[1])
     return task_id
+
+
+def _expired_validation_command_proof(
+    candidate: dict[str, Any], receipt: dict[str, Any], value: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Match expiry checks to native completed command items in this exact turn."""
+    _cwd, rollout_path = _validated_task_turn_thread(candidate)
+    if not rollout_path:
+        return None
+    raw = _read_owned_regular_file(
+        Path(rollout_path),
+        label="native validation execution journal",
+        reject_dangerous_writes=True,
+    )
+    commands = []
+    session_matches = False
+    for line in raw.splitlines():
+        try:
+            event = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        payload = event.get("payload") or {}
+        if event.get("type") == "session_meta":
+            session_matches = payload.get("id") == receipt["threadId"]
+        if (
+            event.get("type") == "event_msg"
+            and payload.get("type") == "item_completed"
+            and payload.get("thread_id") == receipt["threadId"]
+            and payload.get("turn_id") == receipt["turnId"]
+        ):
+            item = payload.get("item") or {}
+            if (
+                item.get("type") == "CommandExecution"
+                and item.get("status") in {"completed", "failed"}
+                and type(item.get("exit_code")) is int
+                and isinstance(item.get("command"), list)
+                and len(item["command"]) == 3
+                and item["command"][1] in {"-lc", "-c"}
+            ):
+                commands.append(item)
+    tests = value.get("tests")
+    if not session_matches or not isinstance(tests, list) or not tests:
+        return None
+    phases = set()
+    used = set()
+    checks = []
+    for test in tests:
+        if not isinstance(test, dict) or not isinstance(test.get("command"), str):
+            return None
+        cwd = test.get("cwd")
+        if not isinstance(cwd, str) or not Path(cwd).is_absolute():
+            return None
+        matched = None
+        for index, item in enumerate(commands):
+            if (
+                index not in used
+                and item["command"][2] == test["command"]
+                and str(item.get("cwd") or "") == Path(cwd).as_uri()
+                and type(test.get("exitCode")) is int
+                and test["exitCode"] == item["exit_code"]
+            ):
+                matched = index
+                break
+        if matched is None:
+            return None
+        used.add(matched)
+        phases.add(test.get("phase"))
+        item = commands[matched]
+        checks.append(
+            test
+            | {
+                "stdout": item["stdout"],
+                "stderr": item["stderr"],
+                "result": item["aggregated_output"],
+            }
+        )
+    if not {"before_fix", "after_fix", "formal"}.issubset(phases):
+        return None
+    return value | {"tests": checks}
 
 
 def _defer_expired_publication_result(
@@ -15399,6 +15505,7 @@ def _defer_expired_publication_result(
             ).fetchone()
         if already_ingested is not None:
             return value, False, False
+        completion: dict[str, Any] = {}
         task_id = _completed_validation_input_task_id(
             store,
             managed_ledger,
@@ -15408,6 +15515,8 @@ def _defer_expired_publication_result(
             result_access=result_access,
             context_raw=context_raw,
             expired_publication=source,
+            allow_expired_context_mismatch=True,
+            completion_proof=completion,
         )
         if (
             task_id is None
@@ -15423,7 +15532,18 @@ def _defer_expired_publication_result(
             or command(["git", "status", "--porcelain"], cwd=result_access.worktree)
         ):
             raise TaskResultEvidenceBlocked("EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID")
-        return dict(value, taskId=task_id), False, True
+        canonical_value = _expired_validation_command_proof(candidate, completion["receipt"], value)
+        if value.get("contextDigest") != context.get("contextDigest") or canonical_value is None:
+            store.record_expired_validation_correction(
+                candidate,
+                source=source,
+                failed_raw=raw,
+                completion=completion,
+                prompt_revision=EXPIRED_PUBLICATION_PROMPT_REVISION,
+                reason="EXPIRED_VALIDATION_CURRENT_CONTEXT_OR_EXECUTION_MISSING",
+            )
+            raise TaskResultEvidenceBlocked("EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID")
+        return dict(canonical_value, taskId=task_id), False, True
 
 
 def _non_pr_validation_parent(
@@ -19269,14 +19389,42 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
     )
     worktree_input_path = str(candidate.get("worktreeInputPath") or "")
     expiry = candidate.get("expiredPublication")
-    expiry_note = (
-        f"本轮是发布请求 {expiry['requestId']} 的复现凭证已到期后的真实续验。"
-        f"保留当前提交 {expiry['commitSha']} 和分支，不改源码、不重新实现或提交。"
-        "即使旧输入的全部检查已通过，也必须在当前环境重新执行真实基线复现和核心回归，"
-        "记录本轮实际命令、退出码和结果。旧签名凭证和旧测试不能算作本轮成功。\n\n"
-        if isinstance(expiry, dict)
-        else ""
-    )
+    if isinstance(expiry, dict):
+        return (
+            f"系统续跑：发布请求 {expiry['requestId']} 的复现凭证已到期。"
+            f"本轮续验指令版本 {EXPIRED_PUBLICATION_PROMPT_REVISION}。"
+            "只在已绑定工作区做真实基线复现和核心回归，保留当前分支和提交 "
+            f"{expiry['commitSha']}，不改源码、不切分支、不提交、不创建任务或公开操作。\n\n"
+            "必须读取并验证当前 `.oss-pr-radar/task-context.json`，它是本轮身份的唯一来源；"
+            "新输出必须使用这个当前签名上下文的 contextDigest、intentId（作为 taskId）、"
+            "key、issueUrl、threadId、worktreePath。"
+            f"另只读 `{worktree_input_path}` 作为历史修复与提交、selectedBaseSha、检查目的的参照。"
+            "历史输入的 contextDigest、tests、成功叙述和签名均不属于本轮，禁止复制。"
+            "当前 `.oss-pr-radar/result.json` 仅在完成本轮后原子替换为新输出，不作为输入。\n\n"
+            "先确认工作区已准备的 `.venv/bin/python`，存在时明确使用该解释器和真实项目依赖，"
+            "不安装依赖，不用 SDK stubs 模拟实际入口。"
+            "本轮必须实际运行三类检查：before_fix 在 selectedBaseSha 的真实源码上复现旧问题"
+            "（可用 git archive 到临时目录，保留原工作树 HEAD）；after_fix 在当前提交的真实核心入口"
+            "执行同一回归；formal 运行当前项目对应正式测试。历史命令若只是自然语言说明，"
+            "先读取真实项目测试和实现，将其转成可执行命令，再通过原生终端逐项执行。"
+            "before_fix 可以是非零失败，也可以退出零但输出实际旧错误，必须如实记录。\n\n"
+            "tests 只能包含本轮真正执行的检查。每项逐字记录实际执行的完整 shell 命令 command"
+            "（不得写摘要或命令说明）、绝对工作目录 cwd、phase（before_fix/after_fix/formal）、"
+            "真实整数 exitCode。结果按实际可见输出如实记录，不猜测 stdout/stderr 分流。"
+            "系统严格核对实际 command/cwd/phase/exitCode 后，依据本轮原生完成项自动补齐"
+            "stdout、stderr 和 result（原生 aggregated_output），再正常签名。"
+            "系统会按本轮 thread/turn 的原生完成记录逐条核对，写 JSON 的命令里提到旧命令"
+            "不能作为执行证明。不能重填当前 contextDigest 后复制旧 tests。"
+            "未执行或仍失败时诚实保留缺口，自动复核由系统写入。"
+            "新输出 stage=FIX_READY、handoffMode=controller_commit_complete，"
+            "保留历史修复的 branch、commitSha、headSha、selectedBaseSha、changedFiles 与 codePaths。"
+            "不得沿用 reproductionReceipt、probeReceipt、resultDigest 或 independentReview；"
+            "系统依据本轮真实结果重新签名和独立审查。"
+            f"记录 validationPolicyRevision={VALIDATION_POLICY_REVISION}。"
+            "准备发布的描述验证段只保留本轮真实事实。"
+            + END_RESULT_TURN_PROMPT
+            + PLAIN_LANGUAGE_STATUS_PROMPT
+        )
     input_note = (
         f"本轮输入只能只读工作区相对路径 `{worktree_input_path}`。"
         "不要读取当前 `.oss-pr-radar/result.json` 作为本轮输入；"
@@ -19308,7 +19456,6 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
         "读取当前任务文件，并只在已绑定的工作区继续。\n\n"
         + input_note
-        + expiry_note
         + f"本轮需要解决：{missing_summary}。{dependency_note}\n\n"
         + "先检查绑定工作区已准备的 `.venv/bin/python`；存在时必须进入该工作区后明确使用这个解释器。"
         "登录 shell 可能重置 PATH，不要依赖裸 `python3` 或沿用旧的依赖不可用判断。"
@@ -19433,6 +19580,11 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
                 result_digest=enriched["resultDigest"],
                 max_active=_private_task_limit(),
                 exclude_intent_id=str(enriched.get("intentId") or "") or None,
+                **(
+                    {"expiry_prompt_revision": EXPIRED_PUBLICATION_PROMPT_REVISION}
+                    if enriched.get("expiredPublication")
+                    else {}
+                ),
                 **_ledger_binding_kwargs(enriched),
             )
             try:

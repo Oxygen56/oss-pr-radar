@@ -20673,6 +20673,23 @@ def test_native_expired_pr_create_requires_real_completed_validation(
     old_raw = result_path.read_bytes()
     old_head = run_git(worktree, "rev-parse", "HEAD")
     source = json.loads(old_raw)
+    # A fresh controller audit naturally changes the signed context identity,
+    # while the original authenticated publication input remains immutable.
+    live_audit = json.loads(
+        json.dumps(
+            store.task_context(issue_url=source["issueUrl"], thread_id="thread-1")["liveAudit"]
+        )
+    )
+    live_audit["evidence"]["digest"] = "e" * 64
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "e" * 64,
+            "liveAudit": live_audit,
+        },
+        dedupe_key="intent-1:expiry-current-audit",
+    )
     later = parse_time(source["reproductionReceipt"]["expiresAt"]) + timedelta(seconds=8)
 
     class ExpiredDateTime(datetime):
@@ -20703,6 +20720,23 @@ def test_native_expired_pr_create_requires_real_completed_validation(
     listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path, min_age_minutes=90))
     assert listed["ok"] and len(listed["candidates"]) == 1, listed
     candidate = listed["candidates"][0]
+    current_expiry_revision = getattr(
+        MODULE, "EXPIRED_PUBLICATION_PROMPT_REVISION", "expired_publication_real_commands_v2"
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "EXPIRED_PUBLICATION_PROMPT_REVISION",
+        "expired_publication_real_commands_v1",
+        raising=False,
+    )
+    native_reserve = store.reserve_validation_followup
+
+    def legacy_reserve(**kwargs):
+        kwargs.pop("expiry_prompt_revision", None)
+        return native_reserve(**kwargs)
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(store, "reserve_validation_followup", legacy_reserve)
     reserved = MODULE.validation_followup_reserve(
         SimpleNamespace(
             ledger=store.path,
@@ -20712,6 +20746,8 @@ def test_native_expired_pr_create_requires_real_completed_validation(
             worktree_path=str(worktree),
         )
     )
+    monkeypatch.setattr(store, "reserve_validation_followup", native_reserve)
+    monkeypatch.setattr(MODULE, "EXPIRED_PUBLICATION_PROMPT_REVISION", current_expiry_revision)
     assert reserved["ok"] and not reserved.get("blocked"), reserved
     assert "复现凭证已到期" in reserved["prompt"]
     assert "真实基线复现和核心回归" in reserved["prompt"]
@@ -20780,6 +20816,7 @@ def test_native_expired_pr_create_requires_real_completed_validation(
     formal = subprocess.run(formal_argv, cwd=worktree, capture_output=True, text=True)
     assert formal.returncode == 0 and "1 passed" in formal.stdout, formal.stderr
     context = json.loads((result_path.parent / "task-context.json").read_text())
+    assert context["contextDigest"] != source["contextDigest"]
     value = dict(source, contextDigest=context["contextDigest"])
     for field in (
         "taskId",
@@ -20820,14 +20857,11 @@ def test_native_expired_pr_create_requires_real_completed_validation(
         == "EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID"
     ), not_completed
     assert result_path.read_bytes() == new_raw
-    blocked_key = MODULE._task_result_evidence_block_key(
-        candidate, new_raw, (result_path.parent / "task-context.json").read_bytes()
-    )
     # Restore the exact source until the native worker starts; no completed receipt is hand-written.
     result_path.write_bytes(old_raw)
     thread_db = tmp_path / "expiry-threads.sqlite3"
     rollout = tmp_path / "expiry-rollout.jsonl"
-    rollout.write_text("")
+    rollout.write_text(json.dumps({"type": "session_meta", "payload": {"id": "thread-1"}}) + "\n")
     with sqlite3.connect(thread_db) as connection:
         connection.execute(
             "CREATE TABLE threads (id TEXT, cwd TEXT, archived INTEGER, first_user_message TEXT, rollout_path TEXT, git_origin_url TEXT)"
@@ -20853,42 +20887,95 @@ def test_native_expired_pr_create_requires_real_completed_validation(
     def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
         if response_id == 1:
             return buffer, {"result": {"thread": {"id": "thread-1"}}}
-        return buffer, {"result": {"turn": {"id": "native-expiry-validation-turn"}}}
+        return buffer, {"result": {"turn": {"id": turn_id}}}
+
+    turn_id = "native-expiry-copied-turn"
+    cache_proof = {}
+
+    def execute_check(command_text, cwd, phase):
+        actual = subprocess.run(
+            ["/bin/zsh", "-lc", command_text], cwd=cwd, capture_output=True, text=True
+        )
+        output = actual.stdout + actual.stderr
+        item = {
+            "type": "CommandExecution",
+            "id": phase + turn_id,
+            "command": ["/bin/zsh", "-lc", command_text],
+            "cwd": Path(cwd).as_uri(),
+            "status": "completed" if actual.returncode == 0 else "failed",
+            "exit_code": actual.returncode,
+            "stdout": actual.stdout,
+            "stderr": actual.stderr,
+            "aggregated_output": output,
+        }
+        with rollout.open("a") as journal:
+            journal.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "item_completed",
+                            "thread_id": "thread-1",
+                            "turn_id": turn_id,
+                            "item": item,
+                        },
+                    }
+                )
+                + "\n"
+            )
+        return {
+            "command": command_text,
+            "cwd": str(cwd),
+            "phase": phase,
+            "exitCode": actual.returncode,
+            "stdout": actual.stdout,
+            "stderr": actual.stderr,
+            "result": output,
+        }
 
     def execute_current_checks(*_args, **_kwargs):
+        if turn_id == "native-expiry-copied-turn":
+            # This native turn truly completes, but only reads Git and copies old checks/context.
+            execute_check("git rev-parse HEAD", worktree, "read_only")
+            copied = dict(value, contextDigest=source["contextDigest"], tests=source["tests"])
+            result_path.write_text(json.dumps(copied))
+            return {"turnId": turn_id, "status": "completed"}
+        import shlex
+
         run_git(worktree, "worktree", "add", "--detach", str(baseline), source["selectedBaseSha"])
-        actual_before = subprocess.run(argv, cwd=baseline, capture_output=True, text=True)
-        actual_after = subprocess.run(argv, cwd=worktree, capture_output=True, text=True)
-        actual_formal = subprocess.run(formal_argv, cwd=worktree, capture_output=True, text=True)
-        assert (
-            actual_before.returncode == 1
-            and actual_after.returncode == actual_formal.returncode == 0
-        )
+        checks = [
+            execute_check(shlex.join(argv), baseline, "before_fix"),
+            execute_check(shlex.join(argv), worktree, "after_fix"),
+            execute_check(shlex.join(formal_argv), worktree, "formal"),
+        ]
+        assert checks[0]["exitCode"] == 1 and checks[1]["exitCode"] == checks[2]["exitCode"] == 0
         run_git(worktree, "worktree", "remove", "--force", str(baseline))
+        current_context = json.loads((result_path.parent / "task-context.json").read_text())
         output = dict(
             value,
+            contextDigest=current_context["contextDigest"],
             tests=[
                 {
-                    "command": " ".join(argv),
-                    "phase": "before_fix",
-                    "exitCode": actual_before.returncode,
-                    "result": actual_before.stderr,
-                },
-                {
-                    "command": " ".join(argv),
-                    "phase": "after_fix",
-                    "exitCode": actual_after.returncode,
-                    "result": "actual runtime assertion passed",
-                },
-                {
-                    "command": " ".join(formal_argv),
-                    "exitCode": actual_formal.returncode,
-                    "result": actual_formal.stdout.splitlines()[-1].split(" in ")[0],
-                },
+                    name: item
+                    for name, item in check.items()
+                    if name not in {"stdout", "stderr", "result"}
+                }
+                | {"result": "checks completed"}
+                for check in checks
             ],
         )
+        cache_proof["checks"] = checks
         result_path.write_text(json.dumps(output))
-        return {"turnId": "native-expiry-validation-turn", "status": "completed"}
+        # The same bytes are blocked before, and accepted only after, native completion.
+        pending = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+        assert (
+            pending["workBlocked"][0]["reason"] == "EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID"
+        ), pending
+        cache_proof["raw"] = result_path.read_bytes()
+        cache_proof["key"] = MODULE._task_result_evidence_block_key(
+            candidate, cache_proof["raw"], (result_path.parent / "task-context.json").read_bytes()
+        )
+        return {"turnId": turn_id, "status": "completed"}
 
     def launch_worker(argv, **kwargs):
         if "task-turn-worker" not in argv:
@@ -20918,6 +21005,7 @@ def test_native_expired_pr_create_requires_real_completed_validation(
         assert completed["ok"] and completed["turnStatus"] == "completed", completed
         return SimpleNamespace(pid=os.getpid())
 
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     with monkeypatch.context() as delivery:
         delivery.setattr(MODULE, "THREAD_DB", thread_db)
         delivery.setattr(MODULE, "ledger", lambda _path: store)
@@ -20932,16 +21020,91 @@ def test_native_expired_pr_create_requires_real_completed_validation(
                 ledger=store.path, thread_id="thread-1", result_digest=candidate["resultDigest"]
             )
         )
-    assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
-    assert result_path.read_bytes() == new_raw
+        assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
+        failed_raw = result_path.read_bytes()
+        blocked = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+        assert (
+            blocked.get("workBlocked", [{}])[0].get("reason")
+            == "EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID"
+        ), blocked
+        assert blocked["publicationRequests"] == [] and result_path.read_bytes() == failed_raw
+        assert run_git(worktree, "rev-parse", "HEAD") == old_head
+        candidates = store.validation_followup_candidates()
+        assert len(candidates) == 1, candidates
+        correction = candidates[0]["expiryCorrection"]
+        with store.connect() as connection:
+            legacy = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' ORDER BY id LIMIT 1"
+                ).fetchone()[0]
+            )
+        assert "expiryPromptRevision" not in legacy
+        assert base64.b64decode(correction["failedRawBase64"]) == failed_raw
+        assert base64.b64decode(correction["sourceRawBase64"]) == old_raw
+        repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+        assert (
+            repeated["publicationRequests"] == []
+            and len(store.validation_followup_candidates()) == 1
+        )
+        with store.connect() as connection:
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'"
+                ).fetchone()[0]
+                == 1
+            )
+            sent = connection.execute(
+                "SELECT dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT'"
+            ).fetchone()
+        assert sent["dedupe_key"] == candidate["resultDigest"]
+        assert "reservationDigest" not in json.loads(sent["payload_json"])
+        assert not MODULE._expired_validation_command_proof(
+            candidates[0],
+            correction["completion"],
+            dict(json.loads(failed_raw), contextDigest=context["contextDigest"]),
+        )
+        previous_reservation = reservation
+        reserved = MODULE.validation_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-1",
+                result_digest=candidate["resultDigest"],
+                intent_id="intent-1",
+                worktree_path=str(worktree),
+            )
+        )
+        assert reserved["ok"] and reserved["reservationDigest"] != previous_reservation, reserved
+        assert "新输出必须使用" in reserved["prompt"] and "禁止复制" in reserved["prompt"]
+        assert result_path.read_bytes() == failed_raw
+        candidate = store.unresolved_validation_followups()[0]
+        reservation = reserved["reservationDigest"]
+        turn_id = "native-expiry-real-validation-turn"
+        delivered = MODULE.validation_followup_deliver(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-1",
+                result_digest=candidate["resultDigest"],
+            )
+        )
+        assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
+    assert store.unresolved_validation_followups() == []
+    assert store.validation_followup_candidates() == []
+    with store.connect() as connection:
+        sent_rows = connection.execute(
+            "SELECT dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id"
+        ).fetchall()
+    assert len(sent_rows) == 2 and sent_rows[0]["dedupe_key"] == candidate["resultDigest"]
+    assert sent_rows[1]["dedupe_key"] == reservation
+    assert json.loads(sent_rows[1]["payload_json"])["reservationDigest"] == reservation
+    assert result_path.read_bytes() == cache_proof["raw"]
     assert (
         MODULE._task_result_evidence_block_key(
-            candidate, new_raw, (result_path.parent / "task-context.json").read_bytes()
+            candidate, cache_proof["raw"], (result_path.parent / "task-context.json").read_bytes()
         )
-        == blocked_key
+        == cache_proof["key"]
     )
     turns = [item for item in _task_turn_messages(process) if item.get("method") == "turn/start"]
-    assert len(turns) == 1 and "复现凭证已到期" in turns[0]["params"]["input"][0]["text"]
+    assert len(turns) == 2 and "复现凭证已到期" in turns[-1]["params"]["input"][0]["text"]
     ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
     assert ingested["ok"] and ingested.get("workBlocked", []) == [] and ingested["errors"] == [], (
         ingested
@@ -20949,6 +21112,7 @@ def test_native_expired_pr_create_requires_real_completed_validation(
     assert ingested["validationDeferred"] and ingested["publicationRequests"] == [], ingested
     assert run_git(worktree, "rev-parse", "HEAD") == old_head
     normalized = json.loads(result_path.read_text())
+    assert normalized["tests"] == cache_proof["checks"]
     assert (
         normalized["taskId"] == "intent-1"
         and normalized["quality"]["independent_review_passed"] is False
