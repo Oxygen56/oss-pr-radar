@@ -37407,6 +37407,35 @@
     ],
     "why": "Issue reports a high-impact streaming tool-call truncation bug with a clear repro, but root cause is not isolated. Existing PR #6632 likely addresses the same code path but is not linked to the issue and lacks maintainer confirmation. Gate requires HUMAN_REVIEW."
   },
+  "52647ce58c3dac1b5c16ad7638b1a80368a9b8a7f2db422a6e8f9de735a97423": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "livekit/agents/tts/_provider_format.py: make steering_instructions() disfluency/pace/nonverbal prose overridable and stop unconditional append in resolve_expressive_options",
+      "Preserve existing English defaults when no override is set"
+    ],
+    "risks": [
+      "API surface change to expressive options may need maintainer design sign-off",
+      "Fish Audio few-shot English fillers must also respect the override"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: custom Japanese tts_instructions_template plus locale filler override must not contain 'um, uh' or 'oh, well, so'",
+      "Run targeted unit tests for tts/_provider_format.py and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a string override vs a separate placeholder for the disfluency fragment"
+    ],
+    "why": "Issue pinpoints the hardcoded English disfluency sentence in steering_instructions() and its unconditional append in resolve_expressive_options, with a concrete reproduction and a proposed minimal fix path; no duplicate or merged coverage found."
+  },
   "527da83e36c8aae7249cfdb73e872454f176323d9a0e95242b1eea1bae5efdb5": {
     "confidence": 0.8,
     "contradictions": [],
@@ -65473,6 +65502,43 @@
     ],
     "why": "The issue reports a real GLM-5.3-Flash FP8 degeneration regression with a build A/B delta, but the reporter explicitly could not construct a synthetic reproduction; only long real agentic sessions trigger it. A maintainer comment states it is a known issue caused by tool call / vLLM frontend, which points away from the algorithm mechanisms (attention kernels, numerics, distributed training) that the candidate claims. The related-issue overlap (#56556, xgrammar structured output) shares only generic stack signatures (clang/gcc/collect_env.py) and is not a true duplicate. The candidate also carries an unresolved AI-disclosure policy conflict. These are materially blocking unknowns for an llm_algorithm contribution."
   },
+  "8cc12fdb533ea4bac26644336e377d6ca19d99da2937694dc0d0e7c7d964cfcb": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "tutorials/evals/_run_evals_quickstart.py: route relevance results through log_document_annotations_dataframe instead of to_annotation_dataframe",
+      "tutorials/evals/evaluate_code_readability_classifications.ipynb and evaluate_code_functionality_classifications.ipynb: dropna/filter None _score before sklearn metrics",
+      "tutorials/evals/trace_level_evals.ipynb, evaluate_rag_system.ipynb, tutorials/agents/langgraph/langgraph_promptchaining.ipynb: add missing pip installs (openai-agents, openinference-instrumentation-llama-index, langgraph)",
+      "tutorials/evals/evals_quickstart.ipynb: guard session.view() when launch_app returns None"
+    ],
+    "risks": [
+      "Item 6 (empty dataset DataFrame) is unresolved and may be a client-side race/API issue rather than a tutorial fix",
+      "Bundling 8 unrelated fixes in one PR may be rejected in favor of per-item PRs",
+      "Notebook-only changes may lack automated CI coverage, making regression protection weak",
+      "Maintainer may prefer a different annotation-logging approach for item 8"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Execute the affected notebooks end-to-end (or the _run_evals_quickstart.py script) against current main and confirm each reported error reproduces",
+      "After the item 8 fix, assert the logged annotation DataFrame retains span_id and document_position and that log_document_annotations_dataframe succeeds",
+      "Add a regression check that the relevance eval DataFrame index survives async_evaluate_dataframe",
+      "Re-run the notebook cells for items 1-5 and 7 to confirm no NaN/ModuleNotFoundError/NoneType errors"
+    ],
+    "unknowns": [
+      "Whether maintainers want item 8 fixed as a tutorial-only change or as an eval-utility/API change",
+      "Root cause of item 6 (empty dataset DataFrame) is undetermined",
+      "Whether the repo accepts bundled multi-notebook fixes or requires one PR per item"
+    ],
+    "why": "Issue bundles 8 concrete, reproducible tutorial runtime failures with named files, error messages, and per-item root causes; item 8 has an independent commenter confirming the failure against current main and proposing a scoped tutorial-only fix aligned with the existing document-annotation path. Items 1-5 and 7 are straightforward missing-dependency/NaN-guard fixes with clear validation paths. Item 6 is explicitly flagged as needing investigation, but the remaining items are independently actionable."
+  },
   "8cc1655cfbfcdebb919852f924ee2bfba5d882e2939d4196c1ad13d05203389a": {
     "confidence": 0.6,
     "contradictions": [
@@ -71213,6 +71279,37 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The design is technically sound and addresses a real bug in local-docker upgrade version metadata persistence. It includes concrete mechanisms (strict version read, re-read stored Profile, narrow write) and a detailed verification plan. However, the maintainer explicitly requested revisions and approval before implementation starts; the latest update claims revisions but the maintainer has not yet re-reviewed. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment and AI disclosure confirmation, which are not yet satisfied."
+  },
+  "995352e44e607575bd9be706b36cdc7948ea19e724d1e44460609b84d8be2a39": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/transformers_utils/processors/minimax_m3.py: remove unused required do_convert_rgb parameter from MiniMaxM3VLVideoProcessor._preprocess()",
+      "tests/models/multimodal/processing/test_minimax_m3.py: add/adjust regression coverage for transformers 5.18.0 signature"
+    ],
+    "risks": [
+      "Repository policy flags an AI disclosure conflict (aiDisclosureConflict=true), which may block automated public submission even though the issue itself discloses AI assistance",
+      "requirements/common.txt allows transformers >=5.10.4 while test requirements pin 5.17.0, so CI may not exercise 5.18.0 unless the test matrix is updated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's CPU-only minimal reproducer under transformers 5.18.0 and confirm it no longer raises TypeError",
+      "Run tests/models/multimodal/processing/test_minimax_m3.py (test_video_tokens_increase_with_max_long_side_pixel, test_video_volumetric_cap_raises) under transformers 5.18.0",
+      "Verify processor outputs are bit-identical between transformers 5.17.0 and 5.18.0 after the fix"
+    ],
+    "unknowns": [
+      "Whether maintainers want the test requirements pin updated alongside the code fix to prevent future CI blind spots"
+    ],
+    "why": "Issue provides a concrete CPU-only reproduction, traceback, and a precise root cause: transformers 5.18.0 moved do_convert_rgb out of BaseVideoProcessor._preprocess(), while vLLM's MiniMaxM3VLVideoProcessor._preprocess() still declares it as a required unused argument. The proposed fix (drop the unused parameter, relying on existing **kwargs) is minimal and backward-compatible with transformers <=5.17.0."
   },
   "99864e26e9a7974851dde8a2697b7de63ffa1d6c5d5a8ab2ffca646a8853dec7": {
     "confidence": 0.72,
@@ -87357,6 +87454,38 @@
       "Exact maintainer design preference for retract semantics; whether the existing merged PR #31962 fully resolves the issue."
     ],
     "why": "The issue provides a detailed root cause analysis with code anchors and measured impact, establishing a clear bug in retract mode's KV release. The suggested fix is concrete and testable, and the existing PRs are incomplete, leaving room for a valuable contribution."
+  },
+  "bcdcb38cffd29d49c365bfa8c22d1a571fc4a79799a05023be58cefe261dff07": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/smolagents/serialization.py ndarray encoder/decoder to preserve shape metadata",
+      "src/smolagents/remote_executors.py remote variable transfer and final-answer wrapper encoding"
+    ],
+    "risks": [
+      "Changing payload format may affect backward compatibility with previously serialized payloads",
+      "Remote executor transfer paths were only statically inspected, not exercised end-to-end",
+      "Maintainer may prefer a different shape-encoding scheme"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting SafeSerializer round-trip preserves shapes (0,768), (2,0,3), (0,0) and controls (2,3,0), (0,), (), (2,3) with dtype float32",
+      "Run the issue's minimal reproduction snippet against the patched module",
+      "Run targeted serialization and remote_executors unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers accept the proposed scope of preserving empty-axis shapes in both remote transfer directions"
+    ],
+    "why": "Issue provides a concrete, reproducible shape-loss bug in SafeSerializer: ndarray encoder records tolist() and dtype without shape metadata, so empty-axis shapes like (0,768) round-trip as (0,). Root cause is anchored to serialization.py lines 150-158 and remote_executors.py transfer paths, with a minimal offline reproduction and expected/actual pair."
   },
   "bcf0d4ef02f9eb67158084dfbcd41b9e34ae48e141ae70372fa131095001a026": {
     "confidence": 0.8,
