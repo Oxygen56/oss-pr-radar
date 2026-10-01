@@ -11983,6 +11983,43 @@
     ],
     "why": "Root cause is already established (sessionmaker().begin() in api/controllers/mcp/mcp.py closing the transaction before downstream commit) and an open PR #40013 already implements the exact fix shape (plain Session + explicit commit, same file). The remaining gap is only a missing regression test, which is a marginal increment rather than an independent contribution; the candidate also carries an ai_disclosure_conflict policy status."
   },
+  "1b30d16ea9aaf549350b7801d2516ea2c87bed66b4dfb39a2ee4fb1635762f3b": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Open PR #43935 is marked technical_complete=true but rootCauseCoverage=false, while the issue itself provides clear root-cause anchors"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/openai/chat/gpt_5_transformation.py: extend is_model_gpt_5_model to recognize gpt-6.1-sol and add none/minimal effort gating",
+      "litellm/llms/openai/responses/transformation.py: apply GPT-6.1 Sol effort contract and drop empty reasoning object",
+      "regression tests covering Chat Completions and Responses drop/reject behavior"
+    ],
+    "risks": [
+      "Model cost map may lag the new model release, so a model-specific guard may be needed until native support lands",
+      "Behavior change for drop_params=False (local 400) could affect callers relying on pass-through",
+      "Overlap with open PR #43935 risks duplicate implementation if not differentiated by root-cause coverage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against the patched tree; all five assertions must pass",
+      "Add a regression test asserting drop_params=True removes reasoning_effort none/minimal on Chat Completions and reasoning.effort on Responses",
+      "Add a test asserting a 400 is raised locally when drop_params=False for unsupported efforts",
+      "Run the target package's unit tests and static checks for the openai llm modules"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a model-specific guard versus extending the GPT-5 family detection",
+      "Whether the cost map will be updated to mark none/minimal unsupported for gpt-6.1-sol"
+    ],
+    "why": "Issue supplies a concrete, self-contained reproduction (test_gpt61sol.py) that fails on stock v1.100.0, names the exact code anchors (OpenAIGPT5Config.is_model_gpt_5_model, chat effort gate, OpenAIResponsesAPIConfig.map_openai_params), and specifies expected behavior for both drop_params=True and disabled-drop paths. Root cause is identified with two distinct gaps (family detection and missing none/minimal gate plus Responses contract). Open PR #43935 is directly related but has rootCauseCoverage=false and a failing proxy-behavior check, so it does not fully cover the issue; competition remains possible by adding root-cause coverage and validation."
+  },
   "1b3ab1dfad3f611f5e29f51bd2750310dfad5336a8e88a689e21a87f951d5d74": {
     "confidence": 0.85,
     "contradictions": [],
@@ -25371,6 +25408,40 @@
       "Which extension mechanism maintainers prefer (_meta key vs Qwen-specific extension) and whether the three layers should be split into separate issues"
     ],
     "why": "Issue requests reject-with-reason feedback to the model. Triage and an independent collaborator verification both anchor the gap in concrete code: ToolConfirmationPayload.cancelMessage exists (tools.ts:1062) but no UI sets it; coreToolScheduler.ts:4356-4360 falls back to the bare 'User did not allow tool call'; resolvePermissionOutcome (permissionUtils.ts:230-235) collapses the ACP response to an enum with no reason. The pipeline to the model already exists end-to-end, so the fix is a small, well-scoped threading change plus optional UI input. No duplicate/merged coverage found; no assignment or disclosure blocker."
+  },
+  "3892a296cfa613051ff4e20aa7af7c5f9f464699cc1cf439bc451f6ea893b38b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports PR #50543 as OPEN and directly covering the issue, while duplicate status is 'human_review_required' rather than resolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Plugin module resolver: resolve scoped @opencode/* imports for loose local plugin files from the project/config directory rather than the plugin file's own directory",
+      "Add regression test covering local plugin with bare @opencode/plugin import"
+    ],
+    "risks": [
+      "Overlapping open PR #50543 may already cover the fix, making independent work redundant",
+      "Resolver change could alter module resolution for non-plugin imports or node_modules paths"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with .opencode/plugins/probe.js importing @opencode/plugin and confirm 'Cannot find package' in server log",
+      "After fix, verify plugin loads with source: local and status: active via /api/plugin",
+      "Add regression test asserting scoped @opencode/* resolution from project directory for loose plugin files"
+    ],
+    "unknowns": [
+      "Whether PR #50543 already implements the same fix and will merge, making independent implementation redundant",
+      "Whether maintainers have a preferred resolver design that would reject an alternative implementation"
+    ],
+    "why": "Issue is a concrete, reproducible plugin module-resolution defect with clear expected/actual behavior and multiple independent confirmations, but the supplied evidence shows an open PR #50543 that directly references the issue and overlaps the same code path, plus a closed PR #50466 with identical title/scope. Duplicate/coverage status is explicitly 'human_review_required', which materially determines whether independent code work is actionable."
   },
   "38a4423040d394b92f3aab9c0e6707655d934f70fd23b59e6c3eda9a3088c268": {
     "confidence": 0.85,
@@ -61522,6 +61593,40 @@
     ],
     "why": "The issue reports a 404 'App trigger not found' after publishing, but a contributor's end-to-end reproduction on current main shows the full publish/sync chain works and the reported error state (webhook row present, app_triggers row missing) does not arise. The reporter's version/commit is unknown and the trigger subsystem was recently refactored, so the root cause is not established and the report may be stale or environment-specific."
   },
+  "841661880abf7bdcb42f34d47bf18a26bd7507568f93429edc8067e03303b02c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports exact comparator failures while approximate tolerances pass, and checkpoint-resume replays pass, leaving whether this is a defect or reference drift unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Muon optimizer update path",
+      "BF16 cast / gradient-zero counting path",
+      "functional test golden references or tolerances"
+    ],
+    "risks": [
+      "Distinguishing a real numerical/algorithmic defect from expected floating-point or hardware-dependent drift",
+      "Changing golden references without identifying the root cause could mask a real regression"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay steps around the first divergent step with a high-precision reference and compare optimizer update and BF16 cast outputs",
+      "Run the affected gpt3_moe_mcore_te_ep8_resume_torch_dist_muon and dist_muon cases with fixed seed and tolerance checks"
+    ],
+    "unknowns": [
+      "Which gradient coordinates or code path produce the zero-count drift",
+      "Whether the mismatch is caused by a code change, hardware/software stack change, or reference staleness",
+      "Whether a maintainer has accepted this as a code fix rather than a golden-reference update"
+    ],
+    "why": "The issue documents repeatable golden-reference mismatches for Muon checkpoint-resume tests, but explicitly states the root cause is not established and no code path or affected gradient coordinates are identified. The evidence is a numerical drift report, not a concrete algorithm defect with a reference-vs-implementation validation path."
+  },
   "841871ae9fb9c3e69741fc459f04463c4eb77958cf3c72ad4736b667d24abfab": {
     "confidence": 0.85,
     "contradictions": [
@@ -78355,6 +78460,45 @@
       "Whether PR #39229 or #32566 incidentally touches the same transfer_infos lifecycle code"
     ],
     "why": "Issue provides a concrete, code-anchored root cause: unconditional creation of transfer_infos[room] in mooncake/conn.py bootstrap thread, ABORT handler not popping the entry, and the only pop path requiring a KV chunk that orphan rooms never receive. Reproduction is a concrete ordered-steps HTTP injection against a 1P1D mooncake_tcp deployment with observed OOMKilled=true and dmesg evidence. Validation path is a reference-vs-implementation test: inject unique bootstrap_room values and assert transfer_infos does not grow unboundedly / orphan rooms are cleaned up. Open PRs #39229 and #32566 share only the bootstrap_room keyword and scheduler.py path, not the root cause (checksum feature and rust-server PD support respectively), so they do not cover this fix."
+  },
+  "a70c90dad51c50236d2ea3c0cd2da9b8eee3b0e18ea3313ae8a1384c781e44fa": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Second reporter's failure at ~375K tokens vs. first reporter's ~148K suggests either different per-plan limits or a payload-size trigger, not a single token ceiling"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "provider/model catalog limit for opencode-go models (context/output) to match gateway reality",
+      "context-overflow classification for provider 400 responses so compact-and-retry engages",
+      "persistence/surfacing of provider 400 response body in logs and session messages",
+      "possibly image/base64 retention caps in tool results to prevent session inflation"
+    ],
+    "risks": [
+      "Root cause may be payload-size rather than token-count, requiring a different fix",
+      "Changing catalog limits could affect other providers or plans",
+      "Provider body may not be available client-side, limiting diagnosability",
+      "Manual /compact may fail identically if summarization carries the same oversized history"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build a failing test that sends a prompt exceeding the gateway's real accept limit and asserts a 400 is classified as context overflow and triggers one-shot compact-and-retry",
+      "Regression test asserting the catalog limit for opencode-go/qwen3.8-flash matches the gateway's actual ceiling",
+      "Test that provider 400 response bodies are persisted in logs and surfaced in session messages",
+      "Reproduce with the reported session ID and token growth table to confirm the failure boundary"
+    ],
+    "unknowns": [
+      "Whether the true trigger is a token ceiling or a request-body/payload ceiling",
+      "The actual provider 400 response body content",
+      "Whether the gateway's limit is per-plan and how it maps to catalog entries"
+    ],
+    "why": "Issue reports a deterministic, reproducible failure: opencode-go gateway rejects prompts around 148k tokens while the catalog advertises 1M context, so preflight compaction never fires and the 400 is not classified as context overflow, permanently bricking the session. Concrete code anchors and a validation path exist, and a second independent reporter corroborates the class of failure. However, the exact root cause is not fully pinned: the second comment cannot separate a token ceiling from a request-body/payload ceiling, and the provider 400 body is never persisted, so the true rejection reason is unknown."
   },
   "a70ead2a13a5362311c7be630c9ecfac5aa6f900c72d994c13cd55ebcf20bcf8": {
     "confidence": 0.85,
@@ -99325,6 +99469,39 @@
     ],
     "why": "Issue provides a clear root cause in the CLI permission-decision path: the ask policy silently denies when onToolPermissionRequest callback is missing, mislabeling denial as user rejection. Concrete reproduction steps and code anchors are supplied, making the fix actionable. An open PR exists but lacks root-cause coverage, leaving room for a more complete contribution."
   },
+  "d42f4830101964554128ad08912a5a5887ee331cb0d6c520721bae180a62ee77": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.actionability_evidence reports root_cause_signal=false and probe_ready=false while the issue body asserts a specific yaml.safe_load failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "skill discovery/frontmatter parsing path",
+      "plugin install/update frontmatter rewrite path",
+      "warning/logging surface for invalid frontmatter"
+    ],
+    "risks": [
+      "Fixing only the warning may leave the silent field-drop in plugin install/update unaddressed",
+      "Changing discovery behavior to include broken skills could alter agent-visible skill semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create the broken SKILL.md from the issue and assert `goose skills list` either lists it or emits a warning containing the path and YAML error",
+      "Add a regression test for plugin install/update preserving original frontmatter when parsing fails"
+    ],
+    "unknowns": [
+      "Exact repository module/file responsible for skill discovery and frontmatter parsing",
+      "Whether maintainers require assignment before accepting a PR for this issue",
+      "Whether the plugin install/update field-drop is the same code path or a separate bug"
+    ],
+    "why": "Issue describes a plausible silent-drop bug with a concrete repro, but the pre-task evidence marks assignment_required and no_code_surface, and the code anchors are only file/field names (`SKILL.md`, `description`, `yaml.safe_load`) rather than a located parsing/discovery module. The root cause is asserted, not verified against the code path, and the submission policy requires assignment before work."
+  },
   "d430e39a4229f45dffa4d6bc31923204ee1a6113e3117c6964b9484f8156c919": {
     "confidence": 0.85,
     "contradictions": [],
@@ -112694,6 +112871,46 @@
       "No maintainer design confirmation on the version-token approach, but this is normal review uncertainty rather than a blocker"
     ],
     "why": "Issue provides a concrete root cause: the shared composer submission hook compares original editor text against transformed displayText to decide whether to clear, misclassifying preprocessing changes as newer user input; plus an unordered debounced draft write race. Code anchors (editorStillContainsSubmittedText, displayText, develop) and a specific introducing commit are supplied, and the recommended fix (monotonic edit version + clearIfUnchanged + serialized latest-value-wins draft writes) is actionable with a clear validation path."
+  },
+  "ee232322be0d5f831d3413f8a1acdf4718285e557a6db3aaf92f97fb2a5e354f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with gate_decision HUMAN_REVIEW, yet actionability_evidence shows no wait_reasons, no maintainer_approved, and no design_confirmation",
+      "Issue body hypothesizes a free-tier validation dependency on shell, but no code path or stack trace confirms it"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/shell.ts",
+      "packages/plugin/src/shell.ts",
+      "packages/opencode/src/tool/shell.ts",
+      "free-tier validation path that misreports permission denials"
+    ],
+    "risks": [
+      "Root cause may live in provider/free-tier validation rather than the shell tool paths listed, so the planned code anchors could be wrong",
+      "Fixing the error message without fixing the underlying validation dependency would mask the real defect",
+      "Overlapping reports (#50627, #51315) may already cover or be fixed by an existing change"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Encode the issue's bisect table as a regression test: agent with `edit: deny` only starts; agent with `edit: deny` + `shell: deny` must start and enforce the deny rather than emit the free-tier error",
+      "Add a case for `action: \"*\"` deny from the corroborating comment to confirm the broader trigger",
+      "Assert the surfaced error is a permission error, not the free-tier message, when a config-defined deny blocks shell"
+    ],
+    "unknowns": [
+      "Actual code path that emits the free-tier error and how it interacts with permission evaluation",
+      "Status and coverage of related issues #50627 and #51315 (whether already fixed or duplicated)",
+      "Whether paid models are affected, which the reporter could not verify",
+      "Whether the failure is in shell tooling, provider validation, or agent session bootstrap"
+    ],
+    "why": "Issue reports a reproducible symptom (config-defined shell/`*` deny on a free-model agent surfaces a misleading free-tier error) with a clean bisect table and a corroborating comment, but no root cause is established: the reporter only offers a hypothesis that an internal free-tier validation path depends on shell availability. The candidate's own actionability evidence sets root_cause_signal=false and probe_ready=false, and the pre-review gate already failed on reproduction_or_validation_missing. Related issues #50627 and #51315 are cited as the same error class but their status/coverage is not supplied, so duplicate/merged-fix coverage is unresolved."
   },
   "ee4b471f90d2b7e5c3a168569f37791438aa8acaaaf91fbad1c436c6198377c5": {
     "confidence": 0.85,
