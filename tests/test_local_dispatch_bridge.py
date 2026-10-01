@@ -9702,11 +9702,135 @@ def test_recovery_resumes_completed_validation_turn_without_a_new_result(monkeyp
     assert listed["recoverable"][0]["completionWithoutResult"] is True
 
 
+def test_refreshed_quota_recovery_preserves_retry_limit(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+
+    def reserve(version, digest):
+        raw = store.recovery_candidates(min_age_minutes=0, include_exhausted_dispatched=True)[0]
+        candidate = MODULE.bind_dispatched_recovery_prompt(
+            raw,
+            prompt_version=version,
+            prompt_digest=digest,
+        )
+        store.reserve_recovery(
+            thread_id="thread-1",
+            nonce=candidate["recoveryNonce"],
+            recovery_prompt_version=version,
+            recovery_prompt_digest=digest,
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+        store.commit_recovery(thread_id="thread-1", nonce=candidate["recoveryNonce"])
+        return candidate
+
+    first = reserve("issue-bound-recovery-v1", "a" * 64)
+    store.abandon_recovery_delivery(
+        thread_id="thread-1",
+        nonce=first["recoveryNonce"],
+        reason="TERMINAL_RECOVERY_TURN_INTERRUPTED",
+        min_age_minutes=0,
+    )
+    source = reserve("issue-bound-recovery-v1", "a" * 64)
+    assert store.sent_recoveries_without_result()[0]["retryCount"] == 1
+    failed_at = int(datetime.now(UTC).timestamp()) + 1
+    rollout = tmp_path / "rollout.jsonl"
+
+    def terminal(turn_id, code):
+        rollout.write_text(
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "turn_id": turn_id,
+                        "error": {"codex_error_info": code, "message": "account quota"},
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    terminal("quota-turn", "usage_limit_exceeded")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)", ("thread-1", str(rollout), failed_at)
+        )
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    auth = codex_home / "auth.json"
+    auth.write_text("{}")
+    os.utime(auth, (failed_at + 5, failed_at + 5))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread: None)
+    monkeypatch.setattr(MODULE, "live_thread_turn_states", lambda _ids: {})
+    monkeypatch.setattr(MODULE, "_discard_negative_task_turn_receipt", lambda **_kwargs: None)
+    os.utime(auth, (failed_at, failed_at))
+    assert MODULE._rearm_interrupted_recovery_turns(store) == ([], [])
+    os.utime(auth, (failed_at + 5, failed_at + 5))
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread: {"pid": 123})
+    assert MODULE._rearm_interrupted_recovery_turns(store) == ([], [])
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread: None)
+    with rollout.open("a") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {"type": "task_started", "turn_id": "new-active-turn"},
+                }
+            )
+            + "\n"
+        )
+    assert MODULE._rearm_interrupted_recovery_turns(store) == ([], [])
+    terminal("quota-turn", "usage_limit_exceeded")
+    with pytest.raises(LedgerError, match="exact sent binding"):
+        store.abandon_recovery_delivery(
+            thread_id="thread-1",
+            nonce=source["recoveryNonce"],
+            intent_id="wrong-intent",
+            worktree_path=str(worktree),
+            reason="CODEX_USAGE_LIMIT_CREDENTIALS_REFRESHED",
+            min_age_minutes=0,
+            credential_refresh={
+                "sourceRecoveryNonce": source["recoveryNonce"],
+                "failedTurnId": "quota-turn",
+                "failedThreadUpdatedAt": failed_at,
+                "authMetadata": MODULE._codex_auth_refresh_metadata_after(failed_at),
+            },
+        )
+    rearmed, exhausted = MODULE._rearm_interrupted_recovery_turns(store)
+    assert exhausted == []
+    assert len(rearmed) == 1
+    assert rearmed[0]["reason"] == "CODEX_USAGE_LIMIT_CREDENTIALS_REFRESHED"
+    with store.connect() as connection:
+        event = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='THREAD_RECOVERY_DELIVERY_ABANDONED' ORDER BY id DESC"
+        ).fetchone()
+    proof = json.loads(event["payload_json"])["credentialRefresh"]
+    assert proof["sourceRecoveryNonce"] == source["recoveryNonce"]
+    assert proof["failedTurnId"] == "quota-turn"
+    assert proof["ordinaryRetryCount"] == 1
+    reserve("reproduction-deferred-recovery-v1", "b" * 64)
+    assert store.sent_recoveries_without_result()[0]["retryCount"] == 1
+    # The already-observed failure cannot authorize another account probe.
+    assert MODULE._rearm_interrupted_recovery_turns(store) == ([], [])
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("UPDATE threads SET updated_at=?", (failed_at + 10,))
+    terminal("new-quota-turn", "usage_limit_exceeded")
+    assert MODULE._rearm_interrupted_recovery_turns(store) == ([], [])
+    terminal("ordinary-failure", "internal_error")
+    rearmed, exhausted = MODULE._rearm_interrupted_recovery_turns(store)
+    assert rearmed == []
+    assert exhausted[0]["reason"] == "RECOVERY_RETRY_EXHAUSTED"
+
+
 def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
-        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)")
-        connection.execute("INSERT INTO threads VALUES (?,?)", ("thread-1", None))
+        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER)")
+        connection.execute("INSERT INTO threads VALUES (?,?,?)", ("thread-1", None, 0))
     calls = []
 
     class Store:
@@ -9755,8 +9879,8 @@ def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path):
 def test_interrupted_recovery_keeps_active_worker_despite_previous_abort(monkeypatch, tmp_path):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
-        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)")
-        connection.execute("INSERT INTO threads VALUES (?,?)", ("thread-1", "rollout.jsonl"))
+        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER)")
+        connection.execute("INSERT INTO threads VALUES (?,?,?)", ("thread-1", "rollout.jsonl", 0))
 
     class Store:
         def sent_recoveries_without_result(self):
@@ -9791,8 +9915,8 @@ def test_interrupted_recovery_keeps_active_worker_despite_previous_abort(monkeyp
 def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
-        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)")
-        connection.execute("INSERT INTO threads VALUES (?,?)", ("thread-1", None))
+        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER)")
+        connection.execute("INSERT INTO threads VALUES (?,?,?)", ("thread-1", None, 0))
 
     exhausted_calls = []
 

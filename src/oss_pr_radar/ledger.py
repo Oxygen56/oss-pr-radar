@@ -5434,6 +5434,16 @@ class RadarLedger:
                                '$.recoveryKind'
                              )='DISPATCHED_TASK'
                          AND recovery.created_at>=d.created_at
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events rearmed
+                           WHERE rearmed.opportunity_key=exhausted.opportunity_key
+                             AND rearmed.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND {_intent_event_binding_clause("i", "rearmed")}
+                             AND rearmed.dedupe_key=exhausted.dedupe_key
+                             AND json_extract(rearmed.payload_json,'$.recoveryNonce')=exhausted.dedupe_key
+                             AND json_extract(rearmed.payload_json,'$.exhaustedEventId')=exhausted.id
+                             AND rearmed.id>exhausted.id
+                         )
                      ))
                      AND NOT EXISTS (
                        SELECT 1 FROM events advanced
@@ -5798,6 +5808,16 @@ class RadarLedger:
                          AND {_intent_event_binding_clause("i", "recovery")}
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'DISPATCHED_TASK'
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events rearmed
+                           WHERE rearmed.opportunity_key=exhausted.opportunity_key
+                             AND rearmed.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND {_intent_event_binding_clause("i", "rearmed")}
+                             AND rearmed.dedupe_key=exhausted.dedupe_key
+                             AND json_extract(rearmed.payload_json,'$.recoveryNonce')=exhausted.dedupe_key
+                             AND json_extract(rearmed.payload_json,'$.exhaustedEventId')=exhausted.id
+                             AND rearmed.id>exhausted.id
+                         )
                        ORDER BY exhausted.id"""
                 ).fetchall()
                 if include_exhausted_dispatched
@@ -6009,6 +6029,9 @@ class RadarLedger:
                              AND json_extract(prior.payload_json,'$.reason')=
                                  'TERMINAL_RECOVERY_TURN_INTERRUPTED'
                              AND prior.id<r.id
+                             AND prior.id>COALESCE(
+                               json_extract(r.payload_json,'$.credentialRefresh.eventId'),0
+                             )
                              AND {_intent_event_binding_clause("i", "prior_recovery")}
                              AND (
                                {_intent_event_binding_clause("i", "prior")}
@@ -6092,7 +6115,13 @@ class RadarLedger:
                 "reservationDigest": row["reservation_digest"],
                 "reservation": json.loads(row["payload_json"]),
                 "sentAt": row["sent_at"],
-                "retryCount": int(row["retry_count"] or 0),
+                "retryCount": int(row["retry_count"] or 0)
+                + int(
+                    (json.loads(row["payload_json"]).get("credentialRefresh") or {}).get(
+                        "ordinaryRetryCount"
+                    )
+                    or 0
+                ),
             }
             for row in rows
         ]
@@ -6330,6 +6359,39 @@ class RadarLedger:
             ).fetchone()
             if existing:
                 raise LedgerError("recovery is already reserved")
+            previous = connection.execute(
+                f"""SELECT abandoned.id,abandoned.payload_json,recovery.payload_json AS recovery_payload_json
+                   FROM events abandoned
+                   JOIN events recovery
+                     ON recovery.opportunity_key=abandoned.opportunity_key
+                    AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                    AND recovery.dedupe_key=json_extract(abandoned.payload_json,'$.reservationDigest')
+                   JOIN intents i ON i.opportunity_key=abandoned.opportunity_key AND i.intent_id=?
+                   WHERE abandoned.opportunity_key=?
+                     AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                     AND {_intent_event_binding_clause("i", "abandoned")}
+                     AND {_intent_event_binding_clause("i", "recovery")}
+                     AND json_extract(recovery.payload_json,'$.recoveryKind')=?
+                     AND COALESCE(json_extract(recovery.payload_json,'$.followupDigest'),'')=?
+                   ORDER BY abandoned.id DESC LIMIT 1""",
+                (
+                    candidate["intentId"],
+                    candidate["key"],
+                    candidate["recoveryKind"],
+                    candidate.get("followupDigest") or "",
+                ),
+            ).fetchone()
+            credential_refresh = None
+            if previous is not None:
+                abandoned_payload = json.loads(previous["payload_json"])
+                if abandoned_payload.get("reason") == "CODEX_USAGE_LIMIT_CREDENTIALS_REFRESHED":
+                    credential_refresh = abandoned_payload["credentialRefresh"] | {
+                        "eventId": previous["id"]
+                    }
+                elif abandoned_payload.get("reason") == "TERMINAL_RECOVERY_TURN_INTERRUPTED":
+                    credential_refresh = json.loads(previous["recovery_payload_json"]).get(
+                        "credentialRefresh"
+                    )
             changes_before = connection.total_changes
             self._event(
                 connection,
@@ -6347,6 +6409,11 @@ class RadarLedger:
                     "recoveryPromptDigest": candidate.get("recoveryPromptDigest"),
                     "recoveryChainDigest": candidate.get("recoveryChainDigest"),
                     "rearmedFromExhausted": candidate.get("rearmedFromExhausted"),
+                    **(
+                        {"credentialRefresh": credential_refresh}
+                        if credential_refresh is not None
+                        else {}
+                    ),
                 },
                 now,
             )
@@ -6478,15 +6545,62 @@ class RadarLedger:
         min_age_minutes: int = 5,
         intent_id: str | None = None,
         worktree_path: str | None = None,
+        credential_refresh: dict[str, Any] | None = None,
     ) -> None:
         """Retire a recovery reservation after proving delivery or result failure."""
 
+        refreshed_quota = reason == "CODEX_USAGE_LIMIT_CREDENTIALS_REFRESHED"
+        if refreshed_quota != (credential_refresh is not None):
+            raise LedgerError("credential recovery proof is incomplete")
+        credential_source = None
+        if refreshed_quota:
+            matches = [
+                item
+                for item in self.sent_recoveries_without_result()
+                if item["threadId"] == thread_id
+                and item["reservationDigest"] == nonce
+                and str(item["intentId"]) == str(intent_id or "")
+                and item["worktreePath"]
+                and worktree_path
+                and _resolved_path_equal(str(item["worktreePath"]), str(worktree_path))
+            ]
+            if len(matches) != 1:
+                raise LedgerError("credential recovery source is not the exact sent binding")
+            credential_source = matches[0]
+            proof = dict(credential_refresh or {})
+            auth_metadata = proof.get("authMetadata") or {}
+            if (
+                set(proof)
+                != {"sourceRecoveryNonce", "failedTurnId", "failedThreadUpdatedAt", "authMetadata"}
+                or proof["sourceRecoveryNonce"] != nonce
+                or not isinstance(proof["failedTurnId"], str)
+                or not proof["failedTurnId"]
+                or type(proof["failedThreadUpdatedAt"]) is not int
+                or proof["failedThreadUpdatedAt"] <= 0
+                or not isinstance(auth_metadata, dict)
+                or set(auth_metadata) != {"path", "mtimeNs", "size"}
+                or type(auth_metadata.get("mtimeNs")) is not int
+                or type(auth_metadata.get("size")) is not int
+                or not isinstance(auth_metadata.get("path"), str)
+                or auth_metadata["mtimeNs"] <= proof["failedThreadUpdatedAt"] * 1_000_000_000
+                or proof["failedThreadUpdatedAt"]
+                < int(parse_time(credential_source["sentAt"]).timestamp())
+            ):
+                raise LedgerError("credential recovery proof is invalid")
+            prior = credential_source["reservation"].get("credentialRefresh") or {}
+            if (
+                prior.get("failedTurnId") == proof["failedTurnId"]
+                and prior.get("authMetadata") == auth_metadata
+            ):
+                raise LedgerError("credential recovery account observation was already used")
+            credential_refresh = proof | {"ordinaryRetryCount": credential_source["retryCount"]}
         current = datetime.now(UTC)
         now = iso_z(current)
         with self.transaction() as connection:
             allow_sent = reason in {
                 "TERMINAL_RECOVERY_TURN_INTERRUPTED",
                 "RECOVERY_RETRY_EXHAUSTED",
+                "CODEX_USAGE_LIMIT_CREDENTIALS_REFRESHED",
             }
             identity_clause = ""
             reservation_params: list[Any] = [thread_id, nonce, nonce]
@@ -6572,6 +6686,10 @@ class RadarLedger:
             minimum_age = timedelta(minutes=max(0 if allow_sent else 1, min_age_minutes))
             if parse_time(row["created_at"]) + minimum_age > current:
                 raise LedgerError("recovery delivery is not old enough to abandon")
+            if refreshed_quota:
+                require_quarantine_clear(
+                    connection, opportunity_key=str(row["key"]), operation="credential recovery"
+                )
             changes_before = connection.total_changes
             self._event(
                 connection,
@@ -6587,6 +6705,11 @@ class RadarLedger:
                     "reservedAt": row["created_at"],
                     "reason": reason,
                     "minimumAgeMinutes": max(0 if allow_sent else 1, min_age_minutes),
+                    **(
+                        {"credentialRefresh": credential_refresh}
+                        if credential_refresh is not None
+                        else {}
+                    ),
                 },
                 now,
             )

@@ -4117,6 +4117,88 @@ def test_new_prompt_rearms_a_legacy_exhausted_dispatch_recovery_once(tmp_path):
         )
 
 
+@pytest.mark.parametrize(
+    "invalid_field",
+    [None, "intentId", "threadId", "worktreePath", "recoveryNonce", "exhaustedEventId"],
+)
+def test_dispatched_prompt_respects_exact_historical_rearm(tmp_path, invalid_field):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    raw = store.recovery_candidates(min_age_minutes=0, include_exhausted_dispatched=True)[0]
+    recovery = bind_dispatched_recovery_prompt(
+        raw,
+        prompt_version="issue-bound-recovery-v1",
+        prompt_digest="a" * 64,
+    )
+    store.reserve_recovery(
+        thread_id="thread-1",
+        nonce=recovery["recoveryNonce"],
+        recovery_prompt_version="issue-bound-recovery-v1",
+        recovery_prompt_digest="a" * 64,
+    )
+    store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    with store.transaction() as connection:
+        exhausted = connection.execute(
+            "SELECT id,payload_json FROM events WHERE event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'"
+        ).fetchone()
+        payload = json.loads(exhausted["payload_json"]) | {
+            "exhaustedEventId": exhausted["id"],
+            "reason": "AUTOMATION_RECOVERY_PROTOCOL_REPAIRED",
+        }
+        if invalid_field is not None:
+            payload[invalid_field] = -1 if invalid_field == "exhaustedEventId" else "wrong-binding"
+        # This is the actual historical native event; today's CLI only exposes
+        # the reviewed implementation variant of the same event.
+        store._event(
+            connection,
+            "a/b#1",
+            "THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED",
+            recovery["recoveryNonce"],
+            payload,
+            iso_z(datetime.now(UTC)),
+        )
+    current = store.recovery_candidates(min_age_minutes=0, include_exhausted_dispatched=True)[0]
+    bound = bind_dispatched_recovery_prompt(
+        current,
+        prompt_version="reproduction-deferred-recovery-v1",
+        prompt_digest="b" * 64,
+    )
+    if invalid_field is not None:
+        assert bound is None
+        return
+    assert current["exhaustedRecoveries"] == []
+    assert len(store.recovery_candidates(min_age_minutes=0)) == 1
+    assert bound is not None
+    store.reserve_recovery(
+        thread_id="thread-1",
+        nonce=bound["recoveryNonce"],
+        recovery_prompt_version="reproduction-deferred-recovery-v1",
+        recovery_prompt_digest="b" * 64,
+    )
+    store.commit_recovery(thread_id="thread-1", nonce=bound["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-1", nonce=bound["recoveryNonce"])
+    exhausted_again = store.recovery_candidates(
+        min_age_minutes=0, include_exhausted_dispatched=True
+    )[0]
+    assert (
+        bind_dispatched_recovery_prompt(
+            exhausted_again,
+            prompt_version="reproduction-deferred-recovery-v1",
+            prompt_digest="b" * 64,
+        )
+        is None
+    )
+
+
 def test_recovery_retry_count_is_scoped_to_the_current_recovery_chain(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

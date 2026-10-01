@@ -5867,7 +5867,7 @@ def _thread_bound_issue_tasks(store: Any) -> list[dict[str, Any]]:
     ]
 
 
-def _codex_auth_refreshed_after(thread_updated_at: int) -> bool:
+def _codex_auth_refresh_metadata_after(thread_updated_at: int) -> dict[str, Any] | None:
     """Return whether Codex credentials changed after a failed task turn.
 
     A usage-limit failure is a snapshot of the account state at that turn.  Once
@@ -5876,11 +5876,22 @@ def _codex_auth_refreshed_after(thread_updated_at: int) -> bool:
     """
 
     codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+    auth_path = codex_home / "auth.json"
     try:
-        metadata = (codex_home / "auth.json").stat()
+        metadata = auth_path.stat()
     except OSError:
-        return False
-    return stat.S_ISREG(metadata.st_mode) and metadata.st_mtime > thread_updated_at
+        return None
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_mtime <= thread_updated_at:
+        return None
+    return {
+        "path": str(auth_path.resolve()),
+        "mtimeNs": metadata.st_mtime_ns,
+        "size": metadata.st_size,
+    }
+
+
+def _codex_auth_refreshed_after(thread_updated_at: int) -> bool:
+    return _codex_auth_refresh_metadata_after(thread_updated_at) is not None
 
 
 def _codex_usage_limit_pause(store: Any) -> dict[str, Any] | None:
@@ -11913,7 +11924,7 @@ def _rearm_interrupted_recovery_turns(
     try:
         rows = {
             item["threadId"]: connection.execute(
-                "SELECT rollout_path FROM threads WHERE id=?", (item["threadId"],)
+                "SELECT rollout_path,updated_at FROM threads WHERE id=?", (item["threadId"],)
             ).fetchone()
             for item in pending
         }
@@ -11936,6 +11947,91 @@ def _rearm_interrupted_recovery_turns(
         state = (
             latest_thread_turn_state(row["rollout_path"]) if row is not None else None
         ) or live.get(item["threadId"])
+        if (
+            isinstance(state, dict)
+            and state.get("status") == "failed"
+            and state.get("code") == CODEX_USAGE_LIMIT_ERROR_CODE
+        ):
+            # A credential refresh is a new account-state observation, not an
+            # extra ordinary failure retry. Recheck the actual turn and owner
+            # while holding the existing task action lock.
+            with opportunity_action_guard(ledger_action_guard_root(store.path), item["key"]):
+                if active_task_turn_worker(item["threadId"]) is not None:
+                    continue
+                with sqlite3.connect(THREAD_DB) as connection:
+                    connection.row_factory = sqlite3.Row
+                    current_row = connection.execute(
+                        "SELECT rollout_path,updated_at FROM threads WHERE id=?",
+                        (item["threadId"],),
+                    ).fetchone()
+                current_state = (
+                    latest_thread_turn_state(current_row["rollout_path"])
+                    if current_row is not None
+                    else None
+                )
+                if (
+                    not isinstance(current_state, dict)
+                    or current_state.get("status") != "failed"
+                    or current_state.get("code") != CODEX_USAGE_LIMIT_ERROR_CODE
+                    or not current_state.get("turnId")
+                ):
+                    continue
+                updated_at = int(current_row["updated_at"] or 0)
+                auth_metadata = _codex_auth_refresh_metadata_after(updated_at)
+                if auth_metadata is None or updated_at < int(
+                    parse_time(item["sentAt"]).timestamp()
+                ):
+                    continue
+                nonce = str((item.get("reservation") or {}).get("recoveryNonce") or "")
+                current_items = [
+                    entry
+                    for entry in store.sent_recoveries_without_result()
+                    if all(
+                        entry.get(field) == item.get(field)
+                        for field in (
+                            "key",
+                            "intentId",
+                            "threadId",
+                            "worktreePath",
+                            "reservationDigest",
+                        )
+                    )
+                ]
+                if len(current_items) != 1:
+                    continue
+                previous = (current_items[0].get("reservation") or {}).get(
+                    "credentialRefresh"
+                ) or {}
+                if (
+                    previous.get("failedTurnId") == current_state["turnId"]
+                    and previous.get("authMetadata") == auth_metadata
+                ):
+                    continue
+                store.abandon_recovery_delivery(
+                    thread_id=item["threadId"],
+                    nonce=nonce,
+                    reason="CODEX_USAGE_LIMIT_CREDENTIALS_REFRESHED",
+                    min_age_minutes=0,
+                    credential_refresh={
+                        "sourceRecoveryNonce": nonce,
+                        "failedTurnId": current_state["turnId"],
+                        "failedThreadUpdatedAt": updated_at,
+                        "authMetadata": auth_metadata,
+                    },
+                    **_ledger_binding_kwargs(item),
+                )
+                _discard_negative_task_turn_receipt(
+                    delivery_kind="recovery", thread_id=item["threadId"], delivery_token=nonce
+                )
+                rearmed.append(
+                    {
+                        "kind": "recovery",
+                        "key": item["key"],
+                        "threadId": item["threadId"],
+                        "reason": "CODEX_USAGE_LIMIT_CREDENTIALS_REFRESHED",
+                    }
+                )
+            continue
         if not _is_immediate_recovery(state):
             continue
         if int(item.get("retryCount") or 0) >= 1:
