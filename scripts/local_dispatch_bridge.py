@@ -18845,7 +18845,7 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
     dependency_note = (
         "系统已按项目锁文件补齐缺失依赖，请重新运行相关检查。"
         if prefetch
-        else "无需新增依赖，请直接重新判断并补齐证据。"
+        else "请重新确认已准备的依赖环境并补齐证据。"
     )
     worktree_input_path = str(candidate.get("worktreeInputPath") or "")
     input_note = (
@@ -18880,7 +18880,15 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "读取当前任务文件，并只在已绑定的工作区继续。\n\n"
         + input_note
         + f"本轮需要解决：{missing_summary}。{dependency_note}\n\n"
+        + "先检查绑定工作区已准备的 `.venv/bin/python`；存在时必须进入该工作区后明确使用这个解释器。"
+        "登录 shell 可能重置 PATH，不要依赖裸 `python3` 或沿用旧的依赖不可用判断。"
+        "确认当前环境后重新运行真实用户入口和原先未完成的核心检查。"
         + "按已加载的受控任务规则更新结果：核心回归必须证明修复前失败、修复后通过；"
+        "必须使用项目真实实现和当前依赖环境，不能用模拟旧行为或替换缺失 SDK 导入的"
+        "in-process stubs 代替真实用户入口及原核心检查。"
+        "项目测试自身的单元 mocks 和 fixtures 仍可按原测试运行。"
+        "遵守仓库规则区分真实用户入口的修复证明和 pytest 等辅助检查；"
+        "未实际运行或仍失败的检查必须诚实保留缺口，不能标记检查通过。"
         "广泛检查、可选依赖或 GPU/模型检查只有在核心检查完整通过时才可明确交给远端 CI。"
         "任何真实失败、缺少生成产物或已知分支问题仍会阻止发布。自动复核结论只能由系统写入。"
         "新输出不得沿用输入中的 reproductionReceipt、probeReceipt 或 resultDigest；"

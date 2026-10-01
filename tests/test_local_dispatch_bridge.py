@@ -32762,6 +32762,272 @@ def test_contradictory_unavailable_pytest_enters_native_validation_before_review
     assert managed.read_task("intent-1")["state"] == "PORTFOLIO_READY"
 
 
+def test_sdk_import_standins_return_to_native_validation_and_real_venv_entry(monkeypatch, tmp_path):
+    from oss_pr_radar.independent_review import review_once
+
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    schema = tmp_path / "schemas" / "independent_review.schema.json"
+    schema.parent.mkdir()
+    schema.write_text("{}", encoding="utf-8")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["tests"] = [
+        {
+            "command": "python3 before/after regression probe with in-process stubs for missing optional external SDK imports",
+            "exitCode": 0,
+            "result": "Simulated old behavior failed and the stub-assisted patched probe passed.",
+        },
+        {"command": "python3 ast.parse changed files", "exitCode": 0, "result": "Parsed."},
+    ]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path, store=store)
+    reviewed = []
+
+    def reviewer(cwd, _schema, prompt, _timeout):
+        reviewed.append(prompt)
+        assert cwd == worktree
+        assert "assert value == 2" in run_git(worktree, "show", "HEAD:runtime.py")
+        return {
+            "verdict": "PASS",
+            "summary": "The committed implementation and real regression are correct.",
+            "findings": [],
+            "evidence": ["runtime.py at current HEAD", "real worktree interpreter passed"],
+        }
+
+    before = review_once(tmp_path, store.path, reviewer=reviewer)
+    assert before["updated"] == []
+    assert before["errors"] == []
+    assert reviewed == []
+    pending = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert pending["errors"] == [], pending
+    assert pending["publicationRequests"] == []
+    assert pending["validationDeferred"][0]["missing"] == [
+        "relevant_tests_green",
+        "independent_review_passed",
+    ]
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["controllerReviewPending"] == []
+    assert listed["environmentBlocked"] == []
+    candidate = listed["candidates"][0]
+    bind_validation_runtime(monkeypatch, tmp_path)
+    reservation = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    assert reservation["ok"] is True
+    prompt = reservation["prompt"]
+    assert "先检查绑定工作区已准备的 `.venv/bin/python`" in prompt
+    assert "不要依赖裸 `python3`" in prompt
+    assert "不能用模拟旧行为或替换缺失 SDK 导入" in prompt
+    rollout = tmp_path / "validation-rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    thread_db = tmp_path / "validation-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads ("
+            "id TEXT, cwd TEXT, archived INTEGER, first_user_message TEXT, "
+            "rollout_path TEXT, git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?)",
+            (
+                candidate["threadId"],
+                str(worktree),
+                0,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+    process = _FakeTaskTurnProcess()
+    bound_prompts = []
+    original_popen = subprocess.Popen
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": candidate["threadId"]}}}
+        return buffer, {"result": {"turn": {"id": "real-venv-validation"}}}
+
+    def launch_native_worker(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        worker_candidate = MODULE._task_turn_reservation(
+            store,
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=candidate["resultDigest"],
+        )
+        before_environment = MODULE._task_turn_prompt("validation-followup", worker_candidate)
+        subprocess.run(
+            [sys.executable, "-m", "venv", "--without-pip", str(worktree / ".venv")],
+            check=True,
+        )
+        after_environment = MODULE._task_turn_prompt("validation-followup", worker_candidate)
+        assert before_environment == after_environment
+        bound_prompts.append(after_environment)
+        worker_args = SimpleNamespace(
+            ledger=store.path,
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=candidate["resultDigest"],
+            delivery_attempt_digest=None,
+            intent_id=None,
+            worktree_path=None,
+            **{
+                option.replace("-", "_"): argv[argv.index("--" + option) + 1]
+                for option in (
+                    "reservation-digest",
+                    "snapshot-id",
+                    "snapshot-path",
+                    "snapshot-digest",
+                    "worktree-input-path",
+                    "worktree-input-digest",
+                    "receipt",
+                )
+            },
+        )
+        completed = MODULE.task_turn_worker_entry(worker_args)
+        assert completed["ok"] is True
+        assert completed["turnStatus"] == "completed"
+        return SimpleNamespace(pid=os.getpid())
+
+    with monkeypatch.context() as delivery:
+        delivery.setattr(MODULE, "THREAD_DB", thread_db)
+        delivery.setattr(MODULE, "ledger", lambda _path: store)
+        delivery.setattr(MODULE, "_app_server_action_session", action_session)
+        delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+        delivery.setattr(MODULE, "_read_app_server_response", read_response)
+        delivery.setattr(
+            MODULE,
+            "_wait_for_app_server_terminal_turn",
+            lambda *_args, **_kwargs: {"turnId": "real-venv-validation", "status": "completed"},
+        )
+        delivery.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+        delivery.setattr(MODULE.subprocess, "Popen", launch_native_worker)
+        delivered = MODULE.validation_followup_deliver(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-1",
+                result_digest=candidate["resultDigest"],
+            )
+        )
+    assert delivered["ok"] is True
+    assert delivered["turnStatus"] == "completed"
+    assert delivered["reservationDigest"] == reservation["reservationDigest"]
+    turns = [item for item in _task_turn_messages(process) if item.get("method") == "turn/start"]
+    assert len(turns) == 1
+    assert turns[0]["params"]["input"][0]["text"] == bound_prompts[0]
+    assert ".venv/bin/python" in bound_prompts[0]
+    assert store.unresolved_validation_followups() == []
+    # The explicit interpreter works even with an unrelated PATH.
+    actual = subprocess.run(
+        [str(worktree / ".venv/bin/python"), "-c", "import runtime; print(runtime.value)"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        env=os.environ | {"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    assert actual.returncode == 0, actual.stdout + actual.stderr
+    assert actual.stdout.strip() == "2"
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["tests"].append(
+        {
+            "command": ".venv/bin/python -c 'import runtime; print(runtime.value)'",
+            "exitCode": actual.returncode,
+            "result": actual.stdout.strip(),
+        }
+    )
+    value["quality"]["relevant_tests_green"] = True
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path, store=store)
+    validated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert validated["errors"] == [], validated
+    assert validated["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    checked = review_once(tmp_path, store.path, reviewer=reviewer)
+    assert checked["errors"] == [], checked
+    assert len(checked["updated"]) == 1
+    ready = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ready["errors"] == [], ready
+    assert ready["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(ready["publicationRequests"]) == 1
+
+
+def test_normal_unit_mocks_remain_valid_test_evidence():
+    quality = {field: True for field in QUALITY_FIELDS}
+    result = {
+        "tests": [
+            {
+                "command": ".venv/bin/python -m pytest tests/test_runtime.py",
+                "exitCode": 0,
+                "result": "Project unit tests passed using their regular SDK mocks and local fixtures, including in-process stubs for missing optional external SDK imports.",
+            }
+        ]
+    }
+    assert MODULE.assess_submit_ready(quality, task_result=result).ready
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        {"command": "python3 ast.parse runtime.py"},
+        {"command": "python3 -m py_compile runtime.py"},
+        {"command": "python3 -m compileall runtime.py"},
+        {"command": "git diff --check"},
+        {"command": ".venv/bin/python --version"},
+        {"command": ".venv/bin/python -c 'import sys; print(sys.version)'"},
+        {"command": "uv sync --locked --offline"},
+        {"command": "python3 -m pip install pytest"},
+        {"command": "ruff check runtime.py"},
+        {"command": "python3 -m venv .venv"},
+        {"command": ".venv/bin/python runtime.py", "phase": "before fix"},
+        {"command": ".venv/bin/python runtime.py", "result": "Passed before the patch."},
+    ],
+)
+def test_sdk_import_standins_are_not_resolved_by_non_current_behavioral_checks(check):
+    result = {
+        "tests": [
+            {
+                "command": "python3 probe with in-process stubs for missing optional external SDK imports",
+                "exitCode": 0,
+            },
+            check | {"exitCode": 0},
+        ]
+    }
+    assessment = MODULE.assess_submit_ready(
+        {field: True for field in QUALITY_FIELDS}, task_result=result
+    )
+    assert assessment.missing == ("relevant_tests_green",)
+
+
+@pytest.mark.parametrize(
+    "command", ["pytest tests/test_runtime.py", "python3 -m unittest test_runtime"]
+)
+def test_sdk_import_standins_can_be_supplemented_by_actual_project_test_pass(command):
+    result = {
+        "tests": [
+            {
+                "command": "python3 probe with in-process stubs for missing optional external SDK imports",
+                "exitCode": 0,
+            },
+            {
+                "command": command,
+                "exitCode": 0,
+                "result": "Current project tests passed with their own in-process stubs for missing optional external SDK imports.",
+            },
+        ]
+    }
+    assert MODULE.assess_submit_ready(
+        {field: True for field in QUALITY_FIELDS}, task_result=result
+    ).ready
+
+
 def test_explicit_before_fix_failure_does_not_block_current_passing_fix(tmp_path):
     store, worktree, result_path = _controller_commit_result(tmp_path)
     value = json.loads(result_path.read_text(encoding="utf-8"))

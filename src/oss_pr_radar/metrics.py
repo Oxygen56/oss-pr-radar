@@ -111,6 +111,18 @@ def is_validation_dependency_failure(item: dict[str, Any]) -> bool:
     )
 
 
+def _is_before_fix_check(item: dict[str, Any], text: str) -> bool:
+    phase = str(item.get("phase") or "").casefold().replace("-", "_").replace(" ", "_")
+    return phase in {
+        "before_fix",
+        "pre_fix",
+        "before_patch",
+        "pre_patch",
+        "baseline",
+        "reproduction",
+    } or bool(re.search(r"\b(?:before|pre)[ _-](?:the[ _-])?(?:fix|patch)\b", text, re.IGNORECASE))
+
+
 def unresolved_current_test_failures(result: dict[str, Any]) -> list[dict[str, Any]]:
     """Find explicit current check failures, retaining legitimate before-fix evidence.
 
@@ -126,18 +138,10 @@ def unresolved_current_test_failures(result: dict[str, Any]) -> list[dict[str, A
     for index, item in enumerate(tests):
         if not isinstance(item, dict):
             continue
-        phase = str(item.get("phase") or "").casefold().replace("-", "_").replace(" ", "_")
         text = "\n".join(
             str(item.get(field) or "") for field in ("command", "summary", "outcome", "result")
         )
-        if phase in {
-            "before_fix",
-            "pre_fix",
-            "before_patch",
-            "pre_patch",
-            "baseline",
-            "reproduction",
-        } or re.search(r"\b(?:before|pre)[ _-](?:the[ _-])?(?:fix|patch)\b", text, re.IGNORECASE):
+        if _is_before_fix_check(item, text):
             continue
         command = str(item.get("command") or "").strip()
         cwd = str(item.get("workingDirectory") or item.get("cwd") or "").strip()
@@ -150,11 +154,57 @@ def unresolved_current_test_failures(result: dict[str, Any]) -> list[dict[str, A
     return list(pending.values())
 
 
+def environment_stub_checks_without_real_validation(result: dict[str, Any]) -> bool:
+    """Reject SDK import stand-ins as the only behavioral validation evidence."""
+
+    tests = result.get("tests")
+    if not isinstance(tests, list):
+        return False
+    environment_stubs = False
+    real_validation = False
+    for item in tests:
+        if not isinstance(item, dict):
+            continue
+        text = "\n".join(
+            str(item.get(field) or "") for field in ("command", "summary", "outcome", "result")
+        )
+        command = str(item.get("command") or "")
+        project_test = bool(
+            re.search(r"(?:^|\s)(?:\S*/)?pytest\b|\s-m\s+(?:pytest|unittest)\b", command)
+        )
+        if (
+            re.search(
+                r"\bin[ -]process\s+stubs?\b.*\bmissing\b.*\bsdk\b.*\bimports?\b",
+                text,
+                re.IGNORECASE | re.DOTALL,
+            )
+            and not project_test
+        ):
+            environment_stubs = True
+        elif item.get("exitCode") == 0 and not _is_before_fix_check(item, text):
+            if not re.search(
+                r"\b(?:ast\.parse|py_compile|compileall|ruff|mypy|pyright|black|isort|"
+                r"eslint|prettier|lint|format|typecheck)\b|"
+                r"\bgit\s+diff\b.*--check\b|--version\b|"
+                r"\bpython(?:\d+(?:\.\d+)*)?\s+-V\b|"
+                r"\b(?:sys\.version(?:_info)?|platform\.python_version|ensurepip)\b|"
+                r"\b(?:pip\d*|uv(?:\s+pip)?|poetry|npm|pnpm|yarn)\s+(?:install|sync|check)\b|"
+                r"(?:^|\s)(?:\S+\s+-m\s+venv|virtualenv)\b",
+                command,
+                re.IGNORECASE,
+            ):
+                real_validation = True
+    return environment_stubs and not real_validation
+
+
 def assess_submit_ready(
     evidence: dict[str, Any], *, task_result: dict[str, Any] | None = None
 ) -> SubmitReadyAssessment:
     effective = dict(evidence)
-    if task_result is not None and unresolved_current_test_failures(task_result):
+    if task_result is not None and (
+        unresolved_current_test_failures(task_result)
+        or environment_stub_checks_without_real_validation(task_result)
+    ):
         effective["relevant_tests_green"] = False
     missing = tuple(field for field in QUALITY_FIELDS if effective.get(field) is not True)
     return SubmitReadyAssessment(not missing, missing, effective)
