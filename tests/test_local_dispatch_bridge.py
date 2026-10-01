@@ -34869,3 +34869,288 @@ def test_explicit_before_fix_failure_does_not_block_current_passing_fix(tmp_path
     assert ingested["validationDeferred"] == []
     assert ingested["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
     assert len(ingested["publicationRequests"]) == 1
+
+
+def _published_tracking_merge_fixture(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    source_raw = result_path.read_bytes()
+    source_value = json.loads(source_raw)
+    previous_head = source_value["commitSha"]
+    branch = source_value["branch"]
+    run_git(worktree, "switch", "main")
+    (worktree / "runtime.py").write_text("value = 3\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "refactor: update runtime")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", branch)
+    managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store, worktree, result_path, degrade_stage=False
+    )
+    publication = MODULE._publication_payload_from_evidence(source_value, source_value["issueUrl"])
+    source_request = {
+        "requestId": "published-authority-request",
+        "opportunityKey": "a/b#1",
+        "intentId": "intent-1",
+        "threadId": "thread-1",
+        "issueUrl": source_value["issueUrl"],
+        "worktreePath": str(worktree),
+        "commitSha": previous_head,
+        "headSha": previous_head,
+        "branch": branch,
+        "selectedBaseSha": source_value["selectedBaseSha"],
+        "codePaths": source_value["codePaths"],
+        "resultDigest": source_value["resultDigest"],
+        "evidenceDigest": hashlib.sha256(source_raw).hexdigest(),
+        "evidenceRawBase64": base64.b64encode(source_raw).decode("ascii"),
+        "publication": publication,
+    }
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=?,evidence_digest=? "
+            "WHERE request_id='published-authority-request'",
+            (json.dumps(source_request), source_request["evidenceDigest"]),
+        )
+    now = iso_z(datetime.now(UTC) + timedelta(seconds=1))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": previous_head,
+                    "actionDigest": "tracking-merge-action",
+                    "taskActionDigest": "tracking-merge-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["解决已发布PR的当前冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    followup = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=followup["wakeDigest"],
+        prepared_head_sha=previous_head,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url=source_value["issueUrl"],
+            thread_id="thread-1",
+            cwd=worktree,
+            prepared_followup_head=previous_head,
+        ).read_bytes()
+    )
+    merged = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", base_sha],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert merged.returncode == 1, merged.stderr
+    (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: resolve runtime conflict")
+    merge_head = run_git(worktree, "rev-parse", "HEAD")
+    value = source_value | {
+        "contextDigest": context["contextDigest"],
+        "handoffMode": "controller_merge_complete",
+        "commitMessage": "fix: resolve runtime conflict",
+        "commitSha": merge_head,
+        "headSha": merge_head,
+        "previousCommitSha": previous_head,
+        "mergeBaseSha": base_sha,
+        "mergeResolutionFiles": ["runtime.py"],
+        "controllerCommitChangedFiles": ["runtime.py"],
+        "changedFiles": ["runtime.py"],
+        "prUrl": pr_url,
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+        "publication": {
+            "baseBranch": "main",
+            "branch": branch,
+            "commitSha": previous_head,
+            "prUrl": pr_url,
+            "status": "PR_OPEN",
+        },
+    }
+    candidate = store.task_result_candidates()[0]
+    with MODULE._task_worktree_private_descriptor(candidate) as opened:
+        value, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=opened,
+            managed_ledger=managed,
+            write_result=False,
+        )
+        MODULE._write_task_result_json_to_private(opened, value)
+    _write_explicit_controller_review(tmp_path, value)
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700, exist_ok=True)
+    monkeypatch.setattr(MODULE, "STATE", state)
+    return store, managed, worktree, result_path, context, source_request
+
+
+def test_ingest_tracking_merge_recovers_metadata_then_requires_fresh_review(monkeypatch, tmp_path):
+    store, _managed, worktree, result_path, _context, source = _published_tracking_merge_fixture(
+        monkeypatch, tmp_path
+    )
+    original_raw = result_path.read_bytes()
+    original = json.loads(original_raw)
+    assert MODULE._controller_review_result(SimpleNamespace(ledger=store.path), original)
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    normalized = json.loads(result_path.read_bytes())
+    assert first["errors"] == [], first
+    assert first["publicationRequests"] == []
+    assert normalized["quality"]["independent_review_passed"] is False
+    assert "independentReview" not in normalized
+    assert normalized["commitSha"] == original["commitSha"]
+    assert normalized["resultDigest"] != original["resultDigest"]
+    assert (
+        normalized["reproductionReceipt"]["receiptDigest"]
+        != original["reproductionReceipt"]["receiptDigest"]
+    )
+    assert MODULE._controller_review_result(SimpleNamespace(ledger=store.path), normalized) is None
+    assert (
+        MODULE._publication_payload_from_evidence(normalized, normalized["issueUrl"])
+        == source["publication"]
+    )
+    with store.connect() as connection:
+        history_row = connection.execute(
+            "SELECT payload_json FROM managed_lifecycle_events "
+            "WHERE event_type='PUBLISHED_FOLLOWUP_METADATA_RECOVERED'"
+        ).fetchone()
+    history = json.loads(history_row[0])["originalResultSnapshot"]
+    history_path = MODULE.STATE / history["snapshotPath"]
+    assert history_path.read_bytes() == original_raw
+    assert history["snapshotDigest"] == hashlib.sha256(original_raw).hexdigest()
+    assert stat.S_IMODE(history_path.stat().st_mode) == 0o400
+
+    _write_explicit_controller_review(tmp_path, normalized)
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert second["errors"] == [], second
+    assert len(second["publicationRequests"]) == 1
+    request = store.publication_request(second["publicationRequests"][0]["requestId"])["request"]
+    bound, _digest = MODULE.publication_evidence_from_request(request)
+    assert request["publicationKind"] == "PR_UPDATE"
+    assert request["existingPrUrl"] == original["prUrl"]
+    assert request["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert request["previousCommitSha"] == original["previousCommitSha"]
+    assert (
+        MODULE._publication_payload_from_evidence(bound, bound["issueUrl"])
+        == request["publication"]
+    )
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "intent",
+        "thread",
+        "worktree",
+        "branch",
+        "pr",
+        "snapshot",
+        "body",
+        "missing_body",
+        "managed_head",
+    ],
+)
+def test_tracking_merge_metadata_rejects_foreign_or_changed_source(monkeypatch, tmp_path, mismatch):
+    store, managed, worktree, result_path, context, source = _published_tracking_merge_fixture(
+        monkeypatch, tmp_path
+    )
+    candidate = store.task_result_candidates()[0]
+    before = result_path.read_bytes()
+    value = json.loads(before)
+    if mismatch in {"intent", "thread", "worktree", "branch", "snapshot"}:
+        field = {
+            "intent": "intentId",
+            "thread": "threadId",
+            "worktree": "worktreePath",
+            "branch": "branch",
+            "snapshot": "evidenceDigest",
+        }[mismatch]
+        source[field] = "foreign-source"
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+                (json.dumps(source), source["requestId"]),
+            )
+    elif mismatch == "pr":
+        value["publication"]["prUrl"] = "https://github.com/a/b/pull/99"
+    elif mismatch in {"body", "missing_body"}:
+        body_path = Path(source["publication"]["bodyPath"])
+        if mismatch == "body":
+            body_path.write_text("Fixes #1\nDifferent body.\n", encoding="utf-8")
+        else:
+            body_path.unlink()
+    else:
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE managed_prs SET head_sha=? WHERE pr_key='a/b#9'", ("a" * 40,)
+            )
+    with MODULE._task_worktree_private_descriptor(candidate) as opened:
+        with pytest.raises((RuntimeError, ValueError)):
+            MODULE._published_followup_publication_metadata(
+                store,
+                managed,
+                candidate=candidate,
+                context=context,
+                value=value,
+                raw=before,
+                result_access=opened,
+            )
+    assert result_path.read_bytes() == before
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("shape", ["complete", "new_pr", "unknown", "not_finalized"])
+def test_publication_metadata_recovery_is_only_the_tracking_merge_shape(shape):
+    value = {
+        "stage": "FIX_READY",
+        "handoffMode": "controller_merge_complete",
+        "publication": {
+            "baseBranch": "main",
+            "branch": "fix/1-runtime-boundary",
+            "commitSha": "a" * 40,
+            "prUrl": "https://github.com/a/b/pull/9",
+            "status": "PR_OPEN",
+        },
+    }
+    candidate = {"stage": "PR_OPEN"}
+    if shape == "complete":
+        value["publication"].update(
+            {"headOwner": "Oxygen56", "title": "Existing title", "bodyFile": "existing-body"}
+        )
+    elif shape == "new_pr":
+        candidate["stage"] = "DISPATCHED"
+    elif shape == "unknown":
+        value["publication"]["unrecognized"] = "value"
+    else:
+        value["handoffMode"] = "controller_merge_required"
+    assert (
+        MODULE._published_followup_publication_metadata(
+            None,
+            None,
+            candidate=candidate,
+            context={},
+            value=value,
+            raw=b"",
+            result_access=None,
+        )
+        is None
+    )

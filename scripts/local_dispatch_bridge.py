@@ -21013,6 +21013,189 @@ def _publication_payload_from_evidence(evidence: dict[str, Any], issue_url: str)
     }
 
 
+def _published_followup_publication_metadata(
+    store: RadarLedger,
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+    result_access: _ValidationWorktreeDirectory,
+) -> tuple[dict[str, str], dict[str, str]] | None:
+    """Read metadata only for a finalized merge carrying its old PR receipt.
+
+    The tracking snapshot is not publication authority.  Recover the exact
+    metadata from its consumed publication's immutable evidence, without
+    reusing that publication's commit, permit, or independent review.
+    """
+
+    tracking = value.get("publication")
+    if (
+        not isinstance(tracking, dict)
+        or set(tracking) != {"baseBranch", "branch", "commitSha", "prUrl", "status"}
+        or value.get("stage") != "FIX_READY"
+        or value.get("handoffMode") != "controller_merge_complete"
+        or candidate.get("stage") not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+    ):
+        return None
+
+    def require(condition: bool) -> None:
+        if not condition:
+            raise TaskResultEvidenceBlocked("PUBLISHED_FOLLOWUP_METADATA_BINDING_INVALID")
+
+    receipt = context.get("publicationReceipt")
+    followup = context.get("prFollowup")
+    require(isinstance(receipt, dict) and isinstance(followup, dict))
+    assert isinstance(receipt, dict) and isinstance(followup, dict)
+    issue_url = str(candidate.get("issueUrl") or "")
+    issue_match = ISSUE_URL.fullmatch(issue_url)
+    task_id = str(candidate.get("intentId") or "")
+    thread_id = str(candidate.get("threadId") or "")
+    worktree = str(result_access.worktree)
+    commit_sha = str(value.get("commitSha") or "")
+    branch = str(value.get("branch") or "")
+    pr_url = str(receipt.get("prUrl") or "")
+    publication_head = str(receipt.get("commitSha") or "")
+    previous_head = str(value.get("previousCommitSha") or "")
+    require(
+        issue_match is not None
+        and bool(task_id)
+        and bool(thread_id)
+        and bool(pr_url)
+        and bool(followup.get("wakeDigest"))
+        and value.get("followupDigest") == followup.get("wakeDigest")
+        and value.get("contextDigest") == context.get("contextDigest")
+        and value.get("taskId", value.get("intentId")) == task_id
+        and context.get("intentId") == task_id
+        and value.get("headSha") == commit_sha
+        and previous_head == followup.get("headSha")
+        and previous_head == followup.get("preparedHeadSha", previous_head)
+        and commit_sha != previous_head
+        and value.get("prUrl") == pr_url == followup.get("prUrl") == tracking.get("prUrl")
+        and publication_head == tracking.get("commitSha")
+        and branch == receipt.get("branch") == tracking.get("branch")
+        and tracking.get("status") == "PR_OPEN"
+        and receipt.get("status") in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+        and all(
+            value.get(field) == context.get(field) == candidate.get(field)
+            for field in ("key", "issueUrl", "threadId", "worktreePath")
+        )
+        and candidate.get("worktreePath") == worktree
+    )
+    assert issue_match is not None
+    snapshot = _publication_git_snapshot(result_access.worktree)
+    require(snapshot == {"commitSha": commit_sha, "branch": branch, "status": ""})
+    result_digest = _task_result_digest(value, raw)
+    current_probe = value.get("reproductionReceipt") or value.get("probeReceipt")
+    require(
+        value.get("resultDigest") == result_digest
+        and isinstance(current_probe, dict)
+        and verify_probe_receipt(
+            current_probe,
+            repo=issue_match.group(1),
+            base_sha=str(value.get("selectedBaseSha") or ""),
+            code_paths=list(value.get("codePaths") or []),
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=issue_url,
+            task_id=task_id,
+            thread_id=thread_id,
+            head_sha=commit_sha,
+            commit_sha=commit_sha,
+            result_digest=result_digest,
+        )
+    )
+    published = managed_ledger.published_pr_for_opportunity(
+        str(candidate["key"]), pr_url=pr_url, publication_head_sha=publication_head
+    )
+    require(
+        isinstance(published, dict)
+        and published.get("state") == "OPEN"
+        and published.get("head_sha") == previous_head
+    )
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT r.*,p.issue_url AS permit_issue_url,
+                      p.commit_sha AS permit_commit_sha,p.branch AS permit_branch,p.pr_url
+               FROM publication_requests r
+               JOIN publication_permits p ON p.request_id=r.request_id
+               WHERE r.opportunity_key=? AND r.status='CONSUMED'
+                 AND p.status='CONSUMED' AND p.pr_url=? AND r.commit_sha=?
+               ORDER BY p.updated_at DESC LIMIT 2""",
+            (candidate["key"], pr_url, publication_head),
+        ).fetchall()
+    require(len(rows) == 1)
+    row = dict(rows[0])
+    source = json.loads(row["request_json"])
+    require(isinstance(source, dict))
+    require(
+        row["thread_id"] == thread_id
+        and row["worktree_path"] == worktree
+        and row["branch"] == branch == row["permit_branch"]
+        and row["permit_issue_url"] == issue_url
+        and row["permit_commit_sha"] == publication_head
+        and row["evidence_digest"] == source.get("evidenceDigest")
+        and all(
+            source.get(field) == expected
+            for field, expected in {
+                "requestId": row["request_id"],
+                "opportunityKey": candidate["key"],
+                "intentId": task_id,
+                "issueUrl": issue_url,
+                "threadId": thread_id,
+                "worktreePath": worktree,
+                "branch": branch,
+                "commitSha": publication_head,
+                "headSha": publication_head,
+            }.items()
+        )
+    )
+    historical, _source_digest = publication_evidence_from_request(source)
+    historical_digest = _task_result_digest(
+        historical, base64.b64decode(source["evidenceRawBase64"], validate=True)
+    )
+    historical_probe = historical.get("reproductionReceipt") or historical.get("probeReceipt")
+    require(
+        historical.get("threadId") == thread_id
+        and isinstance(historical_probe, dict)
+        and verify_probe_receipt(
+            historical_probe,
+            repo=issue_match.group(1),
+            base_sha=str(source.get("selectedBaseSha") or ""),
+            code_paths=list(source.get("codePaths") or []),
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=issue_url,
+            task_id=task_id,
+            thread_id=thread_id,
+            head_sha=publication_head,
+            commit_sha=publication_head,
+            result_digest=historical_digest,
+            enforce_freshness=False,
+        )
+    )
+    publication = historical.get("publication")
+    require(isinstance(publication, dict))
+    assert isinstance(publication, dict)
+    body_path = Path(str(publication.get("bodyFile") or "")).expanduser()
+    require(body_path.is_absolute() and body_path.parent == result_access.private_dir)
+    body_raw = _read_owned_regular_file(
+        Path(body_path.name),
+        label="published followup PR body",
+        reject_dangerous_writes=True,
+        directory_fd=result_access.private_fd,
+    )
+    payload = _publication_payload_from_evidence(historical, issue_url)
+    require(
+        payload == source.get("publication")
+        and payload["baseBranch"] == tracking.get("baseBranch")
+        and hashlib.sha256(body_raw).hexdigest() == payload["bodyDigest"]
+    )
+    metadata = {
+        field: str(publication[field]) for field in ("headOwner", "baseBranch", "title", "bodyFile")
+    }
+    return metadata, {"sourceRequestId": row["request_id"], "sourceEvidenceDigest": _source_digest}
+
+
 def _request_publication_from_task_result(
     store: RadarLedger,
     *,
@@ -23117,6 +23300,35 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             elif stage == "FIX_READY":
                 if not isinstance(quality, dict):
                     raise RuntimeError("FIX_READY requires a quality object")
+                metadata_history = None
+                tracking_publication = value.get("publication")
+                if (
+                    isinstance(tracking_publication, dict)
+                    and set(tracking_publication)
+                    == {"baseBranch", "branch", "commitSha", "prUrl", "status"}
+                    and value.get("handoffMode") == "controller_merge_complete"
+                    and candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+                ):
+                    # Finalization itself can rewrite authentication fields.
+                    # Preserve the actual input before that existing write.
+                    original_raw = _read_task_result_bytes_from_private(result_access)
+                    original_digest = _task_result_digest(json.loads(original_raw), original_raw)
+                    original_bytes_digest = hashlib.sha256(original_raw).hexdigest()
+                    history_id = sha256_json(
+                        {
+                            "kind": "published-followup-metadata",
+                            **_ledger_binding_kwargs(candidate),
+                            "sourceRawDigest": original_bytes_digest,
+                        }
+                    )
+                    metadata_history = _ensure_validation_snapshot(
+                        candidate | {"resultDigest": original_digest},
+                        reservation_digest=history_id,
+                    )
+                    if metadata_history["snapshotDigest"] != original_bytes_digest:
+                        raise TaskResultEvidenceBlocked(
+                            "PUBLISHED_FOLLOWUP_METADATA_HISTORY_CHANGED"
+                        )
                 if quality.get("policy_verified") is not True and controller_policy is not None:
                     value = dict(value)
                     quality = dict(quality)
@@ -23139,6 +23351,52 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     managed_ledger=managed_adapter.ledger,
                     write_result=False,
                 )
+                recovered_metadata = _published_followup_publication_metadata(
+                    store,
+                    managed_adapter.ledger,
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    raw=raw,
+                    result_access=result_access,
+                )
+                if recovered_metadata is not None:
+                    metadata, source_binding = recovered_metadata
+                    if metadata_history is None:
+                        raise TaskResultEvidenceBlocked(
+                            "PUBLISHED_FOLLOWUP_METADATA_HISTORY_MISSING"
+                        )
+                    managed_adapter.ledger.record_event(
+                        event_type="PUBLISHED_FOLLOWUP_METADATA_RECOVERED",
+                        idempotency_key=(
+                            f"published-followup-metadata:{metadata_history['snapshotId']}"
+                        ),
+                        opportunity_key=str(candidate["key"]),
+                        task_id=str(candidate["intentId"]),
+                        state=str(candidate["stage"]),
+                        source="result-ingestion",
+                        provenance=source_binding,
+                        payload={"originalResultSnapshot": metadata_history},
+                    )
+                    value = dict(value)
+                    value["publication"] = dict(value["publication"]) | metadata
+                    value["quality"] = dict(value["quality"], independent_review_passed=False)
+                    value.pop("independentReview", None)
+                    previous_scope = value.pop("controllerCodePathScope", None)
+                    if isinstance(previous_scope, dict):
+                        value["codePaths"] = previous_scope["reported"]
+                    value, raw = _bind_final_reproduction_receipt(
+                        candidate=candidate,
+                        context=context,
+                        value=value,
+                        result_access=result_access,
+                        managed_ledger=managed_adapter.ledger,
+                        write_result=False,
+                    )
+                    # Review migration may only compare payloads that already
+                    # include the restored metadata.  The old payload's PASS
+                    # is never authority for this newly signed envelope.
+                    reported_review_value = dict(value)
                 controller_scope = value.get("controllerCodePathScope")
                 reviewed_code_paths = _validated_changed_files(
                     controller_scope.get("reported")

@@ -15484,6 +15484,24 @@ class RadarLedger:
                         followup_identity[2],
                     ),
                 )
+                if (
+                    required
+                    and previous is not None
+                    and all(incoming_identity)
+                    and incoming_identity == previous_identity == followup_identity
+                    and previous["pr_url"] == pr_url
+                    and previous["head_sha"] == head_sha == binding["commitSha"]
+                ):
+                    self._refresh_pr_followup_rebind_quarantine(
+                        connection,
+                        key=key,
+                        identity=followup_identity,
+                        pr_url=pr_url,
+                        head_sha=head_sha,
+                        wake_digest=str(wake_digest or ""),
+                        checked_at=checked_at,
+                        now=now,
+                    )
                 inserted += int(previous is None)
                 updated += int(previous is not None)
         return {
@@ -15492,6 +15510,141 @@ class RadarLedger:
             "updated": updated,
             "staleHeadSuppressed": stale_head_suppressed,
         }
+
+    def _refresh_pr_followup_rebind_quarantine(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        key: str,
+        identity: tuple[str, str, str],
+        pr_url: str,
+        head_sha: str,
+        wake_digest: str,
+        checked_at: str,
+        now: str,
+    ) -> None:
+        """Keep one authenticated parent-drift gate attached to its fresh snapshot."""
+
+        gates = connection.execute(
+            "SELECT * FROM task_quarantines WHERE opportunity_key=? AND status='ACTIVE'",
+            (key,),
+        ).fetchall()
+        if len(gates) != 1 or gates[0]["reason"] != "PR_FOLLOWUP_REBIND_REQUIRED":
+            return
+        gate = gates[0]
+        try:
+            payload = json.loads(gate["payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            return
+        if (
+            not isinstance(payload, dict)
+            or set(payload)
+            != {
+                "previousWakeDigest",
+                "replacementWakeDigest",
+                "expectedPreparedHeadSha",
+                "observedHeadSha",
+                "reason",
+            }
+            or payload.get("reason") != "PR_FOLLOWUP_REBIND_REQUIRED"
+            or any(
+                not re.fullmatch(r"[0-9a-f]{64}", str(payload.get(field) or ""))
+                for field in ("previousWakeDigest", "replacementWakeDigest")
+            )
+            or any(
+                not re.fullmatch(r"[0-9a-f]{40}", str(payload.get(field) or ""))
+                for field in ("expectedPreparedHeadSha", "observedHeadSha")
+            )
+            or payload["expectedPreparedHeadSha"] == payload["observedHeadSha"]
+            or gate["dedupe_key"] != sha256_text(canonical_json(payload))
+            or not re.fullmatch(r"[0-9a-f]{64}", wake_digest)
+            or payload["replacementWakeDigest"] == wake_digest
+            or parse_time(checked_at) <= parse_time(gate["created_at"])
+        ):
+            return
+        origin = connection.execute(
+            """SELECT payload_json FROM events WHERE opportunity_key=?
+               AND event_type='PR_FOLLOWUP_REBIND_REQUIRED' AND dedupe_key=?
+               AND created_at=?""",
+            (key, payload["replacementWakeDigest"], gate["created_at"]),
+        ).fetchone()
+        if origin is None:
+            return
+        try:
+            authenticated_payload = json.loads(origin["payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            return
+        if authenticated_payload != payload:
+            return
+        preparations = connection.execute(
+            """SELECT payload_json FROM events WHERE opportunity_key=?
+               AND event_type='PR_FOLLOWUP_PREPARATION_BOUND' AND dedupe_key=?
+               AND created_at<?""",
+            (key, payload["previousWakeDigest"], gate["created_at"]),
+        ).fetchall()
+        matching = []
+        for preparation in preparations:
+            try:
+                source = json.loads(preparation["payload_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(source, dict):
+                continue
+            snapshot = source.get("snapshot")
+            bound = _resolve_event_intent_binding(connection, opportunity_key=key, payload=source)
+            if (
+                bound is not None
+                and (bound["intent_id"], bound["thread_id"], bound["worktree_path"]) == identity
+                and isinstance(snapshot, dict)
+                and snapshot.get("prUrl") == pr_url
+                and snapshot.get("headSha") == head_sha
+                and snapshot.get("wakeDigest") == payload["previousWakeDigest"]
+                and snapshot.get("preparedHeadSha") == payload["expectedPreparedHeadSha"]
+            ):
+                matching.append(source)
+        if len(matching) != 1:
+            return
+        replacement = payload | {"replacementWakeDigest": wake_digest}
+        replacement_key = sha256_text(canonical_json(replacement))
+        created = record_quarantine(
+            connection,
+            opportunity_key=key,
+            reason="PR_FOLLOWUP_REBIND_REQUIRED",
+            dedupe_key=replacement_key,
+            payload=replacement,
+            created_at=now,
+        )
+        if created["status"] != "ACTIVE":
+            raise LedgerError("PR follow-up replacement quarantine is not active")
+        self._event(connection, key, "PR_FOLLOWUP_REBIND_REQUIRED", wake_digest, replacement, now)
+        evidence = {
+            "revalidated": True,
+            "repair": "PR_FOLLOWUP_REBIND_SNAPSHOT_REFRESHED",
+            "previousReplacementWakeDigest": payload["replacementWakeDigest"],
+            "replacementWakeDigest": wake_digest,
+            "replacementDedupeKey": replacement_key,
+            "payloadDigest": sha256_json(payload),
+        }
+        if (
+            clear_quarantine_exact(
+                connection,
+                opportunity_key=key,
+                reason="PR_FOLLOWUP_REBIND_REQUIRED",
+                dedupe_key=gate["dedupe_key"],
+                evidence=evidence,
+                cleared_at=now,
+            )
+            != 1
+        ):
+            raise LedgerError("PR follow-up source quarantine changed during refresh")
+        self._event(
+            connection,
+            key,
+            "TASK_QUARANTINE_CLEARED",
+            f"followup-refresh:{gate['dedupe_key']}:{wake_digest}",
+            evidence | {"reason": "PR_FOLLOWUP_REBIND_REQUIRED", "dedupeKey": gate["dedupe_key"]},
+            now,
+        )
 
     def suspend_pr_followups(self, *, source_generated_at: str, reason: str) -> list[str]:
         """Stop task wakes when their verified cloud snapshot is too old."""

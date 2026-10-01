@@ -11054,6 +11054,160 @@ def test_pr_followup_task_drift_rebinds_wake_and_invalidates_preparation(tmp_pat
     assert store.pr_followup_rebind_status("a/b#1")["observedHeadSha"] == "d" * 40
 
 
+def _published_parent_drift_refresh_fixture(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="a" * 40)
+    original = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id=original["threadId"],
+        wake_digest=original["wakeDigest"],
+        prepared_head_sha=original["headSha"],
+    )
+    store.complete_pr_followup_reservation(
+        thread_id=original["threadId"], wake_digest=original["wakeDigest"]
+    )
+    store.commit_pr_followup(thread_id=original["threadId"], wake_digest=original["wakeDigest"])
+    store.rearm_pr_followup_after_task_drift(
+        key, expected_prepared_head_sha=original["headSha"], observed_head_sha="c" * 40
+    )
+    with store.connect() as connection:
+        old_gate = dict(
+            connection.execute(
+                "SELECT * FROM task_quarantines WHERE opportunity_key=? AND status='ACTIVE'",
+                (key,),
+            ).fetchone()
+        )
+        old_events = [dict(row) for row in connection.execute("SELECT * FROM events ORDER BY id")]
+        old_requests = [
+            dict(row) for row in connection.execute("SELECT * FROM publication_requests")
+        ]
+    state = {
+        "version": "pr_followup_v3",
+        "generatedAt": iso_z(datetime.now(UTC)),
+        "items": [
+            {
+                "url": original["prUrl"],
+                "headSha": original["headSha"],
+                "actionDigest": "fresh-action",
+                "taskActionDigest": "fresh-ci-diagnosis",
+                "taskFollowupRequired": True,
+                "taskActions": ["current branch check failed", "integrate current base"],
+                "evidence": {
+                    "actionableCheckNames": [
+                        "All Other Providers / Run tests",
+                        "enterprise-routing / Run tests",
+                        "misc / Run tests",
+                    ],
+                    "baseIntegrationRequired": True,
+                    "baseCompareStatus": "diverged",
+                    "baseSha": "d" * 40,
+                    "baseMergeBaseSha": "b" * 40,
+                },
+                "checkedAt": iso_z(datetime.now(UTC)),
+            }
+        ],
+    }
+    return store, key, old_gate, old_events, old_requests, state
+
+
+@pytest.mark.parametrize("already_refreshed", [False, True])
+def test_pr_followup_fresh_import_preserves_parent_drift_gate_and_allows_reprepare(
+    tmp_path, already_refreshed
+):
+    store, key, old_gate, old_events, old_requests, state = _published_parent_drift_refresh_fixture(
+        tmp_path
+    )
+    if already_refreshed:
+        # The observed failure had already imported a fresh snapshot while the
+        # durable gate retained its earlier replacement wake.
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE pr_followups SET wake_digest=?,task_action_digest=?,checked_at=? "
+                "WHERE opportunity_key=?",
+                (
+                    "7" * 64,
+                    state["items"][0]["taskActionDigest"],
+                    state["items"][0]["checkedAt"],
+                    key,
+                ),
+            )
+        assert store.pr_followup_candidates() == []
+    store.import_pr_followups(state)
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["key"] == key
+    new_wake = candidate["wakeDigest"]
+    assert new_wake != json.loads(old_gate["payload_json"])["replacementWakeDigest"]
+    new_gate = store.active_task_quarantine(key)
+    assert new_gate["payload"]["replacementWakeDigest"] == new_wake
+    with store.connect() as connection:
+        retained = dict(
+            connection.execute(
+                "SELECT * FROM task_quarantines WHERE quarantine_id=?", (old_gate["quarantine_id"],)
+            ).fetchone()
+        )
+        assert retained["status"] == "CLEARED"
+        assert all(
+            retained[field] == old_gate[field]
+            for field in old_gate
+            if field not in {"status", "cleared_at", "clear_payload_json"}
+        )
+        assert [dict(row) for row in connection.execute("SELECT * FROM events ORDER BY id")][
+            : len(old_events)
+        ] == old_events
+        assert [dict(row) for row in connection.execute("SELECT * FROM publication_requests")] == (
+            old_requests
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    store.import_pr_followups(state)
+    assert store.active_task_quarantine(key) == new_gate
+    reserved = store.reserve_pr_followup(
+        thread_id=candidate["threadId"],
+        wake_digest=new_wake,
+        prepared_head_sha="e" * 40,
+        prepared_base_sha="d" * 40,
+        quarantine_reason="PR_FOLLOWUP_REBIND_REQUIRED",
+    )
+    assert reserved["wakeDigest"] == new_wake
+    assert store.active_task_quarantine(key) is not None
+    store.complete_pr_followup_reservation(
+        thread_id=candidate["threadId"],
+        wake_digest=new_wake,
+        quarantine_reason="PR_FOLLOWUP_REBIND_REQUIRED",
+        evidence={"revalidated": True, "preparedHeadSha": "e" * 40},
+    )
+    assert store.active_task_quarantine(key) is None
+    with store.connect() as connection:
+        assert [dict(row) for row in connection.execute("SELECT * FROM publication_requests")] == (
+            old_requests
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("damage", ["foreign_head", "unknown_gate"])
+def test_pr_followup_fresh_import_keeps_unverified_parent_drift_blocked(tmp_path, damage):
+    store, key, old_gate, _, _, state = _published_parent_drift_refresh_fixture(tmp_path)
+    if damage == "foreign_head":
+        state["items"][0]["headSha"] = "f" * 40
+    else:
+        with store.connect() as connection:
+            payload = json.loads(old_gate["payload_json"]) | {"unknown": True}
+            connection.execute(
+                "UPDATE task_quarantines SET payload_json=? WHERE quarantine_id=?",
+                (json.dumps(payload), old_gate["quarantine_id"]),
+            )
+    store.import_pr_followups(state)
+    assert store.pr_followup_candidates() == []
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT status FROM task_quarantines WHERE quarantine_id=?",
+                (old_gate["quarantine_id"],),
+            ).fetchone()[0]
+            == "ACTIVE"
+        )
+        assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 1
+
+
 def test_task_quarantine_blocks_pending_publication_until_cleared(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     now = iso_z(datetime.now(UTC))
