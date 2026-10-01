@@ -3735,6 +3735,41 @@
     ],
     "why": "The issue reports a concrete long-context DFlash slowdown with profiling (~182 ms/cycle drafter FA), but the supplied comment thread materially undermines the stated mechanism: the DCP-sharding asymmetry hypothesis was retracted, the 'drafter rescans full KV every cycle' framing was corrected (DFlash is single-pass), and the measured 28.85 ms overhead is ~17x above what layer-count/sharding geometry allows, with the measurement method itself under calibration. The root cause is therefore not established, and the proposed direction (per-seq-len disable hook) is a scheduling/config control rather than an algorithm mechanism."
   },
+  "0870ee4f4b5078df06619b6fd5388bfc72dab1e780d04fe6f84a3c464ab62424": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports the bug as unfixed, while recent comment says fix is up in #43935"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "OpenAIGPT5Config.is_model_gpt_5_model family detection for gpt-6.1-sol",
+      "Chat Completions reasoning_effort mapping/drop behavior for none/minimal",
+      "Responses reasoning.effort mapping/drop behavior for none/minimal"
+    ],
+    "risks": [
+      "Open PR #43935 may already implement the same fix, making an independent PR duplicative",
+      "Model cost map lag may require a model-specific guard rather than generic family detection",
+      "Changing family detection could affect other gpt-6.x models"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against current main to confirm all five assertions fail",
+      "Add regression tests for drop_params=True removing none/minimal on both Chat Completions and Responses",
+      "Add regression test for local 400 rejection when drop_params=False"
+    ],
+    "unknowns": [
+      "Whether PR #43935 fully covers the Responses path and none/minimal drop behavior described in the issue",
+      "Whether maintainers consider #43935 the canonical fix or want a different approach"
+    ],
+    "why": "Issue provides a concrete reproduction and root-cause hypothesis for gpt-6.1-sol reasoning-effort forwarding, but an open PR #43935 already directly references the issue and claims to fix both Chat Completions and Responses surfaces. The supplied evidence does not establish whether that PR fully covers the reported contract, so duplicate/coverage status is unresolved and materially affects whether independent code work is actionable."
+  },
   "08824c6c554e67f99d7966bde6edb6969d4d35a29de44cc992e4bd054997666f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -31590,6 +31625,37 @@
     ],
     "why": "The issue itself is a well-evidenced, concrete bug (borrowed Gemma4 methods read `_enable_mm_lora`, which DiffusionGemma never sets), but the supplied evidence shows an open PR #54309 with the same title and overlapping code path that already fixes the root cause, and a contributor comment confirming that fix exists. The duplicate/merged-fix coverage is unresolved, which materially determines whether new code work is actionable."
   },
+  "469bc84b5060ccbcfc56d3accd96ba0bbbb289dedf1c7bbab14664d65593e4e0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no existing fix, but open PR #15529 directly targets the same validation path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/kv-router/src/scheduling/config.rs: add finite-and-non-negative validation for prefill_load_scale, overlap_score_credit_decay, router_temperature",
+      "lib/router-plugins/builtin/src/default/parameters.rs: align parameter validation with config validation"
+    ],
+    "risks": [
+      "Overlapping open PR #15529 may already implement the same fix, making a new contribution redundant",
+      "Changing validation semantics could break existing configs that rely on inf as a sentinel"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test in lib/router-plugins/builtin/tests using tests/support fixture asserting validate() rejects inf for prefill_load_scale, overlap_score_credit_decay, router_temperature",
+      "Assert default_policy(config, \"prefill\").select_worker(...) no longer returns NonFiniteCost for inf inputs after fix"
+    ],
+    "unknowns": [
+      "Whether PR #15529 will be merged or is considered the canonical fix",
+      "Whether maintainers want the fix in KvRouterConfig::validate, RouterConfigOverride::validate, or both"
+    ],
+    "why": "Issue provides a clear root cause (validate_min accepts +inf in KvRouterConfig::validate and RouterConfigOverride::validate) and a concrete GPU-free reproduction, but open PR #15529 already directly covers the same code path and identifiers (non_finite, prefill_load_scale, lib/kv-router/src/scheduling/config.rs) with a matching fix title. The duplicate assessment is explicitly human_review_required, so independent implementation space is unresolved."
+  },
   "46ab74884ce598c08f8d5fc5bb1e394a46ad2b9d15c1d9b1c3520dcbd2e767d2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -33968,6 +34034,40 @@
     ],
     "why": "Issue reports a clear regression in Microsoft.Agents.AI.Foundry.Hosting causing port binding conflict, but root cause is not identified. Existing PR #7370 has semantic overlap but is draft and not linked to this issue. Maintainer triage and design confirmation are needed before starting work."
   },
+  "4b186a1b7df0695511d8ec2f92f76a1670e10e989374c6e33bd44145e49f6b53": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Open PR assessment says human_review_required for duplicate while also listing direct code overlap with an open PR"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugin module resolver for scoped @opencode/* imports from local plugin files",
+      "regression test covering local plugin loading with @opencode/plugin import"
+    ],
+    "risks": [
+      "Overlapping open PR #50543 may already cover the fix",
+      "Closed PR #50466 suggests prior attempt without regression test",
+      "Resolver change could affect node_modules tracking behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with .opencode/plugins/probe.js importing @opencode/plugin and confirm the ResolveMessage failure",
+      "After fix, assert plugin loads with source: local and status: active via /api/plugin",
+      "Add regression test for scoped and subpath imports from project and global config plugin dirs"
+    ],
+    "unknowns": [
+      "Whether PR #50543 already implements the same fix and should be preferred",
+      "Whether maintainers consider the closed PR #50466 sufficient coverage"
+    ],
+    "why": "Issue has a strong reproduction and isolation evidence, but the supplied open-PR assessment marks duplicate status as human_review_required: PR #50543 is an open, directly overlapping fix for the same scoped-package resolution path, and PR #50466 is a closed near-identical attempt. Whether independent implementation space remains is unresolved, which materially determines actionability."
+  },
   "4b1d1346cff8c5df4ced18221e9fd6e81ec8794431d86b7753fe20338536dc5b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -35110,6 +35210,44 @@
       "Whether maintainers want the three layers split into separate issues"
     ],
     "why": "Issue requests reject-with-reason feedback to the model; triage and an independent collaborator verify the exact gap: cancelMessage exists in ToolConfirmationPayload (tools.ts:1062) but no UI sets it, and coreToolScheduler.ts:4356-4360 falls back to the bare 'User did not allow tool call'. Concrete code anchors and a feasible _meta extension path are supplied, so the work is actionable."
+  },
+  "4db224c6160aca093a8f56d76f8e6d69fe746565fb1af1596729ec33b5313b40": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Reporter 1 attributes failure to a ~148k token ceiling; reporter 2's numbers (~375K tokens, 3.6MB body with 1.66MB base64) are consistent with either a token ceiling or a payload-size ceiling, which the issue itself flags as unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "provider catalog limit for opencode-go models (context/output) to match gateway ceiling",
+      "context-overflow classification of provider 400 responses so compact-and-retry engages",
+      "persistence/surfacing of provider 400 response body in logs and session messages"
+    ],
+    "risks": [
+      "Two candidate triggers (token ceiling vs request-body/payload ceiling) are not separated from the client side, so the minimal fix may target the wrong mechanism",
+      "Changing catalog limits or overflow classification could alter behavior for other providers/models",
+      "Maintainer may have a preferred design for provider error classification"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that a prompt exceeding the gateway's real input ceiling triggers preflight compaction before the request is sent",
+      "Add a regression test that a provider 400 classified as context overflow triggers one-shot compact-and-retry instead of a permanent failure",
+      "Add a test that the provider 400 response body is persisted and surfaced to the user"
+    ],
+    "unknowns": [
+      "Whether the true trigger is a token ceiling or a request-body/payload ceiling",
+      "The exact gateway accept limit for opencode-go models",
+      "Whether maintainers have a preferred approach for provider error classification"
+    ],
+    "why": "Issue reports a deterministic, reproducible failure: opencode-go gateway rejects prompts around 148k tokens while the catalog advertises 1M context, so preflight compaction never fires and the 400 is not classified as context overflow, permanently bricking the session. A second reporter confirms the same class on a different model with concrete token/payload numbers. Concrete code paths are identified (provider catalog limits, overflow classification, error body persistence)."
   },
   "4db24b0a58c535a875ba487d3f0bde1cef65c69dcfbfc7c3a73b3d8c9f98b857": {
     "confidence": 0.85,
@@ -55329,6 +55467,42 @@
       "Maintainer preference for the suggested fix approach (populating fields vs. backend split)"
     ],
     "why": "Issue provides a clear root cause (extend_prefix_lens_cpu not set in spec branch), a deterministic reproduction command, and a concrete suggested fix. The bug is user-visible and affects a key path (speculative decoding with NVFP4 KV cache)."
+  },
+  "751e8cbb54e776a98c4ba8cf8bee419dd02688630856315289804c864103d05d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body isolates the trigger to `shell: deny`, while the corroborating comment reports `action: \"*\"` deny as the trigger, indicating the failing condition is not yet pinned down"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "permission evaluation path for config-defined agent rules",
+      "free-tier/provider validation path that emits the misleading error",
+      "error message mapping so permission denials are not reported as free-tier failures"
+    ],
+    "risks": [
+      "Fixing the error message without fixing the underlying permission/validation coupling would mask the real bug",
+      "Broadening the trigger to `action: \"*\"` deny may require a different fix than the reported `shell: deny` case",
+      "Paid-model behavior is unverified, so the fix could be scoped too narrowly"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that loads an agent config with `shell: deny` (and separately `action: \"*\"` deny) on a free model and asserts session creation succeeds with rules enforced",
+      "Assert the emitted error for a genuine free-tier violation is unchanged",
+      "Run targeted unit tests for the permission and provider-validation packages"
+    ],
+    "unknowns": [
+      "Which code path performs the free-tier validation and how it depends on shell/permission state",
+      "Whether the failure is in permission evaluation, provider selection, or error mapping",
+      "Whether paid models are affected (explicitly unverified in the issue)"
+    ],
+    "why": "The issue reports a reproducible symptom (config-defined shell/`*` deny on a free-model agent surfaces a misleading free-tier error) with a clean bisect table, but the supplied evidence contains no root-cause signal and no code anchor tying the permission path to the free-tier validation path. The reporter's own hypothesis ('an internal free-tier validation path depends on shell availability') is unverified, and the corroborating comment broadens the trigger to `action: \"*\"` deny, which conflicts with the original narrow `shell: deny` framing. Without a located code path, the fix is speculative."
   },
   "7547e9e9920839d3bf508acf88bc9a917182fe26d4a987ed3c83308332af7243": {
     "confidence": 0.8,
@@ -113850,6 +114024,42 @@
       "Exact code path causing unbounded allocation; whether fix should disable auto team creation or cap memory."
     ],
     "why": "Issue provides detailed reproduction steps, logs, and a suspected root cause (automatic agent-team initialization) with a workaround flag. The evidence supports a concrete validation path and actionable fix."
+  },
+  "efca457fb7a3d8829b90ca6ce1778db90b194e76c461187cf78ece3a12d5e5b8": {
+    "confidence": 0.6,
+    "contradictions": [
+      "candidate.actionability_evidence.needs_confirmation=false and design_confirmation=false, yet preTaskEvidence.policy.status=needs_assignment with assignmentRequired=true and no assignee"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "crates/goose/src/model_config.rs: allow user-supplied supports_vision override for custom/OpenAI-compatible providers",
+      "crates/goose-providers/src/openai.rs and openai_compatible.rs: stop flattening None to false when an explicit override is present",
+      "config.yaml schema / provider entry to accept supports_vision"
+    ],
+    "risks": [
+      "Overlaps with open PRs #12558/#12534 on the same formats/openai.rs path; a new implementation may duplicate or conflict",
+      "Broadening API/config behavior for provider vision support may need maintainer design sign-off",
+      "Workaround via session DB patching suggests session-inheritance interactions that a naive fix could miss"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test asserting a custom OpenAI-compatible provider with supports_vision: true yields supports_vision == Some(true) through base_model_config_from_user_config and apply_canonical_limits",
+      "Regression test that unknown providers without override still resolve to None (preserve apply_canonical_limits_leaves_unknown_providers_untouched)",
+      "Run targeted cargo test for goose and goose-providers packages plus static checks"
+    ],
+    "unknowns": [
+      "Whether PRs #12558/#12534 already cover the supports_vision override root cause",
+      "Whether maintainers require assignment before accepting a community PR for this issue",
+      "Which of the three suggested fixes (config override, env var, capability probing) maintainers prefer"
+    ],
+    "why": "Issue has a clear, source-verified root cause (supports_vision resolved only via canonical catalog; None flattened to false in openai/openai_compatible; no user override) and a concrete validation path. However, two materially blocking unknowns remain: (1) the repository policy is needs_assignment with assignmentRequired=true and no assignee, so code work is not authorized; (2) open PRs #12558 and #12534 semantically overlap on openai_compatible/supports_vision and touch the same formats/openai.rs path, so duplicate/coverage status is unresolved and must be compared before any new work."
   },
   "efcf6b5a9e68ae6d22cc7767d3084b15b28a477f12aa07d4e15a0a5f1d78a71f": {
     "confidence": 0.8,
