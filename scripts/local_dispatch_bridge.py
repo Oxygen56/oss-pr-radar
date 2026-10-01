@@ -19422,6 +19422,7 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
             "系统依据本轮真实结果重新签名和独立审查。"
             f"记录 validationPolicyRevision={VALIDATION_POLICY_REVISION}。"
             "准备发布的描述验证段只保留本轮真实事实。"
+            "保持离线，不发送真实 provider 或付费 API 请求；核心行为通过真实项目实现和 SDK 本地映射验证。"
             + END_RESULT_TURN_PROMPT
             + PLAIN_LANGUAGE_STATUS_PROMPT
         )
