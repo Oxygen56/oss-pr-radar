@@ -21414,6 +21414,36 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         else:
                             quarantined.append(entry)
                         continue
+                    if (
+                        candidate.get("stage") == "DISPATCHED"
+                        and context.get("stage") == "DISPATCHED"
+                        and value.get("stage") in {"AUDIT_NO_GO", "REPRODUCTION_REQUIRED"}
+                        and not context.get("publicationReceipt")
+                        and not context.get("prFollowup")
+                        and not value.get("prUrl")
+                        and not value.get("publicationReceipt")
+                        and binding_gate(candidate, context)
+                    ):
+                        try:
+                            context_stat = os.stat(
+                                "task-context.json",
+                                dir_fd=result_access.private_fd,
+                                follow_symlinks=False,
+                            )
+                            verified_context, _verified_at = (
+                                _verified_private_context_with_singleton_guard(
+                                    store, result_access.worktree, context_raw, context_stat
+                                )
+                            )
+                        except (OSError, RuntimeError, ValueError):
+                            verified_context = None
+                        if verified_context == context and _private_context_matches_current_ledger(
+                            store, context
+                        ):
+                            # Reject these exact obsolete bytes without
+                            # parking the task's normal recovery or stopping
+                            # independent, fully verified contributions.
+                            raise TaskResultEvidenceBlocked(RESULT_CONTEXT_DIGEST_MISMATCH)
                     raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")

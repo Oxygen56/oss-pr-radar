@@ -12598,6 +12598,108 @@ def test_ingestion_ignores_stale_result_after_published_context_moves_on(tmp_pat
     assert result["errors"] == []
 
 
+def test_bound_old_result_blocks_only_its_task_and_keeps_recovery(tmp_path):
+    store, _healthy_worktree, _healthy_result = _controller_commit_result(tmp_path)
+    stale_worktree = MODULE.managed_worktree_path("intent-2", "a/b")
+    stale_worktree.mkdir(parents=True)
+    run_git(stale_worktree, "init")
+    run_git(stale_worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-2",
+            "key": "a/b#2",
+            "repo": "a/b",
+            "issueNumber": 2,
+            "issueUrl": "https://github.com/a/b/issues/2",
+            "title": "Old result",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    store.claim("intent-2", "controller")
+    store.commit_dispatch(
+        "intent-2",
+        owner="controller",
+        thread_id="thread-2",
+        project_id="github",
+        worktree_path=str(stale_worktree),
+    )
+    store.record_audit_snapshot(
+        "a/b#2",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "old-evidence",
+            "liveAudit": {
+                "capturedAt": iso_z(now),
+                "evidence": {"digest": "old-evidence", "issue": {"state": "open"}},
+            },
+        },
+        dedupe_key="old-evidence",
+    )
+    context_path = MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/2", thread_id="thread-2", cwd=stale_worktree
+    )
+    context = json.loads(context_path.read_text())
+    result_path = Path(context["resultPath"])
+    old_raw = json.dumps(
+        {
+            "schemaVersion": "radar-task-result-v1",
+            "key": "a/b#2",
+            "issueUrl": "https://github.com/a/b/issues/2",
+            "threadId": "thread-2",
+            "worktreePath": str(stale_worktree),
+            "contextDigest": "a" * 64,
+            "stage": "AUDIT_NO_GO",
+            "reason": "ALREADY_FIXED_ON_BASE",
+        }
+    ).encode()
+    result_path.write_bytes(old_raw)
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert result["ok"] is True, result
+    assert result["errors"] == []
+    assert result["workBlocked"] == [
+        {"key": "a/b#2", "reason": MODULE.RESULT_CONTEXT_DIGEST_MISMATCH, "alreadyRecorded": False}
+    ]
+    assert result["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(result["publicationRequests"]) == 1
+    assert result["publicationRequests"][0]["key"] == "a/b#1"
+    assert result_path.read_bytes() == old_raw
+    assert json.loads(context_path.read_text()) == context
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/2", thread_id="thread-2")[
+            "stage"
+        ]
+        == "DISPATCHED"
+    )
+    assert store.active_task_quarantine("a/b#2") is None
+    from oss_pr_radar.independent_review import _candidate_result
+
+    candidate = next(
+        item for item in store.task_result_candidates_for_ingestion() if item["key"] == "a/b#2"
+    )
+    assert _candidate_result(candidate) is None
+    recovery = next(
+        item for item in store.recovery_candidates(min_age_minutes=0) if item["key"] == "a/b#2"
+    )
+    store.reserve_recovery(
+        thread_id="thread-2",
+        nonce=recovery["recoveryNonce"],
+        intent_id="intent-2",
+        worktree_path=str(stale_worktree),
+    )
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert repeated["ok"] is True
+    assert repeated["workBlocked"] == [
+        {"key": "a/b#2", "reason": MODULE.RESULT_CONTEXT_DIGEST_MISMATCH, "alreadyRecorded": True}
+    ]
+    assert result_path.read_bytes() == old_raw
+
+
 def test_ingestion_quarantines_context_mismatch_for_active_task(tmp_path):
     store, worktree = registered_store(tmp_path)
     context_path = MODULE.write_task_context(
