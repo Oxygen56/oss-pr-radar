@@ -22021,6 +22021,39 @@
     ],
     "why": "Issue clearly identifies a non-streaming error response format mismatch with OpenAI standard and pinpoints the root cause in create_error_response. Existing PR #33534 directly addresses this but has failed CI checks and lacks complete evidence, leaving room for a materially better PR with robust tests and CI passing."
   },
+  "2e35c26fc3da8d2cb2ba6844bca500c17f5b8f1e13ed320cb4a22ca23281f973": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims platform-side regression but provides no self-hosted reproduction or code-level root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/credentials/query.py",
+      "web/app/components/plugins/marketplace/query.ts"
+    ],
+    "risks": [
+      "Cloud-only failure may be caused by deployment/config rather than repository code",
+      "Proposed code paths are speculative and may not contain the defect",
+      "AI disclosure conflict blocks public submission"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on self-hosted Dify v1.17.1 with a minimal Start→LLM→End workflow and single-step run",
+      "Add a regression test asserting Workflow-mode LLM nodes do not require sys.query in the variable pool"
+    ],
+    "unknowns": [
+      "Whether the bug reproduces on self-hosted main or v1.17.1",
+      "Exact code path that injects sys.query into Workflow LLM nodes",
+      "Whether a maintainer has already identified or fixed the Cloud regression"
+    ],
+    "why": "Issue reports a Cloud-only regression with a plausible but unconfirmed backend hypothesis (mapping_user_inputs_to_variable_pool injecting phantom sys.query). No root-cause evidence, no code anchor beyond a variable name, and no reproduction outside Dify Cloud, so the actionable code change is not established."
+  },
   "2e47e401650933252bacc3ec82d684e5a88844857b9c3bbd4beb6b3e79b62a0e": {
     "confidence": 0.85,
     "contradictions": [
@@ -26247,6 +26280,41 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a concrete assertion failure in expert-parallel setup with 3 GPUs, but the root cause is not fully diagnosed. Existing PR #46370 overlaps semantically and touches the same model_runner path, and related issue #36010 shares stack signatures. The deterministic gate is HUMAN_REVIEW, and the AI disclosure conflict blocks automatic action. Need maintainer review to confirm root cause and avoid duplicate work."
+  },
+  "38346c05d74c400db0bc80f554b55e30710b48b942a510efa236af2d84be4aef": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims 'No open issue or PR covers this' while open PR #58082 overlaps the same code path and is flagged semantic_overlap_requires_review"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/async_utils.py: make async_copy_to_np always copy so CPU snapshots do not alias reused sampler buffers",
+      "Add regression test asserting snapshot immutability after source buffer mutation"
+    ],
+    "risks": [
+      "Repository AI disclosure policy conflict may block submission regardless of technical merit",
+      "Open PR #58082 touches the same file and may already cover or conflict with the fix",
+      "Always-copy change could add overhead on GPU paths if not guarded appropriately"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's standalone repro: create sampled/num_sampled tensors, snapshot via async_copy_to_np, mutate source, assert snapshot retains original values",
+      "Add a CPU unit test for async_copy_to_np snapshot immutability",
+      "If feasible, run DiffusionGemma CPU async-scheduling seeded read and compare tokens/logprob rows against sync baseline"
+    ],
+    "unknowns": [
+      "Whether the repository's AI disclosure conflict can be resolved for this contribution",
+      "Whether PR #58082 already fixes or conflicts with the async_copy_to_np aliasing root cause"
+    ],
+    "why": "The issue presents a clear, reproducible CPU aliasing bug in async_copy_to_np with a concrete root cause and minimal fix, but the supplied evidence contains a materially blocking policy conflict: submission_policy is 'ai_disclosure_conflict' and preTaskEvidence.policy.status is 'ai_disclosure_conflict' with aiDisclosureConflict=true. This unresolved repository disclosure requirement determines whether code work can be submitted at all, so it is not normal implementation uncertainty. Additionally, open PR #58082 overlaps the same code path (vllm/v1/worker/gpu/async_utils.py) and is flagged semantic_overlap_requires_review, leaving duplicate coverage unresolved."
   },
   "384ee22680ac4f86a006b381e7f767fbe644877792881e21632ff8aa4bb0ac81": {
     "confidence": 0.9,
@@ -33698,6 +33766,39 @@
       "Root cause not yet identified"
     ],
     "why": "Issue reports a reproducible hybrid sparse attention + Eagle prefix-cache miss for specific prompt lengths, with concrete commands and cache-hit data. However, the deterministic gate is HUMAN_REVIEW, open PR lookup timed out, and related-issue audit failed, so competition and maintainer context are incomplete."
+  },
+  "486e49399a5976be5cd88f2a9dff2a1c88984fa76bb65b4349049b39c541374a": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/constants.py: add `check_provider_endpoint` to LITELLM_SETTINGS_SAFE_DB_OVERRIDES so DB overlay does not drop it",
+      "litellm/llms/vertex_ai/common_utils.py: implement VertexAIModelInfo.get_models() or explicitly document/guard the unsupported path",
+      "proxy config merge path (_update_config_fields) to preserve config.yaml litellm_settings keys not present in DB row"
+    ],
+    "risks": [
+      "Changing the safe-overrides allowlist could alter precedence semantics for other litellm_settings keys",
+      "Implementing Vertex AI discovery requires live GCP credentials, limiting CI coverage",
+      "Existing PR #40775 touches overlapping config keywords and may need coordination to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: start proxy with STORE_MODEL_IN_DB=True and config.yaml litellm_settings.check_provider_endpoint=true, assert litellm.check_provider_endpoint is True after DB overlay",
+      "Unit test asserting `check_provider_endpoint` is in LITELLM_SETTINGS_SAFE_DB_OVERRIDES",
+      "Test that VertexAIModelInfo().get_models() either returns models or raises a documented, non-swallowed error"
+    ],
+    "unknowns": [
+      "Whether maintainers intend Vertex AI discovery to be implemented now or documented as unsupported",
+      "Whether PR #40775 actually modifies the same config-override path despite the unrelated title"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: `check_provider_endpoint` is absent from `LITELLM_SETTINGS_SAFE_DB_OVERRIDES` in `litellm/constants.py`, so the DB-stored `litellm_settings` row overrides config.yaml and the runtime flag stays False. A second, independent defect is documented: `VertexAIModelInfo.get_models()` is a bare NotImplementedError stub. Both have executable reproduction commands and clear code anchors, giving an actionable fix path. The open PR #40775 only shares generic keywords (`config_yaml`, `store_model_in_db`) and an unrelated bedrock path, so it does not cover this root cause."
   },
   "4875da0967b50ce60e1d51598bbf92cbc8d4125b92488b64d1241741382e938e": {
     "confidence": 0.8,
@@ -65481,6 +65582,38 @@
     ],
     "why": "Issue has a clear, well-evidenced root cause (vendored hono .d.ts in @mastra/mcp dist/_types causing nominal type mismatch for consumer-supplied SSEStreamingApi) and a concrete repro. However, the only candidate fix PR (#23776) is CLOSED with no test files and no confirmed root-cause coverage, and the duplicate/coverage status is explicitly 'human_review_required'. The bot comment also instructs waiting for maintainer triage before opening a PR. Whether the closed PR already resolved or was rejected is a materially blocking unknown for actionability."
   },
+  "866d314d4548b27940edfb6eae63a5011f950df7d10f497d2b5b5657b83bef43": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm-rust/crates/storage-clickhouse/src/read.rs: replace the hardcoded max_result_rows=1000/throw behavior with bounded pagination or an explicit supported-limit response for trace detail",
+      "Trace-detail API path: return a useful partial/load-more contract instead of a generic HTTP 500 when a trace exceeds the reader row cap",
+      "Regression coverage for 999/1,000/1,001-span traces with small payloads"
+    ],
+    "risks": [
+      "Pagination contract may require maintainer design preference on partial/load-more semantics",
+      "Removing or raising the reader cap globally could weaken memory/byte safeguards; fix should retain safeguards",
+      "Rust reader changes may need corresponding proxy/API behavior updates"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's rows_repro.py against a pinned proxy with ClickHouse and confirm 999/1,000 return 200 while 1,001 currently returns 500",
+      "Add a regression test that ingests 1,001 small spans and asserts trace detail returns a bounded/paginated 200 response rather than HTTP 500",
+      "Verify direct ClickHouse controls: same reader/SQL with max_result_rows=1000 fails and 2000 succeeds, confirming the row cap is the cause"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated for pagination vs explicit supported-limit response"
+    ],
+    "why": "Issue provides a concrete, reproducible boundary failure: the Rust ClickHouse reader hardcodes max_result_rows=1000 with result_overflow_mode=throw, so a stored 1,001-span trace returns HTTP 500 (Code 396 TOO_MANY_ROWS_OR_BYTES). The 999/1,000/1,001-span controls and direct ClickHouse cap comparison isolate a row-count failure rather than bytes or timeout, and the code anchor in litellm-rust/crates/storage-clickhouse/src/read.rs is identified. Related PRs #43937 and #43942 do not cover this ordinary trace-detail path, so the opportunity is not already resolved."
+  },
   "86710e0c76147fa454de0a77f22d0ba50cdedc2008b4ad850f0848459dbf332b": {
     "confidence": 0.55,
     "contradictions": [
@@ -68977,6 +69110,42 @@
       "Exact code location where model-card publication is triggered relative to endpoint health"
     ],
     "why": "Issue provides a concrete, reproducible readiness-contract bug in dynamo.mocker disaggregated mode: model card is published at engine creation before the decode worker's startup simulation completes, so /v1/models advertises a model that cannot serve. Root cause is identified (publication not gated on the existing NotReady->Ready endpoint health transition), with a clear repro timeline and suggested fix. This is runtime/discovery plumbing in an inference infra repo, not an llm_algorithm track, so the algorithm gate does not apply."
+  },
+  "8d6278bcb344d2de57d6e92f9371c26fe144cd0320aeb25c0281c2379c684761": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body states the fix is in PR #58890, while open_pr_assessment marks that PR as not referencing the issue and root_cause_coverage=false",
+      "related_issue_assessment flags #59828 as potential duplicate based only on shared stack signatures (failure:clang, failure:gcc, path:collect_env.py), which are generic and unrelated to M-RoPE"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/qwen3_omni_moe_thinker.py: get_mrope_input_positions offset/st advancement",
+      "tests/model_executor/test_qwen3_omni_mrope.py: regression coverage for image/audio/video branches"
+    ],
+    "risks": [
+      "Duplicate/overlapping open PR #58890 may already implement the same fix, making a new contribution redundant",
+      "Audio-in-video value structure could regress if the per-branch st advancement is changed without preserving the nested structure",
+      "Fixing the off-by-one changes positions for all multimodal requests, so downstream numerics may shift"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Synthetic unit test with tokenized prompt [<|vision_start|>, <|image_pad|>x4, <|vision_end|>] and PlaceholderRange(offset=1, length=4); assert positions.shape == (3, seq_len) and no RuntimeError for media-at-prompt-end",
+      "Compare emitted M-RoPE positions against a reference implementation (HF Qwen2.5-Omni behavior) for image, audio, and audio-in-video cases"
+    ],
+    "unknowns": [
+      "Whether PR #58890 fully covers the root cause and would close this issue",
+      "Whether the repository requires AI-usage disclosure that conflicts with automated contribution (policy status ai_disclosure_conflict)",
+      "Whether maintainers consider this issue already resolved by the open PR"
+    ],
+    "why": "Issue describes a concrete M-RoPE offset double-count in Qwen3-Omni with a plausible root cause and a synthetic unit-test path, but the supplied evidence shows an open PR #58890 with the same title and overlapping code paths (qwen3_omni_moe_thinker.py, test_qwen3_omni_mrope.py) that is not linked to this issue, and the duplicate status is 'semantic_overlap_requires_review'. Whether the fix is already covered is a materially blocking unknown for actionability."
   },
   "8d73ab97940c4a949d426b6c2547f627eb612d9ae52cefc5d21fe5356a74234b": {
     "confidence": 0.7,
@@ -84002,6 +84171,43 @@
     ],
     "why": "Root cause is source-confirmed (hooks/toolsSettings/slashCommand in UNSUPPORTED_SPEC_KEYS at acp/kas_agents.py), but the actionable fix is materially blocked: the proposed on-disk KAS agent profile delivery path depends on a KAS bundle that honors disk-profile hooks, and the report verifies bundled KAS 0.63.3 ignores them. The stopgap warning reverses an explicit in-tree DEBUG-vs-WARNING decision, and whether KAS merges an on-disk profile with a wire-injected agent of the same name is unresolved. These are design/dependency rulings, not normal implementation uncertainty."
   },
+  "ad5a0f00910adbe7b83a93614eef3a4e33155ce2cf36dfcc89da481b27c94b82": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports raw BPE glyphs in streaming reasoning deltas, but contributor simulation of the same v0.21.0 chain shows byte-exact clean output",
+      "Issue attributes cause to a missing convert_tokens_to_string/decode step, yet no such call exists in the audited parser paths"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/reasoning/deepseek_r1_reasoning_parser.py (only if a real streaming decode defect is confirmed)",
+      "vllm/entrypoints/openai/chat_completion/serving.py (only if delta_text plumbing is shown to bypass detokenization)"
+    ],
+    "risks": [
+      "Fixing a non-existent vLLM bug would add dead code to the reasoning parser",
+      "The real defect may live in the model's tokenizer files or a transformers version, outside vLLM",
+      "PR #59748 already touches the same parser path without a regression test, risking duplicate/conflicting work"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the contributor's repro.py inside the reporter's container against /models/deepseek to determine whether stock vLLM reproduces the glyphs",
+      "Check AutoTokenizer.from_pretrained('/models/deepseek').encode('你好') == [108386] to rule out the LlamaTokenizer shim",
+      "If reproduced, add a regression test asserting byte-exact reconstruction of CJK reasoning deltas across token-at-a-time streaming"
+    ],
+    "unknowns": [
+      "Whether the reporter's /models/deepseek tokenizer files trigger the LlamaTokenizerFast shim",
+      "Whether the reporter's deployment contains a custom or patched reasoning path between detokenizer and wire",
+      "Whether PR #59748 addresses a confirmed root cause or the same unverified symptom"
+    ],
+    "why": "The issue claims streaming reasoning deltas leak raw byte-level BPE glyphs, but a contributor's in-process simulation of the exact v0.21.0 serving chain (fast and slow detokenizer paths, transformers 5.8.1 and 5.14.1) reconstructs reasoning and content byte-exact with zero glyphs, and an audit of basic_parsers.py and deepseek_r1_reasoning_parser.py finds no convert_ids_to_tokens call. The reporter's own control experiments (clean content, clean non-streaming) are consistent with a deployment-local tokenizer shim (LlamaTokenizerFast mis-declaration, transformers#49252) rather than a vLLM streaming bug. Root cause is therefore unresolved and the proposed fix target is unconfirmed."
+  },
   "ad69c8139d2d059d27b21a319b6323cdafabd169c25d44ee4035cc309ad0090a": {
     "confidence": 0.7,
     "contradictions": [
@@ -90531,6 +90737,36 @@
       "Whether in-container vLLM upgrades are a supported workflow (maintainer decision pending)"
     ],
     "why": "Issue identifies a clear root cause: baked flashinfer-jit-cache version skew with in-container vLLM upgrade causes serve-time registry failure. Maintainer triage confirms engagement and a latent structural hazard remains even though the original repro no longer occurs on 1.4.x. The suggested fix (coupling package versions or documenting unsupported workflow) is actionable and validated by a build-time assert pattern."
+  },
+  "ba541851c6e6e25fdd2aa986526e2a31c8c9c86dcdc51767b0ede9116744bd1c": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.algorithm_evidence claims qualified evaluation_method/formula_signal, but the issue describes health-check result aggregation, not an algorithm or evaluation methodology"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/health_endpoints/_health_endpoints.py: attribute endpoint results by model_id with fallback to model-param mapping"
+    ],
+    "risks": [
+      "Misclassification as llm_algorithm could route a plumbing fix through algorithm review criteria",
+      "Fallback path when `model_id` is absent must preserve prior behavior for endpoints without ids"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Unit test `_aggregate_health_check_results` with two deployments sharing `litellm_params.model` but distinct `model_id`; assert per-deployment healthy_count/unhealthy_count/error_message"
+    ],
+    "unknowns": [
+      "Whether maintainers want this fixed in the proxy health path at all versus the referenced open PR #32161 refactor"
+    ],
+    "why": "The issue is a proxy health-check aggregation bug: `_aggregate_health_check_results` keys results by `litellm_params.model` instead of the per-deployment `model_id`, so counts/status/errors are misattributed across deployments sharing a model param. Root cause and a concrete patch/test are supplied, but this is ordinary proxy plumbing (health endpoint aggregation), not an LLM algorithm contribution. The track=llm_algorithm label is a misclassification: there is no training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The 'evaluation_method' signal is spurious keyword matching on health-check evaluation, not model evaluation. Per track rules, installation/CLI/config/docs/wrapper/provider-integration/ordinary API plumbing must be rejected even in an algorithm repository."
   },
   "ba5edb031c73f01d76280cb2fb0da5190c2ffdbb7abe6a46d7baeb7fdfa1dbbc": {
     "confidence": 0.7,
@@ -99738,6 +99974,42 @@
       "Whether the v4.1.11 fix fully addresses the key-agnostic requirement or only specific aliases"
     ],
     "why": "Issue provides a detailed root cause across three seams (schema gate, runtime normalizer, preview formatter) with a concrete repro and a verified local patch. Maintainer comment indicates a fix in v4.1.11, but the issue remains open and the proposed key-agnostic approach is broader than a single alias fix. The evidence supports actionable code work with a clear validation path."
+  },
+  "cd9ff7bb0066bb0c69ef4a3aa7167fdb5c0490247f8cc28b62909ab6a03a94e9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue says #7822 adds a conservative rejection guard and converts the repro into a passing rejection test, while also stating support for executing the configuration remains open; the intended deliverable is therefore unclear",
+      "open_pr_assessment reports root_cause_coverage=false and technical_complete=false for #7822, yet the issue body describes #7822 as already preventing premature resharding for this pattern"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "MFSDP v2 backward hook timing / resharding logic for frozen weights when inputs require no gradients",
+      "tests/unit_tests/distributed/mfsdp_v2/test_fully_shard.py regression coverage"
+    ],
+    "risks": [
+      "Draft PR #7822 may already cover the root cause, making a new implementation duplicative",
+      "Distinguishing a genuine mathematical/semantic error from hook-timing behavior requires careful baseline, seed, and tolerance control",
+      "CUDA illegal memory access risk if the saved-tensor guard is removed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the documented 2-rank repro at commit 1b2ef3b18eed64a4cdba349e1dcbbfea1cc8aea1 to confirm the failure",
+      "Add/verify a regression test that a nested trainable linear's weight gradient is produced without accessing released frozen-weight storage",
+      "Run the full MFSDP v2 suite on 2 GPUs to check for regressions"
+    ],
+    "unknowns": [
+      "Whether the accepted resolution is the rejection guard in #7822 or full execution support for the frozen-weight configuration",
+      "Whether #7822 will be merged and thus close the actionable gap",
+      "Whether maintainers consider the remaining work in scope for a new contribution"
+    ],
+    "why": "Issue describes a concrete MFSDP v2 correctness bug (frozen weights resharded before backward consumes them) with a reproduction commit and command, but the supplied evidence shows an open draft PR #7822 that already adds a conservative rejection guard and converts the repro into a passing rejection test. The issue itself states support for executing the configuration remains open, so the actionable code work is ambiguous: it is unclear whether the remaining task is to implement full support or whether the guard is the accepted fix. This unresolved duplicate/coverage ambiguity is a materially blocking unknown."
   },
   "cdb0dd253ec33b57efd8de292b84809d5b0dd41f38c71ec59c3c1a22e357aa84": {
     "confidence": 0.7,
@@ -115068,6 +115340,38 @@
       "Exact code location in the Bedrock provider where image dimensions are handled"
     ],
     "why": "The issue describes a Bedrock ValidationException for oversized images in multi-image requests, but the maintainer comment explicitly questions whether a code fix is feasible and suggests documenting the limitation instead. The candidate's own actionability evidence shows root_cause_signal=false and no code anchors beyond the error string, so the actionable code surface is unresolved."
+  },
+  "eabd25d1432bbba585cfd90556ea7d6d3b9059a9a0105820ecb955280414a5eb": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "examples/llm/llm_bench.cpp: instantiate Gemma4EmbeddingPreprocessor and register PLE tensor views in tensorMap before executor->prepare",
+      "cpp/runtime/preprocess/gemma4EmbeddingPreprocessor.h: reuse existing PLE binding logic from LLMRankRuntime",
+      "cpp/runtime/exec/engineExecutor.cpp: ensure PLE bindings are satisfied for benchmark path"
+    ],
+    "risks": [
+      "Repository policy indicates an AI disclosure conflict, so automated public submission is disallowed",
+      "Fix must not alter LLMRankRuntime behavior or broaden API surface beyond the benchmark path",
+      "Maintainer may prefer a different integration point than llm_bench.cpp"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's llm_build + llm_bench commands on a Gemma-4 PLE engine and confirm the ple_token_embeds_0 binding error",
+      "After fix, rerun llm_bench prefill warmup and iterations to confirm successful execution",
+      "Add a regression test that constructs a PLE-enabled engine config and asserts all engine I/O tensors are registry- or TensorMap-bound"
+    ],
+    "unknowns": [
+      "Exact intended fix location/design preference from maintainers beyond the collaborator's general acknowledgment"
+    ],
+    "why": "Issue provides a concrete, reproducible failure: llm_bench does not instantiate Gemma4EmbeddingPreprocessor or register ple_token_embeds_<idx> tensor views in tensorMap, causing engineExecutor::prepare to fail on Gemma-4 PLE engines. Root cause is anchored to specific code paths and a maintainer collaborator confirms it is a real issue to be fixed in llm_bench."
   },
   "eabf8d2ad6a6d650c505b891fa4ff82931bb366ac6de53b459896e57543c7fb8": {
     "confidence": 0.8,
