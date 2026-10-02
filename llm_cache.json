@@ -64440,6 +64440,33 @@
     ],
     "why": "Issue clearly identifies a shallow update in get_config causing recursive override failure, with a concrete reproduction. However, an existing PR #33525 directly addresses this but lacks tests and has failing CI, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed."
   },
+  "85cb4e46a6a396b301c31cf30a0add5c22aa11f0b1129ab8471b10d951264f74": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/adapters.py: replace direct text_config.tie_word_embeddings access with a defensive getattr(..., False) lookup, including the second direct access noted in the issue"
+    ],
+    "risks": [
+      "The fallback default False must match the parent Qwen3VLConfig semantics; a wrong default could silently change weight tying behavior",
+      "Other model configs with missing tie_word_embeddings on text_config may need the same defensive handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Load Qwen/Qwen3-VL-Reranker-8B with the documented sequence-classification overrides and confirm weight loading no longer raises AttributeError",
+      "Add a regression test that constructs a config whose text_config lacks tie_word_embeddings and exercises load_weights_using_from_2_way_softmax"
+    ],
+    "unknowns": [
+      "Whether the second direct access to tie_word_embeddings in adapters.py is on the same code path or a separate one"
+    ],
+    "why": "Issue provides a concrete traceback in vllm/model_executor/models/adapters.py:545 where load_weights_using_from_2_way_softmax directly accesses text_config.tie_word_embeddings, and Qwen3VLTextConfig lacks that attribute while the parent Qwen3VLConfig defines it as False. A tested getattr fallback is documented, giving a clear root cause and validation path."
+  },
   "85d4cef6ecd1fd5631fa2b0b93e49c82d5f929822769c71bf2c94bcdbe329fc9": {
     "confidence": 0.82,
     "contradictions": [
