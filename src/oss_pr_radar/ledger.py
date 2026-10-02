@@ -59,6 +59,10 @@ PR_UPDATE_REARM_REASONS = {
     "EXISTING_PR_HEAD_DRIFT",
     "NON_FAST_FORWARD_PR_UPDATE",
 }
+PR_UPDATE_REVALIDATION_REASONS = {
+    "PR_UPDATE_SOURCE_WAKE_MISMATCH",
+    "PR_UPDATE_AUTHENTICATED_PROBE_EXPIRED",
+}
 PR_FOLLOWUP_REARM_BARRIER_EVENT = "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER"
 MANAGED_REPLAY_REPLACEMENT_CREATED_EVENT = "MANAGED_REPLAY_REPLACEMENT_CREATED"
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
@@ -1434,6 +1438,142 @@ def _managed_replay_creation_snapshot(
     return original
 
 
+def _pr_update_revalidation_reason(
+    connection: sqlite3.Connection, *, row: sqlite3.Row, now: str
+) -> str | None:
+    """Authenticate a retired update for new work, never for publication."""
+    from .managed_lifecycle import ManagedLedger
+    from .metrics import QUALITY_FIELDS
+
+    try:
+        request = json.loads(row["request_json"])
+        if (
+            row["status"] != "BLOCKED"
+            or row["reason"]
+            not in {"BLOCKED_REPRODUCTION_REQUIRED", *PR_UPDATE_REVALIDATION_REASONS}
+            or not isinstance(request, dict)
+            or request.get("publicationKind") != "PR_UPDATE"
+            or request.get("requestId") != row["request_id"]
+            or any(
+                request.get(field) != row[column]
+                for field, column in (
+                    ("opportunityKey", "opportunity_key"),
+                    ("threadId", "thread_id"),
+                    ("commitSha", "commit_sha"),
+                    ("branch", "branch"),
+                    ("worktreePath", "worktree_path"),
+                    ("evidenceDigest", "evidence_digest"),
+                )
+            )
+            or _managed_replay_creation_snapshot(connection, row=row, request=request) != request
+            or row["permit_id"] is not None
+            or connection.execute(
+                "SELECT 1 FROM publication_permits WHERE request_id=? LIMIT 1",
+                (row["request_id"],),
+            ).fetchone()
+            is not None
+        ):
+            return None
+        # Even a historical native reservation is external-work authority.
+        if (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='managed_publication_reservations'"
+            ).fetchone()
+            is not None
+            and connection.execute(
+                "SELECT 1 FROM managed_publication_reservations WHERE request_id=? LIMIT 1",
+                (row["request_id"],),
+            ).fetchone()
+            is not None
+        ):
+            return None
+        raw = base64.b64decode(request["evidenceRawBase64"].encode("ascii"), validate=True)
+        value = json.loads(raw)
+        if hashlib.sha256(raw).hexdigest() != row["evidence_digest"] or not isinstance(value, dict):
+            return None
+        source_wake = str(value.get("followupDigest") or "")
+        request_wake = str(request.get("followupWakeDigest") or "")
+        quality = value.get("quality")
+        receipt = request.get("probeReceipt")
+        intent = request.get("intent")
+        issue = ISSUE_URL_RE.fullmatch(str(request.get("issueUrl") or ""))
+        if (
+            value.get("schemaVersion") != "radar-task-result-v1"
+            or value.get("stage") != "FIX_READY"
+            or value.get("handoffMode") != "controller_merge_complete"
+            or issue is None
+            or PR_URL_RE.fullmatch(str(request.get("existingPrUrl") or "")) is None
+            or re.fullmatch(r"[0-9a-f]{64}", source_wake) is None
+            or re.fullmatch(r"[0-9a-f]{64}", request_wake) is None
+            or not isinstance(quality, dict)
+            or quality != request.get("quality")
+            or any(quality.get(field) is not True for field in QUALITY_FIELDS)
+            or not isinstance(intent, dict)
+            or intent.get("autoSubmitAuthorized") is not True
+            or intent.get("publicSubmissionAllowed") is not True
+            or intent.get("authorizationSource") != "signed_live_revalidation_required"
+            or intent.get("publicationMode") not in {"canary", "active"}
+            or value.get("reproductionReceipt") != receipt
+            or not _managed_replay_receipt_valid_at(
+                receipt, source=request, bound_at=row["created_at"]
+            )
+            or any(
+                value.get(field) != request.get(expected)
+                for field, expected in (
+                    ("key", "opportunityKey"),
+                    ("issueUrl", "issueUrl"),
+                    ("threadId", "threadId"),
+                    ("taskId", "intentId"),
+                    ("worktreePath", "worktreePath"),
+                    ("resultDigest", "resultDigest"),
+                    ("commitSha", "commitSha"),
+                    ("headSha", "commitSha"),
+                    ("branch", "branch"),
+                    ("previousCommitSha", "previousCommitSha"),
+                    ("prUrl", "existingPrUrl"),
+                    ("selectedBaseSha", "selectedBaseSha"),
+                    ("codePaths", "codePaths"),
+                )
+            )
+        ):
+            return None
+        unsigned = dict(value)
+        # The controller's context digest is immutable snapshot metadata, not
+        # signed result authority. Retiring this request cannot validate its
+        # old context/scope or authorize a grant; new preparation must do so.
+        for field in (
+            "reproductionReceipt",
+            "probeReceipt",
+            "resultDigest",
+            "independentReview",
+            "contextDigest",
+        ):
+            unsigned.pop(field, None)
+        if unsigned.pop("controllerPolicyVerification", None) is not None:
+            unsigned["quality"] = dict(unsigned["quality"], policy_verified=True)
+        if sha256_json(unsigned) != request.get("resultDigest"):
+            return None
+        database = connection.execute("PRAGMA database_list").fetchone()["file"]
+        authorization = ManagedLedger(
+            Path(database), ensure_schema=False
+        ).implementation_authorization_receipt(
+            task_id=str(request.get("intentId") or ""),
+            thread_id=str(request.get("threadId") or ""),
+            worktree_path=str(request.get("worktreePath") or ""),
+            repo=issue.group(1),
+            issue_url=str(request["issueUrl"]),
+        )
+        if authorization is None:
+            return None
+        if source_wake != request_wake:
+            return "PR_UPDATE_SOURCE_WAKE_MISMATCH"
+        if parse_time(str(receipt.get("expiresAt") or "")) <= parse_time(now):
+            return "PR_UPDATE_AUTHENTICATED_PROBE_EXPIRED"
+    except (KeyError, TypeError, ValueError, LedgerError, sqlite3.Error):
+        return None
+    return None
+
+
 def _validate_managed_replay_lineage_authority(
     connection: sqlite3.Connection,
     *,
@@ -2021,6 +2161,66 @@ class RadarLedger:
                     reason=row["reason"],
                     now=now,
                 )
+            self._rearm_authenticated_pr_updates(connection, now=now)
+
+    def _rearm_authenticated_pr_updates(self, connection: sqlite3.Connection, *, now: str) -> None:
+        rows = connection.execute(
+            """SELECT r.* FROM publication_requests r
+               JOIN opportunities o ON o.key=r.opportunity_key
+               WHERE r.status='BLOCKED'
+                 AND r.reason IN (
+                   'BLOCKED_REPRODUCTION_REQUIRED',
+                   'PR_UPDATE_SOURCE_WAKE_MISMATCH',
+                   'PR_UPDATE_AUTHENTICATED_PROBE_EXPIRED'
+                 )
+                 AND o.stage IN ('FIX_READY','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')"""
+        ).fetchall()
+        for source in rows:
+            # Classification, denial and the existing observation barrier must
+            # become visible together. A failed native rearm preserves the row.
+            connection.execute("SAVEPOINT pr_update_revalidation")
+            try:
+                row = connection.execute(
+                    "SELECT * FROM publication_requests WHERE request_id=?",
+                    (source["request_id"],),
+                ).fetchone()
+                reason = _pr_update_revalidation_reason(connection, row=row, now=now)
+                if reason is None:
+                    connection.execute("ROLLBACK TO pr_update_revalidation")
+                    continue
+                connection.execute(
+                    """UPDATE publication_requests SET reason=?,updated_at=?
+                       WHERE request_id=? AND reason<>?""",
+                    (reason, now, row["request_id"], reason),
+                )
+                self._event(
+                    connection,
+                    row["opportunity_key"],
+                    "PUBLICATION_BLOCKED",
+                    f"{row['request_id']}:{reason}",
+                    {
+                        "requestId": row["request_id"],
+                        "reason": reason,
+                        "previousReason": row["reason"],
+                        "evidenceDigest": row["evidence_digest"],
+                        "requestDigest": sha256_text(row["request_json"]),
+                    },
+                    now,
+                )
+                if not self._rearm_followup_for_publication_drift(
+                    connection,
+                    request_id=row["request_id"],
+                    key=row["opportunity_key"],
+                    request_json=row["request_json"],
+                    reason=reason,
+                    now=now,
+                ):
+                    connection.execute("ROLLBACK TO pr_update_revalidation")
+            except Exception:
+                connection.execute("ROLLBACK TO pr_update_revalidation")
+                raise
+            finally:
+                connection.execute("RELEASE pr_update_revalidation")
 
     @staticmethod
     def _no_go_watermark(connection: sqlite3.Connection, key: str) -> dict[str, str | None] | None:
@@ -13888,7 +14088,7 @@ class RadarLedger:
         reason: str,
         now: str,
     ) -> bool:
-        if reason not in PR_UPDATE_REARM_REASONS:
+        if reason not in PR_UPDATE_REARM_REASONS | PR_UPDATE_REVALIDATION_REASONS:
             return False
         try:
             request = json.loads(request_json)
@@ -13896,6 +14096,16 @@ class RadarLedger:
             return False
         if request.get("publicationKind") != "PR_UPDATE":
             return False
+        if reason in PR_UPDATE_REVALIDATION_REASONS:
+            source = connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=? AND opportunity_key=?",
+                (request_id, key),
+            ).fetchone()
+            if (
+                source is None
+                or _pr_update_revalidation_reason(connection, row=source, now=now) != reason
+            ):
+                return False
         connection.execute(
             """UPDATE publication_permits SET status='EXPIRED',updated_at=?
                WHERE request_id=? AND status='ACTIVE'""",
@@ -13932,13 +14142,29 @@ class RadarLedger:
                 and barrier_payload.get("rearmAfter")
             )
         followup = connection.execute(
-            """SELECT pr_url,head_sha,wake_digest,checked_at FROM pr_followups
+            """SELECT pr_url,head_sha,wake_digest,checked_at,intent_id,thread_id,worktree_path
+               FROM pr_followups
                WHERE opportunity_key=?""",
             (key,),
         ).fetchone()
         if followup is None or request.get("existingPrUrl") != followup["pr_url"]:
             return False
         if reason != "EXISTING_PR_HEAD_DRIFT" and previous_commit != followup["head_sha"]:
+            return False
+        if reason in PR_UPDATE_REVALIDATION_REASONS and (
+            followup["intent_id"] != intent_id
+            or followup["thread_id"] != thread_id
+            or not _resolved_path_equal(str(followup["worktree_path"] or ""), worktree_path)
+            or connection.execute(
+                """SELECT 1 FROM publication_requests published
+                   JOIN publication_permits permit ON permit.request_id=published.request_id
+                   WHERE published.opportunity_key=?
+                     AND published.thread_id=? AND published.worktree_path=?
+                     AND permit.status='CONSUMED' AND permit.pr_url=?""",
+                (key, thread_id, worktree_path, followup["pr_url"]),
+            ).fetchone()
+            is None
+        ):
             return False
         request_row = connection.execute(
             """SELECT thread_id,worktree_path,status,reason FROM publication_requests
@@ -15699,7 +15925,7 @@ class RadarLedger:
     ) -> bool:
         if (
             request_row["status"] != "BLOCKED"
-            or request_row["reason"] not in PR_UPDATE_REARM_REASONS
+            or request_row["reason"] not in PR_UPDATE_REARM_REASONS | PR_UPDATE_REVALIDATION_REASONS
         ):
             return False
         try:
@@ -15711,6 +15937,13 @@ class RadarLedger:
             or request.get("requestId") != request_row["request_id"]
             or request.get("publicationKind") != "PR_UPDATE"
             or request.get("existingPrUrl") != followup_pr_url
+        ):
+            return False
+        if request_row["reason"] in PR_UPDATE_REVALIDATION_REASONS and (
+            _pr_update_revalidation_reason(
+                connection, row=request_row, now=iso_z(datetime.now(UTC))
+            )
+            != request_row["reason"]
         ):
             return False
         event_rows = connection.execute(
