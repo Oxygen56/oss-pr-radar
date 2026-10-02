@@ -21123,6 +21123,37 @@
     ],
     "why": "Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed before implementing."
   },
+  "2c3f4702c75d0f6b1fd1cd70ff4f67912fcdea51c2d8a0d30ef3483cd31ad394": {
+    "confidence": 0.7,
+    "contradictions": [
+      "actionability_evidence reports root_cause_signal=false while the issue body provides specific validation error logs and a clear failure mode"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "stdio transport response handling",
+      "JSON-RPC response validation error propagation"
+    ],
+    "risks": [
+      "Fixing may alter public error-handling behavior of the stdio client",
+      "Maintainer may prefer a different recovery strategy"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that feeds a response missing jsonrpc and a response with both result and error, asserting the matching request fails and a subsequent ping succeeds."
+    ],
+    "unknowns": [
+      "Whether the repository requires prior assignment before submitting a PR",
+      "Whether the AI-disclosure conflict is resolved",
+      "Exact code location in java-sdk responsible for the stdio response loop"
+    ],
+    "why": "Issue describes a concrete stdio client failure with reproduction steps and logs, but the supplied evidence lacks a code anchor in the target repository and the pre-task policy flags unresolved assignment and AI-disclosure requirements, which materially block whether code work is actionable."
+  },
   "2c4adea5959b6500ea1796f91e6a49b2e666a7b7ad58696e26cd53fcb1b811d7": {
     "confidence": 0.8,
     "contradictions": [],
