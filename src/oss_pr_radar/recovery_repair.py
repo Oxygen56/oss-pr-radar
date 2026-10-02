@@ -107,9 +107,7 @@ def _event_time(event: dict[str, Any]) -> float | None:
     return None
 
 
-def _valid_outcome(
-    receipt: dict[str, Any], event_id: str, event_key: str, namespace: str
-) -> bool:
+def _valid_outcome(receipt: dict[str, Any], event_id: str, event_key: str, namespace: str) -> bool:
     """Accept only a completed wrapper and the exact namespaced outcome."""
     if str(receipt.get("turnStatus") or "") != "completed":
         return False
@@ -139,9 +137,8 @@ def _valid_outcome(
 
 
 def _is_recovery(event_id: str, event: dict[str, Any], namespace: str) -> bool:
-    return (
-        event.get("kind") == "outcome_reconcile"
-        and str(event_id).startswith(f"outcome-reconcile:{namespace}:")
+    return event.get("kind") == "outcome_reconcile" and str(event_id).startswith(
+        f"outcome-reconcile:{namespace}:"
     )
 
 
@@ -291,8 +288,7 @@ def migrate_unmarked_transient_model_recoveries(
             fallback = event.get("modelFallback")
             if not _is_recovery(event_id, event, namespace) or (
                 isinstance(fallback, dict)
-                and fallback.get("schemaVersion")
-                == "oss_pr_radar_event_model_fallback_v1"
+                and fallback.get("schemaVersion") == "oss_pr_radar_event_model_fallback_v1"
             ):
                 continue
             receipt = _object(row["receipt_json"])
@@ -320,7 +316,9 @@ def migrate_unmarked_transient_model_recoveries(
             if (
                 root_row is None
                 or root_turn is None
-                or not _lineage_valid(event_id, event, root_id, _object(root_row["payload_json"]), key, namespace)
+                or not _lineage_valid(
+                    event_id, event, root_id, _object(root_row["payload_json"]), key, namespace
+                )
                 or str(root_row["status"] or "") not in {"delivered", "needs_reconcile"}
                 or str(root_turn["status"] or "") != "needs_reconcile"
                 or _valid_outcome(receipt, event_id, key, namespace)
@@ -370,7 +368,12 @@ def migrate_unmarked_transient_model_recoveries(
                 generation = 1
             repaired["recoveryGeneration"] = generation
             marker["lastArtifactGeneration"] = generation
-            for key_to_remove in ("terminalReason", "recoveryExhausted", "recoveryAttempts", "retryNotBefore"):
+            for key_to_remove in (
+                "terminalReason",
+                "recoveryExhausted",
+                "recoveryAttempts",
+                "retryNotBefore",
+            ):
                 repaired.pop(key_to_remove, None)
             changed = db.execute(
                 "UPDATE event_lane_events SET status='pending',attempts=?,payload_json=?,"
@@ -418,7 +421,11 @@ def rearm_historical_recoveries(
         for row in rows:
             event = _object(row["payload_json"])
             event_id = str(row["event_id"])
-            records[event_id] = {"row": row, "event": event, "receipt": _object(row["receipt_json"])}
+            records[event_id] = {
+                "row": row,
+                "event": event,
+                "receipt": _object(row["receipt_json"]),
+            }
         for event_id, record in records.items():
             row = record["row"]
             event = record["event"]
@@ -502,7 +509,9 @@ def rearm_historical_recoveries(
             history = marker.get("rearmHistory")
             if not isinstance(history, list):
                 history = []
-            history = [item for item in history if isinstance(item, dict)][-(_MAX_REARM_HISTORY - 1) :]
+            history = [item for item in history if isinstance(item, dict)][
+                -(_MAX_REARM_HISTORY - 1) :
+            ]
             history.append(
                 {
                     "at": stamp,
@@ -575,7 +584,12 @@ def _supersede_chain(
             "UPDATE event_lane_events SET status='coalesced',payload_json=?,delivered_at=?,"
             "lease_until=NULL,lease_owner=NULL,lease_token=NULL "
             "WHERE event_id=? AND status='needs_reconcile' AND attempts=?",
-            (json.dumps(repaired, sort_keys=True), time.time(), event_id, int(row["attempts"] or 0)),
+            (
+                json.dumps(repaired, sort_keys=True),
+                time.time(),
+                event_id,
+                int(row["attempts"] or 0),
+            ),
         )
         if changed.rowcount:
             db.execute(
@@ -591,9 +605,10 @@ def _supersede_chain(
         "SELECT status FROM event_lane_turns WHERE event_id=?", (root_id,)
     ).fetchone()
     if root_row is not None and root_turn is not None:
-        if str(root_row["status"] or "") in {"delivered", "needs_reconcile"} and str(
-            root_turn["status"] or ""
-        ) == "needs_reconcile":
+        if (
+            str(root_row["status"] or "") in {"delivered", "needs_reconcile"}
+            and str(root_turn["status"] or "") == "needs_reconcile"
+        ):
             root = _object(root_row["payload_json"])
             root["terminalReason"] = "historical_recovery_superseded_by_valid_outcome"
             root["supersededByValidOutcome"] = target
@@ -634,13 +649,16 @@ def migrate_completed_recovery_chains(
             root_turn = db.execute(
                 "SELECT status FROM event_lane_turns WHERE event_id=?", (root_id,)
             ).fetchone()
-            if root_row is None or root_turn is None or not _valid_outcome(
-                _object(row["receipt_json"]), event_id, key, namespace
+            if (
+                root_row is None
+                or root_turn is None
+                or not _valid_outcome(_object(row["receipt_json"]), event_id, key, namespace)
             ):
                 continue
-            if str(root_row["status"] or "") not in {"delivered", "needs_reconcile"} or str(
-                root_turn["status"] or ""
-            ) != "needs_reconcile":
+            if (
+                str(root_row["status"] or "") not in {"delivered", "needs_reconcile"}
+                or str(root_turn["status"] or "") != "needs_reconcile"
+            ):
                 continue
             root = _object(root_row["payload_json"])
             if not root or str(root.get("eventKey") or key) != key:

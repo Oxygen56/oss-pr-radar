@@ -3512,14 +3512,13 @@ class Radar:
         distinctive_overlap = semantic_distinctive_overlap(issue_title, text)
         overlapping_paths = overlapping_issue_pr_paths(issue_context, file_paths)
         direct_code_overlap = bool(
-            references_issue
-            and keyword_hits >= 3
-            and code_like_overlap
-            and distinctive_overlap
+            references_issue and keyword_hits >= 3 and code_like_overlap and distinctive_overlap
         )
-        semantic_overlap = (bool(overlapping_paths) and keyword_hits >= 2) or (
-            keyword_hits >= 3 and code_like_overlap and len(distinctive_overlap) >= 2
-        ) or direct_code_overlap
+        semantic_overlap = (
+            (bool(overlapping_paths) and keyword_hits >= 2)
+            or (keyword_hits >= 3 and code_like_overlap and len(distinctive_overlap) >= 2)
+            or direct_code_overlap
+        )
 
         score = 0
         strengths: list[str] = []

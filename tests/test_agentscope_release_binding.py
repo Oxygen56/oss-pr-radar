@@ -22,7 +22,9 @@ def test_inactive_event_release_is_pinned_without_consulting_current_pointer(tmp
     monkeypatch.setattr(
         binding,
         "active_release",
-        lambda _root: (_ for _ in ()).throw(AssertionError("current-release must not be consulted")),
+        lambda _root: (_ for _ in ()).throw(
+            AssertionError("current-release must not be consulted")
+        ),
     )
     result = binding.bind_verified_release(tmp_path, event)
     assert result.code_root == Path(event)

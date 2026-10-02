@@ -6,7 +6,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import sqlite3
+import stat
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -20,11 +23,13 @@ from oss_pr_radar.agentscope_events import (  # noqa: E402
     EventLane,
     GitHubIssuePoller,
     PollResult,
+    _receipt_has_live_bridge,
     advance_model_fallback,
     dispatch_once,
     github_event_effective_time,
 )
 from oss_pr_radar.claims import detect_claims  # noqa: E402
+from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.local_publication import run_bridge  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
 from oss_pr_radar.recovery_repair import (  # noqa: E402
@@ -32,6 +37,7 @@ from oss_pr_radar.recovery_repair import (  # noqa: E402
     migrate_unmarked_transient_model_recoveries,
     rearm_historical_recoveries,
 )
+from oss_pr_radar.release_binding import runtime_ledger_path  # noqa: E402
 from scripts.migrate_event_recovery_chains import (  # noqa: E402
     _declared_lineage_ids,
     _event_source,
@@ -888,6 +894,268 @@ def _live_exhausted_recovery_evidence(
         return None
 
 
+def _read_prestart_rejection_artifact(path: Path) -> tuple[dict, str]:
+    """Read the original private receipt without following a replacement link."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        source = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(source.st_mode)
+            or source.st_uid != os.getuid()
+            or source.st_mode & 0o022
+            or source.st_size > 64 * 1024
+        ):
+            raise ValueError("prestart rejection artifact is unsafe")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            raw = stream.read(64 * 1024 + 1)
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ValueError("prestart rejection artifact is not an object")
+        return value, hashlib.sha256(raw).hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def _controller_prestart_rejection_binding(root: Path, key: str) -> dict | None:
+    """Authenticate a current controller rejection; never clear its quarantine."""
+    authorization = require_operational_authorization(root)
+    binding = {
+        field: authorization.get(field)
+        for field in ("releaseId", "releaseHead", "releaseManifestSha256", "ledgerTarget")
+    }
+    if authorization.get("state") != "ACTIVE" or not all(binding.values()):
+        return None
+    path = runtime_ledger_path(root)
+    if str(path.resolve().relative_to(root.resolve() / "state")) != binding["ledgerTarget"]:
+        return None
+    store = RadarLedger(path, read_only=True)
+    with store.connect() as db:
+        db.execute("BEGIN")
+        opportunity = db.execute("SELECT * FROM opportunities WHERE key=?", (key,)).fetchone()
+        intents = db.execute(
+            "SELECT intent_id,status,intent_digest FROM intents WHERE opportunity_key=? "
+            "ORDER BY intent_id",
+            (key,),
+        ).fetchall()
+        quarantines = db.execute(
+            "SELECT quarantine_id,reason,dedupe_key,payload_json FROM task_quarantines "
+            "WHERE opportunity_key=? AND status='ACTIVE' ORDER BY quarantine_id",
+            (key,),
+        ).fetchall()
+        if (
+            opportunity is None
+            or opportunity["stage"] != "AUDIT_NO_GO"
+            or not opportunity["terminal_reason"]
+            or opportunity["repo"] != REPO
+            or key != f"{REPO}#{opportunity['issue_number']}"
+            or opportunity["issue_url"]
+            != f"https://github.com/{REPO}/issues/{opportunity['issue_number']}"
+            or not intents
+            or any(row["status"] != "REJECTED" for row in intents)
+            or not quarantines
+        ):
+            return None
+        return binding | {
+            "opportunityKey": key,
+            "stage": "AUDIT_NO_GO",
+            "terminalReason": opportunity["terminal_reason"],
+            "intentDigest": hashlib.sha256(
+                json.dumps([dict(row) for row in intents], sort_keys=True).encode()
+            ).hexdigest(),
+            "quarantineDigest": hashlib.sha256(
+                json.dumps([dict(row) for row in quarantines], sort_keys=True).encode()
+            ).hexdigest(),
+        }
+
+
+def _settle_rejected_prestart_recovery(
+    root: Path,
+    lane: EventLane,
+    *,
+    root_event_id: str,
+    recovery_event_id: str,
+    event_key: str,
+    now: float,
+) -> bool:
+    """Watch one exhausted, never-started chain that the controller still rejects."""
+    try:
+        with lane.writer() as db:
+            events = {
+                row["event_id"]: row
+                for row in db.execute(
+                    "SELECT * FROM event_lane_events WHERE event_id IN (?,?)",
+                    (root_event_id, recovery_event_id),
+                ).fetchall()
+            }
+            turns = {
+                row["event_id"]: row
+                for row in db.execute(
+                    "SELECT * FROM event_lane_turns WHERE event_id IN (?,?)",
+                    (root_event_id, recovery_event_id),
+                ).fetchall()
+            }
+            if len(events) != 2 or len(turns) != 2:
+                return False
+            payloads = {key: json.loads(row["payload_json"]) for key, row in events.items()}
+            if payloads[root_event_id].get(
+                "kind"
+            ) != "issue_update" or not _valid_exhausted_recovery_lineage(
+                recovery_event_id,
+                payloads[recovery_event_id],
+                payloads[root_event_id],
+                root_event_id,
+                event_key,
+            ):
+                return False
+            if (
+                db.execute(
+                    "SELECT 1 FROM event_lane_threads WHERE event_key=?", (event_key,)
+                ).fetchone()
+                or db.execute(
+                    "SELECT 1 FROM event_lane_turns WHERE event_key=? "
+                    "AND event_id NOT IN (?,?) AND status IN ('reserved','started')",
+                    (event_key, root_event_id, recovery_event_id),
+                ).fetchone()
+            ):
+                return False
+            artifacts = {}
+            for event_id in (root_event_id, recovery_event_id):
+                event, turn = events[event_id], turns[event_id]
+                persisted = json.loads(turn["receipt_json"])
+                if (
+                    event["status"] != "needs_reconcile"
+                    or int(event["attempts"]) < lane.max_attempts
+                    or turn["status"] != "needs_reconcile"
+                    or turn["event_key"] != event_key
+                    or turn["thread_id"]
+                    or turn["turn_id"]
+                    or not isinstance(persisted, dict)
+                    or persisted.get("terminalReason") != "handler_start_exception"
+                    or _receipt_has_live_bridge(persisted)
+                    or persisted.get("turnStarted") is True
+                    or persisted.get("turnId")
+                    or persisted.get("turnStatus")
+                ):
+                    return False
+                history = persisted.get("receiptHistory", [])
+                if not isinstance(history, list) or any(
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("receipt"), dict)
+                    or item["receipt"].get("turnStarted") is True
+                    or item["receipt"].get("turnId")
+                    or item["receipt"].get("turnStatus")
+                    or _receipt_has_live_bridge(item["receipt"])
+                    for item in history
+                ):
+                    return False
+                path = _event_artifact_path(
+                    root,
+                    EVENT_RECEIPT_DIR,
+                    event_id,
+                    attempt=int(event["attempts"]),
+                    is_recovery=event_id == recovery_event_id,
+                    generation=_recovery_generation(payloads[event_id]),
+                )
+                receipt, receipt_digest = _read_prestart_rejection_artifact(path)
+                launch, launch_digest = _read_prestart_rejection_artifact(
+                    path.with_suffix(".launch.json")
+                )
+                request, request_digest = _read_prestart_rejection_artifact(
+                    path.with_suffix(".request.json")
+                )
+                if (
+                    set(receipt)
+                    != {
+                        "eventId",
+                        "eventKey",
+                        "model",
+                        "ok",
+                        "retryable",
+                        "turnStarted",
+                        "turnId",
+                        "error",
+                    }
+                    or receipt.get("eventId") != event_id
+                    or receipt.get("eventKey") != event_key
+                    or receipt.get("ok") is not False
+                    or receipt.get("retryable") is not False
+                    or receipt.get("turnStarted") is not False
+                    or receipt.get("turnId") not in (None, "")
+                    or receipt.get("error")
+                    != (f"PermissionError:task action blocked by active quarantine: {event_key}")
+                    or receipt.get("model") not in EVENT_MODEL_CANDIDATES
+                    or launch.get("model") != receipt["model"]
+                    or not isinstance(launch.get("pid"), int)
+                    or isinstance(launch.get("pid"), bool)
+                    or launch["pid"] <= 0
+                    or _receipt_has_live_bridge({"workerPid": launch["pid"]})
+                    or any(
+                        request.get(field) != receipt[field]
+                        for field in (
+                            "eventId",
+                            "eventKey",
+                            "model",
+                        )
+                    )
+                ):
+                    return False
+                try:
+                    os.kill(launch["pid"], 0)
+                except ProcessLookupError:
+                    pass
+                else:
+                    return False
+                artifacts[event_id] = {
+                    "receiptPath": str(path),
+                    "receiptDigest": receipt_digest,
+                    "requestDigest": request_digest,
+                    "launchDigest": launch_digest,
+                    "attempts": int(event["attempts"]),
+                }
+            binding = _controller_prestart_rejection_binding(root, event_key)
+            if binding is None:
+                return False
+            marker = {
+                "schemaVersion": "agentscope_controller_prestart_rejection_v1",
+                "state": "watch_only",
+                "reason": "controller_prestart_rejected",
+                "rootEventId": root_event_id,
+                "recoveryEventId": recovery_event_id,
+                "eventKey": event_key,
+                "observedAt": datetime.fromtimestamp(now, UTC).isoformat(),
+                "controllerBinding": binding,
+                "artifacts": artifacts,
+            }
+            # Retain original payload/receipt bytes and attempt history.  This
+            # is a local policy closeout, not a completed/public no-action turn.
+            db.execute(
+                "UPDATE event_lane_events SET status='watch_only' WHERE event_id=?",
+                (root_event_id,),
+            )
+            db.execute(
+                "UPDATE event_lane_events SET status='coalesced' WHERE event_id=?",
+                (recovery_event_id,),
+            )
+            db.execute(
+                "UPDATE event_lane_turns SET status='watch_only' WHERE event_id=?",
+                (root_event_id,),
+            )
+            db.execute(
+                "UPDATE event_lane_turns SET status='superseded' WHERE event_id=?",
+                (recovery_event_id,),
+            )
+            db.execute(
+                "INSERT INTO event_lane_state(key,value_json) VALUES(?,?)",
+                (
+                    f"controller-prestart-rejection:{root_event_id}",
+                    json.dumps(marker, sort_keys=True),
+                ),
+            )
+            return True
+    except (OSError, RuntimeError, ValueError, TypeError, KeyError, sqlite3.Error):
+        return False
+
+
 def _settle_exhausted_outcome_recoveries(
     root: Path,
     lane: EventLane,
@@ -895,7 +1163,7 @@ def _settle_exhausted_outcome_recoveries(
     transport=None,
     now: float | None = None,
 ) -> dict[str, int]:
-    """Settle only exhausted chains whose current public state proves no-op."""
+    """Settle exact prestart rejections or exhausted chains with public no-op proof."""
 
     try:
         current = time.time() if now is None else float(now)
@@ -962,6 +1230,16 @@ def _settle_exhausted_outcome_recoveries(
             skipped += 1
             continue
         candidates += 1
+        if _settle_rejected_prestart_recovery(
+            root,
+            lane,
+            root_event_id=root_event_id,
+            recovery_event_id=str(row["event_id"]),
+            event_key=event_key,
+            now=current,
+        ):
+            settled += 1
+            continue
         audit_key = f"outcome-recovery-evidence:{row['event_id']}"
         audit = lane.state_value(audit_key)
         last_checked = _parse_time(

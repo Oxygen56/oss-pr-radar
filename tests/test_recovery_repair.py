@@ -97,9 +97,7 @@ def test_rearm_advances_artifact_generation_and_is_bounded(tmp_path: Path) -> No
     old_path.parent.mkdir(parents=True)
     old_path.write_text('{"turnStatus":"failed"}\n', encoding="utf-8")
 
-    first = rearm_historical_recoveries(
-        lane, namespace="agentscope", now=1_700_000_000
-    )
+    first = rearm_historical_recoveries(lane, namespace="agentscope", now=1_700_000_000)
     assert first == {"candidates": 1, "rearmed": 1, "superseded": 0, "skipped": 0}
     with lane.connect() as db:
         event_row = db.execute(
@@ -112,22 +110,23 @@ def test_rearm_advances_artifact_generation_and_is_bounded(tmp_path: Path) -> No
     assert payload["recoveryGeneration"] == 1
     assert payload["historicalModelRepair"]["automaticRearmCount"] == 1
     assert old_path.is_file()
-    assert event_artifact_path(
-        tmp_path,
-        "agentscope_event_receipts",
-        recovery_id,
-        is_recovery=True,
-        generation=1,
-    ) != old_path
+    assert (
+        event_artifact_path(
+            tmp_path,
+            "agentscope_event_receipts",
+            recovery_id,
+            is_recovery=True,
+            generation=1,
+        )
+        != old_path
+    )
 
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile',attempts=3 WHERE event_id=?",
             (recovery_id,),
         )
-    second = rearm_historical_recoveries(
-        lane, namespace="agentscope", now=1_700_000_001
-    )
+    second = rearm_historical_recoveries(lane, namespace="agentscope", now=1_700_000_001)
     assert second["rearmed"] == 0
     assert second["skipped"] == 1
 
@@ -323,9 +322,7 @@ def test_rearm_supersedes_chain_only_for_a_later_valid_completed_turn(tmp_path: 
         },
         status="completed",
     )
-    result = rearm_historical_recoveries(
-        lane, namespace="agentscope", now=1_700_000_000
-    )
+    result = rearm_historical_recoveries(lane, namespace="agentscope", now=1_700_000_000)
     assert result["superseded"] == 1
     with lane.connect() as db:
         states = {
@@ -345,4 +342,7 @@ def test_rearm_supersedes_chain_only_for_a_later_valid_completed_turn(tmp_path: 
         )
     assert states[root_id] == ("coalesced", "superseded")
     assert states[recovery_id] == ("coalesced", "superseded")
-    assert recovery_payload["historicalModelRepair"]["supersededByValidOutcome"]["turnId"] == "turn-later"
+    assert (
+        recovery_payload["historicalModelRepair"]["supersededByValidOutcome"]["turnId"]
+        == "turn-later"
+    )
