@@ -6360,20 +6360,32 @@ def _publication_review_context(
     return review_context
 
 
+def _drain_pr_followup_identity(candidate: dict[str, Any]) -> tuple[str, ...] | None:
+    identity = tuple(
+        candidate.get(field)
+        for field in ("key", "intentId", "threadId", "worktreePath", "wakeDigest")
+    )
+    if not all(isinstance(value, str) and value for value in identity):
+        return None
+    return identity
+
+
 def _higher_priority_existing_work(
     args: argparse.Namespace,
     *,
     intent_key: str,
+    _drain_isolated_pr_followups: tuple[tuple[str, ...], ...] = (),
 ) -> list[dict[str, str]]:
     """Keep scarce task capacity on work already closest to a useful outcome."""
 
     priorities: list[dict[str, str]] = []
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
-    for item in [
-        *pr_state["candidates"],
-        *pr_state["restoreRequired"],
-        *pr_state["unresolved"],
-    ]:
+    for item in pr_state["candidates"]:
+        if _drain_pr_followup_identity(item) in _drain_isolated_pr_followups:
+            continue
+        if item.get("key") != intent_key:
+            priorities.append({"kind": "pr_followup", "key": str(item.get("key") or "")})
+    for item in [*pr_state["restoreRequired"], *pr_state["unresolved"]]:
         if item.get("key") != intent_key:
             priorities.append({"kind": "pr_followup", "key": str(item.get("key") or "")})
 
@@ -6398,7 +6410,11 @@ def _higher_priority_existing_work(
     return priorities
 
 
-def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
+def claim_intent(
+    args: argparse.Namespace,
+    *,
+    _drain_isolated_pr_followups: tuple[tuple[str, ...], ...] = (),
+) -> dict[str, Any]:
     store = ledger(args.ledger)
     pending = {item["intentId"]: item for item in store.pending()}
     intent = pending.get(args.intent_id)
@@ -6449,7 +6465,15 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
             "reason": "task_wip_limit",
         }
     if intent.get("mode") != "shadow":
-        priority_work = _higher_priority_existing_work(args, intent_key=str(intent["key"]))
+        priority_work = _higher_priority_existing_work(
+            args,
+            intent_key=str(intent["key"]),
+            **(
+                {"_drain_isolated_pr_followups": _drain_isolated_pr_followups}
+                if _drain_isolated_pr_followups
+                else {}
+            ),
+        )
         if priority_work:
             return {
                 "ok": True,
@@ -26775,6 +26799,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
     deferred_followups: list[dict[str, Any]] = []
     isolated_followups: list[dict[str, Any]] = []
+    isolated_priority_followups: list[tuple[str, ...]] = []
     restored_followup_threads: set[str] = set()
     if pr_state.get("restoreRequired"):
         restore_candidate = pr_state["restoreRequired"][0]
@@ -26791,6 +26816,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             restore_failure = restore_target(candidate)
             if restore_failure:
                 return restore_failure
+        candidate_identity = _drain_pr_followup_identity(candidate)
         try:
             reserved = pr_followup_reserve(
                 argparse.Namespace(
@@ -26811,6 +26837,9 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     "reason": path_error,
                 }
             )
+            if path_error == "PR_FOLLOWUP_BRANCH_IN_USE":
+                if candidate_identity is not None:
+                    isolated_priority_followups.append(candidate_identity)
             continue
         if reserved.get("deferred"):
             deferred_followups.append(
@@ -27008,7 +27037,12 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 lease_minutes=30,
                 prepare=True,
                 task_project_id=args.project_id,
-            )
+            ),
+            **(
+                {"_drain_isolated_pr_followups": tuple(isolated_priority_followups)}
+                if isolated_priority_followups
+                else {}
+            ),
         )
         if not claim.get("authorized"):
             decision = claim.get("decision") or {}

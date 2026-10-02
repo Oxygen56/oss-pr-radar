@@ -15234,8 +15234,9 @@ def test_prepare_pr_followup_retries_transient_pr_head_fetch(monkeypatch, tmp_pa
 
 
 @pytest.mark.parametrize("workspace_missing", [True, False])
-def test_drain_isolates_foreign_branch_during_real_followup_restore_and_continues_validation(
-    monkeypatch, tmp_path, workspace_missing
+@pytest.mark.parametrize("next_work", ["validation", "new_issue"])
+def test_drain_isolates_foreign_branch_and_continues_existing_or_new_work(
+    monkeypatch, tmp_path, workspace_missing, next_work
 ):
     store, expected, head, _pr_url = _published_followup_store(tmp_path / "ledger")
     github_root = MODULE.GITHUB_ROOT
@@ -15293,7 +15294,12 @@ def test_drain_isolates_foreign_branch_during_real_followup_restore_and_continue
     )
     validation = {"key": "a/b#2", "threadId": "validation-thread", "resultDigest": "result"}
     monkeypatch.setattr(
-        MODULE, "validation_followup_list", lambda _args: {"candidates": [validation]}
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {
+            "candidates": [validation] if next_work == "validation" else [],
+            "unresolved": [],
+        },
     )
     monkeypatch.setattr(MODULE, "validation_followup_reserve", lambda _args: {"ok": True})
     delivered = []
@@ -15308,15 +15314,76 @@ def test_drain_isolates_foreign_branch_during_real_followup_restore_and_continue
         "pr_followup_deliver",
         lambda _args: pytest.fail("foreign branch candidate must not be dispatched"),
     )
+    audited = []
+    if next_work == "new_issue":
+        now = datetime.now(UTC)
+        store.enqueue(
+            {
+                "intentId": "intent-new",
+                "key": "a/b#2",
+                "repo": "a/b",
+                "issueNumber": 2,
+                "issueUrl": "https://github.com/a/b/issues/2",
+                "title": "New runtime bug",
+                "mode": "canary",
+                "category": "NEW_CLEAN_CANDIDATE",
+                "autoSpawn": True,
+                "score": 12,
+                "issuedAt": iso_z(now),
+                "expiresAt": iso_z(now + timedelta(hours=1)),
+            }
+        )
+        evidence = SimpleNamespace(digest="live-policy", as_dict=lambda: {})
+        verdict = AuthorizationDecision(
+            status="HOLD",
+            reason_code="POLICY_UNKNOWN",
+            checks={"policy": "HOLD"},
+            evidence_digest=evidence.digest,
+        )
+
+        def audit(intent):
+            audited.append(intent["intentId"])
+            return evidence, verdict
+
+        monkeypatch.setattr(MODULE, "_audit_intent", audit)
+        monkeypatch.setattr(
+            MODULE,
+            "ManagedAdapter",
+            lambda *_args: SimpleNamespace(record_preflight_outcome=lambda **_kwargs: None),
+        )
+        monkeypatch.setattr(
+            MODULE, "recovery_list", lambda _args: {"recoverable": [], "unresolved": []}
+        )
 
     result = MODULE.drain_once(
-        SimpleNamespace(ledger=store.path, project_id="github", owner="test-drain")
+        SimpleNamespace(
+            ledger=store.path, runtime_root=tmp_path, project_id="github", owner="test-drain"
+        )
     )
 
     assert result["ok"] is True
-    assert result["action"] == "validation_followup_dispatched"
-    assert result["key"] == validation["key"]
-    assert delivered == [validation["threadId"]]
+    if next_work == "validation":
+        assert result["action"] == "validation_followup_dispatched"
+        assert result["key"] == validation["key"]
+        assert delivered == [validation["threadId"]]
+    else:
+        assert result["action"] == "none"
+        assert audited == ["intent-new"]
+        assert delivered == []
+        assert result["held"][-1] == {"key": "a/b#2", "reason": "POLICY_UNKNOWN"}
+        assert store.pending()[0]["ledgerStatus"] == "PENDING"
+        ordinary_claim = MODULE.claim_intent(
+            SimpleNamespace(
+                ledger=store.path,
+                runtime_root=tmp_path,
+                intent_id="intent-new",
+                owner="ordinary-cli",
+                lease_minutes=30,
+                prepare=False,
+            )
+        )
+        assert ordinary_claim["reason"] == "higher_priority_existing_work"
+        assert audited == ["intent-new"]
     assert result["isolatedFollowups"] == [
         {"key": candidate["key"], "reason": "PR_FOLLOWUP_BRANCH_IN_USE"}
     ]
@@ -15336,6 +15403,116 @@ def test_drain_isolates_foreign_branch_during_real_followup_restore_and_continue
         assert (expected / ".oss-pr-radar" / "task-context.json").read_text() == (
             "preserve previous input\n"
         )
+
+
+@pytest.mark.parametrize(
+    "remaining_priority",
+    [
+        "key",
+        "intentId",
+        "threadId",
+        "worktreePath",
+        "wakeDigest",
+        "restore",
+        "unresolved",
+        "validation",
+        "wip_limit",
+        "other_path_error",
+    ],
+)
+def test_drain_branch_isolation_preserves_changed_identity_and_other_priority(
+    monkeypatch, tmp_path, remaining_priority
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-new",
+            "key": "a/b#2",
+            "repo": "a/b",
+            "issueNumber": 2,
+            "issueUrl": "https://github.com/a/b/issues/2",
+            "title": "New runtime bug",
+            "mode": "canary",
+            "autoSpawn": True,
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    candidate = {
+        "key": "a/b#1",
+        "intentId": "published-intent",
+        "threadId": "published-thread",
+        "worktreePath": str(tmp_path / "published-worktree"),
+        "wakeDigest": "original-wake",
+    }
+    lists = []
+
+    def followups(_args):
+        lists.append(True)
+        current = dict(candidate)
+        if len(lists) > 1 and remaining_priority in current:
+            current[remaining_priority] += "-changed"
+        return {
+            "candidates": [current],
+            "restoreRequired": [current]
+            if len(lists) > 1 and remaining_priority == "restore"
+            else [],
+            "unresolved": [current] if remaining_priority == "unresolved" else [],
+        }
+
+    def reserve(_args):
+        reason = (
+            "CODE_PATH_MISSING"
+            if remaining_priority == "other_path_error"
+            else "PR_FOLLOWUP_BRANCH_IN_USE"
+        )
+        raise RuntimeError(reason)
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": []})
+    monkeypatch.setattr(MODULE, "_rearm_negative_followup_deliveries", lambda _store: [])
+    monkeypatch.setattr(MODULE, "_rearm_interrupted_recovery_turns", lambda _store: ([], []))
+    monkeypatch.setattr(MODULE, "_codex_usage_limit_pause", lambda _store: None)
+    monkeypatch.setattr(MODULE, "publication_feedback_list", lambda _args: {"candidates": []})
+    monkeypatch.setattr(MODULE, "pr_followup_list", followups)
+    monkeypatch.setattr(MODULE, "pr_followup_reserve", reserve)
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {
+            "candidates": [],
+            "unresolved": [{"key": "a/b#3"}] if remaining_priority == "validation" else [],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE, "recovery_list", lambda _args: {"recoverable": [], "unresolved": []}
+    )
+    monkeypatch.setattr(
+        MODULE, "_private_task_limit", lambda: 1 if remaining_priority == "wip_limit" else None
+    )
+    monkeypatch.setattr(MODULE, "_active_task_count", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: pytest.fail("remaining priority and WIP must still precede live audit"),
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=store.path, runtime_root=tmp_path, project_id="github", owner="test-drain"
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "none"
+    assert result["held"][-1] == {
+        "key": "a/b#2",
+        "reason": "task_wip_limit"
+        if remaining_priority == "wip_limit"
+        else "higher_priority_existing_work",
+    }
+    assert store.pending()[0]["ledgerStatus"] == "PENDING"
 
 
 def test_pr_followup_branch_ownership_git_failure_is_not_isolated(monkeypatch, tmp_path):
