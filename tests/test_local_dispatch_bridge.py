@@ -29202,7 +29202,16 @@ def test_available_dependency_prefetch_rearms_a_stalled_validation(monkeypatch, 
     assert listed["candidates"][0]["prefetchRequired"] is True
 
 
-def test_locked_but_absent_node_dependency_builds_npm_prefetch_plan(tmp_path):
+@pytest.mark.parametrize(
+    ("failure_summary", "prefetch_required"),
+    [
+        ("eslint-config-next 16.3.0 is locked but absent", True),
+        ("ENOENT: no such file or directory, open 'fixtures/tsx.json'", False),
+    ],
+)
+def test_locked_but_absent_node_dependency_builds_npm_prefetch_plan(
+    tmp_path, failure_summary, prefetch_required
+):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     (worktree / "package.json").write_text("{}\n", encoding="utf-8")
@@ -29215,7 +29224,7 @@ def test_locked_but_absent_node_dependency_builds_npm_prefetch_plan(tmp_path):
             {
                 "command": "npm run lint:json",
                 "exitCode": 2,
-                "summary": "eslint-config-next 16.3.0 is locked but absent",
+                "summary": failure_summary,
             }
         ],
     }
@@ -29229,14 +29238,15 @@ def test_locked_but_absent_node_dependency_builds_npm_prefetch_plan(tmp_path):
         }
     )
 
-    assert len(failures) == 1
-    assert commands == [
+    assert len(failures) == int(prefetch_required)
+    expected_commands = [
         {
             "kind": "npm_locked_install",
             "cwd": str(worktree.resolve()),
             "argv": ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
         }
     ]
+    assert commands == (expected_commands if prefetch_required else [])
 
 
 def test_unlocked_unverified_gate_is_classified_as_environment_blocked(monkeypatch, tmp_path):
@@ -32077,7 +32087,30 @@ def test_validation_prefetch_timeout_has_structured_failure(monkeypatch, tmp_pat
     assert raised.value.failure["timeoutSeconds"] == 600
 
 
-def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "failed_check",
+    [
+        {
+            "command": "npm run test",
+            "exitCode": 127,
+            "summary": "Vitest was unavailable because node_modules is absent",
+        },
+        {
+            "command": "npm run dev -- extensions uninstall orphaned-extension",
+            "exitCode": 1,
+            "result": "scripts/dev.js failed to spawn tsx: ENOENT.",
+        },
+        {
+            "command": "npm -w packages/core run test -- src/extension/extensionManager.test.ts",
+            "exitCode": 127,
+            "result": "The targeted core regression command still fails before collection "
+            "because the local vitest binary is absent.",
+        },
+    ],
+)
+def test_validation_followup_reserve_runs_prefetch_inside_bridge(
+    monkeypatch, tmp_path, failed_check
+):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         missing_quality=("regression_test_verified", "relevant_tests_green"),
@@ -32090,13 +32123,7 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tm
     (ui_root / "package.json").write_text("{}\n", encoding="utf-8")
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value["changedFiles"] = ["runtime.py", "ui/app.tsx"]
-    value["tests"] = [
-        {
-            "command": "npm run test",
-            "exitCode": 127,
-            "summary": "Vitest was unavailable because node_modules is absent",
-        }
-    ]
+    value["tests"] = [failed_check]
     raw = json.dumps(value).encode()
     result_path.write_bytes(raw)
     digest = _refresh_reproduction_certificate(result_path, store=store)

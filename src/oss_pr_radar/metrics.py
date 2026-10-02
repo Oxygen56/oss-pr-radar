@@ -77,6 +77,8 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "module lookup disabled",
     "goproxy=off",
     "node_modules",
+    "spawn tsx: enoent",
+    "local vitest binary is absent",
     "vitest was unavailable",
     "prettier was unavailable",
     "eslint was unavailable",
