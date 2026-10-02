@@ -9811,7 +9811,16 @@ def test_recovery_skips_a_recently_active_thread(monkeypatch, tmp_path):
     assert result["recoverable"] == []
 
 
-def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("error_code", "error_message"),
+    [
+        ("cyber_policy", "try rephrasing"),
+        ("other", "workspace routing discovery timed out"),
+    ],
+)
+def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(
+    monkeypatch, tmp_path, error_code, error_message
+):
     project_root = tmp_path / "github"
     worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
     worktree.mkdir(parents=True)
@@ -9829,8 +9838,8 @@ def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(monkeypat
                             "type": "task_complete",
                             "turn_id": "turn-1",
                             "error": {
-                                "codex_error_info": "cyber_policy",
-                                "message": "try rephrasing",
+                                "codex_error_info": error_code,
+                                "message": error_message,
                             },
                         },
                     }
@@ -9886,10 +9895,13 @@ def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(monkeypat
 
     assert result["blocked"] == []
     assert result["recoverable"][0]["immediateRecovery"] is True
-    assert result["recoverable"][0]["terminalError"]["code"] == "cyber_policy"
+    assert result["recoverable"][0]["terminalError"]["code"] == error_code
 
 
-def test_recovery_immediately_resumes_an_interrupted_validation_followup(monkeypatch, tmp_path):
+@pytest.mark.parametrize("routing_timeout", [False, True])
+def test_recovery_immediately_resumes_an_interrupted_validation_followup(
+    monkeypatch, tmp_path, routing_timeout
+):
     store, worktree = registered_store(tmp_path)
     run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
     store.record_stage("a/b#1", "VALIDATION_PENDING")
@@ -9924,9 +9936,9 @@ def test_recovery_immediately_resumes_an_interrupted_validation_followup(monkeyp
         )
 
     interrupted = {
-        "status": "interrupted",
-        "code": "turn_interrupted",
-        "message": "interrupted",
+        "status": "failed" if routing_timeout else "interrupted",
+        "code": "other" if routing_timeout else "turn_interrupted",
+        "message": "workspace routing discovery timed out" if routing_timeout else "interrupted",
         "turnId": "turn-validation",
     }
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)

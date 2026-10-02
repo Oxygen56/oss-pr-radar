@@ -955,6 +955,8 @@ def _is_immediate_recovery(state: dict[str, Any] | None) -> bool:
     if code in IMMEDIATE_RECOVERY_ERROR_CODES:
         return True
     message = str(state.get("message") or "").casefold()
+    if code == "other" and message == "workspace routing discovery timed out":
+        return True
     return code == "other" and any(
         marker in message
         for marker in (
