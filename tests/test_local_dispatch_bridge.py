@@ -34872,8 +34872,8 @@ def test_explicit_before_fix_failure_does_not_block_current_passing_fix(tmp_path
     assert len(ingested["publicationRequests"]) == 1
 
 
-def _published_tracking_merge_fixture(monkeypatch, tmp_path, *, required=False):
-    store, worktree, result_path = _controller_commit_result(tmp_path)
+def _published_tracking_merge_fixture(monkeypatch, tmp_path, *, required=False, worktree=None):
+    store, worktree, result_path = _controller_commit_result(tmp_path, worktree=worktree)
     source_raw = result_path.read_bytes()
     source_value = json.loads(source_raw)
     previous_head = source_value["commitSha"]
@@ -35163,8 +35163,11 @@ def test_publication_queue_uses_exact_current_merge_review_before_historical_rec
     from oss_pr_radar.independent_review import _context_review_binding_digest
 
     store, _managed, _worktree, result_path, context, _source = _published_tracking_merge_fixture(
-        monkeypatch, tmp_path
+        monkeypatch,
+        tmp_path,
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
     )
+    assert MODULE._is_managed_worktree(_worktree)
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
     assert first["errors"] == [], first
     normalized = json.loads(result_path.read_bytes())
