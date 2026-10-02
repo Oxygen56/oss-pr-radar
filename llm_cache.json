@@ -3942,6 +3942,37 @@
     ],
     "why": "The issue describes a real bug in PD disaggregation where the router reports healthy before the prefill worker is ready, causing benchmark failures. However, the root cause is not precisely identified, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate requires HUMAN_REVIEW."
   },
+  "089429c844cd4f60205378aecc99741ad0152245ca4a65c6d31ec4175a992bda": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate claims high impact on agent/inference/RAG critical path, but the issue is an OAuth login failure with no algorithmic or runtime-path evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No actionable code change identified for the auth failure; only a possible logging improvement in the SDK auth error path"
+    ],
+    "risks": [
+      "Fixing the logger would mask rather than resolve the underlying OAuth failure",
+      "Acting on an unreproducible auth report risks speculative changes to the auth flow"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "None available: no reproduction steps, no failing test, no controlled experiment, and no numerical or behavioral regression target"
+    ],
+    "unknowns": [
+      "Actual root cause of the Cline OAuth login failure",
+      "Whether the failure is environment-specific (Windows/VS Code 1.139.1) or a general auth regression",
+      "Whether any existing PR or internal Linear ticket (CLINE-3464) already covers the auth fix"
+    ],
+    "why": "Issue is a bare login failure report with no reproduction steps, no root-cause evidence, and no code anchor beyond a generic server.js process listing. The only concrete signal is a maintainer noting the logger drops error details, which is a logging fix, not the auth failure itself; the auth issue remains untracked and unactionable."
+  },
   "08b1c8427869eb8ed4cd6e26186378e34f1fcb8c9560a15383284fa4a571d03c": {
     "confidence": 0.6,
     "contradictions": [
@@ -106560,6 +106591,38 @@
       "Whether PR #56635 already covers the actionable fix and whether issue #56583 is the same defect"
     ],
     "why": "Issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not reproduce it synthetically; only build A/B and rollback evidence exists. A maintainer states it is a known tool-call/frontend issue, and PR #56635 claims a parser fix, but the supplied evidence does not establish a confirmed root cause or a concrete reference-vs-implementation validation path for this issue. The candidate's own actionability evidence shows root_cause_signal true but no maintainer approval, no design confirmation, and the open PR assessment flags missing root-cause coverage."
+  },
+  "de43d915c5f6dfed4304def6731471cd9693cf16d508537014a1693b3ce780d3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue body frames the OOM as an unresolved gateway defect, while maintainer comment and independent reproduction attribute it to an ABI mismatch already fixed in 2.2.4"
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "No code change justified by supplied evidence; potential follow-ups are docs correction of match_list field names (match_rule_domain/match_rule_path/match_rule_type) and surfacing config-validation errors instead of silent drop"
+    ],
+    "risks": [
+      "Treating an already-fixed ABI bug as an open code task would duplicate 152f14b1",
+      "The reporter's 2.2.4 EAGAIN startup failure is an environment/thread-limit issue, not evidence of an unfixed code defect",
+      "Docs/validation follow-ups are low-value relative to the resolved crash and lack maintainer confirmation of scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Re-run the reported 151-byte POST initialize against 2.2.4 to confirm HTTP 200 and no panic (already reported green)",
+      "If pursuing the docs/validation follow-up, add a config-parse test asserting invalid match_list fields produce a visible error rather than silent discard"
+    ],
+    "unknowns": [
+      "Whether maintainers want the docs field-name correction and visible config-validation error as separate PRs"
+    ],
+    "why": "Maintainer (johnlanni) already attributed the crash to an Envoy/Go-filter cgo ABI mismatch fixed in 2.2.4 via commit 152f14b1, and an independent commenter reproduced 2.2.3 red / 2.2.4 green on the same stack with the same payload, confirming the fix. The issue is therefore a resolved-version bug report, not an actionable code contribution; remaining asks are maintainer Q&A (config supportability, docs field-name fix, visible config-validation errors) rather than a concrete code change with a root cause to implement."
   },
   "de458e1b82831b70f40bf74227d09a62c9482f7f9ce4818d8dcd4843c78c17be": {
     "confidence": 0.8,
