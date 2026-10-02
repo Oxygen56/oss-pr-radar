@@ -73908,6 +73908,38 @@
     ],
     "why": "The issue clearly identifies a client-side provenance loss in StreamableHTTPClientTransport and proposes a concrete fix, but the deterministic gate requires HUMAN_REVIEW and the submission policy needs assignment. No competing PR exists, but maintainer confirmation is needed before implementation."
   },
+  "97f30152dc7107ef067a7caac4863f005f84d161e88f6b34b4d8c58792a9896f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no existing fix, but open PR #15529 directly references the issue and modifies the same config.rs path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/kv-router/src/scheduling/config.rs: add finite-and-non-negative validation for prefill_load_scale, overlap_score_credit_decay, router_temperature in KvRouterConfig::validate and RouterConfigOverride::validate",
+      "lib/router-plugins/builtin/src/default/parameters.rs: align parameter validation with config validation"
+    ],
+    "risks": [
+      "Open PR #15529 may already cover the same fix, making a new contribution redundant",
+      "Changing validation to reject +inf could break users relying on router_temperature=inf as a uniform-sampling limit",
+      "Broadening validation to RouterConfigOverride may affect other config surfaces"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test in lib/router-plugins/builtin/tests using the existing tests/support fixture (4 workers, 2 dp ranks, 400 selections) asserting validate() returns Err for prefill_load_scale=inf, overlap_score_credit_decay=inf, router_temperature=inf",
+      "Add env-parsing test through try_kv_router_config_from_dynamo_env() asserting DYN_ROUTER_PREFILL_LOAD_SCALE=inf/Infinity/1e999 and DYN_ROUTER_TEMPERATURE=inf are rejected at startup"
+    ],
+    "unknowns": [
+      "Whether PR #15529 fully resolves the issue or leaves independent implementation space (duplicateStatus=human_review_required)",
+      "Whether maintainers consider the missing regression test in #15529 a sufficient gap for a separate contribution"
+    ],
+    "why": "Issue provides a concrete, well-evidenced root cause (validate_min accepts +inf for prefill_load_scale/overlap_score_credit_decay/router_temperature in KvRouterConfig::validate and RouterConfigOverride::validate) and a GPU-free reproduction path. However, an open PR #15529 directly references this issue, overlaps the same code path (lib/kv-router/src/scheduling/config.rs), and shares distinctive terms (non_finite, prefill_load_scale), with review approval and passing CI. The duplicate/coverage status is explicitly 'human_review_required', which is a materially blocking unknown: it is unresolved whether independent implementation space remains."
+  },
   "97fbde2b290a85970f57496c532ef65e266e8ba926d61adefdf49198a8420b21": {
     "confidence": 0.8,
     "contradictions": [
@@ -78740,6 +78772,45 @@
       "Maintainer acceptance of the behavior change is pending; no explicit approval yet"
     ],
     "why": "Issue provides a precise root cause with code anchors, a concrete reproduction scenario, and a clear fix direction (propagate MCP provenance structurally). The triage confirms the root cause and identifies implementation dependencies. The change is actionable and testable."
+  },
+  "a1b44d21cf7124f10fdffc48808c93f729931e2834fdf474442816eb88b4743c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims connector never serves a hit, but open PR #52244 titled 'Restore hybrid GDN prefix-cache hits under MTP spec decoding' suggests a known overlapping fix path",
+      "Candidate category WAIT_MAINTAINER vs gate_decision HUMAN_REVIEW vs policy ai_disclosure_conflict"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/simple_kv_offload/manager.py eager store-spec scan alignment",
+      "vllm/distributed/kv_transfer/kv_connector/v1/simple_cpu_offload_connector.py store/lookup path",
+      "vllm/v1/core/sched/scheduler.py connector meta construction"
+    ],
+    "risks": [
+      "Root cause may be LCM block_size alignment, per-group g_block_size, or finish-step flush; fixing the wrong one yields no behavior change",
+      "PR #52244 may already cover the same hybrid GDN prefix-cache root cause, making a new fix duplicative",
+      "AI disclosure policy conflict may block public submission regardless of technical merit",
+      "Private quantized checkpoint prevents independent reproduction of the reported counters"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on a public hybrid GDN + full-attention checkpoint with fixed seed and synthetic prompts, forcing GPU prefix eviction, and compare external_prefix_cache_hits_total before/after",
+      "Run the same eviction probe on a dense attention-only model to determine whether the miss is hybrid-specific",
+      "Add a regression test asserting CPU offload hits after GPU prefix eviction for a hybrid config, with fixed block sizes and tolerance for cache granularity"
+    ],
+    "unknowns": [
+      "Whether the bug reproduces on a public hybrid checkpoint or is specific to the private quantized checkpoint",
+      "Whether PR #52244 already fixes the same root cause",
+      "Which of the two hypothesized scan-alignment causes is actually responsible",
+      "Whether the repository's AI disclosure policy permits an automated contribution"
+    ],
+    "why": "The issue describes a plausible hybrid GDN + full-attention CPU offload miss, but the reporter explicitly states the checkpoint is a private quantization and no public reproducer exists; the root cause is only hypothesized (LCM block_size alignment vs per-group g_block_size, or finish-step flush), and the key experiment distinguishing hybrid-specific from general behavior has not been run. The supplied evidence also flags an unresolved semantic-overlap PR (#52244) that may already cover the root cause, plus an AI disclosure policy conflict. These are materially blocking unknowns for actionable code work."
   },
   "a1c274bf8271dfe5e037082b2928fb6abfdace3c73d9b3907db7940586d4ca42": {
     "confidence": 0.7,
@@ -96045,6 +96116,41 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a single OOM/SIGABRT crash on a non-documented configuration path; root cause is unconfirmed (three hypotheses), no maintainer confirmation of supported config, and no reproducible test yet. The crash is severe but the exact code path and expected behavior need maintainer input."
+  },
+  "c73417bc3ae67e83456d0a632781e553a7bac30f6b3ce3994283803e129bb2bd": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Open-PR assessment reports semantic_overlap_requires_review with PR #40775 but also states direct_code_overlap=false and root_cause_coverage=false, leaving coverage ambiguous"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/constants.py LITELLM_SETTINGS_SAFE_DB_OVERRIDES allowlist",
+      "litellm/llms/vertex_ai/common_utils.py VertexAIModelInfo.get_models()",
+      "config overlay merge behavior for litellm_settings"
+    ],
+    "risks": [
+      "PR #40775 may already address the config propagation root cause, making a new fix duplicative",
+      "Adding check_provider_endpoint to the safe-override allowlist may have unintended precedence semantics",
+      "Vertex AI model discovery requires live GCP credentials, limiting CI validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with STORE_MODEL_IN_DB=True and check_provider_endpoint: true, assert litellm.check_provider_endpoint is True after DB overlay",
+      "Unit test VertexAIModelInfo.get_models() returns real models instead of raising NotImplementedError",
+      "Regression test that DB-stored litellm_settings row lacking the key does not clobber config.yaml value"
+    ],
+    "unknowns": [
+      "Whether PR #40775 actually fixes the litellm_settings DB-override propagation for check_provider_endpoint",
+      "Whether maintainers consider the VertexAIModelInfo stub in scope for this issue or a separate one"
+    ],
+    "why": "Issue describes two distinct bugs: (1) check_provider_endpoint not in LITELLM_SETTINGS_SAFE_DB_OVERRIDES so DB-stored litellm_settings overrides config.yaml, and (2) VertexAIModelInfo.get_models() is a NotImplementedError stub. The supplied open-PR assessment flags semantic overlap with PR #40775 (config_yaml, store_model_in_db) but does not establish whether that PR covers either root cause; duplicate coverage is unresolved and materially determines whether new code work is actionable."
   },
   "c73c1c28e5d92cfea9cd051e1623b763ae87f687c35a2162b9ce5f4be0dd65fd": {
     "confidence": 0.8,
