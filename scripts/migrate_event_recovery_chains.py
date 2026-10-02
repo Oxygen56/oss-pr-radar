@@ -34,10 +34,13 @@ def _event_source(
     source = str(event.get("eventIdSource") or "")
     payload_root = str(payload.get("rootEventId") or "")
     payload_source = str(payload.get("eventId") or "")
-    stable_identity = re.fullmatch(
-        rf"outcome-reconcile:{re.escape(namespace)}:[0-9a-f]{{64}}",
-        event_id,
-    ) is not None
+    stable_identity = (
+        re.fullmatch(
+            rf"outcome-reconcile:{re.escape(namespace)}:[0-9a-f]{{64}}",
+            event_id,
+        )
+        is not None
+    )
     if stable_identity and not declared_root:
         return None
     if declared_root:
@@ -137,12 +140,8 @@ def _valid_terminal_outcome(
         return False
     if state == "design_wait":
         try:
-            started = datetime.fromisoformat(
-                str(outcome["waitStartedAt"]).replace("Z", "+00:00")
-            )
-            until = datetime.fromisoformat(
-                str(outcome["waitUntil"]).replace("Z", "+00:00")
-            )
+            started = datetime.fromisoformat(str(outcome["waitStartedAt"]).replace("Z", "+00:00"))
+            until = datetime.fromisoformat(str(outcome["waitUntil"]).replace("Z", "+00:00"))
             if started.tzinfo is None or until.tzinfo is None:
                 return False
         except (KeyError, TypeError, ValueError):
@@ -170,6 +169,7 @@ def _coverage_contract(value: dict[str, Any] | None, *, namespace: str) -> dict[
     if not isinstance(overrides, list):
         raise ValueError("invalid recovery root overrides")
     roots: set[str] = set()
+
     def normalize_entries(entries: list[Any], *, label: str) -> list[dict[str, str]]:
         normalized: list[dict[str, str]] = []
         for item in entries:
@@ -183,11 +183,13 @@ def _coverage_contract(value: dict[str, Any] | None, *, namespace: str) -> dict[
             if not event_key or not turn_key:
                 raise ValueError(f"{label} keys are required")
             roots.add(root)
-            normalized.append({
-                "rootEventId": root,
-                "expectedEventKey": event_key,
-                "expectedTurnEventKey": turn_key,
-            })
+            normalized.append(
+                {
+                    "rootEventId": root,
+                    "expectedEventKey": event_key,
+                    "expectedTurnEventKey": turn_key,
+                }
+            )
         return normalized
 
     normalized_baselines = normalize_entries(baselines, label="baseline coverage")
@@ -210,9 +212,7 @@ def _recovery_plan(
     invalid_recovery_kinds: set[str] = set()
     event_statuses: dict[str, str] = {}
     created_at: dict[str, float] = {}
-    for row in db.execute(
-        "SELECT event_id,status,created_at,payload_json FROM event_lane_events"
-    ):
+    for row in db.execute("SELECT event_id,status,created_at,payload_json FROM event_lane_events"):
         event_id = str(row["event_id"])
         event_statuses[event_id] = str(row["status"])
         event = _json_object(row["payload_json"])
@@ -228,14 +228,12 @@ def _recovery_plan(
 
     turns: dict[str, dict[str, Any]] = {}
     for row in db.execute(
-        "SELECT event_id,event_key,thread_id,turn_id,status,receipt_json "
-        "FROM event_lane_turns"
+        "SELECT event_id,event_key,thread_id,turn_id,status,receipt_json FROM event_lane_turns"
     ):
         turns[str(row["event_id"])] = dict(row)
 
     active_turn_count = sum(
-        str(turn.get("status") or "") in {"reserved", "started"}
-        for turn in turns.values()
+        str(turn.get("status") or "") in {"reserved", "started"} for turn in turns.values()
     )
 
     def recovery_resolved(event_id: str) -> bool:
@@ -244,9 +242,7 @@ def _recovery_plan(
             turn is None or str(turn.get("status") or "") == "superseded"
         )
 
-    recovery_overrides = {
-        item["rootEventId"]: item for item in coverage["recoveryRootOverrides"]
-    }
+    recovery_overrides = {item["rootEventId"]: item for item in coverage["recoveryRootOverrides"]}
     for root_event_id, override in recovery_overrides.items():
         root_event = all_events.get(root_event_id)
         root_turn = turns.get(root_event_id)
@@ -255,12 +251,10 @@ def _recovery_plan(
             or root_turn is None
             or not _ordinary_event_identity_valid(root_event_id, root_event)
             or _event_key(root_event) != override["expectedEventKey"]
-            or str(root_turn.get("event_key") or "")
-            != override["expectedTurnEventKey"]
+            or str(root_turn.get("event_key") or "") != override["expectedTurnEventKey"]
             or event_statuses.get(root_event_id)
             not in {"delivered", "needs_reconcile", "coalesced"}
-            or str(root_turn.get("status") or "")
-            not in {"needs_reconcile", "superseded"}
+            or str(root_turn.get("status") or "") not in {"needs_reconcile", "superseded"}
         ):
             raise ValueError(f"invalid recovery root override: {root_event_id}")
 
@@ -320,9 +314,8 @@ def _recovery_plan(
             current = source
         if current and current not in events and current in all_events:
             root_event = all_events[current]
-            if (
-                _event_key(root_event) == lineage_key
-                and _ordinary_event_identity_valid(current, root_event)
+            if _event_key(root_event) == lineage_key and _ordinary_event_identity_valid(
+                current, root_event
             ):
                 root_event_id = current
             else:
@@ -371,15 +364,13 @@ def _recovery_plan(
                 or _event_key(ancestor) != final_event_key
                 or (
                     not ancestor_resolved
-                    and event_statuses.get(source)
-                    not in {"delivered", "needs_reconcile"}
+                    and event_statuses.get(source) not in {"delivered", "needs_reconcile"}
                 )
                 or (
                     ancestor_turn is not None
                     and (
                         str(ancestor_turn.get("event_key") or "") != final_event_key
-                        or str(ancestor_turn.get("status") or "")
-                        in {"reserved", "started"}
+                        or str(ancestor_turn.get("status") or "") in {"reserved", "started"}
                     )
                 )
             ):
@@ -408,9 +399,7 @@ def _recovery_plan(
         root_turn = turns.get(root_event_id)
         root_override = recovery_overrides.get(root_event_id)
         expected_root_turn_key = (
-            root_override["expectedTurnEventKey"]
-            if root_override is not None
-            else final_event_key
+            root_override["expectedTurnEventKey"] if root_override is not None else final_event_key
         )
         if (
             not lineage_valid
@@ -426,26 +415,20 @@ def _recovery_plan(
                 )
             )
             or _event_key(root_event) != final_event_key
-            or (
-                root_override is not None
-                and root_override["expectedEventKey"] != final_event_key
-            )
+            or (root_override is not None and root_override["expectedEventKey"] != final_event_key)
             or not _ordinary_event_identity_valid(root_event_id, root_event)
             or root_event_id in unsafe_roots
             or (
                 root_turn is not None
                 and (
-                    str(root_turn.get("event_key") or "")
-                    != expected_root_turn_key
+                    str(root_turn.get("event_key") or "") != expected_root_turn_key
                     or str(root_turn.get("status") or "") in {"reserved", "started"}
                 )
             )
         ):
             continue
         changed_events = [
-            event_id
-            for event_id in ancestors
-            if event_statuses.get(event_id) != "coalesced"
+            event_id for event_id in ancestors if event_statuses.get(event_id) != "coalesced"
         ]
         changed_turns = [
             event_id
@@ -453,8 +436,7 @@ def _recovery_plan(
             if event_id in turns and str(turns[event_id].get("status") or "") != "superseded"
         ]
         root_turn_changed = bool(
-            root_turn is not None
-            and str(root_turn.get("status") or "") == "needs_reconcile"
+            root_turn is not None and str(root_turn.get("status") or "") == "needs_reconcile"
         )
         root_event_changed = root_status == "needs_reconcile"
         if root_event_changed:
@@ -471,16 +453,18 @@ def _recovery_plan(
         ]
         if unresolved_siblings:
             continue
-        proposals.append({
-            "coverageType": "outcome_recovery",
-            "rootEventId": root_event_id,
-            "rootEventToCoalesce": root_event_changed,
-            "rootTurnToSupersede": root_turn_changed,
-            "finalEventId": final_event_id,
-            "intermediateEventIds": list(reversed(ancestors)),
-            "changedEvents": changed_events,
-            "changedTurns": changed_turns,
-        })
+        proposals.append(
+            {
+                "coverageType": "outcome_recovery",
+                "rootEventId": root_event_id,
+                "rootEventToCoalesce": root_event_changed,
+                "rootTurnToSupersede": root_turn_changed,
+                "finalEventId": final_event_id,
+                "intermediateEventIds": list(reversed(ancestors)),
+                "changedEvents": changed_events,
+                "changedTurns": changed_turns,
+            }
+        )
 
     # A legacy recursive implementation could create conflicting valid leaves.
     # Never guess which one is authoritative; stable recovery IDs make this
@@ -506,8 +490,7 @@ def _recovery_plan(
             event_status != "baseline"
             or not _ordinary_event_identity_valid(root_event_id, event)
             or _event_key(event) != baseline["expectedEventKey"]
-            or str(turn.get("event_key") or "")
-            != baseline["expectedTurnEventKey"]
+            or str(turn.get("event_key") or "") != baseline["expectedTurnEventKey"]
         ):
             raise ValueError(f"baseline coverage event is not baseline: {root_event_id}")
         if turn_status == "superseded":
@@ -520,16 +503,18 @@ def _recovery_plan(
             or receipt.get("terminalReason") != "handler_turn_timeout"
         ):
             raise ValueError(f"unsafe baseline coverage turn: {root_event_id}")
-        chains.append({
-            "coverageType": "bootstrap_baseline",
-            "rootEventId": root_event_id,
-            "rootEventToCoalesce": False,
-            "rootTurnToSupersede": True,
-            "finalEventId": root_event_id,
-            "intermediateEventIds": [],
-            "changedEvents": [],
-            "changedTurns": [root_event_id],
-        })
+        chains.append(
+            {
+                "coverageType": "bootstrap_baseline",
+                "rootEventId": root_event_id,
+                "rootEventToCoalesce": False,
+                "rootTurnToSupersede": True,
+                "finalEventId": root_event_id,
+                "intermediateEventIds": [],
+                "changedEvents": [],
+                "changedTurns": [root_event_id],
+            }
+        )
 
     event_targets: dict[str, dict[str, str]] = {}
     turn_targets: dict[str, dict[str, str]] = {}
@@ -558,12 +543,8 @@ def _recovery_plan(
         "turnTargets": turn_targets,
         "eventsToCoalesce": len(event_targets),
         "turnsToSupersede": len(turn_targets),
-        "rootEventsToCoalesce": sum(
-            bool(chain["rootEventToCoalesce"]) for chain in chains
-        ),
-        "rootTurnsToSupersede": sum(
-            bool(chain["rootTurnToSupersede"]) for chain in chains
-        ),
+        "rootEventsToCoalesce": sum(bool(chain["rootEventToCoalesce"]) for chain in chains),
+        "rootTurnsToSupersede": sum(bool(chain["rootTurnToSupersede"]) for chain in chains),
         "activeTurnCount": active_turn_count,
     }
 
@@ -598,8 +579,7 @@ def migrate_recovery_chains(
         if apply:
             for event_id, target_status in sorted(plan["eventTargets"].items()):
                 changed = db.execute(
-                    "UPDATE event_lane_events SET status='coalesced' "
-                    "WHERE event_id=? AND status=?",
+                    "UPDATE event_lane_events SET status='coalesced' WHERE event_id=? AND status=?",
                     (event_id, target_status["expectedStatus"]),
                 ).rowcount
                 if changed != 1:
@@ -607,8 +587,7 @@ def migrate_recovery_chains(
                 changed_events += changed
             for event_id, target_status in sorted(plan["turnTargets"].items()):
                 changed = db.execute(
-                    "UPDATE event_lane_turns SET status='superseded' "
-                    "WHERE event_id=? AND status=?",
+                    "UPDATE event_lane_turns SET status='superseded' WHERE event_id=? AND status=?",
                     (event_id, target_status["expectedStatus"]),
                 ).rowcount
                 if changed != 1:

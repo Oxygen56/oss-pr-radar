@@ -268,7 +268,9 @@ def main() -> None:
         help="build and verify the immutable release without changing current-release",
     )
     args = parser.parse_args()
-    print(json.dumps(deploy(args.source, args.target, activate=not args.no_activate), sort_keys=True))
+    print(
+        json.dumps(deploy(args.source, args.target, activate=not args.no_activate), sort_keys=True)
+    )
 
 
 if __name__ == "__main__":

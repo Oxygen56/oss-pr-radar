@@ -81,8 +81,13 @@ def test_create_release_without_activation_verifies_release_and_preserves_active
     git(source, "add", "scripts/runner.py")
     git(
         source,
-        "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-        "commit", "-m", "source-v3",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
     )
 
     result = MODULE.create_release(source, target, activate=False)
@@ -104,8 +109,13 @@ def test_create_release_verification_failure_preserves_active_pointer(tmp_path, 
     git(source, "add", "scripts/runner.py")
     git(
         source,
-        "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-        "commit", "-m", "source-v3",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
     )
     original_verify = MODULE.verify_release
     calls = 0
@@ -128,7 +138,12 @@ def test_cli_no_activate_builds_release_without_current_release_switch(tmp_path)
     source, target = make_repositories(tmp_path)
     completed = subprocess.run(
         [
-            sys.executable, str(SCRIPT), "--source", str(source), "--target", str(target),
+            sys.executable,
+            str(SCRIPT),
+            "--source",
+            str(source),
+            "--target",
+            str(target),
             "--no-activate",
         ],
         check=True,

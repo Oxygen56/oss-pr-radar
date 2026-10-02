@@ -74,18 +74,21 @@ def _add_stable_recovery(
         f"outcome-reconcile:{namespace}:"
         + hashlib.sha256(root_event_id.encode("utf-8")).hexdigest()
     )
-    assert lane.append({
-        "eventId": recovery_id,
-        "kind": "outcome_reconcile",
-        "eventKey": event_key,
-        "rootEventId": root_event_id,
-        "eventIdSource": root_event_id,
-        "payload": {
+    assert lane.append(
+        {
+            "eventId": recovery_id,
+            "kind": "outcome_reconcile",
+            "eventKey": event_key,
             "rootEventId": root_event_id,
-            "eventId": root_event_id,
-            "publicKey": event_key,
+            "eventIdSource": root_event_id,
+            "payload": {
+                "rootEventId": root_event_id,
+                "eventId": root_event_id,
+                "publicKey": event_key,
+            },
         },
-    }, priority=250)
+        priority=250,
+    )
     lane.reserve_handler_turn(event_key, recovery_id, f"client:{recovery_id}")
     lane.bind_handler_turn(
         event_key,
@@ -121,9 +124,7 @@ def test_recovery_chain_migration_is_dry_run_evidence_preserving_and_idempotent(
     database = tmp_path / f"{namespace}-events.sqlite3"
     lane = EventLane(database)
     event_key = (
-        "agentscope-ai/agentscope#2441"
-        if namespace == "agentscope"
-        else "HKUDS/nanobot#5524"
+        "agentscope-ai/agentscope#2441" if namespace == "agentscope" else "HKUDS/nanobot#5524"
     )
     root_event_id = f"{namespace}-root"
     root_event = {
@@ -210,10 +211,13 @@ def test_recovery_chain_migration_is_dry_run_evidence_preserving_and_idempotent(
     assert preview["rootTurnsToSupersede"] == 1
     assert preview["changed"] == 0
     with lane.connect() as db:
-        assert db.execute(
-            "SELECT status FROM event_lane_events WHERE event_id=?",
-            (recovery_one,),
-        ).fetchone()[0] == "delivered"
+        assert (
+            db.execute(
+                "SELECT status FROM event_lane_events WHERE event_id=?",
+                (recovery_one,),
+            ).fetchone()[0]
+            == "delivered"
+        )
 
     applied = migration.migrate_recovery_chains(
         database,
@@ -224,12 +228,10 @@ def test_recovery_chain_migration_is_dry_run_evidence_preserving_and_idempotent(
     assert applied["turnsChanged"] == 3
     assert applied["changed"] == 5
     with lane.connect() as db:
-        event_statuses = dict(db.execute(
-            "SELECT event_id,status FROM event_lane_events"
-        ).fetchall())
-        turn_statuses = dict(db.execute(
-            "SELECT event_id,status FROM event_lane_turns"
-        ).fetchall())
+        event_statuses = dict(
+            db.execute("SELECT event_id,status FROM event_lane_events").fetchall()
+        )
+        turn_statuses = dict(db.execute("SELECT event_id,status FROM event_lane_turns").fetchall())
         evidence_after = {
             row["event_id"]: (row["payload_json"], row["receipt_json"])
             for row in db.execute(
@@ -349,14 +351,16 @@ def test_valid_recovery_coalesces_needs_reconcile_root_event_and_turn(
     lane = EventLane(database)
     event_key = "agentscope-ai/agentscope#2448"
     root_event_id = "agentscope-root-needs-reconcile"
-    assert lane.append({
-        "eventId": root_event_id,
-        "eventKey": event_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 2448,
-        "kind": "issue_update",
-        "updatedAt": "2026-08-27T09:51:38Z",
-    })
+    assert lane.append(
+        {
+            "eventId": root_event_id,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 2448,
+            "kind": "issue_update",
+            "updatedAt": "2026-08-27T09:51:38Z",
+        }
+    )
     lane.reserve_handler_turn(event_key, root_event_id, "client:root")
     lane.bind_handler_turn(
         event_key,
@@ -368,8 +372,7 @@ def test_valid_recovery_coalesces_needs_reconcile_root_event_and_turn(
     )
     with lane.writer() as db:
         db.execute(
-            "UPDATE event_lane_events SET status='needs_reconcile',attempts=3 "
-            "WHERE event_id=?",
+            "UPDATE event_lane_events SET status='needs_reconcile',attempts=3 WHERE event_id=?",
             (root_event_id,),
         )
     final_recovery = "outcome-reconcile:agentscope:stable"
@@ -415,17 +418,18 @@ def test_ordinary_later_outcome_is_not_inferred_and_baseline_requires_explicit_p
     lane = EventLane(database)
     event_key = "agentscope-ai/agentscope#2397"
     old_event_id = "github:agentscope-ai/agentscope:2397:pr_update:old"
-    assert lane.append({
-        "eventId": old_event_id,
-        "eventKey": event_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 2397,
-        "kind": "pr_update",
-        "updatedAt": "2026-08-25T15:16:46Z",
-    }, now=1)
-    lane.reserve_handler_turn(
-        "agentscope-ai/agentscope#2385", old_event_id, "client:misbound"
+    assert lane.append(
+        {
+            "eventId": old_event_id,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 2397,
+            "kind": "pr_update",
+            "updatedAt": "2026-08-25T15:16:46Z",
+        },
+        now=1,
     )
+    lane.reserve_handler_turn("agentscope-ai/agentscope#2385", old_event_id, "client:misbound")
     lane.bind_handler_turn(
         "agentscope-ai/agentscope#2385",
         old_event_id,
@@ -441,14 +445,17 @@ def test_ordinary_later_outcome_is_not_inferred_and_baseline_requires_explicit_p
         )
 
     final_event_id = "github:agentscope-ai/agentscope:2397:pr_update:new"
-    assert lane.append({
-        "eventId": final_event_id,
-        "eventKey": event_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 2397,
-        "kind": "pr_update",
-        "updatedAt": "2026-08-25T15:16:47Z",
-    }, now=2)
+    assert lane.append(
+        {
+            "eventId": final_event_id,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 2397,
+            "kind": "pr_update",
+            "updatedAt": "2026-08-25T15:16:47Z",
+        },
+        now=2,
+    )
     lane.reserve_handler_turn(event_key, final_event_id, "client:final")
     lane.bind_handler_turn(
         event_key,
@@ -474,14 +481,17 @@ def test_ordinary_later_outcome_is_not_inferred_and_baseline_requires_explicit_p
 
     baseline_id = "github:agentscope-ai/agentscope:2364:issue_update:baseline"
     baseline_key = "agentscope-ai/agentscope#2364"
-    assert lane.append({
-        "eventId": baseline_id,
-        "eventKey": baseline_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 2364,
-        "kind": "issue_update",
-        "updatedAt": "2026-08-22T17:08:35Z",
-    }, now=3)
+    assert lane.append(
+        {
+            "eventId": baseline_id,
+            "eventKey": baseline_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 2364,
+            "kind": "issue_update",
+            "updatedAt": "2026-08-22T17:08:35Z",
+        },
+        now=3,
+    )
     lane.reserve_handler_turn(baseline_key, baseline_id, "client:baseline")
     lane.bind_handler_turn(
         baseline_key,
@@ -504,11 +514,13 @@ def test_ordinary_later_outcome_is_not_inferred_and_baseline_requires_explicit_p
     coverage = {
         "schemaVersion": "event-recovery-legacy-coverage-v1",
         "namespace": "agentscope",
-        "baselineRoots": [{
-            "rootEventId": baseline_id,
-            "expectedEventKey": baseline_key,
-            "expectedTurnEventKey": baseline_key,
-        }],
+        "baselineRoots": [
+            {
+                "rootEventId": baseline_id,
+                "expectedEventKey": baseline_key,
+                "expectedTurnEventKey": baseline_key,
+            }
+        ],
     }
     preview = migration.migrate_recovery_chains(
         database,
@@ -517,9 +529,7 @@ def test_ordinary_later_outcome_is_not_inferred_and_baseline_requires_explicit_p
     )
     assert preview["eventsToCoalesce"] == 0
     assert preview["turnsToSupersede"] == 1
-    assert [item["coverageType"] for item in preview["chains"]] == [
-        "bootstrap_baseline"
-    ]
+    assert [item["coverageType"] for item in preview["chains"]] == ["bootstrap_baseline"]
     migration.migrate_recovery_chains(
         database,
         namespace="agentscope",
@@ -527,16 +537,18 @@ def test_ordinary_later_outcome_is_not_inferred_and_baseline_requires_explicit_p
         legacy_coverage=coverage,
     )
     with lane.connect() as db:
-        statuses = dict(db.execute(
-            "SELECT event_id,status FROM event_lane_events "
-            "WHERE event_id IN (?,?)",
-            (old_event_id, baseline_id),
-        ))
-        turn_statuses = dict(db.execute(
-            "SELECT event_id,status FROM event_lane_turns "
-            "WHERE event_id IN (?,?)",
-            (old_event_id, baseline_id),
-        ))
+        statuses = dict(
+            db.execute(
+                "SELECT event_id,status FROM event_lane_events WHERE event_id IN (?,?)",
+                (old_event_id, baseline_id),
+            )
+        )
+        turn_statuses = dict(
+            db.execute(
+                "SELECT event_id,status FROM event_lane_turns WHERE event_id IN (?,?)",
+                (old_event_id, baseline_id),
+            )
+        )
     assert statuses[old_event_id] == "needs_reconcile"
     assert statuses[baseline_id] == "baseline"
     assert turn_statuses[old_event_id] == "needs_reconcile"
@@ -555,11 +567,13 @@ def test_recovery_lineage_cannot_cross_public_keys(tmp_path: Path) -> None:
     database = tmp_path / "agentscope-events.sqlite3"
     lane = EventLane(database)
     root_event_id = "root-key-a"
-    assert lane.append({
-        "eventId": root_event_id,
-        "eventKey": "agentscope-ai/agentscope#1",
-        "kind": "issue_update",
-    })
+    assert lane.append(
+        {
+            "eventId": root_event_id,
+            "eventKey": "agentscope-ai/agentscope#1",
+            "kind": "issue_update",
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
@@ -586,32 +600,35 @@ def test_stable_recovery_requires_one_consistent_declared_root(tmp_path: Path) -
     event_key = "agentscope-ai/agentscope#1"
     root_a = "root-a"
     root_b = "root-b"
-    assert lane.append({
-        "eventId": root_a,
-        "eventKey": event_key,
-        "kind": "issue_update",
-    })
+    assert lane.append(
+        {
+            "eventId": root_a,
+            "eventKey": event_key,
+            "kind": "issue_update",
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
             (root_a,),
         )
     recovery_id = (
-        "outcome-reconcile:agentscope:"
-        + hashlib.sha256(root_a.encode("utf-8")).hexdigest()
+        "outcome-reconcile:agentscope:" + hashlib.sha256(root_a.encode("utf-8")).hexdigest()
     )
-    assert lane.append({
-        "eventId": recovery_id,
-        "kind": "outcome_reconcile",
-        "eventKey": event_key,
-        "rootEventId": root_a,
-        "eventIdSource": root_b,
-        "payload": {
+    assert lane.append(
+        {
+            "eventId": recovery_id,
+            "kind": "outcome_reconcile",
+            "eventKey": event_key,
             "rootEventId": root_a,
-            "eventId": root_b,
-            "publicKey": event_key,
-        },
-    })
+            "eventIdSource": root_b,
+            "payload": {
+                "rootEventId": root_a,
+                "eventId": root_b,
+                "publicKey": event_key,
+            },
+        }
+    )
     lane.reserve_handler_turn(event_key, recovery_id, "client:recovery")
     lane.bind_handler_turn(
         event_key,
@@ -679,13 +696,15 @@ def test_baseline_plan_rejects_a_turn_that_really_started(tmp_path: Path) -> Non
     lane = EventLane(database)
     event_id = "github:agentscope-ai/agentscope:1:issue_update:baseline"
     event_key = "agentscope-ai/agentscope#1"
-    assert lane.append({
-        "eventId": event_id,
-        "eventKey": event_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 1,
-        "kind": "issue_update",
-    })
+    assert lane.append(
+        {
+            "eventId": event_id,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+        }
+    )
     lane.reserve_handler_turn(event_key, event_id, "client:baseline")
     lane.bind_handler_turn(
         event_key,
@@ -703,11 +722,13 @@ def test_baseline_plan_rejects_a_turn_that_really_started(tmp_path: Path) -> Non
     coverage = {
         "schemaVersion": "event-recovery-legacy-coverage-v1",
         "namespace": "agentscope",
-        "baselineRoots": [{
-            "rootEventId": event_id,
-            "expectedEventKey": event_key,
-            "expectedTurnEventKey": event_key,
-        }],
+        "baselineRoots": [
+            {
+                "rootEventId": event_id,
+                "expectedEventKey": event_key,
+                "expectedTurnEventKey": event_key,
+            }
+        ],
     }
 
     with pytest.raises(ValueError, match="unsafe baseline coverage turn"):
@@ -725,13 +746,15 @@ def test_root_identity_mismatch_and_unresolved_sibling_block_recovery(
     lane = EventLane(database)
     bad_root = "github:agentscope-ai/agentscope:1:issue_update:bad"
     bad_key = "agentscope-ai/agentscope#2"
-    assert lane.append({
-        "eventId": bad_root,
-        "eventKey": bad_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 1,
-        "kind": "issue_update",
-    })
+    assert lane.append(
+        {
+            "eventId": bad_root,
+            "eventKey": bad_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
@@ -746,9 +769,7 @@ def test_root_identity_mismatch_and_unresolved_sibling_block_recovery(
         turn_status="completed",
         valid_outcome=True,
     )
-    bad_identity = migration.migrate_recovery_chains(
-        database, namespace="agentscope"
-    )
+    bad_identity = migration.migrate_recovery_chains(database, namespace="agentscope")
     assert bad_identity["eventsToCoalesce"] == 0
 
     root = "ordinary-root"
@@ -769,21 +790,21 @@ def test_root_identity_mismatch_and_unresolved_sibling_block_recovery(
         valid_outcome=True,
     )
     sibling_id = "outcome-reconcile:agentscope:unresolved-sibling"
-    assert lane.append({
-        "eventId": sibling_id,
-        "kind": "outcome_reconcile",
-        "eventKey": key,
-        "eventIdSource": root,
-        "payload": {"eventId": root, "publicKey": key},
-    })
+    assert lane.append(
+        {
+            "eventId": sibling_id,
+            "kind": "outcome_reconcile",
+            "eventKey": key,
+            "eventIdSource": root,
+            "payload": {"eventId": root, "publicKey": key},
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
             (sibling_id,),
         )
-    sibling_blocked = migration.migrate_recovery_chains(
-        database, namespace="agentscope"
-    )
+    sibling_blocked = migration.migrate_recovery_chains(database, namespace="agentscope")
     assert sibling_blocked["eventsToCoalesce"] == 0
 
 
@@ -792,22 +813,25 @@ def test_root_payload_event_id_must_match_database_identity(tmp_path: Path) -> N
     lane = EventLane(database)
     root = "github:agentscope-ai/agentscope:1:issue_update:identity"
     key = "agentscope-ai/agentscope#1"
-    assert lane.append({
-        "eventId": root,
-        "eventKey": key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 1,
-        "kind": "issue_update",
-    })
+    assert lane.append(
+        {
+            "eventId": root,
+            "eventKey": key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+        }
+    )
     with lane.writer() as db:
-        payload = json.loads(db.execute(
-            "SELECT payload_json FROM event_lane_events WHERE event_id=?",
-            (root,),
-        ).fetchone()[0])
+        payload = json.loads(
+            db.execute(
+                "SELECT payload_json FROM event_lane_events WHERE event_id=?",
+                (root,),
+            ).fetchone()[0]
+        )
         payload["eventId"] = "github:agentscope-ai/agentscope:2:issue_update:identity"
         db.execute(
-            "UPDATE event_lane_events SET status='needs_reconcile',payload_json=? "
-            "WHERE event_id=?",
+            "UPDATE event_lane_events SET status='needs_reconcile',payload_json=? WHERE event_id=?",
             (json.dumps(payload), root),
         )
     _add_stable_recovery(
@@ -834,13 +858,15 @@ def test_receipt_envelope_must_match_recovery_event(tmp_path: Path) -> None:
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
             (root,),
         )
-    assert lane.append({
-        "eventId": recovery_id,
-        "kind": "outcome_reconcile",
-        "eventKey": key,
-        "eventIdSource": root,
-        "payload": {"eventId": root, "publicKey": key},
-    })
+    assert lane.append(
+        {
+            "eventId": recovery_id,
+            "kind": "outcome_reconcile",
+            "eventKey": key,
+            "eventIdSource": root,
+            "payload": {"eventId": root, "publicKey": key},
+        }
+    )
     lane.reserve_handler_turn(key, recovery_id, "client:receipt")
     lane.bind_handler_turn(
         key,
@@ -917,13 +943,15 @@ def test_sha256_stable_recovery_with_four_exact_root_fields_is_accepted(
     lane = EventLane(database)
     root = "github:agentscope-ai/agentscope:1:issue_update:stable"
     key = "agentscope-ai/agentscope#1"
-    assert lane.append({
-        "eventId": root,
-        "eventKey": key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 1,
-        "kind": "issue_update",
-    })
+    assert lane.append(
+        {
+            "eventId": root,
+            "eventKey": key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
@@ -951,29 +979,30 @@ def test_stable_shaped_id_without_all_root_declarations_fails_closed(
     lane = EventLane(database)
     root = "github:agentscope-ai/agentscope:1:issue_update:missing-root"
     key = "agentscope-ai/agentscope#1"
-    assert lane.append({
-        "eventId": root,
-        "eventKey": key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 1,
-        "kind": "issue_update",
-    })
+    assert lane.append(
+        {
+            "eventId": root,
+            "eventKey": key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
             (root,),
         )
-    recovery_id = (
-        "outcome-reconcile:agentscope:"
-        + hashlib.sha256(root.encode("utf-8")).hexdigest()
+    recovery_id = "outcome-reconcile:agentscope:" + hashlib.sha256(root.encode("utf-8")).hexdigest()
+    assert lane.append(
+        {
+            "eventId": recovery_id,
+            "kind": "outcome_reconcile",
+            "eventKey": key,
+            "eventIdSource": root,
+            "payload": {"eventId": root, "publicKey": key},
+        }
     )
-    assert lane.append({
-        "eventId": recovery_id,
-        "kind": "outcome_reconcile",
-        "eventKey": key,
-        "eventIdSource": root,
-        "payload": {"eventId": root, "publicKey": key},
-    })
     lane.reserve_handler_turn(key, recovery_id, "client:missing-root")
     lane.bind_handler_turn(
         key,
@@ -1014,8 +1043,7 @@ def test_malformed_sibling_declaring_a_root_blocks_its_valid_recovery(
     assert lane.append({"eventId": other, "eventKey": key, "kind": "issue_update"})
     with lane.writer() as db:
         db.execute(
-            "UPDATE event_lane_events SET status='needs_reconcile' "
-            "WHERE event_id IN (?,?)",
+            "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id IN (?,?)",
             (root, other),
         )
     _add_stable_recovery(
@@ -1025,17 +1053,19 @@ def test_malformed_sibling_declaring_a_root_blocks_its_valid_recovery(
         event_key=key,
     )
     malformed_id = "outcome-reconcile:agentscope:malformed-sibling"
-    assert lane.append({
-        "eventId": malformed_id,
-        "kind": "outcome_reconcile",
-        "eventKey": key,
-        "eventIdSource": other,
-        "payload": {
-            "rootEventId": root,
-            "eventId": other,
-            "publicKey": key,
-        },
-    })
+    assert lane.append(
+        {
+            "eventId": malformed_id,
+            "kind": "outcome_reconcile",
+            "eventKey": key,
+            "eventIdSource": other,
+            "payload": {
+                "rootEventId": root,
+                "eventId": other,
+                "publicKey": key,
+            },
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
@@ -1081,13 +1111,15 @@ def test_indirect_malformed_sibling_blocks_the_reachable_root(
         turn_status="completed",
         valid_outcome=True,
     )
-    assert lane.append({
-        "eventId": malformed,
-        "kind": "outcome_reconcile",
-        "eventKey": key,
-        "eventIdSource": intermediate,
-        "payload": {"eventId": final_id, "publicKey": key},
-    })
+    assert lane.append(
+        {
+            "eventId": malformed,
+            "kind": "outcome_reconcile",
+            "eventKey": key,
+            "eventIdSource": intermediate,
+            "payload": {"eventId": final_id, "publicKey": key},
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
@@ -1127,13 +1159,15 @@ def test_recovery_like_sibling_requires_both_id_prefix_and_kind(
         root_event_id=root,
         event_key=key,
     )
-    assert lane.append({
-        "eventId": sibling_id,
-        "kind": kind,
-        "eventKey": key,
-        "eventIdSource": root,
-        "payload": {"eventId": root, "publicKey": key},
-    })
+    assert lane.append(
+        {
+            "eventId": sibling_id,
+            "kind": kind,
+            "eventKey": key,
+            "eventIdSource": root,
+            "payload": {"eventId": root, "publicKey": key},
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
@@ -1165,13 +1199,15 @@ def test_resolved_malformed_sibling_does_not_permanently_block_root(
         root_event_id=root,
         event_key=key,
     )
-    assert lane.append({
-        "eventId": malformed,
-        "kind": "issue_update",
-        "eventKey": key,
-        "eventIdSource": root,
-        "payload": {"eventId": root, "publicKey": key},
-    })
+    assert lane.append(
+        {
+            "eventId": malformed,
+            "kind": "issue_update",
+            "eventKey": key,
+            "eventIdSource": root,
+            "payload": {"eventId": root, "publicKey": key},
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='coalesced' WHERE event_id=?",
@@ -1203,13 +1239,15 @@ def test_resolved_child_does_not_hide_an_authoritative_valid_leaf(
         event_key=key,
     )
     resolved_child = "outcome-reconcile:agentscope:resolved-child"
-    assert lane.append({
-        "eventId": resolved_child,
-        "kind": "outcome_reconcile",
-        "eventKey": key,
-        "eventIdSource": final_id,
-        "payload": {"eventId": final_id, "publicKey": key},
-    })
+    assert lane.append(
+        {
+            "eventId": resolved_child,
+            "kind": "outcome_reconcile",
+            "eventKey": key,
+            "eventIdSource": final_id,
+            "payload": {"eventId": final_id, "publicKey": key},
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='coalesced' WHERE event_id=?",
@@ -1236,13 +1274,15 @@ def test_valid_leaf_can_traverse_a_fully_resolved_ancestor(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
             (root,),
         )
-    assert lane.append({
-        "eventId": ancestor,
-        "kind": "outcome_reconcile",
-        "eventKey": key,
-        "eventIdSource": root,
-        "payload": {"eventId": root, "publicKey": key},
-    })
+    assert lane.append(
+        {
+            "eventId": ancestor,
+            "kind": "outcome_reconcile",
+            "eventKey": key,
+            "eventIdSource": root,
+            "payload": {"eventId": root, "publicKey": key},
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='coalesced' WHERE event_id=?",
@@ -1287,13 +1327,15 @@ def test_resolved_invalid_recovery_like_node_cannot_be_a_lineage_bridge(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
             (root,),
         )
-    assert lane.append({
-        "eventId": ancestor_id,
-        "kind": kind,
-        "eventKey": key,
-        "eventIdSource": root,
-        "payload": {"eventId": root, "publicKey": key},
-    })
+    assert lane.append(
+        {
+            "eventId": ancestor_id,
+            "kind": kind,
+            "eventKey": key,
+            "eventIdSource": root,
+            "payload": {"eventId": root, "publicKey": key},
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='coalesced' WHERE event_id=?",
@@ -1345,10 +1387,12 @@ def test_terminal_recovery_requires_complete_exact_evidence(
     )
     with lane.writer() as db:
         if mutation == "receipt_identity":
-            receipt = json.loads(db.execute(
-                "SELECT receipt_json FROM event_lane_turns WHERE event_id=?",
-                (recovery_id,),
-            ).fetchone()[0])
+            receipt = json.loads(
+                db.execute(
+                    "SELECT receipt_json FROM event_lane_turns WHERE event_id=?",
+                    (recovery_id,),
+                ).fetchone()[0]
+            )
             receipt["eventId"] = value
             receipt["eventKey"] = value
             db.execute(
@@ -1361,10 +1405,12 @@ def test_terminal_recovery_requires_complete_exact_evidence(
                 (value, value, recovery_id),
             )
         else:
-            receipt = json.loads(db.execute(
-                "SELECT receipt_json FROM event_lane_turns WHERE event_id=?",
-                (recovery_id,),
-            ).fetchone()[0])
+            receipt = json.loads(
+                db.execute(
+                    "SELECT receipt_json FROM event_lane_turns WHERE event_id=?",
+                    (recovery_id,),
+                ).fetchone()[0]
+            )
             receipt["outcome"]["extra"] = value
             db.execute(
                 "UPDATE event_lane_turns SET receipt_json=? WHERE event_id=?",
@@ -1384,13 +1430,15 @@ def test_exact_recovery_root_override_allows_only_declared_legacy_turn_key(
     root = "github:agentscope-ai/agentscope:2397:pr_update:legacy"
     event_key = "agentscope-ai/agentscope#2397"
     legacy_turn_key = "agentscope-ai/agentscope#2385"
-    assert lane.append({
-        "eventId": root,
-        "eventKey": event_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 2397,
-        "kind": "pr_update",
-    })
+    assert lane.append(
+        {
+            "eventId": root,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 2397,
+            "kind": "pr_update",
+        }
+    )
     lane.reserve_handler_turn(legacy_turn_key, root, "client:legacy")
     lane.bind_handler_turn(
         legacy_turn_key,
@@ -1411,18 +1459,20 @@ def test_exact_recovery_root_override_allows_only_declared_legacy_turn_key(
         root_event_id=root,
         event_key=event_key,
     )
-    assert migration.migrate_recovery_chains(
-        database, namespace="agentscope"
-    )["turnsToSupersede"] == 0
+    assert (
+        migration.migrate_recovery_chains(database, namespace="agentscope")["turnsToSupersede"] == 0
+    )
     coverage = {
         "schemaVersion": "event-recovery-legacy-coverage-v1",
         "namespace": "agentscope",
         "baselineRoots": [],
-        "recoveryRootOverrides": [{
-            "rootEventId": root,
-            "expectedEventKey": event_key,
-            "expectedTurnEventKey": legacy_turn_key,
-        }],
+        "recoveryRootOverrides": [
+            {
+                "rootEventId": root,
+                "expectedEventKey": event_key,
+                "expectedTurnEventKey": legacy_turn_key,
+            }
+        ],
     }
 
     preview = migration.migrate_recovery_chains(
@@ -1439,9 +1489,12 @@ def test_exact_recovery_root_override_allows_only_declared_legacy_turn_key(
         legacy_coverage=coverage,
     )
     assert applied["changed"] == 1
-    assert migration.migrate_recovery_chains(
-        database,
-        namespace="agentscope",
-        apply=True,
-        legacy_coverage=coverage,
-    )["changed"] == 0
+    assert (
+        migration.migrate_recovery_chains(
+            database,
+            namespace="agentscope",
+            apply=True,
+            legacy_coverage=coverage,
+        )["changed"]
+        == 0
+    )

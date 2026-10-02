@@ -5633,7 +5633,9 @@ def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
                 process, selector, buffer, response_id=2, timeout=30, action=start_method
             )
             if not thread_id:
-                thread_id = str(((start_message.get("result") or {}).get("thread") or {}).get("id") or "")
+                thread_id = str(
+                    ((start_message.get("result") or {}).get("thread") or {}).get("id") or ""
+                )
             if not thread_id:
                 raise RuntimeError("app server did not return a thread receipt")
             params = {
@@ -5681,11 +5683,16 @@ def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
         if terminal:
             current = read_json(Path(args.receipt), missing={})
             outcome = _validated_agentscope_event_outcome(
-                outcome_path, allowed_dir=allowed_outcome_dir,
-                event_id=event_id, public_key=event_key,
+                outcome_path,
+                allowed_dir=allowed_outcome_dir,
+                event_id=event_id,
+                public_key=event_key,
             )
-            terminal_receipt = current | {"turnStatus": terminal["status"], "outcome": outcome,
-                                         "outcomePath": str(outcome_path)}
+            terminal_receipt = current | {
+                "turnStatus": terminal["status"],
+                "outcome": outcome,
+                "outcomePath": str(outcome_path),
+            }
             if terminal.get("error") is not None:
                 terminal_receipt["terminalError"] = terminal["error"]
             _atomic_json(
@@ -15726,9 +15733,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 # worktree.  Both layouts bind the same verified repository;
                 # rejecting the legacy cwd strands otherwise valid follow-up
                 # and recovery turns after an upgrade.
-                valid_workspace = (
-                    thread_cwd in {GITHUB_ROOT.resolve(), worktree} and valid_origin
-                )
+                valid_workspace = thread_cwd in {GITHUB_ROOT.resolve(), worktree} and valid_origin
             else:
                 valid_workspace = (
                     thread_cwd == worktree

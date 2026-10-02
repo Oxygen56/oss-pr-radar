@@ -60,30 +60,57 @@ def test_agentscope_outcome_validation_is_fail_closed(tmp_path):
     allowed = tmp_path / "outcomes"
     allowed.mkdir()
     path = allowed / "event.json"
-    path.write_text(json.dumps({
-        "schemaVersion": "agentscope_event_outcome_v1",
-        "eventId": "e1", "publicKey": "agentscope-ai/agentscope#1",
-        "state": "design_wait", "waitStartedAt": "2026-08-23T00:00:00Z",
-        "waitUntil": "2026-08-24T00:00:01Z",
-    }))
-    assert MODULE._validated_agentscope_event_outcome(
-        path, allowed_dir=allowed, event_id="e1", public_key="agentscope-ai/agentscope#1"
-    )["error"] == "OUTCOME_WAIT_INVALID"
-    path.write_text(json.dumps({
-        "schemaVersion": "agentscope_event_outcome_v1", "eventId": "wrong",
-        "publicKey": "agentscope-ai/agentscope#1", "state": "no_action",
-    }))
-    assert MODULE._validated_agentscope_event_outcome(
-        path, allowed_dir=allowed, event_id="e1", public_key="agentscope-ai/agentscope#1"
-    )["error"] == "OUTCOME_IDENTITY_MISMATCH"
-    path.write_text(json.dumps({
-        "schemaVersion": "agentscope_event_outcome_v1", "eventId": "e1",
-        "publicKey": "agentscope-ai/agentscope#1", "state": "no_action",
-        "unexpected": "field",
-    }))
-    assert MODULE._validated_agentscope_event_outcome(
-        path, allowed_dir=allowed, event_id="e1", public_key="agentscope-ai/agentscope#1"
-    )["error"] == "OUTCOME_SCHEMA_INVALID"
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "agentscope_event_outcome_v1",
+                "eventId": "e1",
+                "publicKey": "agentscope-ai/agentscope#1",
+                "state": "design_wait",
+                "waitStartedAt": "2026-08-23T00:00:00Z",
+                "waitUntil": "2026-08-24T00:00:01Z",
+            }
+        )
+    )
+    assert (
+        MODULE._validated_agentscope_event_outcome(
+            path, allowed_dir=allowed, event_id="e1", public_key="agentscope-ai/agentscope#1"
+        )["error"]
+        == "OUTCOME_WAIT_INVALID"
+    )
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "agentscope_event_outcome_v1",
+                "eventId": "wrong",
+                "publicKey": "agentscope-ai/agentscope#1",
+                "state": "no_action",
+            }
+        )
+    )
+    assert (
+        MODULE._validated_agentscope_event_outcome(
+            path, allowed_dir=allowed, event_id="e1", public_key="agentscope-ai/agentscope#1"
+        )["error"]
+        == "OUTCOME_IDENTITY_MISMATCH"
+    )
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "agentscope_event_outcome_v1",
+                "eventId": "e1",
+                "publicKey": "agentscope-ai/agentscope#1",
+                "state": "no_action",
+                "unexpected": "field",
+            }
+        )
+    )
+    assert (
+        MODULE._validated_agentscope_event_outcome(
+            path, allowed_dir=allowed, event_id="e1", public_key="agentscope-ai/agentscope#1"
+        )["error"]
+        == "OUTCOME_SCHEMA_INVALID"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -5781,9 +5808,7 @@ def test_recovery_accepts_github_project_thread_with_managed_worktree(monkeypatc
     assert result["recoverable"][0]["threadId"] == "thread-1"
 
 
-def test_recovery_accepts_legacy_thread_bound_to_its_managed_worktree(
-    monkeypatch, tmp_path
-):
+def test_recovery_accepts_legacy_thread_bound_to_its_managed_worktree(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
     worktree.mkdir(parents=True)
@@ -13372,9 +13397,7 @@ def test_agentscope_event_worker_propagates_requested_model(monkeypatch, tmp_pat
         )
     )
 
-    turn = next(
-        item for item in _task_turn_messages(process) if item.get("method") == "turn/start"
-    )
+    turn = next(item for item in _task_turn_messages(process) if item.get("method") == "turn/start")
     assert turn["params"]["model"] == "gpt-5.6-terra"
     assert result["model"] == "gpt-5.6-terra"
 
