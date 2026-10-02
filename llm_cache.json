@@ -114535,6 +114535,39 @@
     ],
     "why": "Issue provides a concrete, reproducible root cause: inline data: media is forwarded twice (multi_modal_data and extra_args.messages), inflating the serialized request-plane frame past the 32MiB DYN_TCP_MAX_MESSAGE_SIZE cap, causing worker RST and HTTP 500. Code anchors (network.rs, codec.rs, egress/tcp_client.rs) and a maintainer comment scoping the remaining open half (dedup of inline media) confirm actionability. The transport preflight half was already fixed by #14110, leaving a clear, non-covered dedup fix."
   },
+  "eb258dc29d04bcefd88bfeacf6c17ec1f5ecfdda85d603bb75f6eecdfa29d21a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states no running-frontend reproduction, but open PR #15529 claims coverage with review approval and passing CI"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/kv-router/src/scheduling/config.rs: add finite-and-non-negative validation for prefill_load_scale, overlap_score_credit_decay, router_temperature in KvRouterConfig::validate() and RouterConfigOverride::validate()",
+      "lib/router-plugins/builtin/src/default/parameters.rs: align parameter validation with config validation"
+    ],
+    "risks": [
+      "PR #15529 may already cover the fix, making an independent PR redundant",
+      "Changing validation to reject inf could break users relying on router_temperature=inf as a uniform-sampling limit",
+      "Scope creep into RouterConfigOverride validation may affect other config surfaces"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test in lib/router-plugins/builtin/tests using the existing tests/support fixture asserting validate() returns Err for prefill_load_scale=inf, overlap_score_credit_decay=inf, and router_temperature=inf",
+      "Add env-parsing test for DYN_ROUTER_PREFILL_LOAD_SCALE=inf/Infinity/1e999 asserting startup rejection",
+      "Run targeted cargo test for kv-router and router-plugins packages"
+    ],
+    "unknowns": [
+      "Whether PR #15529 fully resolves the issue or leaves gaps (e.g., missing regression tests) that justify an independent contribution",
+      "Maintainer preference on whether router_temperature=inf should be rejected or treated as a valid uniform-sampling limit"
+    ],
+    "why": "Issue provides a concrete, GPU-free reproduction and a clear root cause: validate_min accepts +inf for prefill_load_scale, overlap_score_credit_decay, and router_temperature in KvRouterConfig::validate() and RouterConfigOverride::validate(), while the builtin plugin already rejects non-finite values. However, open PR #15529 directly references this issue, overlaps the same code path (lib/kv-router/src/scheduling/config.rs), and is already approved with passing CI, so duplicate/coverage status is unresolved and materially determines whether independent code work is actionable."
+  },
   "eb2a183aee1a3ffbd205610d01a5ba99396f41080cf788d30a76165eae359536": {
     "confidence": 0.8,
     "contradictions": [
