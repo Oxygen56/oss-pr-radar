@@ -12924,6 +12924,44 @@
     ],
     "why": "Issue provides a clear root cause (transformers main injects 'embedding_rowwise' into tp_plan for tied-embedding models, DeepSpeed's strict allowlist rejects it) and a concrete executable reproducer. The semantic note outlines policy options and the need for a deliberate fix. Although an open PR (#8241) overlaps in test paths, it does not cover the root cause, so the issue remains actionable."
   },
+  "1c106690da35a233002b56796d74292ad956176f5dc043b74be2090216a9910e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body asserts a verified goose source root cause, while the reporter's later comment attributes resolution to a model switch with auto-compaction disabled, leaving the defect attribution unresolved",
+      "actionability_evidence reports maintainer_approved=true and root_cause_signal=false, while the issue body supplies a detailed root-cause analysis"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/context_mgmt/mod.rs compact_messages metadata visibility",
+      "crates/goose-agent/src/operation.rs messages_since_kickoff kickoff scan",
+      "crates/goose/src/agents/state_machine/ops_compaction.rs context_tokens staleness",
+      "crates/goose/src/acp/server.rs HistoryReplaced handling"
+    ],
+    "risks": [
+      "Fixing metadata visibility without confirming the provider-path confound may not address the observed freeze",
+      "Changing messages_since_kickoff fallback semantics could alter request construction for unrelated sessions",
+      "Explicit HistoryReplaced handling in ACP may change frontend cache-invalidation behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Re-enable auto-compaction on the current model and attempt to reproduce the freeze signature (>=3 consecutive turns at identical input_tokens >=10k with ~99% cache-read)",
+      "Build a regression test that runs compact_messages then messages_since_kickoff and asserts the preserved user message remains user_visible and is selected as the kickoff",
+      "Add a test asserting CompactionOperation::context_tokens does not re-fire compaction when session.usage.total_tokens is stale after idle"
+    ],
+    "unknowns": [
+      "Whether the freeze reproduces with auto-compaction enabled on the current model",
+      "Whether the stale-token-counter and metadata-corruption paths are actually exercised in the frozen sessions",
+      "Whether the maintainer's suggested in-progress work by lifeizhou-ap already covers this area"
+    ],
+    "why": "The issue contains a detailed, code-anchored root-cause hypothesis (agent_only metadata corruption in compact_messages, stale kickoff scan in messages_since_kickoff, stale token counter in ops_compaction, swallowed HistoryReplaced in ACP), but the reporter's own follow-up materially weakens it: all 3 freezes were on one model, zero freezes in 1,338 turns after switching models, and auto-compaction was disabled within hours of the switch. The reporter explicitly states the two changes are confounded and n=1, so it is unresolved whether the defect is in goose's compaction/session-store path or a model/provider-path interaction. That missing fact determines whether the proposed code fix is actionable."
+  },
   "1c11f00be7ff9cc505b5a7089525d3450be514c92d9774e87490cda3e9e74e58": {
     "confidence": 0.82,
     "contradictions": [],
@@ -21465,6 +21503,35 @@
       "Maintainer confirmation on preferred fix approach"
     ],
     "why": "Issue provides a deterministic CPU reproducer, exact root cause (missing reward_extra_info key in DisRM return), and a minimal fix. The change is a concrete algorithm-contract fix in the reward path, with clear regression test path."
+  },
+  "2d04e682fcb1eb6da0b98e394a7b159a9c5002c8b78e2bdc306bac7c90ecf306": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "examples/llm/llm_bench.cpp: instantiate Gemma4EmbeddingPreprocessor and register PLE tensor views in tensorMap before executor->prepare",
+      "cpp/runtime/preprocess/gemma4EmbeddingPreprocessor.h: possibly expose helper for bench path reuse"
+    ],
+    "risks": [
+      "Repository has an AI disclosure conflict policy that blocks automated public submission",
+      "Fix may need to mirror LLMRankRuntime's PLE registration logic to avoid divergence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's llm_bench command on a Gemma-4 engine and confirm the ple_token_embeds_0 binding error",
+      "After fix, rerun prefill warmup and iterations to confirm successful benchmark execution",
+      "Regression: run llm_bench on a non-PLE model to ensure no binding regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a shared helper vs. duplicating PLE registration in llm_bench"
+    ],
+    "why": "Issue provides a concrete reproduction command, exact error output, and a specific root cause: llm_bench.cpp does not instantiate Gemma4EmbeddingPreprocessor or register ple_token_embeds_<idx> tensor views in tensorMap, while LLMRankRuntime does. This is a well-scoped runtime binding fix with clear code anchors."
   },
   "2d103a9998c82d8defd07df3e3748e3bcc4e73057172ea45de85b1b2226568bd": {
     "confidence": 0.7,
@@ -49899,6 +49966,39 @@
     "unknowns": [],
     "wait_reason": null,
     "why": "The issue is a configuration/API refactor moving knobs between dataclasses, not an LLM algorithm change. It lacks a concrete training objective, model mechanism, or numerical method. The validation path is config parsing and e2e training, not a reference-vs-implementation test or numerical regression."
+  },
+  "690e2ffadd3602b0cac30892413d13cc9c2bfdd1d75f25033c12af9dda7f5dfe": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue suggests automatic resizing as ideal, but collaborator comment prefers avoiding local-client-side image compression"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bedrock provider request path: pre-send image dimension validation or resize",
+      "User-facing error handling for oversized images"
+    ],
+    "risks": [
+      "Maintainer may prefer documenting the limitation over code changes",
+      "Automatic resizing could alter image fidelity or conflict with maintainer preference against local compression"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a multi-image Bedrock request containing an image >2000px in one dimension and assert the failure",
+      "Add regression test asserting oversized images are resized or a clear error is returned before the Bedrock call"
+    ],
+    "unknowns": [
+      "Which module/provider path constructs Bedrock image payloads",
+      "Whether maintainers want a code fix or a documented limitation",
+      "Whether assignment is required before contribution"
+    ],
+    "why": "Issue describes a Bedrock ValidationException for oversized images in multi-image requests, but no code anchor or root-cause location is supplied; the only code anchor is the error string `ValidationException`. The collaborator comment explicitly leaves the fix direction open (patch vs. documenting the limitation) and expresses a preference against local-client-side image compression, so the actionable code change is not yet determined."
   },
   "6911062c3bcd53eda91f41364edf30544ef5a9b712dd9a1fcb2e0577ef37bca6": {
     "confidence": 0.85,
