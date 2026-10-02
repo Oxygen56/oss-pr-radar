@@ -530,7 +530,11 @@ def benign_policy_recovery_prompt(issue_url: str) -> str:
 
 VALIDATION_RECOVERY_PROMPT = (
     "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
-    "读取当前任务文件，只补仍缺少的验证；未完成的检查重新运行，不恢复旧进程。"
+    "必须读取并验证当前 `.oss-pr-radar/task-context.json`，它是本轮身份和授权的唯一来源；"
+    "新结果的 contextDigest、taskId（上下文 intentId）、key、issueUrl、threadId、worktreePath"
+    "必须来自该当前上下文。旧不可变 validation-input 仅作历史修复、提交、基线和检查目的的参考，"
+    "不得复制旧 contextDigest、tests、成功叙述或签名。只补仍缺少的验证；"
+    "未完成的检查重新运行，如实保留失败，不恢复旧进程。"
     "生成新结果时删除输入里的 reproductionReceipt、probeReceipt 和 resultDigest，"
     "这些签名字段由系统重新生成。"
     "保持离线，不安装依赖，不请求权限，也不执行任何 GitHub 公开操作。"
@@ -2648,6 +2652,8 @@ def _validation_result_context_refresh_proof(
             turnId=completion["receipt"]["turnId"],
             sourceResultBytesBase64=base64.b64encode(raw).decode("ascii"),
         )
+        if completion.get("recovery") is not None:
+            proof["recovery"] = completion["recovery"]
     return proof
 
 
@@ -15545,6 +15551,167 @@ def _expired_publication_context_is_unpublished(
     )
 
 
+def _completed_validation_recovery_receipt(
+    store: RadarLedger,
+    *,
+    candidate: dict[str, Any],
+    validation_sent: tuple[dict[str, Any], dict[str, Any]],
+    source_raw: bytes,
+    result_access: _ValidationWorktreeDirectory,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Prove the exact native recovery of an interrupted validation delivery."""
+    binding = {key: candidate.get(key) for key in ("intentId", "threadId", "worktreePath")}
+    raw = _read_task_result_bytes_from_private(result_access)
+    if raw == source_raw or _active_task_turn_for_result(candidate) is not None:
+        return None
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT id,event_type,dedupe_key,payload_json,created_at FROM events
+               WHERE opportunity_key=? AND event_type IN (
+                 'THREAD_RECOVERY_RESERVED','THREAD_RECOVERY_SENT',
+                 'THREAD_RECOVERY_DELIVERY_ABANDONED','THREAD_RECOVERY_RETRY_EXHAUSTED',
+                 'TASK_TURN_DELIVERY_STARTED') ORDER BY id""",
+            (candidate["key"],),
+        ).fetchall()
+    events = [(dict(row), json.loads(row["payload_json"])) for row in rows]
+    events = [
+        (row, payload)
+        for row, payload in events
+        if all(payload.get(k) == v for k, v in binding.items())
+    ]
+    reserved = next(
+        (item for item in reversed(events) if item[0]["event_type"] == "THREAD_RECOVERY_RESERVED"),
+        None,
+    )
+    if reserved is None:
+        return None
+    reservation, payload = reserved
+    nonce = str(payload.get("recoveryNonce") or "")
+    if (
+        reservation["id"] <= validation_sent[0]["id"]
+        or payload.get("recoveryKind") != "VALIDATION_FOLLOWUP_RESULT"
+        or payload.get("followupDigest") != validation_sent[1].get("resultDigest")
+        or not re.fullmatch(r"[0-9a-f]{64}", nonce)
+        or reservation["dedupe_key"] != nonce
+    ):
+        return None
+    abandoned = [
+        row
+        for row, _ in events
+        if row["event_type"] == "THREAD_RECOVERY_DELIVERY_ABANDONED"
+        and row["id"] < reservation["id"]
+    ]
+    epoch = max((row["created_at"] for row in abandoned), default="")
+    expected_nonce = sha256_text(
+        f"{candidate['key']}|{binding['threadId']}|{validation_sent[0]['created_at']}|"
+        f"VALIDATION_FOLLOWUP_RESULT|{payload['followupDigest']}|{epoch}|recovery-v3"
+    )
+    if nonce != expected_nonce or any(
+        row["id"] > reservation["id"]
+        and row["event_type"]
+        in {"THREAD_RECOVERY_DELIVERY_ABANDONED", "THREAD_RECOVERY_RETRY_EXHAUSTED"}
+        and (row["dedupe_key"] == nonce or payload.get("reservationDigest") == nonce)
+        for row, payload in events
+    ):
+        return None
+    sent = next(
+        (
+            row
+            for row, p in reversed(events)
+            if row["event_type"] == "THREAD_RECOVERY_SENT"
+            and row["dedupe_key"] == nonce
+            and p.get("recoveryNonce") == nonce
+        ),
+        None,
+    )
+    delivery = next(
+        (
+            row
+            for row, p in reversed(events)
+            if row["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+            and p.get("deliveryKind") == "recovery"
+            and p.get("deliveryToken") == nonce
+        ),
+        None,
+    )
+    if sent is None or delivery is None or not (reservation["id"] < delivery["id"] < sent["id"]):
+        return None
+    receipt_key = _task_turn_delivery_file_key(
+        delivery_kind="recovery", thread_id=str(binding["threadId"]), delivery_token=nonce
+    )
+    receipt = json.loads(
+        _read_owned_regular_file(
+            STATE / "task_turn_receipts" / f"{receipt_key}.json",
+            label="completed validation recovery receipt",
+            reject_dangerous_writes=True,
+        )
+    )
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("ok") is not True
+        or receipt.get("deliveryKind") != "recovery"
+        or receipt.get("deliveryToken") != nonce
+        or receipt.get("threadId") != binding["threadId"]
+        or receipt.get("turnStatus") != "completed"
+        or not receipt.get("turnId")
+    ):
+        return None
+    _, rollout_path = _validated_task_turn_thread(candidate)
+    latest = latest_thread_turn_state(rollout_path)
+    if (
+        not latest
+        or latest.get("status") != "completed"
+        or latest.get("turnId") != receipt["turnId"]
+    ):
+        return None
+    journal = _read_owned_regular_file(
+        Path(str(rollout_path)), label="validation recovery journal", reject_dangerous_writes=True
+    )
+    started_at = completed_at = None
+    session_matches = False
+    for line in journal.splitlines():
+        record = json.loads(line)
+        event = record.get("payload") or {}
+        if record.get("type") == "session_meta":
+            session_matches = event.get("id") == binding["threadId"]
+        if record.get("type") != "event_msg" or event.get("turn_id") != receipt["turnId"]:
+            continue
+        if event.get("type") == "task_started":
+            started_at = parse_time(record["timestamp"])
+        elif event.get("type") == "task_complete" and not event.get("error"):
+            completed_at = parse_time(record["timestamp"])
+    result_stat = os.stat("result.json", dir_fd=result_access.private_fd, follow_symlinks=False)
+    result_time = datetime.fromtimestamp(result_stat.st_mtime, UTC)
+    if (
+        not session_matches
+        or started_at is None
+        or completed_at is None
+        or not (
+            parse_time(validation_sent[0]["created_at"])
+            <= parse_time(reservation["created_at"])
+            <= parse_time(delivery["created_at"])
+            <= started_at
+            <= result_time
+            <= completed_at
+        )
+        or not (
+            parse_time(delivery["created_at"]) <= parse_time(sent["created_at"]) <= completed_at
+        )
+    ):
+        return None
+    return receipt, {
+        "recoveryNonce": nonce,
+        "reservedEventId": reservation["id"],
+        "deliveryEventId": delivery["id"],
+        "sentEventId": sent["id"],
+        "turnId": receipt["turnId"],
+        "startedAt": iso_z(started_at),
+        "completedAt": iso_z(completed_at),
+        "sourceResultDigest": validation_sent[1]["resultDigest"],
+        "resultBytesDigest": hashlib.sha256(raw).hexdigest(),
+    }
+
+
 def _completed_validation_input_task_id(
     store: RadarLedger,
     managed_ledger: ManagedLedger,
@@ -15650,7 +15817,7 @@ def _completed_validation_input_task_id(
         ):
             return None
         rows = connection.execute(
-            """SELECT id,event_type,payload_json FROM events
+            """SELECT id,event_type,payload_json,created_at FROM events
                WHERE opportunity_key=? AND event_type IN
                  ('VALIDATION_FOLLOWUP_RESERVED','VALIDATION_FOLLOWUP_SENT') ORDER BY id""",
             (candidate["key"],),
@@ -15787,11 +15954,27 @@ def _completed_validation_input_task_id(
         or receipt.get("threadId") != binding["threadId"]
         or receipt.get("deliveryToken") != historical["result_digest"]
         or receipt.get("reservationDigest") != reservation
-        or receipt.get("turnStatus") != "completed"
         or not isinstance(receipt.get("turnId"), str)
         or not receipt["turnId"]
     ):
         return None
+    recovery_proof = None
+    if receipt.get("turnStatus") != "completed":
+        if validation_context_digest is None or receipt.get("turnStatus") not in {
+            "failed",
+            "interrupted",
+        }:
+            return None
+        recovery = _completed_validation_recovery_receipt(
+            store,
+            candidate=candidate,
+            validation_sent=sent,
+            source_raw=snapshot,
+            result_access=result_access,
+        )
+        if recovery is None:
+            return None
+        receipt, recovery_proof = recovery
     context_stat = os.stat(
         "task-context.json", dir_fd=result_access.private_fd, follow_symlinks=False
     )
@@ -15805,6 +15988,8 @@ def _completed_validation_input_task_id(
         return None
     if completion_proof is not None:
         completion_proof.update(receipt=receipt, reservation=reserved[1])
+        if recovery_proof is not None:
+            completion_proof["recovery"] = recovery_proof
     return task_id
 
 

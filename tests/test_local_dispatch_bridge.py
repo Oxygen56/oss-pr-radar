@@ -10427,6 +10427,8 @@ def test_recovery_delivery_preserves_validation_followup_prompt():
     assert "只有在本轮结束后才能继续" in prompt
     assert "删除输入里的 reproductionReceipt、probeReceipt 和 resultDigest" in prompt
     assert "由系统重新生成" in prompt
+    assert "task-context.json" in prompt and "身份和授权的唯一来源" in prompt
+    assert "不得复制旧 contextDigest、tests、成功叙述或签名" in prompt
 
 
 def test_policy_recovery_delivery_keeps_the_exact_issue_identity(monkeypatch, tmp_path):
@@ -13201,7 +13203,10 @@ def _audit_refresh_validation_result(tmp_path, *, omit_task_id=False):
     return store, worktree, result_path, old_context, current_context
 
 
-def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkeypatch, tmp_path):
+@pytest.mark.parametrize("recovery_completed", [False, True])
+def test_native_incomplete_validation_survives_same_binding_audit_refresh(
+    monkeypatch, tmp_path, recovery_completed
+):
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -13267,11 +13272,54 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
         result = (
             {"thread": {"id": "thread-1"}}
             if response_id == 1
-            else {"turn": {"id": "native-incomplete-validation"}}
+            else {
+                "turn": {
+                    "id": "native-incomplete-validation-recovery"
+                    if observed.get("recovery")
+                    else "native-incomplete-validation"
+                }
+            }
         )
         return buffer, {"result": result}
 
     def complete_validation(*_args, **_kwargs):
+        turn_id = (
+            "native-incomplete-validation-recovery"
+            if observed.get("recovery")
+            else "native-incomplete-validation"
+        )
+        with rollout.open("a") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": iso_z(datetime.now(UTC)),
+                        "payload": {"type": "task_started", "turn_id": turn_id},
+                    }
+                )
+                + "\n"
+            )
+        if recovery_completed and not observed.get("recovery"):
+            error = {
+                "codex_error_info": "other",
+                "message": "workspace routing discovery timed out",
+            }
+            with rollout.open("a") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "timestamp": iso_z(datetime.now(UTC)),
+                            "payload": {
+                                "type": "task_complete",
+                                "turn_id": turn_id,
+                                "error": error,
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+            return {"turnId": turn_id, "status": "failed", "error": error}
         source_path = worktree / observed["worktree_input_path"]
         source_raw = source_path.read_bytes()
         source = json.loads(source_raw)
@@ -13295,7 +13343,9 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
         assert [check["exitCode"] for check in checks] == [127, 1]
         value = dict(
             source,
-            contextDigest=current["contextDigest"],
+            contextDigest=source["contextDigest"]
+            if observed.get("recovery")
+            else current["contextDigest"],
             tests=checks,
             reason="VALIDATION_INCOMPLETE",
         )
@@ -13314,21 +13364,36 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
             checks=checks,
             quality=value["quality"],
         )
-        return {"turnId": "native-incomplete-validation", "status": "completed"}
+        with rollout.open("a") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": iso_z(datetime.now(UTC)),
+                        "payload": {"type": "task_complete", "turn_id": turn_id},
+                    }
+                )
+                + "\n"
+            )
+        return {"turnId": turn_id, "status": "completed"}
 
     def launch_worker(argv, **kwargs):
         if "task-turn-worker" not in argv:
             return original_popen(argv, **kwargs)
+        is_recovery = argv[argv.index("--delivery-kind") + 1] == "recovery"
+        observed["recovery"] = is_recovery
         worker_args = SimpleNamespace(
             ledger=store.path,
-            delivery_kind="validation-followup",
+            delivery_kind="recovery" if is_recovery else "validation-followup",
             thread_id="thread-1",
-            delivery_token=candidate["resultDigest"],
+            delivery_token=argv[argv.index("--delivery-token") + 1],
             delivery_attempt_digest=None,
             intent_id=None,
             worktree_path=None,
             **{
                 option.replace("-", "_"): argv[argv.index("--" + option) + 1]
+                if "--" + option in argv
+                else None
                 for option in (
                     "reservation-digest",
                     "snapshot-id",
@@ -13340,9 +13405,11 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
                 )
             },
         )
-        observed["worktree_input_path"] = worker_args.worktree_input_path
+        if not is_recovery:
+            observed["worktree_input_path"] = worker_args.worktree_input_path
         completed = MODULE.task_turn_worker_entry(worker_args)
-        assert completed["ok"] and completed["turnStatus"] == "completed", completed
+        expected_status = "failed" if recovery_completed and not is_recovery else "completed"
+        assert completed["ok"] and completed["turnStatus"] == expected_status, completed
         return SimpleNamespace(pid=os.getpid())
 
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
@@ -13361,7 +13428,10 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
                 result_digest=candidate["resultDigest"],
             )
         )
-    assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
+    expected_status = "failed" if recovery_completed else "completed"
+    assert delivered["ok"] and delivered["turnStatus"] == expected_status, delivered
+    if recovery_completed:
+        observed["raw"] = result_path.read_bytes()
     candidate = store.task_result_candidates_for_ingestion()[0]
     with store.connect() as connection:
         prior_events = [
@@ -13405,12 +13475,54 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
     assert current_context["contextDigest"] != old_context["contextDigest"]
     assert current_context["targetBase"] == old_context["targetBase"]
     assert result_path.read_bytes() == observed["raw"]
+    if recovery_completed:
+        recovery = next(
+            item
+            for item in store.recovery_candidates(min_age_minutes=0)
+            if item["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
+        )
+        store.reserve_recovery(
+            thread_id="thread-1",
+            nonce=recovery["recoveryNonce"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+        with monkeypatch.context() as delivery:
+            delivery.setattr(MODULE, "ledger", lambda _path: store)
+            delivery.setattr(MODULE, "_app_server_action_session", action_session)
+            delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+            delivery.setattr(MODULE, "_read_app_server_response", read_response)
+            delivery.setattr(MODULE, "_wait_for_app_server_terminal_turn", complete_validation)
+            delivery.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+            delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+            resumed = MODULE.recovery_deliver(
+                SimpleNamespace(
+                    ledger=store.path,
+                    thread_id="thread-1",
+                    recovery_nonce=recovery["recoveryNonce"],
+                    intent_id="intent-1",
+                    worktree_path=str(worktree),
+                )
+            )
+        assert resumed["ok"] and resumed["turnStatus"] == "completed", resumed
+        receipt_key = MODULE._task_turn_delivery_file_key(
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=reserved["resultDigest"],
+            validation_reservation_digest=reserved["reservationDigest"],
+        )
+        assert (
+            json.loads((MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json").read_text())[
+                "turnStatus"
+            ]
+            == "failed"
+        )
     after = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
     assert after["errors"] == [], after["errors"]
     assert after["ok"], after
-    assert pending_sync["pendingResultIngestion"] == [{"key": "a/b#1", "threadId": "thread-1"}], (
-        pending_sync
-    )
+    assert pending_sync["pendingResultIngestion"] == (
+        [] if recovery_completed else [{"key": "a/b#1", "threadId": "thread-1"}]
+    ), pending_sync
     assert pending_context_raw == old_context_raw
     assert after["publicationRequests"] == [] and after["validationDeferred"], after
     normalized = json.loads(result_path.read_text())
@@ -13427,6 +13539,13 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
         assert (
             base64.b64decode(json.loads(rows[0][0])["sourceResultBytesBase64"]) == observed["raw"]
         )
+        if recovery_completed:
+            recovery_proof = json.loads(rows[0][0])["recovery"]
+            assert recovery_proof["recoveryNonce"] == recovery["recoveryNonce"]
+            assert recovery_proof["turnId"] == "native-incomplete-validation-recovery"
+            assert (
+                recovery_proof["resultBytesDigest"] == hashlib.sha256(observed["raw"]).hexdigest()
+            )
         assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
         assert [
