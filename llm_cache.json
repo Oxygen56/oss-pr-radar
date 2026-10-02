@@ -1779,6 +1779,41 @@
     ],
     "why": "Issue pinpoints a concrete regression in encode_arguments_to_dsml(): unconditional json.loads() on an already-normalized dict raises TypeError, caught and wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. Expected vs actual output and the #28035 reference behavior are supplied, giving a clear root cause and validation path."
   },
+  "04703c3678839fd16dc521d81c29d92f9a7fbe45907c3f91715845d128714297": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Track/mechanisms claim distributed_training and numerics_quantization, but the issue body describes a streaming detokenization bug with no training, distributed, or numerical component",
+      "algorithm_evidence matched_terms ('overflow', 'tensor parallel') come from the collect_env environment dump, not from the bug description"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "rust/src/parser/src/reasoning/deepseek_r1.rs streaming delta emission",
+      "rust/src/parser/src/unified/hf/content.rs token-to-string decoding for reasoning deltas"
+    ],
+    "risks": [
+      "Misclassification as llm_algorithm may route this to the wrong review criteria; the real fix is parser/detokenization plumbing, not an algorithm change",
+      "Multi-byte characters split across token boundaries require incremental UTF-8 buffering, which is easy to get subtly wrong",
+      "AI-disclosure policy conflict may prevent any automated submission regardless of technical merit"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a small local model and --reasoning-parser deepseek_r1, stream=true, non-ASCII prompt; assert first reasoning delta decodes to the expected UTF-8 character rather than byte-level BPE glyphs",
+      "Add a regression test comparing streaming reasoning deltas against the non-streaming decoded output for the same prompt"
+    ],
+    "unknowns": [
+      "Whether the repository's AI-disclosure policy permits an automated contribution for this issue",
+      "Whether the deepseek_r1 reasoning parser is implemented in the Rust parser crate or the Python entrypoint, which determines the exact fix location",
+      "Whether an existing open PR already addresses streaming reasoning detokenization"
+    ],
+    "why": "The issue describes a plausible streaming detokenization bug in the deepseek_r1 reasoning parser, but the supplied evidence is internally contradictory: the candidate is labeled track=llm_algorithm with mechanisms distributed_training/numerics_quantization, while the actual bug is a byte-level BPE detokenization/streaming-parser issue with no training objective, model mechanism, distributed invariant, quantization method, or kernel algorithm. The algorithm_evidence matched terms ('overflow', 'tensor parallel') appear to be incidental keyword matches from the environment dump, not the bug. Additionally, the pre-task policy status is ai_disclosure_conflict and the candidate risk notes a repository AI-disclosure requirement that hard-disables automated public action, which is a materially blocking unknown for whether code work can be submitted."
+  },
   "047cd0b1cd62fb0a74ad0e5105c3fa71175bdf19ba37fb93501d3489b31d7773": {
     "confidence": 0.85,
     "contradictions": [],
@@ -21289,6 +21324,32 @@
     ],
     "why": "The issue describes a frontend bug with detailed code references, but recent maintainer comments indicate the expected behavior is disputed and requires product-level confirmation. The root cause is clear in code, but the desired fix is not agreed upon, making the contribution not actionable without maintainer decision."
   },
+  "2d130634174898decc6b3f40e4becd5b1d7fb6ae5230b82b15d31e6a08158b8f": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.why claims an LLM algorithm mechanism (evaluation_method) while the issue body describes only proxy health-check result aggregation"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/health_endpoints/_health_endpoints.py: attribute health-check results by model_id with fallback to model-param mapping"
+    ],
+    "risks": [
+      "Fix is proxy bookkeeping only; no algorithmic or numerical behavior is involved",
+      "Fallback path for endpoints lacking model_id must preserve prior behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Unit test `_aggregate_health_check_results` with two deployments sharing `litellm_params.model` but distinct `model_id`, asserting per-deployment healthy/unhealthy counts and error attribution"
+    ],
+    "unknowns": [],
+    "why": "The issue is a proxy health-check aggregation bug: `_aggregate_health_check_results` keys results by `litellm_params.model` instead of the deployment's `model_id`, so results are misattributed across deployments. This is ordinary proxy/API plumbing, not an LLM algorithm contribution. The track=llm_algorithm gate requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; the supplied algorithm_evidence only matched the generic term 'evaluation_method' with no actual algorithm mechanism. The fix is a straightforward dict-keying change with a unit test, which is low-value for this track."
+  },
   "2d20737835a18cacdd71192fb6a9764a1288bc51cb6e33179e270463ebe10767": {
     "confidence": 0.85,
     "contradictions": [
@@ -32256,6 +32317,40 @@
     ],
     "why": "Issue provides a deterministic repro and root cause for a startup crash on SM100 with split-KV FA4 warmup. Existing PR #41834 overlaps semantically but is broad and not directly linked; a focused fix (DSL pin bump plus defensive kernel change) is actionable and materially better."
   },
+  "46e890e5326b60ec1ccdca37205df910242c0625245e089a916bccb77819422f": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims no existing fix, but comment and open_pr_assessment show PR #43935 already implements the described drop/reject behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "OpenAI GPT-5/6 family detection in OpenAIGPT5Config.is_model_gpt_5_model",
+      "Chat Completions reasoning_effort mapping/drop logic",
+      "Responses API reasoning.effort mapping/drop logic"
+    ],
+    "risks": [
+      "Duplicating open PR #43935",
+      "Broadening API behavior changes beyond the reported model",
+      "Cost-map lag may make model-specific guards brittle"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against current main to confirm failures",
+      "Add regression tests asserting none/minimal are dropped or rejected for gpt-6.1-sol on both Chat Completions and Responses"
+    ],
+    "unknowns": [
+      "Whether PR #43935 is merged, abandoned, or technically insufficient",
+      "Whether maintainers prefer a model-specific guard vs. cost-map-driven gating"
+    ],
+    "why": "Issue provides a concrete reproduction and root-cause hypothesis, but an open PR #43935 already directly covers the same fix (drop/reject none/minimal for gpt-6.1-sol on Chat Completions and Responses) with tests, and the supplied evidence does not establish whether that PR is merged, stale, or technically insufficient. Duplicate/merged-fix coverage is a materially blocking unknown for actionability."
+  },
   "46eb63ec7b584c8a61b09ef612bc5b0a73bcf035d871399f5b81c4bb6dddcf46": {
     "confidence": 0.85,
     "contradictions": [],
@@ -34879,6 +34974,40 @@
       "Exact maintainer response or acceptance of the proposed fix."
     ],
     "why": "The issue identifies a concrete algorithmic bug in the reward modeling and DPO training pipeline: after truncation, chosen and rejected sequences can become identical, leading to constant loss and zero gradient. It provides a clear root cause, a stable reproduction script, and a suggested fix. This is a valid LLM algorithm correctness issue with a clear validation path."
+  },
+  "4b962b8d004ddb79793fd5777ed610bb459aae1d55bd373c77c79aa5768e05e0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body and comment describe a concrete reproduction, but candidate.actionability_evidence reports reproduction_or_validation_missing and probe_ready=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/mcp/server/sse.py: close session stream ends in connect_sse's finally or make handle_post_message's send bounded",
+      "src/mcp/shared/_context_streams.py: possibly adjust buffer size or send semantics"
+    ],
+    "risks": [
+      "Changing stream buffer size or send semantics may alter backpressure and 202-then-deliver behavior",
+      "Closing streams in connect_sse's finally may conflict with response_wrapper's ownership of those closes on the normal disconnect path",
+      "Repository AI disclosure policy conflict may block contribution"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that starts an SSE server whose lifespan raises after an await, POSTs a message, and asserts the request returns rather than hanging under anyio.fail_after",
+      "Add a test for the malformed-body branch in handle_post_message to ensure it does not park forever on a zero-buffer stream"
+    ],
+    "unknowns": [
+      "Whether the fix should use a non-zero buffer or send_nowait/503",
+      "Whether closing streams in connect_sse's finally is safe for the normal disconnect path",
+      "How to resolve the repository's ai_disclosure_conflict policy"
+    ],
+    "why": "The issue provides a detailed root cause (zero-buffer streams, aclose() skipped on task-group cancellation) and a concrete reproduction, but the supplied actionability evidence explicitly records reproduction_or_validation_missing, probe_ready=false, and no public repro signals. The comment also raises two unresolved design questions (buffer size vs send_nowait/503, and whether closing in connect_sse's finally is safe for the normal disconnect path) that determine where the fix belongs. Additionally, the repository policy status is ai_disclosure_conflict, which is a materially blocking submission-policy unknown."
   },
   "4bad929f9c51b29ce7f132dab4aa28ca0b3ca597477b6cbc5fa601fd6d4b078c": {
     "confidence": 0.85,
@@ -50164,6 +50293,42 @@
     ],
     "why": "Issue reports a user-visible bug but lacks a clear root cause and minimal reproduction. The maintainer asked a clarifying question, and the reporter's response is incomplete. No code path or module is identified, and no open PR exists. The issue is actionable only after maintainer confirmation and a concrete repro."
   },
+  "69e5220cdc4f72f9dbb097cbab794736d4283dd72afea59c65092c73cc7be7c7": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Reporter cites ~148k ceiling for qwen3.8-flash while commenter reports failure near 375k for deepseek-v4.1-flash, suggesting either per-model limits or a separate payload-size trigger"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "provider catalog limit for opencode-go models (limit.context/output) to match gateway ceiling",
+      "provider error classification so unparseable 400 is treated as context overflow and triggers compact-and-retry",
+      "persist/surface provider 400 response body in logs and session messages"
+    ],
+    "risks": [
+      "Changing catalog limits may affect other opencode-go models or plans",
+      "Overflow classification could mask genuine non-overflow 400s",
+      "Provider body may contain sensitive data if surfaced verbatim"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that feeds an over-limit prompt to the opencode-go provider path and asserts context-overflow classification plus one-shot compact-and-retry",
+      "Add a test asserting the catalog limit for opencode-go/qwen3.8-flash reflects the gateway's real accept ceiling",
+      "Add a test that a provider 400 body is persisted/surfaced rather than dropped"
+    ],
+    "unknowns": [
+      "Whether the true gateway ceiling is a token cap, a payload-size cap, or both",
+      "Whether PR #52651 already covers the overflow-classification fix"
+    ],
+    "why": "Issue reports a deterministic, reproducible failure: opencode-go gateway rejects ~148k-token prompts with HTTP 400 while catalog advertises 1M context, so preflight compaction never fires and the 400 is not classified as context overflow, permanently bricking the session. Concrete code anchors and a validation path exist (catalog limit correction, overflow classification, or surfacing the provider body). No direct duplicate or merged fix is established; PR #52651 is keyword-overlap only and not a confirmed covering fix."
+  },
   "6a1b7468790a8c73b1b8a0f589f17b22abaf433b0391d66c67c4720a601abc2e": {
     "confidence": 0.8,
     "contradictions": [],
@@ -60753,6 +60918,40 @@
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, indicating a generation-level bug in v0.5.17 for Qwen3.5-arch models. Root cause not yet identified, but the actionable path is to add a failing test and bisect the regression. No duplicate or merged fix found."
   },
+  "7edbb5057663912b9e157a0c4cee27390704a5bb788f6ca3be5a06c25997d557": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP OAuth discovery/authorization flow: attempt device authorization grant when authorization-server discovery fails and protected-resource metadata advertises device_authorization_endpoint",
+      "Error classification: distinguish 'device flow available but discovery failed' from generic DCR incompatibility message",
+      "Possibly annotate/remove the bundled github marketplace entry until connectable"
+    ],
+    "risks": [
+      "Maintainer may prefer option 2 (better error) or option 3 (marketplace annotation) over the device-flow fallback, changing scope",
+      "Device-flow fallback may interact with token refresh handling noted in prior issue #5191",
+      "Changing OAuth ordering could affect other MCP servers relying on discovery-first behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: mock authorization-server discovery returning 404 with protected-resource metadata advertising device_authorization_endpoint, assert device-flow path is attempted instead of aborting",
+      "Regression test: server publishing discovery + DCR (e.g. Sentry-style metadata) still registers via authorization_code path",
+      "Manual/integration probe against https://api.githubcopilot.com/mcp/ using the supplied device-flow client to confirm a bearer token is obtainable"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the device-flow fallback the desired fix versus improved error messaging or marketplace removal",
+      "Whether the prior 'not a bug' conclusion in #5191 still applies to the new DCR-specific blocker"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: GitHub's authorization-server discovery endpoint returns 404, so Cline's OAuth flow aborts before reaching its already-implemented device-code grant. The requested fix (fall back to device flow when protected-resource metadata advertises device_authorization_endpoint) is a bounded, testable change in the MCP OAuth path, and a commenter supplied a runnable device-flow probe. No open PR or duplicate covers this; the two merged PRs only share the incidental token '404s' and have no code overlap."
+  },
   "7ee9071c510ccf2eee1957b8087078dea24ffdd1da42f004b4f25610551a1753": {
     "confidence": 0.7,
     "contradictions": [],
@@ -69931,6 +70130,42 @@
       "Whether maintainers have already planned a fix or prefer a different approach"
     ],
     "why": "The issue provides a clear root cause: the managed Zoom OAuth app lacks webinar write scopes, the toolkit lacks webinar creation tools, and search/workbench mislead users into an unfixable OAuth loop. The reproduction steps and minimal example are concrete, and the requested fixes are actionable code changes in the Composio platform."
+  },
+  "920e471950bcd3ab8079fde74d9bfe952bf8770cbde263a034772f144ca5d271": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue proposes eviction in closeSessionAdmission, but triage states closeSessionAdmission is provider-route-only and the raw path never signals Session release to the executor"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/managed-runtime-tool-executor.ts: add bounded eviction of settled JournalEntry (drop input/inputJson/result or delete entry) with a defined trigger for the raw path",
+      "packages/cli/src/serve/managed-runtime-tool-routes.ts: possibly add a release/acknowledge signal so the executor learns a raw Session ended",
+      "packages/cli/src/serve/managed-runtime-provider-worker.ts: keep provider-route behavior unchanged"
+    ],
+    "risks": [
+      "Choosing the wrong eviction trigger could break late status/cancel/acknowledgeV3 lookups for released Sessions",
+      "Dropping input/inputJson before settlement could break duplicate-join or result retrieval",
+      "Scope creep into #13042's provider-route retirement concerns"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that runs N raw-path execute calls across released Sessions and asserts the executor's entries Map size stays bounded",
+      "Assert hasActiveSession/claimProviderSession remain O(active) after many settled calls",
+      "Verify status/cancel still answer for recently released Sessions within the chosen retention window"
+    ],
+    "unknowns": [
+      "Where the raw path should signal Session release / what eviction trigger is correct",
+      "Whether status/cancel must still be answered for released Sessions and for how long",
+      "Whether maintainers have a preferred design among the two proposed shapes"
+    ],
+    "why": "The issue provides a concrete, code-anchored root cause (append-only `entries` Map in ManagedToolExecutor, no delete/clear, payload-proportional retention) and independent verification confirms it at the cited commit. However, the triage bot explicitly flags a materially blocking design unknown: the proposed eviction point (`closeSessionAdmission`) is provider-route-only, and the raw path never signals a Session release to the executor at all. The correct eviction trigger/location is unresolved and determines whether the code work is actionable, so this is not merely normal implementation uncertainty."
   },
   "92164996bb48588b4f1bd9163ffcefac3ba56f1b945ec9b941450b883dc22e48": {
     "confidence": 0.8,
@@ -79711,6 +79946,42 @@
       "Whether the repo actually contains the affected hook scripts"
     ],
     "why": "The issue describes a plausible Windows mintty/git-bash hook-spawn bug, but the affected files (hooks/cursor-hooks.json, scripts/on_file_read_cursor.sh) are only present in the installed Cursor marketplace plugin cache and are not found in the mem0ai/mem0 repository. The candidate's own preTaskEvidence shows codePathsPlan is empty and the pre-review failed with 'no_code_surface'. Without a confirmed in-repo code surface or plugin build pipeline, no concrete code change can be scoped or validated."
+  },
+  "a6a1b9881dcb828a2335b65d2ec8d67a45c9205319cd09f454cf7d58de376848": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body and comments describe a clear root cause, but candidate.actionability_evidence reports root_cause_signal=false and no code anchors"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Hub daemon lifecycle/reaping on sidecar exit",
+      "Sidecar hub connection probe to validate liveness/instance identity before reuse",
+      "Port 25463 stale-listener detection and fresh-daemon spawn fallback"
+    ],
+    "risks": [
+      "Fix may require changes to process supervision and port ownership semantics that could affect normal hub reuse",
+      "Windows-specific process reaping behavior may not generalize to macOS/Linux",
+      "Without code anchors, the fix location (sidecar vs hub daemon vs desktop supervisor) is ambiguous"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by launching the desktop app, killing the parent sidecar while leaving the hub daemon bound to 25463, then relaunching and asserting a fresh hub is spawned and prompts succeed",
+      "Regression test that a stale hub with a dead parent PID is detected and not reused",
+      "Test that a live hub with a matching instance/version is still reused to avoid unnecessary restarts"
+    ],
+    "unknowns": [
+      "Which module owns hub daemon spawn/reuse and port probing",
+      "Whether an existing liveness/version handshake exists that could be extended",
+      "Whether maintainers have a preferred fix location or design for daemon lifecycle"
+    ],
+    "why": "The issue provides a strong reproduction narrative and a plausible root cause (orphaned hub daemon reused without liveness/version validation), but the supplied actionability evidence explicitly marks root_cause_signal=false, code_anchors=[], and probe_ready=false, and the pre-review gate failed with no_code_surface and reproduction_or_validation_missing. No concrete code path, module, or validation harness is identified, so the code work is not yet actionable."
   },
   "a6a812194616c875dcc2ef51ad987ae8043eb7b514d52c334e7dd6ed87e9bd19": {
     "confidence": 0.85,
@@ -90555,6 +90826,37 @@
       "Whether maintainers consider this a provider bug or expected macOS behavior"
     ],
     "why": "Issue provides a concrete, reproducible macOS memory-admission bug: WeightHasher file reads populate reclaimable file cache, and the admission check counts it as unavailable, causing false insufficient-memory rejection. Two independent reproductions (48 GB M4 Pro and 64 GB M1 Max) plus a sudo purge recovery step establish a clear validation path. Code anchors (WeightHasher, memory_reserve_gb, startup_preload_timeout_secs) point to the relevant Swift provider path."
+  },
+  "bec1c54c6f64b15f3a1a234b4dd8509e7ccc1d375b8e97b9aee75f459a7aac71": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "skill discovery/frontmatter parsing path",
+      "goose skills list warning output",
+      "goose plugin install/update frontmatter rewrite behavior"
+    ],
+    "risks": [
+      "Fix location unknown without code anchors; may span discovery, plugin install, and update paths",
+      "Behavior change to skill listing could affect existing consumers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create a SKILL.md with invalid YAML frontmatter (unquoted colon+space) and assert goose skills list emits a warning and/or lists a placeholder skill",
+      "Regression test that plugin install/update does not silently drop fields when frontmatter parsing fails"
+    ],
+    "unknowns": [
+      "Exact code path for skill discovery and frontmatter parsing",
+      "Whether assignment is required before contribution",
+      "Whether base SHA change invalidates the reproduction"
+    ],
+    "why": "Issue describes a real silent-failure bug with a concrete reproduction, but the supplied evidence lacks code anchors for the discovery/parsing path, the repository requires assignment before work, and the base SHA changed. These are materially blocking unknowns for an actionable code contribution."
   },
   "becf805131b06fcb619807d6d45d29b2b42f0b896624b8a165a31949b353dc60": {
     "confidence": 0.8,
@@ -104048,6 +104350,39 @@
     ],
     "why": "The issue precisely identifies a config validation bug: draft models are incorrectly required to implement SupportsPP even though they are never pipeline-parallelized. The suggested fix is minimal and well-scoped, with a clear code path and reproduction command. No competing PR or issue exists, and the fix is actionable."
   },
+  "d9602f810332372754c7fe0c475a2d3b1fe3c20d485219e438741460f26e66cd": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports exact-comparator failures while all approximate tolerances pass and checkpoint-resume replays pass, leaving whether this is a defect or reference drift unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Muon optimizer update path or BF16 cast/rounding boundary in checkpoint-resume tests",
+      "Golden reference values or tolerance policy for gb200/h100 Muon recipes"
+    ],
+    "risks": [
+      "Distinguishing a genuine numerical/algorithmic defect from expected floating-point or hardware-dependent drift",
+      "Changing golden references without a confirmed root cause could mask a real regression"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay steps 51-100 with the original exact validator on the affected topology",
+      "Compare the first divergent step's preceding optimizer update and BF16 cast against a high-precision reference"
+    ],
+    "unknowns": [
+      "Which gradient coordinates or code path produce the zero-count drift",
+      "Whether the divergence is a rounding-boundary change or a concentrated gradient discrepancy",
+      "Whether the stored golden references are stale relative to NGC 26.09"
+    ],
+    "why": "The issue documents repeatable golden-reference mismatches for Muon checkpoint-resume tests, but explicitly states the root cause is not established and no code path or affected gradient coordinates are identified. The evidence is a numerical drift report, not a concrete algorithm defect with a known fix."
+  },
   "d9674ef6d41118c51bbb5de407911c75ed2faf334ccdeab609f79bfaf0a33dc7": {
     "confidence": 0.85,
     "contradictions": [],
@@ -105406,6 +105741,40 @@
       "Whether the failure is reproducible at all on current main outside the reporter's packaged install"
     ],
     "why": "The issue gives a plausible root cause (scrubbed env lacks LD_LIBRARY_PATH for the relocated PEP 517 build interpreter), but a contributor could not reproduce it on current main in an isolated Linux pod under a relocatable CPython with relative RPATH, and the maintainer triage explicitly says the trigger is narrower than reported and that the proposed remedy crosses a security boundary (LD_LIBRARY_PATH is on multiple deny lists). The fix shape is therefore not mechanically actionable without a maintainer security ruling and host-specific loader metadata."
+  },
+  "dccf5b2881641fe09d9fb27c1f49e437f3141f8c5d031d8abbb9a2da7939301f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Workspace selection persistence/loading logic that validates stored workspace paths against the filesystem and prunes non-existent entries",
+      "Workspace switcher UI to allow removing an entry from the recent workspaces list",
+      "lastWorkspace fallback handling when the stored last workspace no longer exists"
+    ],
+    "risks": [
+      "Pruning on every dropdown open could cause filesystem I/O on slow/network drives; consider pruning at launch or debounced",
+      "Windows path casing/separators may cause false negatives in existence checks",
+      "Removing entries could interact with other persisted preferences if storage schema is shared"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test that seeds the workspace-selection store with a non-existent path and asserts it is pruned on load/open",
+      "Add a regression test that lastWorkspace is reset to a valid remaining workspace when the stored one is deleted",
+      "Manually reproduce: open folder, delete it from disk, reopen switcher, confirm entry is gone or removable"
+    ],
+    "unknowns": [
+      "Exact desktop source module/file that reads and writes cline.code.workspace-selection.v2 is not supplied",
+      "Whether maintainers prefer automatic pruning versus a manual remove control"
+    ],
+    "why": "Issue provides ordered reproduction steps, a concrete persisted-state root cause (workspaces array under cline.code.workspace-selection.v2 never validated against filesystem), and a clear expected behavior (prune dead paths and/or add removal UI). No open PR or duplicate issue covers it, and no maintainer design constraint is recorded. The suggested Python pruner is only a diagnostic sketch, not a repo-appropriate fix, but it does not block a real implementation in the desktop workspace-selection code."
   },
   "dce7cfc8bee1655008e21d4ead2902ed8c265397eafd36072f0658b1ed203d09": {
     "confidence": 0.9,
@@ -109112,6 +109481,41 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "Issue provides a clear, reproducible Windows shell truncation bug with code anchor and expected behavior options, but submission policy requires assignment and no maintainer approval or design confirmation exists."
+  },
+  "e3e23183adb773ddd07859812501cf62664e061c223733a474b6d84bdb23d517": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Codex completion event -> runWaiter resolution in chat-run-socket",
+      "streamOutput() EOF/terminal event handling and 120000ms timeout path",
+      "sessionMap.isWorking clearing / markExternalRunCompleted()",
+      "session_id/run_id mapping between printCompleted and run.completed"
+    ],
+    "risks": [
+      "Root cause is suspected, not confirmed; fix may require deeper runtime tracing",
+      "Bundled dist/server/index.js is minified, so source-level anchors may differ from shipped artifact",
+      "Avoid widening API behavior changes while adjusting timeout/waiter semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with minimal prompt '只回复 OK' through Ekko Studio Codex Coding Agent and measure latency vs native Codex CLI",
+      "Add a regression test asserting runWaiter resolves on Codex completion event without waiting for the 120000ms deadline",
+      "Verify sessionMap.isWorking is cleared immediately after codex exec exits and no duplicate codex exec exited events occur"
+    ],
+    "unknowns": [
+      "Exact code-level defect location in source (vs bundled dist) is not confirmed",
+      "Whether maintainers have a preferred fix approach for the run waiter/timeout path"
+    ],
+    "why": "Issue reports a concrete, reproducible user-visible latency bug (~120s vs ~5s) in the Codex Coding Agent run/session lifecycle, with ordered reproduction steps, expected/actual behavior, isolation tests ruling out MCP servers and config, and static code anchors pointing to 120000ms waits in runAndWait()/streamOutput() and isWorking state propagation. No open PR or duplicate issue covers it. Root cause is suspected rather than confirmed, but the evidence supports a concrete reference-vs-implementation validation path."
   },
   "e3e40fdcee2fe7a2bf61ba47a3555ae7b27c132cd5d5b7b60490a658c6923ce5": {
     "confidence": 0.72,
