@@ -1,6 +1,41 @@
 {
   "channel": "codex",
-  "events": [],
+  "events": [
+    {
+      "actionKind": "USER_DECISION",
+      "attemptId": "169a97a80228ed11d719e6edaf37e63f06f9a222d95dbfeab19290f1419201e5",
+      "candidateKey": "Tencent/WeKnora#3926",
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**事项**：[Bug]:  后台管理界面无法删除「嵌入渠道(embed channel)」产生的会话，删除报「删除失败，请稍后再试」\n**原因**：需要你确认下一步，当前记录不足以安全继续。\n**下一步**：请确认是否继续，以及需要补充的要求。",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "[Bug]:  后台管理界面无法删除「嵌入渠道(embed channel)」产生的会话，删除报「删除失败，请稍后再试」",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "eventId": "056f9b002d024079339d9d1806815d632d448178abc3e52c7de1e50852095bc0",
+      "idempotencyKey": "056f9b002d024079339d9d1806815d632d448178abc3e52c7d",
+      "nextAction": "请确认是否继续，以及需要补充的要求。",
+      "notificationDigest": "89e28dc47714e11c5a754d4358f509b50878679ea0b23bad19e25300c9955633",
+      "reason": "需要你确认下一步，当前记录不足以安全继续。",
+      "status": "PENDING",
+      "taskId": null,
+      "title": "[Bug]:  后台管理界面无法删除「嵌入渠道(embed channel)」产生的会话，删除报「删除失败，请稍后再试」"
+    }
+  ],
   "schema": "oss-pr-radar.war-room-outbox.v1",
-  "sourceArtifactDigest": "3b9233cbd2e1a6a8503238dfd62819bd6ca5db3e8bf1477dc296577225b1047a"
+  "sourceArtifactDigest": "137ba45cfdf1120be4de2272e3573145dd9f7fbb5d9f499a4bbe6c598b7d1191"
 }

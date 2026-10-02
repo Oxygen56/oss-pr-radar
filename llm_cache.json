@@ -4856,6 +4856,38 @@
     ],
     "why": "Issue #2645 gives a concrete, user-visible bug with ordered reproduction steps, expected/actual behavior, and a clear root cause: RealtimeTUI._send() publishes input to the chat view before awaiting RealtimeAgent.send(), so a failed send leaves an undelivered message rendered. The fix is a small, testable ordering/rollback change in the TUI send path. Open PR #2646 covers the same issue but is marked as lacking root-cause coverage, so a competing fix that adds a failing regression test and addresses the publish-before-await ordering is actionable."
   },
+  "0adb78634b460af6087179ca2ed5f2038f8d3f6dd3837209054dfa74e571ecd7": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/application/service/embed_session.go: relax user scope for Admin+ callers in DeleteSession",
+      "Apply consistent scope handling to UpdateSession and BatchDeleteSessions",
+      "Ensure applySessionUserScope bypasses owner filter for Admin+ when appropriate"
+    ],
+    "risks": [
+      "Over-broadening scope could let non-admin roles delete arbitrary sessions",
+      "Behavior change to UpdateSession/BatchDeleteSessions may affect other callers",
+      "Maintainer may prefer a different scope model (e.g., principal-type prefix allowlist)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create an embed channel, open widget as visitor to create an embed_session:<tenantID>:<channelID>:<sessionID> row, then delete via admin API and assert success",
+      "Regression test: non-admin user still cannot delete another user's session (scope preserved)",
+      "Unit test for applySessionUserScope with Admin role and embed_session: prefixed user_id"
+    ],
+    "unknowns": [
+      "Exact role-check helper/name used to determine Admin+ in this codebase",
+      "Whether maintainers prefer prefix-based allowlist vs. role-based scope relaxation"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: embed sessions store user_id as 'embed_session:<tenantID>:<channelID>:<sessionID>', while admin delete scope filters on admin user_id/NULL/empty, so DeleteSession matches zero rows and returns ErrSessionNotFound. Reproduction steps are ordered and include expected/actual behavior plus the equivalent SQL. Fix direction (relax user scope for Admin+ in DeleteSession/UpdateSession/BatchDeleteSessions consistent with ListSessions) is actionable and testable."
+  },
   "0ae11579e957c12353af71e4c65bc10b9abdd99472dc62782282d546b6bed599": {
     "confidence": 0.8,
     "contradictions": [],
@@ -6105,6 +6137,41 @@
       "Whether the referenced related issues (#2367, #3482, #6741, #7197) already cover any of the proposed changes"
     ],
     "why": "The issue describes three distinct behavioral problems in the Google realtime plugin (hybrid blocking/non-blocking state, per-session rather than per-tool behavior/scheduling, and tool results waiting for playout), with code anchors and measured trial numbers. However, the supplied actionability evidence explicitly records reproduction_or_validation_missing, public_repro_signals=0, reproduction_evidence=[], root_cause_signal=false, and probe_ready=false. The issue body contains no minimal reproduction script or failing test, and the three proposed fixes are independent design changes with no maintainer-approved direction. This is a materially blocking unknown: without a concrete reproduction or agreed root cause, it is not determinable which of the three issues is actionable as a single code contribution."
+  },
+  "0e355f155ff7db8f973bbdc90560e2c96b22ebff4c1587e23483e6670d0b1dfa": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports rootCauseCoverage=false and missing tests, yet PR #50543 has direct code overlap and references the issue",
+      "duplicate status is human_review_required while candidate category is WAIT_MAINTAINER"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Plugin module resolver: resolve scoped @opencode/* specifiers from the project/config directory rather than the plugin file's own directory",
+      "Add regression test covering local plugin with bare @opencode/plugin import"
+    ],
+    "risks": [
+      "Overlapping open PR #50543 may already cover the fix, making independent work redundant",
+      "Maintainer-owned PR #49097 touches the same plugin resolution path and may define the preferred approach",
+      "Resolver change could affect node_modules tracking behavior for other plugin imports"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with .opencode/plugins/probe.js importing @opencode/plugin and confirm ResolveMessage failure in server log",
+      "After fix, verify plugin loads with source: local and status: active via /api/plugin",
+      "Add regression test asserting scoped package resolution from project directory"
+    ],
+    "unknowns": [
+      "Whether PR #50543 or #49097 already resolves the issue in a way that leaves no independent implementation space",
+      "Whether maintainers have a preferred resolver design that would make an independent fix non-actionable"
+    ],
+    "why": "Issue is a concrete, reproducible plugin module-resolution defect with clear expected/actual behavior and multiple independent reproductions, but the supplied evidence shows an open PR (#50543) with direct code overlap and a closed PR (#50466) covering the same fix, plus maintainer-owned PR #49097 touching the same area. Duplicate/coverage status is explicitly 'human_review_required', which materially determines whether independent code work is actionable."
   },
   "0e43ee603bf6f2a4019ee8553f3310c2552808ca8da803c15e2e492ed52ea043": {
     "confidence": 0.55,
@@ -38351,6 +38418,37 @@
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than adding each model to an exclusion list. The root cause is a hardcoded model list in the Bedrock provider. No open PR or issue addresses this, and the issue provides a concrete reproduction."
   },
+  "533d67ee18eefbd0083084fdb79e9c02f226f7ef77fce836ea63c1ee1b116e93": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims probe_ready=true and a reproduction path, but root_cause_signal=false and the planned code paths do not match the reported variable-pool mapping failure"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unidentified backend workflow variable-pool mapping path (candidate codePathsPlan appears unrelated to the reported failure)"
+    ],
+    "risks": [
+      "Cloud-only failure may not be reproducible from the public repo or may depend on Cloud deployment state",
+      "Fixing the wrong module could mask the actual regression",
+      "Repository has an AI disclosure conflict that blocks automated public submission"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a minimal Start→LLM→End workflow and single-step LLM run, then add a regression test around the variable-pool mapping once the failing code path is identified"
+    ],
+    "unknowns": [
+      "Actual code path throwing 'Variable key ... not found in user inputs'",
+      "Whether the bug is reproducible in self-hosted/main or only in Cloud",
+      "Whether a maintainer has identified or is investigating the regression"
+    ],
+    "why": "Issue reports a Cloud-only regression with a plausible symptom and reproduction, but no root-cause evidence: the reporter only hypothesizes a phantom sys.query injection in mapping_user_inputs_to_variable_pool. The candidate's own actionability evidence marks root_cause_signal=false, and the proposed code paths (api/services/credentials/query.py, web/app/components/plugins/marketplace/query.ts) are unrelated to workflow variable-pool mapping, so the actionable code location is unknown."
+  },
   "5354015a7de32ad802775401785755dd57a4f7a59de2a688324eaf514eb5cda2": {
     "confidence": 0.8,
     "contradictions": [
@@ -40282,6 +40380,42 @@
       "Maintainer's preferred resolution for credentialPersistence when the artifact is missing"
     ],
     "why": "The issue gives a clear root cause (name-based uninstall resolves only through getLoadedExtensions(), which requires an on-disk manifest, while install checks the store snapshot) and a concrete reproduction. However, the supplied open-PR assessment reports PR #11889 with semantic overlap on packages/core/src/extension/extension-store.ts and status 'semantic_overlap_requires_review', and the triage comment explicitly says the credential-cleanup question needs a maintainer decision before a fix lands. The duplicate/overlap coverage is unresolved, which materially determines whether independent code work is actionable."
+  },
+  "5645eb677d99177f808516042661430b873e30ef37c327f70c122da43023ea23": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body describes the bug as unfixed, while recent comment and open PR #43935 claim a fix is already up"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "OpenAIGPT5Config.is_model_gpt_5_model family detection for gpt-6.1-sol",
+      "Chat Completions reasoning_effort drop/reject for none/minimal",
+      "Responses reasoning.effort drop/reject for none/minimal"
+    ],
+    "risks": [
+      "Duplicating or conflicting with open PR #43935",
+      "Expanding API behavior beyond the reported unsupported-effort contract",
+      "Cost-map lag for a new model may make a model-specific guard brittle"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against current main to confirm the five failing assertions",
+      "Add regression tests for drop_params=True removing none/minimal on both Chat Completions and Responses",
+      "Add a test that drop_params=False rejects unsupported effort locally with a 400"
+    ],
+    "unknowns": [
+      "Whether PR #43935 already fully covers the Chat Completions and Responses paths with adequate tests",
+      "Whether maintainers intend to merge #43935 or prefer a different implementation",
+      "Whether the cost map or model registry already marks none/minimal unsupported for gpt-6.1-sol"
+    ],
+    "why": "Issue supplies a concrete reproduction and root-cause hypothesis for gpt-6.1-sol reasoning-effort forwarding, but an open PR #43935 already claims to fix exactly this with regression coverage, and the supplied duplicate assessment marks root-cause coverage as absent and competition as weak. The unresolved duplicate/merged-fix coverage is a materially blocking unknown for deciding whether independent code work is actionable."
   },
   "565564ba34d55dfa42de3d39398691ada8df430031bd8317b78aef11128418ab": {
     "confidence": 0.6,
@@ -48256,6 +48390,38 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a real bug with root cause and repro, but an existing PR (#25387) directly targets the same code paths and is closed without merge. Need maintainer review of that PR's status and design preferences before starting new work."
+  },
+  "676703554df5c0cf1eb37851c838086e2f6fbcfa3045030efd5905a673b69fe3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "skill discovery/frontmatter parsing path",
+      "goose skills list warning output",
+      "goose plugin install/update frontmatter rewrite behavior"
+    ],
+    "risks": [
+      "Fix location unknown: could be in skill discovery, plugin install, or frontmatter rewrite code",
+      "Behavior change may affect existing plugins with malformed frontmatter",
+      "Assignment required before contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create a SKILL.md with invalid YAML frontmatter (unquoted colon+space) and assert goose skills list emits a warning and/or lists a placeholder skill",
+      "Regression test that plugin install/update does not silently drop fields when frontmatter parsing fails"
+    ],
+    "unknowns": [
+      "Which module/function performs frontmatter parsing and skill discovery",
+      "Whether maintainers want a warning, placeholder skill, or hard failure",
+      "Whether the issue is already assigned or covered by an open PR"
+    ],
+    "why": "Issue describes a plausible silent-drop bug with a concrete reproduction, but the supplied evidence lacks code anchors, root-cause confirmation, and any validation path; the pre-task evidence explicitly flags reproduction_or_validation_missing and no_code_surface, and the repository requires assignment before work."
   },
   "676dbf442006c8e5c919f7c422e00d6efae04f098a8bba8bdfadd57243312cdb": {
     "confidence": 0.6,
@@ -56525,6 +56691,39 @@
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH leak into spawned stdio MCP servers, breaking external Python interpreters. Reporter provides executable minimal repro, /proc environ evidence, and a working workaround. Triage bot initially disputed the AppImage attribution but the reporter supplied live evidence (AppRun.wrapped binary strings, mount prefix matching the app's own filename, /proc maps) that the leak originates in the AppImage's AppRun. Code anchors (mcp-client.ts, sanitize-child-env.ts) point to the spawn env construction, and the suggested fix (strip PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH from MCP child env) is concrete and testable."
   },
+  "768d9cafc0f2ee6b4848905b8d76faf3519def1596159ebe6b5357d340bec167": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports exact-comparator failures while also stating all samples pass the existing approximate tolerances and checkpoint-resume replays pass exactly"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Muon optimizer update path or BF16 cast/rounding boundary in checkpoint-resume tests",
+      "Golden reference values or tolerance policy for gradient-zero counts"
+    ],
+    "risks": [
+      "Distinguishing a genuine numerical/optimizer bug from expected floating-point or hardware-dependent variation",
+      "Changing golden references or tolerances without identifying the affected gradient coordinates could mask a real regression"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Re-run the affected GB200/H100 Muon checkpoint-resume functional tests with fixed seed and compare per-step gradient norm, parameter norm, loss, and zero counts around the first divergent step",
+      "Replay saved checkpoint-resume steps 51-100 with the original exact validator to confirm resume equality"
+    ],
+    "unknowns": [
+      "Which gradient coordinates or tensors drive the zero-count drift",
+      "Whether the mismatch is caused by a code defect, BF16 rounding boundary, or stale golden references",
+      "Whether the affected tests are expected to be bitwise deterministic across NGC 26.08/26.09 and hardware variants"
+    ],
+    "why": "The issue documents repeatable golden-reference mismatches for Muon checkpoint-resume tests, but explicitly states the root cause is not established and only proposes a focused comparison around the first divergent step. No concrete training-objective, optimizer-mechanism, numerical-method, or kernel-algorithm defect is identified, so the actionable code change is not yet determined."
+  },
   "768ec3fe50a795e1ec1561bd5aaf6c756378b5f98619bfd923176abfb0a39f58": {
     "confidence": 0.8,
     "contradictions": [],
@@ -57774,6 +57973,38 @@
     ],
     "why": "Issue reports a concrete bug with a clear repro and plausible root cause (Gemini 3.5 API change). Existing PR #36292 overlaps semantically but is not linked to the issue and may not fully address the root cause. A new PR that directly fixes the mapping and adds a regression test could be materially better."
   },
+  "79791e1f2f3bac80b509ddb18eccb164784e3105835e4961034c6f07ac6dae10": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue proposes eviction in closeSessionAdmission, but triage states closeSessionAdmission is provider-route-only and the raw path never signals Session release to the executor"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/managed-runtime-tool-executor.ts: add bounded eviction or drop input/inputJson after settle/release",
+      "possibly a new raw-path Session-release signal from managed-runtime-tool-routes.ts to the executor"
+    ],
+    "risks": [
+      "Evicting too early breaks status/cancel/acknowledgeV3 lookups for released Sessions",
+      "Chosen eviction point may conflict with maintainer design preference (need-discussion label)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting entries does not grow unboundedly across many released raw-path Sessions",
+      "Reproduce with the linked s3b-retention-raw.mjs probe and confirm RSS stabilizes"
+    ],
+    "unknowns": [
+      "Which eviction shape maintainers will accept (drop on release vs. drop input/inputJson post-settle vs. bounded ring)",
+      "Whether a new raw-path release signal must be added, and where"
+    ],
+    "why": "Root cause is well-evidenced: ManagedToolExecutor.entries is append-only, payload-proportional, and only the raw path grows it. But the triage bot explicitly states the proposed eviction point (closeSessionAdmission) is provider-route-only and the raw path never signals a Session release to the executor, so a design decision is required before code. The issue is labeled need-discussion and the fix location is unresolved, making the concrete code change not yet actionable."
+  },
   "79b90688470676eef7388ae5bbadf26cbf5465a964662aada4299d7b1df541c3": {
     "confidence": 0.7,
     "contradictions": [
@@ -58527,6 +58758,40 @@
       "Whether the maintainers consider this a valid independent contribution given the existing open PRs."
     ],
     "why": "Issue describes a concrete TypeError from missing positional args in ep_scatter_from_psum, but the supplied evidence shows an open PR #39399 with direct code overlap on the same path and a second PR #37211 also targeting the same fix; duplicate/coverage status is explicitly human_review_required, which is a materially blocking unknown for whether independent code work is actionable."
+  },
+  "7b6ba0714422429313497e211b0737a5390b7e58669b87da2a7272e2c8c773ad": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Workspace selection persistence/validation logic that prunes non-existent paths from the recent workspaces list",
+      "Workspace switcher UI to remove an entry or reflect pruned entries"
+    ],
+    "risks": [
+      "Pruning on every dropdown open could cause filesystem I/O latency on slow/network drives",
+      "Resetting lastWorkspace may unexpectedly change the active workspace on launch",
+      "Cross-platform path handling (Windows drive letters vs POSIX) must be validated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that seeds a workspace-selection state containing a deleted path and asserts it is pruned on load/dropdown open",
+      "Regression test that lastWorkspace is reset when its path no longer exists",
+      "Manual repro: open folder, delete it from disk, reopen switcher and confirm entry is gone or removable"
+    ],
+    "unknowns": [
+      "Exact desktop module/file owning the workspace-selection persistence is not pinned in the supplied evidence",
+      "Whether maintainers prefer auto-pruning vs an explicit remove control"
+    ],
+    "why": "Issue provides ordered reproduction steps, a concrete persisted-state root cause (workspaces array under cline.code.workspace-selection.v2 never validated against the filesystem), and code anchors (workspaces, lastWorkspace). No open PR or duplicate issue covers it, and no maintainer design constraint is recorded. The suggested Python pruner is only a diagnostic sketch, not the actual fix, so real code work in the desktop workspace-selection path remains actionable."
   },
   "7b71933caccca17af79798f06baa3d1a64a554f8e95201c87417c0379d97418b": {
     "confidence": 0.6,
@@ -66023,6 +66288,37 @@
       "Whether existing PR #38719 already fixes this issue and its implementation details"
     ],
     "why": "Issue provides a clear regression with version matrix, minimal reproducer, and a detailed root-cause analysis in comments identifying the forced stream=True and the dead compensation path. The fix location is suggested and code anchors are provided, making the contribution actionable."
+  },
+  "8b9dd92722cad30de143a0580fd1070ebf456da8fd32d39aa980f451348961c2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "MCP OAuth discovery/authorization flow: attempt device authorization grant when authorization-server discovery fails and protected-resource metadata advertises device_authorization_endpoint",
+      "Error classification: distinguish device-flow-capable servers from generic DCR incompatibility"
+    ],
+    "risks": [
+      "Changing OAuth fallback ordering could affect other MCP servers that rely on discovery-first behavior",
+      "Device-flow fallback may need client_id/registration handling that differs from DCR path",
+      "Prior issue #5191 was closed as not-a-bug, so maintainers may dispute scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the bundled github MCP server config and confirm the current 'does not support dynamic client registration' failure",
+      "Add a regression test where authorization-server discovery 404s but protected-resource metadata advertises device_authorization_endpoint, asserting the device flow is attempted",
+      "Run the device-flow client against api.githubcopilot.com/mcp/ to confirm the fallback yields a usable bearer token"
+    ],
+    "unknowns": [
+      "Whether maintainers accept device-flow fallback as the intended design versus a clearer error or marketplace annotation"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: GitHub's authorization-server discovery endpoint returns 404, so Cline aborts before reaching its already-implemented device-code grant. The requested fix (fall back to device flow when protected-resource metadata advertises device_authorization_endpoint) is a bounded, testable change in the MCP OAuth path, and a commenter supplied a minimal device-flow client to validate the fallback."
   },
   "8bbf2c53df2caa1e03f26ec1571ec0e685657e5587c0fd1f8f1be34647b30c4e": {
     "confidence": 0.8,
@@ -85914,6 +86210,38 @@
     ],
     "why": "The issue itself admits the synthetic reproduction failed and the only evidence is a build A/B plus rollback across three changed components (vLLM commit range, FlashInfer 0.6.17→0.6.18, transformers 5.15.1→5.16.1). The candidate's algorithm_evidence claims mechanisms like distributed_training, numerics_quantization, and evaluation_method, but the issue body contains no training objective, quantization/numerical method, kernel algorithm, or controlled experiment; matched terms are incidental environment strings. The open PR #56635 is a parser-frontend fix that a contributor explicitly says is for a separate issue, and the reporter attributes the remaining garble to a weights/training issue, so duplicate/coverage is unresolved. Root cause is not established, so code work is not yet actionable."
   },
+  "b6729fbc1003e848ce4da0198a2e6809437273ce5896c68b5693397b0858c318": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/litellm_pre_call_utils.py: team-level metadata merge should not overwrite key-level opted_out_global_guardrails with an empty list",
+      "litellm/integrations/custom_guardrail.py: should_run_guardrail / _get_admin_metadata precedence between key and team metadata for opted_out_global_guardrails"
+    ],
+    "risks": [
+      "Changing merge precedence could alter intended team-level override semantics for other metadata fields",
+      "Fix must preserve behavior when team-level opted_out_global_guardrails is non-empty and intentionally set",
+      "Issue author has not confirmed the root cause at runtime, so the fix should be validated against the reproduction before finalizing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test creating a key with key-level opted_out_global_guardrails and a team whose metadata has opted_out_global_guardrails: [], then assert should_run_guardrail returns False for a default_on guardrail",
+      "Reproduce the issue's 4-key matrix (no team vs team, same opt-out) against a default_on guardrail and confirm the team-key case now skips the guardrail",
+      "Run targeted unit tests for litellm_pre_call_utils and custom_guardrail plus static checks"
+    ],
+    "unknowns": [
+      "Exact runtime merge order between key-level and team-level metadata in v1.93.0 is hypothesized, not debugger-confirmed",
+      "Maintainer-preferred precedence between key-level and team-level opt-outs is not stated"
+    ],
+    "why": "Issue provides a controlled 4-key experiment isolating team membership as the variable, a concrete expected-vs-actual pair, executable curl reproduction steps, and specific code anchors in litellm_pre_call_utils.py and custom_guardrail.py. The suspected root cause (team-level empty-list overwrite of key-level opted_out_global_guardrails) is a concrete, testable hypothesis with a clear reference-vs-implementation validation path. No duplicate or merged fix covers this path; the only overlapping PR (#43978) is keyword-only with no code-path overlap."
+  },
   "b69b1d513c5008d6e327f4dbf3e3275ae2fde96b1ec8f4d3d4a213f90797b0e8": {
     "confidence": 0.85,
     "contradictions": [],
@@ -91763,6 +92091,41 @@
       "Exact root cause not identified; maintainer may need to trace whether backend stream is fully consumed."
     ],
     "why": "Issue provides a high-probability concurrent reproduction, clear expected behavior, and code anchors in streaming paths. Root cause is not pinpointed but the evidence is sufficient to start a concrete fix and validation."
+  },
+  "c333070dc6e85ae7e4ed394195190343bde013700dff4b1bfa2ae3d96472382d": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Second reporter's failure occurred at ~375K tokens on deepseek-v4.1-flash, well above the ~148k ceiling cited for qwen3.8-flash, so the exact trigger (token ceiling vs payload-size ceiling) is not pinned down."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "provider error classification: treat opencode-go unparseable 400 as context overflow so one-shot compact-and-retry engages",
+      "model catalog limit for opencode-go models (context/output) reconciled with the gateway's real accept ceiling",
+      "provider error persistence: surface and store the HTTP 400 response body in logs and session messages"
+    ],
+    "risks": [
+      "Changing the catalog context limit for opencode-go could affect other models/routes sharing the same provider entry.",
+      "Classifying all unparseable 400s as context overflow may mask genuine invalid-request errors.",
+      "Persisting provider bodies may leak sensitive request/response content into logs."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test that feeds an opencode-go 400 response through the provider error classifier and asserts it is recognized as context overflow and triggers compact-and-retry.",
+      "Add a regression test asserting the persisted provider error includes the response body rather than only the generic message.",
+      "Reproduce with a session whose prompt exceeds the gateway ceiling and verify preflight compaction fires before the hard wall."
+    ],
+    "unknowns": [
+      "Whether the maintainer prefers fixing the catalog limit, the overflow classification, or body surfacing first.",
+      "Whether the true gateway ceiling is a token cap or a request-body/payload-size cap."
+    ],
+    "why": "Issue reports a concrete, deterministic failure: opencode-go gateway rejects ~148k-token prompts with HTTP 400 while the catalog advertises 1M context, so preflight compaction never fires and the 400 is not classified as context overflow; the provider body is also dropped. Two independent reporters confirm the class of failure, and the issue supplies a reproduction path, session IDs, token counts, and candidate code paths. The competing PR #52651 is only keyword-overlapping (no shared code paths, no issue reference, root_cause_coverage=false), so it does not establish coverage. Remaining uncertainty is which of the three proposed fixes the maintainer wants, which is normal implementation choice rather than a blocker."
   },
   "c3394128ed1a20206f24ca129de4ad1b5d11ab099172874837f20e6eaea7f64b": {
     "confidence": 0.85,
@@ -109136,6 +109499,39 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports pipeline parallelism unsupported for deepseek-v4-flash-0731, with a concrete repro command and traceback. However, the supplied evidence flags a potential duplicate issue #52735 sharing stack signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not yet confirmed; the traceback stops at speculative config creation, not the pipeline parallel path. Maintainer confirmation is needed to avoid duplicate work."
+  },
+  "e5b3a6d56ae92564f1f508c42429e935f9b4f4c52015806da90a09fa9f5c537f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence reports root_cause_signal=false and code_anchors=[] while the issue body and comments describe a concrete root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sidecar/hub daemon lifecycle management (orphan reaping or staleness validation before reuse)",
+      "hub port 25463 probe logic to validate daemon identity/version/liveness"
+    ],
+    "risks": [
+      "Fix location unknown without code anchors; could be in sidecar spawn logic, hub daemon, or desktop app lifecycle",
+      "Windows-specific process reaping behavior may not generalize to other platforms"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by launching app, quitting, leaving orphan hub daemon bound to 25463, relaunching, and asserting a fresh hub is spawned or the stale one is rejected",
+      "Regression test that a sidecar connecting to a hub whose parent has exited does not reuse it"
+    ],
+    "unknowns": [
+      "Which module owns hub daemon spawn/reuse logic",
+      "Whether a maintainer has an existing design preference for daemon lifecycle",
+      "Whether the base SHA change invalidates the reproduction path"
+    ],
+    "why": "Issue provides a detailed reproduction and a plausible root cause (orphaned hub daemon reused without staleness/liveness validation), but the supplied evidence contains no code anchors, no confirmed root-cause signal, and no probe-ready path. The pre-task evidence explicitly flags base_sha_changed, no_code_surface, and reproduction_or_validation_missing, so the actionable code surface is not established."
   },
   "e5b54040998f52478b102a7c070150067592e930fb5aa973b0108b833faf18be": {
     "confidence": 0.8,
