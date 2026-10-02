@@ -40099,6 +40099,38 @@
     ],
     "why": "The issue reports a real GLM-5.3-Flash degeneration bug, but the reporter explicitly could not reproduce it synthetically; only long agentic sessions trigger it. A maintainer comment attributes it to 'tool call / vllm frontend', and an open PR #56635 claims a parser-frontend fix, but that PR's root_cause_coverage is false and its validation is incomplete. The candidate's own evidence marks rootCauseCoverage=false and keyPathCoverage=false, and the duplicate/overlap assessment is only 'weak_pr_competition_possible'. Without a concrete reproduction or confirmed root cause, the code work is not yet actionable."
   },
+  "553b0494ad3afeefe90ba7fc495c90379dcc4af8f8959c0b3073c81843152c2e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "pipecat/services/openai/realtime/llm.py: remove fatal return after `_handle_evt_error` in `_receive_task_handler`",
+      "pipecat/services/openai/realtime/llm.py: catch `ConnectionClosed` around the receive loop and push with `force_treat_as_permanent=True` unless `_disconnecting`",
+      "pipecat/services/openai/realtime/llm.py: push `_ws_send` and `_connect` failures with `force_treat_as_permanent=True`"
+    ],
+    "risks": [
+      "Changing error-event handling from fatal to non-fatal could mask genuinely fatal server errors if not scoped carefully",
+      "Marking send/connect failures permanent may alter behavior for transient network blips",
+      "PR #6024 already targets the same issue and may overlap or supersede this work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using the issue's fake-socket reproduction: one recoverable error event followed by a normal event must be read and the receive loop must stay alive",
+      "Add regression test for mid-session `ConnectionClosedError` (1011) producing a permanent error and making the service unusable under `ProcessorUnusablePolicy.END`",
+      "Add regression test for refused connect producing a permanent error rather than a recoverable `CONNECTIVITY` error"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the exact `force_treat_as_permanent=True` approach or a different recovery/retry policy",
+      "Whether PR #6024 will be merged and fully cover the root cause, making a competing PR redundant"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: `_receive_task_handler` returns after `_handle_evt_error`, `ConnectionClosedError` is uncaught, and `_ws_send`/`_connect` push recoverable errors, leaving the service deaf but usable. A minimal reproducible example with a fake socket and expected/actual output is supplied, and the proposed fix mirrors `OpenAILiveLLMService`."
+  },
   "553d404b4dc9e9117298002b4ecc1a6817447a24fcff7b6900a99034e60ae209": {
     "confidence": 0.8,
     "contradictions": [
