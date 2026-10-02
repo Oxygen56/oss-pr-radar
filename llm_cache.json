@@ -2582,6 +2582,40 @@
     ],
     "why": "The issue provides a clear root cause: the sequential pipeline FX-traces the vision tower even when it is in the ignore list, and Qwen3-VL's rot_pos_emb is not traceable, causing a CUDA driver error. It includes a minimal reproduction script, environment details, and evidence that RTN works, isolating the problem to the calibration/tracing path. This is a concrete, actionable bug in an algorithm repository with a clear validation path."
   },
+  "063ba142d3ef610dfb6896a7c0a4359071c2da84cf2c46cb4eddef11ad078cb4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter observes raw token glyphs in streaming reasoning deltas, but contributor's simulation of the same chain and version produces clean byte-exact output",
+      "Reporter's control experiments (non-streaming clean, no-parser clean) imply a clean detokenizer, which is inconsistent with the parser re-introducing raw token strings"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/reasoning/deepseek_r1_reasoning_parser.py (only if a real defect is confirmed)",
+      "vllm/entrypoints/openai/chat_completion/serving.py (only if a real defect is confirmed)"
+    ],
+    "risks": [
+      "Fixing a non-reproducible symptom could mask a deployment-specific tokenizer misconfiguration",
+      "The checkpoint's LlamaTokenizerFast shim (huggingface/transformers#49252) is a separate confounder that could be mistaken for this bug"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the contributor's repro.py inside the reporter's container against /models/deepseek to confirm whether stock code reproduces the glyphs",
+      "Add a streaming regression test asserting reasoning deltas reconstruct byte-exact UTF-8 for CJK input"
+    ],
+    "unknowns": [
+      "Whether the reporter's /models/deepseek tokenizer files are the Hub LlamaTokenizerFast shim or a correct byte-level BPE tokenizer",
+      "Whether the reporter's deployment contains a custom/patched reasoning path not present in stock v0.21.0",
+      "Whether PR #59748 actually addresses the same root cause or a different detokenization defect"
+    ],
+    "why": "The issue claims streaming reasoning deltas leak raw byte-level BPE glyphs, but the contributor's in-process simulation of the exact v0.21.0 serving chain (both fast and slow detokenizer paths, transformers 5.8.1 and 5.14.1) shows clean output, and an audit finds no convert_ids_to_tokens in the reasoning/parser path. The reported signature is not reproducible from stock code, so the root cause is not established and the fix target is undetermined."
+  },
   "063ce2a3f90a7ab2eadefc9320656b31f0db007bbe3f3830e3a785039a6d618e": {
     "confidence": 0.7,
     "contradictions": [],
@@ -12923,6 +12957,40 @@
       "Whether maintainers prefer config-driven (a) or model-side (b) fix"
     ],
     "why": "Issue provides a deterministic, fully specified root cause: Qwen3_5GatedDeltaNet builds in_proj_ba as a GPTQ layer unconditionally, while the checkpoint stores in_proj_a/b as bf16, so 96 'not found in params_dict' warnings occur and gptq_marlin_repack fails on size_n=96. Concrete code anchors, checkpoint evidence, and two viable fix paths (honor GPTQModel dynamic negative rules, or generalize the modelopt_fp4 guard) are supplied, with a reproducible docker command and traceback."
+  },
+  "1c265e18fd82f11fb701338114177c48fb20924cacb303f0989a66d8aa4ca8f3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/tokenizer/tokenizer.go: segment Chinese queries for Infinity instead of passing through unchanged",
+      "internal/service/nlp/query_builder.go: avoid whole-clause phrase branches or relax minimum_should_match for unsegmentable clauses",
+      "internal/service/nlp/retrieval.go: optionally compute hybrid similarity on Go side for Infinity as done for Elasticsearch"
+    ],
+    "risks": [
+      "Open PR #20402 touches internal/service/nlp/query_builder.go with semantic overlap on full_text; must compare implementation boundaries before proceeding",
+      "Changing tokenization or minimum_should_match may alter ranking behavior for existing English/keyword queries",
+      "Infinity analyzer behavior may differ across versions, requiring version-pinned validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that builds the Infinity full-text query for a Chinese natural-language question and asserts the keyword leg returns a non-zero score",
+      "Reproduce with the 3-chunk Markdown fixture and assert top-1 similarity with vector_similarity_weight=0 is > 0",
+      "Run targeted unit tests for internal/service/nlp and internal/tokenizer"
+    ],
+    "unknowns": [
+      "Whether PR #20402 actually addresses the same root cause or only adjacent query-builder behavior",
+      "Whether maintainers prefer Go-side rescoring vs. tokenizer segmentation for Infinity"
+    ],
+    "why": "Issue provides a detailed, reproducible root cause: in Infinity mode Tokenize/FineGrainedTokenize return input unchanged, so Chinese questions become a single unsegmented term; the generated MatchText expression with minimum_should_match=30% over 7 fields rejects the chunk, zeroing the full-text leg and collapsing hybrid similarity to ~0.3×cosine. Evidence includes expected/actual pairs, ordered steps, executable curl commands, and direct Infinity HTTP API experiments isolating minimum_should_match as the cause. Code anchors are concrete and confirmed unchanged on main by the bot comment."
   },
   "1c29c8f7c77e5baad1dea1341a1beb0eb1d72dc394531f00f270c11a4a5a1045": {
     "confidence": 0.7,
@@ -28841,6 +28909,37 @@
       "Exact code location where the popup value is dropped; maintainer design preference for the fix."
     ],
     "why": "The issue provides a clear, reproducible bug with a minimal example, explicit steps, and a working contrast path, establishing a concrete root cause in the graph-page popup request-context handling. The fix is actionable and testable."
+  },
+  "3efed96650a7535fcc936c67d643c60f45dae6032ed3302adcce4cbb4e644c65": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "dify-agent-runtime/internal/sanitize/sanitize.go: add pending-bytes buffer in PtySanitizer, prepend incomplete UTF-8 suffix to next Feed, flush leftover as replacement chars in Flush",
+      "dify-agent-runtime/internal/sanitize/sanitize_test.go: add regression test for split UTF-8 runes across read boundaries"
+    ],
+    "risks": [
+      "Must preserve existing ANSI/CR/EOF state machine behavior in consumeRune/consumeVisible",
+      "Flush semantics for trailing incomplete runes need to match existing EOF handling",
+      "Repository has an AI disclosure conflict policy that may affect submission workflow"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's utf8_read_boundary_repro_test.go and run `go test ./internal/sanitize -mod=readonly -count=1 -v` from dify-agent-runtime; expect chunk sizes 1-5 to pass after fix",
+      "Run existing seven sanitizer tests to confirm ANSI/CR/EOF behavior unchanged",
+      "Add a Flush test where stream ends mid-rune to verify replacement-character emission"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred implementation approach for the pending-buffer fix"
+    ],
+    "why": "Issue provides a concrete, executable Go regression test and a clear root cause: PtySanitizer.Feed decodes each read chunk independently, so multi-byte UTF-8 runes split across read boundaries are replaced with U+FFFD. The bot comment corroborates the mechanism and points to the exact code path (sanitize.go Feed/Run). No open PR or duplicate issue covers this Go path; the referenced PR #41761 is a separate Python path."
   },
   "3f17002d3044f789aaf1b0ba6df119055532ffd1c801681b6a530fa268326724": {
     "confidence": 0.72,
@@ -55797,6 +55896,40 @@
     ],
     "why": "The issue documents a real API asymmetry with a deterministic reproduction, but the required change is an API design decision (removal keyed by session, user, or memory entry) that the reporter explicitly declines to propose, and the repository policy requires assignment before work. Without an agreed API shape, the code work is not actionable."
   },
+  "73921e5a67e01df7ef8c6312eec0cad7306ff679c582d7391b58f6f1d26e97b0": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pipecat/services/openai/realtime/llm.py: `_receive_task_handler` should not return after `_handle_evt_error` and should catch `ConnectionClosed` around the receive loop, pushing with `force_treat_as_permanent=True` unless `_disconnecting`",
+      "pipecat/services/openai/realtime/llm.py: `_ws_send` should push send failures with `force_treat_as_permanent=True`",
+      "pipecat/services/openai/realtime/llm.py: `_connect` should push connect failures with `force_treat_as_permanent=True`",
+      "AzureRealtimeLLMService inherits the corrected behavior"
+    ],
+    "risks": [
+      "Changing error-event handling from fatal to non-fatal could mask genuinely unrecoverable server errors if the error taxonomy is not respected",
+      "Marking send/connect failures permanent changes pipeline termination behavior and could affect existing users relying on transient retry semantics",
+      "AzureRealtimeLLMService inherits the change and may have provider-specific error semantics not covered by the OpenAI-focused reproduction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the issue's FakeSocket harness: one recoverable error event followed by a normal event must be read (server events read == 2) and the receive task must remain alive",
+      "Add a test where the fake socket raises `ConnectionClosedError(Close(1011, ...))` mid-session and assert exactly one permanent `ErrorFrame` is pushed and `is_usable` becomes False under `ProcessorUnusablePolicy.END`",
+      "Add a test where `websocket_connect` raises `ConnectionRefusedError` and assert a permanent error is reported",
+      "Run the targeted openai realtime service unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred error-classification policy for which realtime error events should remain fatal",
+      "Whether Azure realtime has provider-specific error events that differ from OpenAI's recoverable set"
+    ],
+    "why": "Issue provides a concrete, self-contained reproduction (fake socket, no network/API key) and pins the root cause to specific code paths: the `return` after `_handle_evt_error` in `_receive_task_handler`, the uncaught `ConnectionClosedError` around the receive loop, and non-permanent error pushes in `_ws_send`/`_connect`. The proposed fix mirrors an existing in-repo reference implementation (`OpenAILiveLLMService`), giving a clear reference-vs-implementation validation path. The dependency on #1781 is historical context for why the loop exit remained, not an unresolved blocker for the fix."
+  },
   "7395d5be26bcb443b1b23ca620e889adbd9b2b6c4f8d8d42a74b64599b9a01a3": {
     "confidence": 0.8,
     "contradictions": [
@@ -65322,6 +65455,37 @@
       "Whether the FFmpeg color defect is in scope for this repository or requires an upstream/runtime image change"
     ],
     "why": "Issue reports two defects: (A) response_format=b64_json dropped in _engine_inputs_from_video() with a concrete one-line diff and code anchors, and (B) FFmpeg MMXEXT color corruption with a model-free reproduction. However, open PR #13707 ('feat(vllm-omni): preserve generated video audio') overlaps the same omni_handler.py/output_formatter.py paths and the distinctive 'base64' semantic, is unmerged, and its root-cause coverage is unverified. Whether that PR already fixes the field-propagation defect is a materially blocking unknown that determines whether new code work is actionable."
+  },
+  "87d3bdf574edd51cd1f3d5d16ea9ec4b531f23bd986d29b93551b2dba3123311": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate claims high impact on agent/inference/RAG critical path, but the issue is an OAuth login failure with no algorithmic or runtime-path evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No actionable code change can be scoped from the supplied evidence; the auth failure path is unidentified"
+    ],
+    "risks": [
+      "Fixing the logger would not resolve the reported login failure",
+      "Auth failure may be environment-specific (Windows, VS Code 1.139.1) and not reproducible"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Not available: no reproduction steps, no failing test, no error detail beyond a truncated 'Cline OAuth login failed' log line"
+    ],
+    "unknowns": [
+      "Actual root cause of the OAuth login failure",
+      "Whether the failure is reproducible or environment-specific",
+      "Whether any existing PR already addresses the auth path"
+    ],
+    "why": "Issue is a user login failure report with no reproduction steps, no root-cause evidence, and no code anchor beyond a generic server.js process listing. The only concrete signal is a maintainer comment that the logger drops error details, which is a logging fix, not the auth failure itself; the auth issue remains open and undiagnosed."
   },
   "87e1e3883b8bcbdc45b2b762880717964635f4b88bdf38523ba82eaf48efc66c": {
     "confidence": 0.8,
@@ -121723,6 +121887,40 @@
       "Whether PR #13551 fully resolves the issue; maintainer preference on refusal vs. preservation."
     ],
     "why": "Issue provides a clear root cause (git reset --hard moves branch pointer), a minimal repro, and a concrete fix suggestion. An open PR (#13551) already targets the same code path with a test, but is not linked to the issue; the issue remains actionable for a fix or to guide review of the PR."
+  },
+  "faa508bbcf2f3164605650f0af515188a8d311b7124050706473b27732d8e69d": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/google/gemini_live/llm.py: move live.connect() inside failure handling so setup errors route through _handle_connection_error",
+      "src/pipecat/services/google/gemini_live/llm.py: override _classify_error for google-genai APIError close codes (1007/1008 permanent)",
+      "src/pipecat/services/google/gemini_live/llm.py: pass force_treat_as_permanent=True and exception=error on reconnect exhaustion and in _handle_send_error",
+      "src/pipecat/services/google/gemini_live/llm.py: clear _bot_is_responding and push TTSStoppedFrame on connection loss in _disconnect()"
+    ],
+    "risks": [
+      "Changing _disconnect() to push TTSStoppedFrame may interact with existing interruption/reconnect state handling",
+      "Classifying APIError close codes could affect other google-genai error paths if codes are reused",
+      "Maintainer may prefer a different placement for the connect() try/except"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests using the issue's fake live client for: session fails to open (1008), reconnect ladder exhausted, send-side error, and mid-reply drop with successful reconnect",
+      "Assert ErrorFrame reaches on_pipeline_error, is_usable becomes False, ProcessorUnusablePolicy.END ends the pipeline, and EndFrame is not deferred 30s after a mid-reply drop",
+      "Run targeted unit tests for pipecat.services.google.gemini_live and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for GeminiLive error classification not captured in supplied evidence"
+    ],
+    "why": "Issue provides a concrete, reproducible failure with a minimal fake-client repro, exact code anchors (_connection_task_handler, _handle_connection_error, _handle_send_error, _disconnect), and a specific proposed fix aligned with OpenAILiveLLMService behavior. No duplicate/merged coverage found and no maintainer design conflict is established."
   },
   "fab5383adfc009881f8e0b1d2f1e8602ce171c406b5ce1c4c2236485154777f5": {
     "confidence": 0.6,
