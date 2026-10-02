@@ -48225,6 +48225,45 @@
     ],
     "why": "The issue presents a clear, well-bisected root cause: DiffusionGemmaForConditionalGeneration borrows Gemma4 methods by class assignment but never runs Gemma4's __init__, so _enable_mm_lora is unset and any image request raises AttributeError and kills EngineCore. However, an open PR (#54309) already implements the suggested fix on the same code path, and the supplied evidence explicitly flags unresolved duplicate/merged-fix coverage (semantic_overlap_requires_review, direct_code_overlap false, root_cause_coverage false). Whether new code work is actionable depends on comparing that PR's implementation boundary, which is a materially blocking unknown."
   },
+  "64b6b7115ad4040c28db5267ba8482d8506dc6782bc097c62e3cd73ae133a43c": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/trainer/dpo.py: call keep_trainable_dtype_on_resume before train(resume_from_checkpoint=...)",
+      "src/soup_cli/trainer/ipo.py: same guarded call",
+      "src/soup_cli/trainer/grpo.py: same guarded call",
+      "src/soup_cli/trainer/reward_model.py: same guarded call",
+      "add per-wrapper resume tests driving wrapper train() with a fake trainer"
+    ],
+    "risks": [
+      "Helper keep_trainable_dtype_on_resume does not exist on main until #1504 merges, so the change is blocked on that dependency",
+      "RewardTrainer score head keeps bf16 while adapter is upcast; fix must not alter score-head dtype",
+      "IPO wrapper not directly measured; assumed same via DPOTrainer with loss_type=ipo",
+      "No GPU 4-bit validation; CPU table fakes the 4-bit flag"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "CPU reproduction script from the issue: build DPOTrainer on tiny-Qwen2 with LoRA, set is_loaded_in_4bit=True, save checkpoint, call _load_from_checkpoint, assert trainable dtypes stay bf16",
+      "Repeat analogous CPU checks for GRPO and Reward trainers",
+      "Per-wrapper test that drives wrapper train() with a fake trainer and asserts the helper is invoked when resume_from_checkpoint is not None",
+      "Optional GPU 4-bit run for DPO/GRPO/Reward to confirm dtype and metric behavior"
+    ],
+    "unknowns": [
+      "Whether #1504 will merge and land the helper on main before this follow-up can be implemented",
+      "Whether the fp32/bf16 difference materially changes metrics of a real resumed run for DPO/GRPO/Reward"
+    ],
+    "why": "Issue provides a concrete, measured root cause: TRL trainers cast trainable adapter params to bf16 at construction, and Trainer._load_from_checkpoint reloads via load_adapter with autocast_adapter_dtype=True, upcasting to fp32; the #1504 helper restores bf16 in all four trainers. Maintainer confirmed code paths and scoping, and explicitly requested a separate PR after #1504 merges."
+  },
   "64cc70c942f8fe6a88061b32a08632c4ca6375755cc173c16c930fc203e7e0e9": {
     "confidence": 0.7,
     "contradictions": [],
@@ -54276,6 +54315,42 @@
       "Whether maintainers prefer Option A (minimal merge) or Option B (recursive splitter) for the long term; the issue suggests Option A as lower risk, but maintainer preference is not confirmed"
     ],
     "why": "Issue provides a precise root cause (has_custom branch bypasses chunk_token_num), a reproducible example with expected vs actual output, and a clear minimal fix (Option A). Maintainer comment confirms the diagnosis and suggests a concrete implementation path. The bug is user-visible and severe (429k chunks vs 1.4k), and the fix is well-scoped."
+  },
+  "6f5aa6bb171cefed63ff3cba86825cee4ce556932af778b9afa1b4f7355af3d0": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue body attributes cause to zod-to-json-schema; comments show zod v4 branch is taken and zod-to-json-schema is never called",
+      "Issue body reports patching had no effect while still flagging zod-to-json-schema as the cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No in-repo source change identified; fix belongs to @modelcontextprotocol/sdk (mapMiniTarget default / target option in mcp.ts)",
+      "At most a dependency bump in server-filesystem once an upstream SDK release ships"
+    ],
+    "risks": [
+      "Fixing in this repo would require post-processing SDK-generated schemas, duplicating upstream work",
+      "Dialect choice is contested upstream (spec permits explicit draft-07), so a local change may conflict with the eventual SDK decision",
+      "PR #4775 overlap unresolved; duplicate effort risk"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce via stdio tools/list against server-filesystem built from f46d957 and assert $schema dialect",
+      "Unit-test toJsonSchemaCompat with and without target:'draft-2020-12' to confirm dialect selection",
+      "Diff draft-07 vs 2020-12 output for tuple shapes (items vs prefixItems) to confirm non-cosmetic impact"
+    ],
+    "unknowns": [
+      "Whether maintainers want a local workaround in server-filesystem or will wait for the upstream SDK fix",
+      "Whether PR #4775 already covers the intended change",
+      "Which upstream resolution (server changes dialect vs validator honors draft-07) will be accepted"
+    ],
+    "why": "Comments establish the root cause is in @modelcontextprotocol/sdk (mapMiniTarget defaulting to draft-7, mcp.ts not passing target), not in this repo's src/filesystem; upstream typescript-sdk issues #2084/#2085/#2653/#2677/#2721 already track the fix, and the spec-permits-draft-07 counter-reading (#2532/#2534) makes the repair a maintainer call. No actionable code change exists in this repository beyond a dependency bump after upstream lands, and PR #4775 semantically overlaps with unresolved duplicate status."
   },
   "6f5fc081ddc6b4ba03f712ff2bc027a4fbb09871ac3c4df152ebce023ea6cb9d": {
     "confidence": 0.85,
@@ -79809,6 +79884,40 @@
     ],
     "why": "The issue itself is technically strong: it identifies a concrete root cause (Quack 0.6.5 removed quack.activation.sub_packed_f32x2, while the vendored MSA revision 087c161 still calls it), gives a controlled A/B regression boundary, a minimal reproduction, and a known upstream fix (MSA #12, revision f355c37). However, the supplied evidence shows the fix is already proposed by open PR #56545, which updates fmha_sm100.cmake from 087c161 to the fixed MSA revision. The duplicate assessment explicitly says semantic_overlap_requires_review and forbids automatic duplicate task creation. Whether any code work remains actionable depends on comparing #56545's actual diff against the issue's root cause, which is a materially blocking unknown. Additionally, the repository policy status is ai_disclosure_conflict, which is a disclosure requirement that must be resolved before any public contribution."
   },
+  "a4bee17f8541a8d39e4ded872c6adbec4f73171e2983a3b5c2f8be5b484b62fa": {
+    "confidence": 0.6,
+    "contradictions": [
+      "PR #7489 is CLOSED yet listed as COVERAGE for the issue; duplicate status human_review_required with root_cause_coverage false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mem0-ts GoogleEmbedder.embedBatch: send one Content object per text",
+      "Validate response cardinality and reject missing/empty vectors so per-text fallback runs"
+    ],
+    "risks": [
+      "Closed PR #7489 may already cover the same fix, making duplicate work",
+      "AI disclosure conflict (ai_disclosure_conflict) may block public submission",
+      "Issue author states they have not personally reproduced it"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Mocked regression asserting one content part per text for gemini-embedding-2",
+      "Regression for malformed/short embedding responses triggering fallback",
+      "Live check comparing gemini-embedding-2 vs gemini-embedding-001 returning N vectors for N texts"
+    ],
+    "unknowns": [
+      "Whether closed PR #7489 already implements the same fix and was merged or rejected",
+      "Whether the repository's AI disclosure policy permits this contribution path"
+    ],
+    "why": "Issue #7488 provides a concrete root cause (GoogleEmbedder.embedBatch passes a bare string array as contents, which gemini-embedding-2 collapses into one multipart item) and a live reproduction showing 1 vs 2 embeddings. However, the supplied evidence contains a materially blocking unknown: PR #7489 is CLOSED and references this issue with reference_relation COVERAGE, but duplicate status is human_review_required and root_cause_coverage is false. Whether that closed PR already covers the fix determines whether new code work is actionable."
+  },
   "a4dce4399322ce56b8fa8b71eda5fe290043b04de39c5042c67824689ee486fe": {
     "confidence": 0.82,
     "contradictions": [],
@@ -82144,6 +82253,46 @@
       "Maintainer preference on caching strategy not confirmed"
     ],
     "why": "The issue describes a performance bug with clear repro and latency data, but lacks root-cause analysis and maintainer confirmation. Existing PRs are keyword-overlap only and not direct competition. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. However, the fix likely involves provider-specific caching behavior and may need design confirmation."
+  },
+  "aa80d73f0385405688a4fcbc4ebf84379fa9f4a2d035dbac06c32d1abff26026": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body asserts a verified source-level root cause in compact_messages()/messages_since_kickoff(), while the reporter's follow-up attributes resolution to a model switch with auto-compaction disabled, leaving the automatic compaction path unexercised",
+      "Issue body states no existing issue covers this, while the maintainer comment points to possible related in-progress work by lifeizhou-ap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/context_mgmt/mod.rs compact_messages() metadata visibility",
+      "crates/goose-agent/src/operation.rs messages_since_kickoff() kickoff scan",
+      "crates/goose/src/agents/state_machine/ops_compaction.rs context_tokens() staleness",
+      "acp/server.rs AgentEvent::HistoryReplaced handling"
+    ],
+    "risks": [
+      "Fixing metadata visibility may not address a model/provider-path interaction that is the actual trigger",
+      "Changing messages_since_kickoff() fallback semantics could alter request construction for unrelated sessions",
+      "Explicit HistoryReplaced handling in ACP may change frontend cache invalidation behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Re-enable auto-compaction on the current model and attempt to reproduce the byte-identical-request freeze across an idle/sleep cycle",
+      "Add a regression test asserting the preserved post-compaction user message retains user_visible=true after save_compacted_conversation()",
+      "Add a test that messages_since_kickoff() includes a newly persisted user message after compaction",
+      "Instrument request payload hashing to confirm whether identical inputTokens/cacheRead across turns corresponds to a byte-identical request"
+    ],
+    "unknowns": [
+      "Whether the freeze reproduces with auto-compaction enabled on the current model",
+      "Whether lifeizhou-ap's in-progress work already covers this defect",
+      "Whether the identical inputTokens/cacheRead signature reflects a byte-identical request or provider-side accounting",
+      "Whether the stale total_tokens counter is reproducible independently of the model/provider path"
+    ],
+    "why": "The reporter's own follow-up materially weakens the original root-cause claim: all 3 freezes occurred on one model, zero in 1,338 turns after switching models, and auto-compaction was disabled within hours of the switch, so the automatic compaction path has not been exercised since. The proposed fix targets compact_messages()/messages_since_kickoff()/ops_compaction, but the evidence no longer establishes that path as the cause versus a model/provider request-construction interaction. The maintainer comment also asks the reporter to check for other in-progress PRs/issues (lifeizhou-ap) before patching, and no such check is present in the supplied evidence."
   },
   "aa9313a01d7976467910f3969bdb17e27ddfddd7246bf5bd278c74fb2d35abb0": {
     "confidence": 0.85,
@@ -98409,6 +98558,42 @@
     ],
     "why": "The issue identifies a concrete root cause: a data-dependent RuntimeError in _adjust_embedding_length during multimodal chunked prefill kills the entire scheduler process via SIGQUIT, amplified by client retries across nodes. The proposed fix (abort request instead of server) is actionable and testable, with clear reproduction evidence and a related issue (#37968) pointing to a specific offset bug."
   },
+  "cc76d363bb9fece1b0bfb77fd1a8201d0db261f71adddc12a8341969cb35e553": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment lists PR #56273 touching the same PLE embedding paths while duplicate status is only 'semantic_overlap_requires_review'",
+      "related_issue_assessment flags #59642 as potential overlap but sharedBehaviorSignals is empty"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/models/qwen4_exp/nvidia/ngram_embedding.py: from_quant_config dispatch for INCConfig",
+      "vllm/models/qwen4_exp/common/ngram_embedding.py: PLE method selection based on per-layer checkpoint metadata"
+    ],
+    "risks": [
+      "Fix may assume all INC checkpoints have unquantized PLE; issue itself notes per-layer metadata should be checked",
+      "Overlap with PR #56273 could make this redundant or conflict on the same files",
+      "ai_disclosure_conflict policy status may block automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with Intel/Qwen3.8-Flash-Next-W4A16-AutoRound on 2x A100, TP=2, EP enabled, confirming NotImplementedError at ngram_embedding.py from_quant_config",
+      "Add regression test asserting PLE selects unquantized method when checkpoint metadata marks PLE unquantized while model-level config is INCConfig",
+      "Verify W4A16 MARLIN MoE path still initializes and serves after fix"
+    ],
+    "unknowns": [
+      "Whether PR #56273 or #59740 already fixes the INCConfig PLE dispatch root cause",
+      "Whether the checkpoint exposes per-layer quantization metadata needed for correct dispatch",
+      "Whether maintainers consider this covered by the dedicated qwen38-flash-next image path"
+    ],
+    "why": "Issue describes a concrete quantization-dispatch failure (INCConfig rejected by Qwen4ExpPLEEmbeddingMethod.from_quant_config) with traceback and a tested workaround, but supplied evidence shows unresolved duplicate/overlap: PR #56273 directly touches the same PLE embedding paths and is titled 'Support packed NVFP4 Qwen4Exp PLE embeddings', and issue #59642 is flagged as potential overlap. Whether existing PRs already cover this root cause is a materially blocking unknown for actionable code work."
+  },
   "cc84a3e9ba4c69518ffba183993e7aad400f0de593785d219ab0e18b2e6deebf": {
     "confidence": 0.82,
     "contradictions": [],
@@ -105171,6 +105356,42 @@
       "Whether maintainer prefers full ReLoRA restart implementation vs. rename-and-document contract (explicitly stated as a maintainer decision, but both paths are actionable)"
     ],
     "why": "Issue identifies a concrete algorithmic conformance gap in ReLoRA restart (no merge of B@A into base before pruning) plus a deterministic tie-handling bug in magnitude_prune_tensor (strict > threshold zeroes all entries, killing both LoRA factors and producing zero gradients). Maintainer confirmed both claims with reproducible measurements (base weight delta 0, MSE 142.12 vs control 8.77e-13; nonzero A/B = 0 with requested keep 4; grad norms 0). This is a genuine LLM algorithm mechanism (PEFT restart semantics, numerical pruning correctness) with a clear reference-vs-implementation validation path."
+  },
+  "d97101b11438f7336dfcf442d4598a9c9c5b4c37f130f9639560f19d5dbe034a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.algorithm_evidence claims post_training_objective/PEFT mechanisms, but the issue is documentation/CLI-plumbing, not an algorithm mechanism"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "docs/*.md and README.md invocation spellings (regenerations, soup-serve, drop --live, soup --no-telemetry train, soup eval benchmark, --max-iterations, --num-speculative-tokens)",
+      "src/soup_cli/recipes/catalog.py online-dpo-smollm2-135m description",
+      "docs/data.md --benchmarks wording",
+      "tests/test_issue979_documented_cli_flags_exist.py generalized to all soup invocations and recipe descriptions"
+    ],
+    "risks": [
+      "Overlap with #1448 and #1440 on shared stack signatures (data_score.py, parsers.py) may indicate duplicate coverage",
+      "UI plugin registry direction unresolved pending maintainer ruling",
+      "Doc-only fixes may be judged low-value without the guard generalization"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run each documented invocation from the Reproduction block and assert exit 0 or removal from docs",
+      "Mutation test: reintroduce --spec-tokens or --online-dpo-judge and assert the generalized guard fails",
+      "Register a UI tab and assert it appears in served HTML (only if maintainer rules to wire the registry)"
+    ],
+    "unknowns": [
+      "Maintainer ruling on whether to wire or remove the Web UI plugin registry",
+      "Whether #1448/#1440 already cover the same doc-vs-CLI mismatches"
+    ],
+    "why": "Issue documents concrete, reproducible doc-vs-CLI mismatches with exact file:line anchors, executed evidence, and acceptance criteria. Remaining work (8 doc spellings, decontamination wording, guard generalization) is actionable; the UI plugin registry has an explicit maintainer ruling pending but is separable and does not block the rest."
   },
   "d991b32a94ede3b515b261d244c1fcfae818f94136971f1ab0a7511776fb2e76": {
     "confidence": 0.8,
@@ -113971,6 +114192,35 @@
     ],
     "why": "Issue reports a user-visible bug with a plausible root cause (Gemini 3.5 API change) and a minimal repro, but the fix requires design confirmation: whether to map reasoning_effort to thinking_summaries on generateContent or add Interactions API support. No maintainer input or help-wanted signal, and the only open PR is unrelated. Actionability is blocked by missing maintainer direction on the intended API behavior."
   },
+  "eab966116eae86228f935fbb3e46a42237832a8c1d7342c8a7bd11e5cc77dd25": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Maintainer comment leans toward documenting the limitation rather than patching, while the candidate frames this as a reproducible fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Bedrock provider image preprocessing or validation path"
+    ],
+    "risks": [
+      "Maintainer may prefer documentation over code change",
+      "Automatic resizing could alter image semantics or increase payload size"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a multi-image Bedrock request containing an image >2000px and assert either automatic resize or a clear preflight error"
+    ],
+    "unknowns": [
+      "Whether maintainers want automatic resizing, preflight validation, or documentation only",
+      "Exact code location in the Bedrock provider where image dimensions are handled"
+    ],
+    "why": "The issue describes a Bedrock ValidationException for oversized images in multi-image requests, but the maintainer comment explicitly questions whether a code fix is feasible and suggests documenting the limitation instead. The candidate's own actionability evidence shows root_cause_signal=false and no code anchors beyond the error string, so the actionable code surface is unresolved."
+  },
   "eabf8d2ad6a6d650c505b891fa4ff82931bb366ac6de53b459896e57543c7fb8": {
     "confidence": 0.8,
     "contradictions": [],
@@ -119103,6 +119353,37 @@
       "Whether maintainers prefer the structural mixin approach over the minimal attribute-set fix"
     ],
     "why": "The issue gives a precise, bisected root cause (borrowed Gemma4 methods read `_enable_mm_lora`, which DiffusionGemma's __init__ never sets) and a concrete reproduction path, but an open PR (#54309) already implements the fix on the same file, and a contributor comment states the fix already exists there. The duplicate/coverage question is unresolved, which materially determines whether new code work is actionable."
+  },
+  "f509996b7a9c9220d0cc9a5651252fa3bf3c4a7505b1a2f190fe2dd94db0ad77": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/cost_calculator.py: add input_cost_per_character and output_cost_per_character to _NON_TOKEN_RATE_FIELDS (or equivalent pricing-detection condition)",
+      "litellm/litellm_core_utils/llm_cost_calc/utils.py: replace truthiness check on input_cost_per_character with an explicit None check so 0.0 selects cost_per_character instead of raising KeyError"
+    ],
+    "risks": [
+      "Open PR #38812 touches the same cost-metric selection area (zero-rate handling) and may partially overlap the secondary defect; implementation boundary should be compared before coding",
+      "Broadening the pricing-detection condition could change model-name selection for other non-token metrics, so the change should stay scoped to character fields",
+      "Legal/CLA confirmation is required before submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: register an openai/<model> deployment with api_base and input_cost_per_character=1e-8, POST /v1/audio/speech with a known character count, assert x-litellm-response-cost == chars*1e-8 and LiteLLM_SpendLogs.spend matches",
+      "Positive control: same request against openai/tts-1 must still yield 11*1.5e-05, proving no regression to built-in character pricing",
+      "Unit test for select_cost_metric_for_model with input_cost_per_character=0.0 asserting cost_per_character is selected rather than KeyError"
+    ],
+    "unknowns": [
+      "Whether PR #38812 already fixes the secondary zero-rate KeyError in select_cost_metric_for_model, which would narrow the remaining scope to the primary _NON_TOKEN_RATE_FIELDS fix"
+    ],
+    "why": "Issue provides a concrete, source-anchored root cause: `_select_model_name_for_cost_calc` / `_cost_map_entry_prices_anything` in cost_calculator.py omits `input_cost_per_character`/`output_cost_per_character` from the non-token rate fields, so character-priced deployments fall back to a shared key stripped of custom pricing and silently record spend=0. A minimal fix (add the two fields to `_NON_TOKEN_RATE_FIELDS`) plus a positive control (tts-1 works) and a config-only reproduction give a clear reference-vs-implementation validation path. Track is agent_ai_infra, so the algorithm-only rejection rule does not apply."
   },
   "f51968efa12f9b85d7e4ca0b81eb15ec8471a22e3df2d1d51521422c4e9bbd3d": {
     "confidence": 0.6,
