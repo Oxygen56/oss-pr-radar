@@ -21281,6 +21281,7 @@ def _request_publication_from_task_result(
         target_base=target_base,
         target_base_bound="targetBase" in value,
         replacement_of_request_id=replacement_of_request_id,
+        followup_wake_digest=value.get("followupDigest") or None,
     )
     publication_evidence_from_request(request["request"])
     if (
@@ -23305,8 +23306,12 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 if (
                     isinstance(tracking_publication, dict)
                     and set(tracking_publication)
-                    == {"baseBranch", "branch", "commitSha", "prUrl", "status"}
-                    and value.get("handoffMode") == "controller_merge_complete"
+                    in (
+                        {"branch", "commitSha", "prUrl", "status"},
+                        {"baseBranch", "branch", "commitSha", "prUrl", "status"},
+                    )
+                    and value.get("handoffMode")
+                    in {"controller_merge_required", "controller_merge_complete"}
                     and candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
                 ):
                     # Finalization itself can rewrite authentication fields.

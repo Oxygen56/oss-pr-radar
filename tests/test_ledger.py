@@ -9922,6 +9922,138 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path, publicati
         )
 
 
+def test_pr_update_request_preserves_result_wake_after_followup_refresh(tmp_path):
+    import base64
+    import hashlib
+    import sqlite3
+
+    from oss_pr_radar.repo_probe import rebind_probe_receipt
+
+    store, args = publication_request_fixture(tmp_path)
+    published = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        published["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    pr_url = "https://github.com/a/b/pull/9"
+    store.consume_publication_permit(permit["permit_id"], pr_url)
+    checked_at = iso_z(datetime.now(UTC))
+    item = {
+        "url": pr_url,
+        "headSha": args["commit_sha"],
+        "actionDigest": "original-action",
+        "taskActionDigest": "original-task-action",
+        "taskFollowupRequired": True,
+        "taskActions": ["当前分支检查失败"],
+        "evidence": {"actionableCheckNames": ["Ruff"]},
+        "checkedAt": checked_at,
+    }
+    store.import_pr_followups(
+        {"version": "pr_followup_v3", "generatedAt": checked_at, "items": [item]}
+    )
+    source_wake = store.pr_followup_candidates()[0]["wakeDigest"]
+    store.reserve_pr_followup(
+        thread_id=args["thread_id"],
+        wake_digest=source_wake,
+        prepared_head_sha=args["commit_sha"],
+    )
+
+    value = json.loads(Path(args["evidence_path"]).read_text())
+    value.pop("reproductionReceipt")
+    value["followupDigest"] = source_wake
+    result_digest = sha256_json(value)
+    receipt = rebind_probe_receipt(
+        args["probe_receipt"],
+        repo="a/b",
+        base_sha=args["selected_base_sha"],
+        code_paths=args["code_paths"],
+        issue_url=args["issue_url"],
+        task_id="intent-1",
+        thread_id="intent-1",
+        head_sha=args["head_sha"],
+        commit_sha=args["commit_sha"],
+        result_digest=result_digest,
+    )
+    raw = json.dumps(
+        value | {"resultDigest": result_digest, "reproductionReceipt": receipt}
+    ).encode()
+    args = args | {
+        "evidence_digest": hashlib.sha256(raw).hexdigest(),
+        "evidence_raw_base64": base64.b64encode(raw).decode(),
+        "probe_receipt": receipt,
+        "result_digest": result_digest,
+    }
+    refreshed_at = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": refreshed_at,
+            "items": [
+                item
+                | {
+                    "actionDigest": "refreshed-action",
+                    "taskActionDigest": "refreshed-task-action",
+                    "checkedAt": refreshed_at,
+                }
+            ],
+        }
+    )
+    with store.connect() as connection:
+        mutable_wake = connection.execute(
+            "SELECT wake_digest FROM pr_followups WHERE opportunity_key='a/b#1'"
+        ).fetchone()[0]
+        historical_requests = [
+            dict(row) for row in connection.execute("SELECT * FROM publication_requests")
+        ]
+        historical_events = [dict(row) for row in connection.execute("SELECT * FROM events")]
+        with sqlite3.connect(tmp_path / "legacy.sqlite3") as copied:
+            connection.backup(copied)
+    assert mutable_wake != source_wake
+
+    legacy_store = RadarLedger(tmp_path / "legacy.sqlite3")
+    legacy = legacy_store.create_publication_request(**args)
+    assert legacy["request"]["followupWakeDigest"] == mutable_wake
+    update = store.create_publication_request(**args, followup_wake_digest=source_wake)
+    assert update["request_id"] == legacy["request_id"]
+    assert update["status"] == "PENDING"
+    assert update["request"]["publicationKind"] == "PR_UPDATE"
+    assert update["request"]["followupWakeDigest"] == json.loads(raw)["followupDigest"]
+    with store.connect() as connection:
+        for row in historical_requests:
+            assert (
+                dict(
+                    connection.execute(
+                        "SELECT * FROM publication_requests WHERE request_id=?",
+                        (row["request_id"],),
+                    ).fetchone()
+                )
+                == row
+            )
+        for row in historical_events:
+            assert (
+                dict(connection.execute("SELECT * FROM events WHERE id=?", (row["id"],)).fetchone())
+                == row
+            )
+    saved_legacy = legacy_store.publication_request(legacy["request_id"])
+    returned_legacy = legacy_store.create_publication_request(
+        **args, followup_wake_digest=source_wake
+    )
+    assert returned_legacy["request"] == legacy["request"]
+    assert legacy_store.publication_request(legacy["request_id"]) == saved_legacy
+
+
+def test_publication_request_rejects_invalid_explicit_followup_wake(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    for invalid in ("", "not-a-wake"):
+        with pytest.raises(LedgerError, match="publication follow-up wake digest is invalid"):
+            store.create_publication_request(**args, followup_wake_digest=invalid)
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+
+
 def test_existing_publication_request_without_snapshot_upgrades_idempotently(tmp_path):
     store, args = publication_request_fixture(tmp_path)
 

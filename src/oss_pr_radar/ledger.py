@@ -11398,7 +11398,13 @@ class RadarLedger:
         target_base_bound: bool = False,
         evidence_raw_base64: str | None = None,
         replacement_of_request_id: str | None = None,
+        followup_wake_digest: str | None = None,
     ) -> dict[str, Any]:
+        if followup_wake_digest is not None and (
+            not isinstance(followup_wake_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", followup_wake_digest) is None
+        ):
+            raise LedgerError("publication follow-up wake digest is invalid")
         now = iso_z(datetime.now(UTC))
         request_identity = [
             issue_url,
@@ -11539,7 +11545,8 @@ class RadarLedger:
                     {
                         "existingPrUrl": previous_publication["pr_url"],
                         "previousCommitSha": previous_commit_sha,
-                        "followupWakeDigest": followup["wake_digest"] if followup else None,
+                        "followupWakeDigest": followup_wake_digest
+                        or (followup["wake_digest"] if followup else None),
                     }
                 )
             if replacement_source_request is not None:

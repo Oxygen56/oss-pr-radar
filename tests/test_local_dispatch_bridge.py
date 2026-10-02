@@ -24966,6 +24966,7 @@ def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consum
         value=receipt_bound,
     )
     assert historical_context["prFollowup"]["wakeDigest"] == replacement["wakeDigest"]
+    assert publication_request["followupWakeDigest"] == receipt_bound["followupDigest"]
     assert historical_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] == [
         "runtime.py",
         "runtime/new.py",
@@ -34871,7 +34872,7 @@ def test_explicit_before_fix_failure_does_not_block_current_passing_fix(tmp_path
     assert len(ingested["publicationRequests"]) == 1
 
 
-def _published_tracking_merge_fixture(monkeypatch, tmp_path):
+def _published_tracking_merge_fixture(monkeypatch, tmp_path, *, required=False):
     store, worktree, result_path = _controller_commit_result(tmp_path)
     source_raw = result_path.read_bytes()
     source_value = json.loads(source_raw)
@@ -34951,17 +34952,19 @@ def _published_tracking_merge_fixture(monkeypatch, tmp_path):
             prepared_followup_head=previous_head,
         ).read_bytes()
     )
-    merged = subprocess.run(
-        ["git", "merge", "--no-commit", "--no-ff", base_sha],
-        cwd=worktree,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert merged.returncode == 1, merged.stderr
+    if not required:
+        merged = subprocess.run(
+            ["git", "merge", "--no-commit", "--no-ff", base_sha],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert merged.returncode == 1, merged.stderr
     (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
-    run_git(worktree, "add", "runtime.py")
-    run_git(worktree, "commit", "-m", "fix: resolve runtime conflict")
+    if not required:
+        run_git(worktree, "add", "runtime.py")
+        run_git(worktree, "commit", "-m", "fix: resolve runtime conflict")
     merge_head = run_git(worktree, "rev-parse", "HEAD")
     value = source_value | {
         "contextDigest": context["contextDigest"],
@@ -34986,29 +34989,54 @@ def _published_tracking_merge_fixture(monkeypatch, tmp_path):
     }
     candidate = store.task_result_candidates()[0]
     with MODULE._task_worktree_private_descriptor(candidate) as opened:
-        value, _raw = MODULE._bind_final_reproduction_receipt(
-            candidate=candidate,
-            context=context,
-            value=value,
-            result_access=opened,
-            managed_ledger=managed,
-            write_result=False,
-        )
+        if required:
+            value["handoffMode"] = "controller_merge_required"
+            value["publication"].pop("baseBranch")
+            for field in (
+                "commitSha",
+                "previousCommitSha",
+                "mergeResolutionFiles",
+                "controllerCommitChangedFiles",
+                "codePaths",
+                "reproductionReceipt",
+                "probeReceipt",
+                "resultDigest",
+                "independentReview",
+            ):
+                value.pop(field, None)
+        else:
+            value, _raw = MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=opened,
+                managed_ledger=managed,
+                write_result=False,
+            )
         MODULE._write_task_result_json_to_private(opened, value)
-    _write_explicit_controller_review(tmp_path, value)
+    if not required:
+        _write_explicit_controller_review(tmp_path, value)
     state = tmp_path / "state"
     state.mkdir(mode=0o700, exist_ok=True)
     monkeypatch.setattr(MODULE, "STATE", state)
     return store, managed, worktree, result_path, context, source_request
 
 
-def test_ingest_tracking_merge_recovers_metadata_then_requires_fresh_review(monkeypatch, tmp_path):
+@pytest.mark.parametrize("required", [False, True])
+def test_ingest_tracking_merge_recovers_metadata_then_requires_fresh_review(
+    monkeypatch, tmp_path, required
+):
     store, _managed, worktree, result_path, _context, source = _published_tracking_merge_fixture(
-        monkeypatch, tmp_path
+        monkeypatch, tmp_path, required=required
     )
     original_raw = result_path.read_bytes()
     original = json.loads(original_raw)
-    assert MODULE._controller_review_result(SimpleNamespace(ledger=store.path), original)
+    if required:
+        assert original["handoffMode"] == "controller_merge_required"
+        assert set(original["publication"]) == {"branch", "commitSha", "prUrl", "status"}
+        assert run_git(worktree, "status", "--porcelain") == "M runtime.py"
+    else:
+        assert MODULE._controller_review_result(SimpleNamespace(ledger=store.path), original)
 
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
     normalized = json.loads(result_path.read_bytes())
@@ -35016,12 +35044,12 @@ def test_ingest_tracking_merge_recovers_metadata_then_requires_fresh_review(monk
     assert first["publicationRequests"] == []
     assert normalized["quality"]["independent_review_passed"] is False
     assert "independentReview" not in normalized
-    assert normalized["commitSha"] == original["commitSha"]
-    assert normalized["resultDigest"] != original["resultDigest"]
-    assert (
-        normalized["reproductionReceipt"]["receiptDigest"]
-        != original["reproductionReceipt"]["receiptDigest"]
-    )
+    assert normalized["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert normalized["handoffMode"] == "controller_merge_complete"
+    assert normalized["resultDigest"] != original.get("resultDigest")
+    assert normalized["reproductionReceipt"]["receiptDigest"] != original.get(
+        "reproductionReceipt", {}
+    ).get("receiptDigest")
     assert MODULE._controller_review_result(SimpleNamespace(ledger=store.path), normalized) is None
     assert (
         MODULE._publication_payload_from_evidence(normalized, normalized["issueUrl"])
@@ -35047,11 +35075,83 @@ def test_ingest_tracking_merge_recovers_metadata_then_requires_fresh_review(monk
     assert request["publicationKind"] == "PR_UPDATE"
     assert request["existingPrUrl"] == original["prUrl"]
     assert request["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
-    assert request["previousCommitSha"] == original["previousCommitSha"]
+    assert request["previousCommitSha"] == original.get("previousCommitSha", original["headSha"])
     assert (
         MODULE._publication_payload_from_evidence(bound, bound["issueUrl"])
         == request["publication"]
     )
+
+
+def test_publication_request_keeps_authenticated_wake_after_followup_snapshot_drift(
+    monkeypatch, tmp_path
+):
+    store, _managed, _worktree, result_path, _context, source = _published_tracking_merge_fixture(
+        monkeypatch, tmp_path
+    )
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["errors"] == [], first
+    normalized = json.loads(result_path.read_bytes())
+    source_wake = normalized["followupDigest"]
+    _write_explicit_controller_review(tmp_path, normalized)
+    actual_request = MODULE._request_publication_from_task_result
+    observed_wakes = []
+
+    def request_after_snapshot_refresh(ledger, **kwargs):
+        # The signed result is already finalized and freshly reviewed; a
+        # concurrent official snapshot replaces only the mutable follow-up row.
+        value = kwargs["value"]
+        assert value["followupDigest"] == source_wake
+        refreshed_at = iso_z(datetime.now(UTC) + timedelta(seconds=2))
+        ledger.import_pr_followups(
+            {
+                "version": "pr_followup_v3",
+                "generatedAt": refreshed_at,
+                "items": [
+                    {
+                        "url": value["prUrl"],
+                        "headSha": value["previousCommitSha"],
+                        "actionDigest": "later-official-action",
+                        "taskActionDigest": "later-official-task-action",
+                        "taskFollowupRequired": True,
+                        "taskActions": ["复核后续官方快照中的当前冲突"],
+                        "evidence": {
+                            "mergeConflict": True,
+                            "baseRefName": "main",
+                            "baseSha": value["mergeBaseSha"],
+                            "mergeConflictFiles": ["runtime.py"],
+                        },
+                        "checkedAt": refreshed_at,
+                    }
+                ],
+            }
+        )
+        with ledger.connect() as connection:
+            current_wake = connection.execute(
+                "SELECT wake_digest FROM pr_followups WHERE opportunity_key='a/b#1'"
+            ).fetchone()[0]
+        assert current_wake != source_wake
+        observed_wakes.append(current_wake)
+        return actual_request(ledger, **kwargs)
+
+    monkeypatch.setattr(
+        MODULE, "_request_publication_from_task_result", request_after_snapshot_refresh
+    )
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert second["errors"] == [], second
+    assert len(second["publicationRequests"]) == 1
+    request = store.publication_request(second["publicationRequests"][0]["requestId"])["request"]
+    bound, _digest = MODULE.publication_evidence_from_request(request)
+    assert len(observed_wakes) == 1
+    assert request["followupWakeDigest"] == bound["followupDigest"] == source_wake
+    assert request["followupWakeDigest"] != observed_wakes[0]
+    assert request["publication"] == source["publication"]
+    assert request["probeReceipt"]["resultDigest"] == bound["resultDigest"]
+    # Correct identity cannot promote the original conflict-only preparation
+    # into permission for historical publication review.
+    with pytest.raises(
+        RuntimeError, match="publication independent review signed context mismatch"
+    ):
+        MODULE._publication_review_context(store, request=request, value=bound)
 
 
 @pytest.mark.parametrize(
