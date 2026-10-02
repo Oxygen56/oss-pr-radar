@@ -9460,8 +9460,8 @@ def test_authenticated_pr_update_retirement_requires_new_observation(
         reopened.grant_publication_request(
             request["request_id"],
             issue_url=request["request"]["issueUrl"],
-            commit_sha=request["commit_sha"],
-            branch=request["branch"],
+            commit_sha=request["request"]["commitSha"],
+            branch=request["request"]["branch"],
             evidence={},
         )
 
