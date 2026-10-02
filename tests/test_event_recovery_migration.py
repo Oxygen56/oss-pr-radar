@@ -429,6 +429,10 @@ def test_ordinary_later_outcome_is_not_inferred_and_baseline_requires_explicit_p
         },
         now=1,
     )
+    with lane.connect() as db:
+        old_event_id = db.execute(
+            "SELECT event_id FROM event_lane_events ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()[0]
     lane.reserve_handler_turn("agentscope-ai/agentscope#2385", old_event_id, "client:misbound")
     lane.bind_handler_turn(
         "agentscope-ai/agentscope#2385",
@@ -456,6 +460,10 @@ def test_ordinary_later_outcome_is_not_inferred_and_baseline_requires_explicit_p
         },
         now=2,
     )
+    with lane.connect() as db:
+        final_event_id = db.execute(
+            "SELECT event_id FROM event_lane_events ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()[0]
     lane.reserve_handler_turn(event_key, final_event_id, "client:final")
     lane.bind_handler_turn(
         event_key,

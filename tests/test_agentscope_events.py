@@ -29,12 +29,15 @@ CENTRAL_THREAD = "01a0399e-f694-7213-98e6-9d7c4808dfa2"
 
 
 def _configure_manifest(worker, root: Path, monkeypatch) -> None:
+    central_cwd = root / "agentscope"
+    central_cwd.mkdir(exist_ok=True)
+    monkeypatch.setattr(worker, "CENTRAL_CWD", central_cwd.resolve())
     value = {
         "schemaVersion": "oss-pr-radar-event-lane-v1",
         "repositories": {
             "agentscope-ai/agentscope": {
                 "activeThreadId": CENTRAL_THREAD,
-                "cwd": "/Users/oxygen/Documents/github/agentscope",
+                "cwd": str(worker.CENTRAL_CWD),
             },
         },
     }
@@ -2973,7 +2976,7 @@ def test_runtime_root_manifest_and_foreign_event_fail_closed(tmp_path, monkeypat
     claimed = lane.claim(limit=1)[0]
     worker.issue_handler_delivery(runtime_root, lane, claimed)
     extra = calls[-1]["extra_args"]
-    assert extra[extra.index("--cwd") + 1] == "/Users/oxygen/Documents/github/agentscope"
+    assert extra[extra.index("--cwd") + 1] == str(worker.CENTRAL_CWD)
     (release_root / worker.EVENT_LANE_MANIFEST).write_text("{}", encoding="utf-8")
     mutated = {
         "eventId": "mutated-release-manifest",
@@ -3073,7 +3076,11 @@ def test_pr_event_ignores_old_shared_followup_binding(tmp_path, monkeypatch):
             "pull_request": {"html_url": "https://github.com/agentscope-ai/agentscope/pull/2397"},
         },
     }
-    assert not hasattr(worker, "RadarLedger")
+
+    def unexpected_ledger(*_args, **_kwargs):
+        raise AssertionError("ordinary PR target resolution must not read the shared ledger")
+
+    monkeypatch.setattr(worker, "RadarLedger", unexpected_ledger)
     target = worker._resolve_event_target(tmp_path, event)
     assert target["kind"] == "pr_watch"
     assert target["key"] == "agentscope-ai/agentscope#2397"
