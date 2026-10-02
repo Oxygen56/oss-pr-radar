@@ -27591,6 +27591,76 @@
     ],
     "why": "Issue reports a clear user-visible bug with a detailed root cause: delayed registry-to-GUI projection overwrites newly added models. The bug is reproducible and affects key provider configuration paths. No competing PR or issue found, and the maintainer gate allows work."
   },
+  "3b3aa712fc83e2582dcfcf9945834202d8b50951c1e72c383826fa2abce93e44": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/anthropic-provider.ts: request TaskCreate/TaskUpdate or set CLAUDE_CODE_ENABLE_TASKS=false",
+      "packages/core/agents/main.yaml: update requested planning tools",
+      "packages/core/src/core/codex-app-server-provider.ts: set tools.update_plan.enabled=true in buildThreadConfigurationOverrides",
+      "plan-update event translation for TaskCreate/TaskUpdate if option 2 chosen"
+    ],
+    "risks": [
+      "CLAUDE_CODE_ENABLE_TASKS=false may be removed in a future Claude Code release, making option 1 fragile",
+      "Translating TaskCreate/TaskUpdate into plan events may diverge from TodoWrite semantics (partial updates, task IDs)",
+      "Codex update_plan opt-in may change again upstream",
+      "No maintainer design preference recorded for which fix option to take"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with claude -p --tools 'Bash,TodoWrite,TaskCreate,TaskUpdate' and assert TaskCreate/TaskUpdate appear in tool list",
+      "Reproduce with codex exec --json -c tools.update_plan.enabled=true and assert todo_list item emitted",
+      "Add regression test asserting every requested builtin tool appears in provider tool list",
+      "Run targeted unit tests for anthropic-provider and codex-app-server-provider packages"
+    ],
+    "unknowns": [
+      "Which of the four proposed fix options maintainers prefer",
+      "Whether TaskCreate/TaskUpdate semantics map cleanly to existing plan-update event schema"
+    ],
+    "why": "Issue provides version-paired reproductions for both providers and identifies concrete code anchors (anthropic-provider.ts builtinTools, main.yaml, codex-app-server-provider.ts buildThreadConfigurationOverrides). Root cause is a silent tool-name/opt-in drift after dependency upgrades, with a clear validation path (tool-list assertion and plan-update event emission)."
+  },
+  "3b4acdb43202312b932f9b812419f9e9a515fb73cfc8c6289cab00c52ebc6d28": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/router.py: route pre-first-chunk MidStreamFallbackError through the retry wrapper before fallbacks",
+      "litellm/litellm_core_utils/streaming_handler.py: preserve is_pre_first_chunk semantics",
+      "litellm/llms/custom_httpx/aiohttp_transport.py: ensure transport error classification stays retryable",
+      "add streaming regression test for pre-first-chunk drop"
+    ],
+    "risks": [
+      "Open PR #44221 shares litellm/router.py and v1_messages semantics; must compare implementation boundaries before coding to avoid duplicate work",
+      "Retrying same deployment must be gated strictly on is_pre_first_chunk to avoid double-emitting content",
+      "Broadening retry behavior could change API semantics for post-content drops (#40404)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's test_databricks_midstream_drop.py to confirm hits==1/APIConnectionError(500) on base",
+      "After fix, assert hits>=2 and no 500 for pre-first-chunk drop",
+      "Run targeted router/streaming unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #44221 actually covers the pre-first-chunk retry root cause or only adjacent router code"
+    ],
+    "why": "Issue provides a concrete root-cause chain (aiohttp_transport maps Connection closed/TransferEncodingError to httpx.ReadError -> APIConnectionError; streaming_handler wraps as MidStreamFallbackError(is_pre_first_chunk=True); router._aanthropic_messages_recover_stream_error only routes to fallbacks, so no retry wrapper runs) plus a self-contained aiohttp repro that asserts hits>=2. This is a concrete, testable streaming/retry invariant on the agent/inference critical path, not plumbing."
+  },
   "3b6357808bc57226be3f4b0d8072dee0a8b94c1f99dc1967a664ac2f0756391d": {
     "confidence": 0.6,
     "contradictions": [
@@ -30779,6 +30849,45 @@
       "Whether the ACP server version supports session/cancel reliably"
     ],
     "why": "Issue provides a concrete, reproducible divergence: /pause sets execution_status=PAUSED synchronously while ACPAgent's in-flight prompt() keeps running tool calls; root cause is identified in LocalConversation.pause() cooperative step-boundary semantics vs ACP step granularity, with code anchors (execution_status, paused, ACPAgent, PauseEvent). No open PR or duplicate issue covers it, and a validation path exists (pause/interrupt/resume driver measuring workspace growth)."
+  },
+  "42a68b4c3296aa07bbaf3d769fc0eaf7443145d73303ed3d39a508fadae3ee3e": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue proposes capability-fields-override while PR #9672 documents instance-wins, so the intended rule is unresolved",
+      "Pre-task policy requires assignment while the issue is unassigned"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/capabilities/native_or_local.py precedence/merge logic",
+      "capabilities/_merge.py combine ordering",
+      "capabilities/web_fetch.py, web_search.py, x_search.py, mcp.py, image_generation.py field handling and warnings",
+      "capabilities/AGENTS.md and native docstring documenting the chosen rule"
+    ],
+    "risks": [
+      "Behavior/API change to capability precedence could break existing users relying on instance-wins",
+      "Overlap with open PRs #9672 and #9477 may make a new contribution redundant",
+      "Warnings/errors naming fields could leak MCP credentials if implemented carelessly"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test asserting the chosen precedence for WebFetch(native=WebFetchTool(), allowed_domains=['a.com'])",
+      "Regression test for combine order-dependence with two WebFetch capabilities",
+      "Test that _requires_native no longer disables local= for fields no native tool enforces",
+      "Compare against PR #9672 and #9477 heads to avoid duplicating already-covered fixes"
+    ],
+    "unknowns": [
+      "Maintainer's chosen precedence rule (A/B/C candidates in the issue)",
+      "Whether PR #9672 or #9477 already covers the root cause",
+      "Whether assignment is required before contribution"
+    ],
+    "why": "The issue is a design-ruling request ('OK to go with that?') about which precedence rule NativeOrLocalTool capabilities should follow when capability fields meet an explicit native= tool. It documents the behavior thoroughly, but the actionable code change depends on an unresolved maintainer decision (capability-fields-override vs instance-wins), and the pre-task evidence flags assignment_required plus reproduction_or_validation_missing. Two open PRs (#9672, #9477) already touch the same code paths and semantics, so duplicate/coverage is unresolved."
   },
   "42afd440b8467de2408209e7ade86de06b9139dbf27e4209e05f526ab047483a": {
     "confidence": 0.72,
@@ -81629,6 +81738,37 @@
     ],
     "why": "Issue reports a real regression (GLM-5.3-Flash FP8 degenerating into repeated-token word salad in long multi-turn agentic sessions), but the reporter explicitly could not reproduce it synthetically; only build A/B + rollback evidence exists. A maintainer comment (ZJY0516) attributes it to 'tool call / vllm frontend', which is frontend/parser plumbing rather than an llm_algorithm mechanism, and the candidate's own algorithm_evidence shows formula_signal=false and experiment_signal=false. The candidate also carries an unresolved ai_disclosure_conflict policy status and a potential duplicate (#55238) with shared stack signatures, both of which are materially blocking for actionability."
   },
+  "a86707f29082c7951fb67e5e6cf1338ab71178bfdd27ae20b7d6e120e14fe591": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment reports PR #15529 as COVERAGE with direct code overlap and review approval, while preTaskEvidence duplicate status is human_review_required"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/kv-router/src/scheduling/config.rs: add finite-and-non-negative validation for prefill_load_scale, overlap_score_credit_decay, router_temperature",
+      "lib/router-plugins/builtin/src/default/parameters.rs: align parameter validation with config validation"
+    ],
+    "risks": [
+      "Duplicate/overlapping open PR #15529 may already resolve the issue, making a new contribution redundant",
+      "Changing validation may alter behavior for users relying on inf as a mathematical limit for router_temperature"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test in lib/router-plugins/builtin/tests using tests/support fixture asserting validate() rejects inf for prefill_load_scale, overlap_score_credit_decay, router_temperature",
+      "Assert default_policy(config, \"prefill\").select_worker returns Ok for finite values and startup fails for non-finite values"
+    ],
+    "unknowns": [
+      "Whether PR #15529 will be merged or is considered the canonical fix",
+      "Whether maintainers want additional regression tests beyond the existing PR"
+    ],
+    "why": "Issue provides a clear root cause (validate_min accepts +inf in KvRouterConfig::validate and RouterConfigOverride::validate) and a concrete GPU-free reproduction, but open PR #15529 already directly covers the same code path with the same fix and has review approval, so independent implementation space is unresolved and requires human comparison."
+  },
   "a87a35c04aafab18260fffc8259291852dd16abd921f7d5876cac70e9f87bc0c": {
     "confidence": 0.7,
     "contradictions": [
@@ -112717,6 +112857,39 @@
       "Whether maintainers accept the root cause analysis; status of PR #1726 and its failing CI details"
     ],
     "why": "Issue reports stale get_episodes results; maintainer comment attributes to queue latency, but user analysis identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent episodes. Existing PR #1726 addresses this but has failing CI and lacks full evidence. A materially better PR with robust tests and root-cause analysis is plausible."
+  },
+  "e79735d9395873543a71c9b38ee8a3546e0188925c3a31dd857861f1a17f568c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER vs gate HUMAN_REVIEW with needs_assignment; comment thread indicates spec-process gating rather than simple maintainer preference"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/server/src/server/mcp.ts: add configurable onToolInputValidationError hook or structured issues in default result"
+    ],
+    "risks": [
+      "Public API surface change to McpServer/registerTool requires spec/SEP alignment",
+      "Behavior change could affect existing servers relying on current error shape",
+      "Assignment required per repo policy"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test asserting current fixed text-only error shape for schema failures",
+      "Add regression test that a configured hook returns structuredContent with issue paths"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept the hook design vs the smaller structuredContent alternative",
+      "Whether SEP-1303 process must complete before implementation",
+      "Whether an assignee will be designated"
+    ],
+    "why": "The issue describes a real API limitation (private validateToolInput and createToolError in packages/server/src/server/mcp.ts), but the supplied evidence shows no reproduction, no failing test, and no maintainer design confirmation. Comment thread explicitly says the proper route is the Specification Enhancement Path proposal process before implementation, and the requester is waiting for maintainer assignment. This is a design/spec-gated feature request, not an actionable code fix."
   },
   "e7b8126f29a1df13e2f54498d1db1bbd122f5e65f3fa993cfb0081fdd1d90d6f": {
     "confidence": 0.9,
