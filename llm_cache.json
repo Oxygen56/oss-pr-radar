@@ -36678,6 +36678,46 @@
     ],
     "why": "Issue #806 identifies a concrete, code-anchored defect: training.use_flash_attn and training.use_liger are consumed only by SFTTrainerWrapper._setup_transformers (trainer/sft.py:1293, 882, 1351-1356), yet commands/train.py:1192-1214 validates them for every task and autopilot/decisions.py:344-346 enables them regardless of task. The issue supplies a reproducible probe (build_soup_config on a preference JSONL yielding dpo/grpo/pretrain with both flags true, then soup train exiting 1 on missing packages) and explicit acceptance criteria, including a CPU tiny-model test with a stubbed get_attn_implementation asserting the kwarg reaches from_pretrained. This is a real behavioral bug with a clear root cause and a concrete validation path, not installation/CLI plumbing alone."
   },
+  "4df7143e7317362b76688d977a79cad0b3a6e7701a42454414d6dbe5592fa36a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels the issue as a verifiable LLM algorithm mechanism, but actionability evidence shows root_cause_signal=false and no reproduction evidence",
+      "Open PR #52244 is flagged as semantic overlap requiring review while also being unlinked and unconfirmed as covering the root cause"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/v1/simple_kv_offload/manager.py eager store-spec scan alignment",
+      "vllm/distributed/kv_transfer/kv_connector/v1/simple_cpu_offload_connector.py store/lookup path",
+      "vllm/v1/core/sched/scheduler.py connector meta construction"
+    ],
+    "risks": [
+      "Root cause may be the LCM block_size alignment in the eager scan, the finish-step flush gap, or an unrelated lookup mismatch; the issue does not distinguish these",
+      "PR #52244 may already cover the same root cause, making a new contribution duplicative",
+      "Repository AI disclosure policy conflict blocks automated public submission",
+      "Private quantized checkpoint means the reported failure cannot be independently reproduced as stated"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on a public hybrid GDN+full-attention checkpoint with prefix caching enabled and SimpleCPUOffloadConnector, forcing GPU prefix eviction, then check external_prefix_cache_hits_total",
+      "Compare against a dense attention-only model with identical config to isolate whether the failure is hybrid-specific",
+      "Add a regression test asserting the eager store-spec scan emits scannable blocks for a hybrid MambaSpec+FullAttentionSpec group config"
+    ],
+    "unknowns": [
+      "Whether the failure is hybrid-specific or reproduces on dense attention-only models",
+      "Whether PR #52244 already fixes the same root cause",
+      "Whether the eager scan alignment or the finish-step flush gap is the actual defect",
+      "Whether the repository's AI disclosure policy permits any automated contribution to this issue"
+    ],
+    "why": "Issue reports a real symptom (external prefix cache queries with zero hits on a hybrid GDN+full-attention model) but supplies no public reproducer, no confirmed root cause, and explicitly leaves the hybrid-specific hypothesis untested. The candidate's own actionability evidence shows public_repro_signals=0, root_cause_signal=false, probe_ready=false, and reproductionPathPlan=false. The only overlapping open PR (#52244) is unlinked and unconfirmed as covering the same root cause, so duplicate coverage is unresolved. Policy status is ai_disclosure_conflict, which is a repository-level disclosure requirement that blocks automated public action."
+  },
   "4e01eb1567abace3970b30df90be15d4a9cff0499d42fddf29b5b9a6602edc99": {
     "confidence": 0.8,
     "contradictions": [
@@ -64118,6 +64158,45 @@
     ],
     "why": "Issue reports intermittent repeated-token degeneration in long agentic sessions on GLM-5.3-Flash, but the reporter explicitly could not reproduce synthetically; the only evidence is a build A/B across three simultaneously changed components (vLLM commit range, FlashInfer 0.6.17→0.6.18, transformers 5.15.1→5.16.1). Comments attribute the behavior to at least two distinct causes (parser reasoning/tool-call bleed vs. weights/training), and a further comment reports DP+EP going off-rails, so no single root cause is established. For track=llm_algorithm this is a serving/parser-integration symptom without a concrete training objective, numerical method, kernel algorithm, or controlled experiment."
   },
+  "849d98e7eb92949ae1478e150632bbacd1b22392e05bea93daff8b9fdb186ee4": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no way to recover, while open PR #6031 title claims to add reconnect for the same service"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: stop forcing reconnect_on_error=False and default to True",
+      "src/pipecat/services/sarvam/stt.py: complete in-flight utterance on drop in _reconnect_websocket",
+      "src/pipecat/services/sarvam/stt.py: classify 4000 and non-rate-limit 1003 as permanent",
+      "src/pipecat/services/sarvam/stt.py: bounded retry or permanent failure for failed first connect"
+    ],
+    "risks": [
+      "PR #6031 may already implement the same reconnect fix, making a new contribution duplicative",
+      "PR #6032 may cover the failed-first-connect retry path",
+      "Changing reconnect defaults could alter behavior for existing users",
+      "Permanent-close classification may conflict with maintainer design preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py drop scenario and assert 2 handshakes, transcripts from both connections, and is_usable True",
+      "Run repro.py connect scenario and assert retry then transcription, or is_usable False if unrecoverable",
+      "Add regression tests for 1006, 1011, and 1003 rate-limit close codes",
+      "Run targeted Sarvam STT unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #6031 already fixes the root cause described in the issue",
+      "Whether PR #6032 covers the failed-first-connect scenario",
+      "Maintainer preference on reconnect_on_error default and permanent-close classification"
+    ],
+    "why": "Issue provides a strong reproduction and root-cause analysis for SarvamRealtimeSTTService's forced reconnect_on_error=False and missing first-connect retry. However, open PR #6031 ('fix(sarvam): reconnect SarvamRealtimeSTTService when its websocket drops') semantically overlaps the same code path and appears to address the same root cause, while PR #6032 covers the failed-first-connect retry. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review', which is a materially blocking unknown for deciding whether new code work is actionable."
+  },
   "849e49dfe4c049a89e779753ec080ce36575bb463fd32e7ef0842f4c20b882c1": {
     "confidence": 0.6,
     "contradictions": [
@@ -82718,6 +82797,43 @@
     ],
     "why": "Issue clearly describes a bug with root cause and reproduction, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#25387) directly targets the same fix but is closed with missing tests and CI failures, requiring maintainer assessment."
   },
+  "aaff6a13ed91aef042c61d1178116964120fefae3627f57f5880205935dd8bc1": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue asserts two independent root causes but does not establish which one actually blocks the reported /v1/models behavior",
+      "Open PR assessment reports semantic overlap with PR #40775 (config_yaml, store_model_in_db) while also stating direct_code_overlap is false and root_cause_coverage is false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/constants.py LITELLM_SETTINGS_SAFE_DB_OVERRIDES handling of check_provider_endpoint",
+      "litellm/llms/vertex_ai/common_utils.py VertexAIModelInfo.get_models() implementation or explicit unsupported-provider handling"
+    ],
+    "risks": [
+      "Fixing only the allowlist leaves Vertex AI discovery still failing due to the get_models() stub",
+      "Fixing only the stub leaves the config flag still not propagated under STORE_MODEL_IN_DB",
+      "Broadening LITELLM_SETTINGS_SAFE_DB_OVERRIDES may change DB-overlay semantics for other settings"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with STORE_MODEL_IN_DB=True and config.yaml check_provider_endpoint: true, then assert litellm.check_provider_endpoint is True and /v1/models expands vertex_ai/*",
+      "Unit test that DB-stored litellm_settings overlay does not drop check_provider_endpoint",
+      "Unit test for VertexAIModelInfo.get_models() behavior (implemented or explicitly documented as unsupported)"
+    ],
+    "unknowns": [
+      "Whether PR #40775 or another open PR already addresses the DB-overlay allowlist or the Vertex AI get_models() stub",
+      "Which of the two described root causes is the primary actionable fix for the reported symptom",
+      "Whether maintainers consider Vertex AI model discovery in scope or intentionally unsupported"
+    ],
+    "why": "Issue describes two distinct potential root causes (DB-stored litellm_settings allowlist omission and a VertexAIModelInfo.get_models() NotImplementedError stub), but the supplied evidence does not establish which is the actual blocker for the reported behavior, and the open PR assessment flags semantic overlap requiring human comparison before any code work is actionable."
+  },
   "ab04bc90ecb68a531ba0d5b8b9e235c2a4a53d1b5cc0cee8d582386b05b87cdf": {
     "confidence": 0.8,
     "contradictions": [
@@ -83885,6 +84001,40 @@
       "No maintainer approval or explicit confirmation that the suggested fix is preferred, but this is normal PR review uncertainty and does not block actionability."
     ],
     "why": "The issue provides a precise root cause in StreamingPostProcessor.process_output, with code anchors, a suggested minimal fix, and concrete reproduction steps including expected vs actual frame timing. The fix is a small, well-scoped change to flush tool-call deltas immediately, with production validation already performed by the reporter. This is a technically valuable and actionable contribution."
+  },
+  "addc7eacdf16e21add2363c27ff5539739ba149a5c077d0b046aa0fffd9cb02c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue triage states individual root-cause fixes are non-goals owned by other issues/PRs, while the candidate frames this issue as a directly fixable bug"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "tests/e2e/mock-llm/utils/mock-llm-helpers.ts (bash-success oracle, owned by PR #17555)",
+      "tests/e2e/mock-llm/*/mock-llm-*.spec.ts (state-dependent journeys, owned by PR #17636)",
+      "runtime-services context on profile-backed launches (owned by #16205/#17716)"
+    ],
+    "risks": [
+      "Duplicate/overlapping open PRs #17555 and #17636 may already cover the root causes, making a new fix redundant",
+      "Repository policy reports an AI disclosure conflict (ai_disclosure_conflict), which blocks automated public action",
+      "Quarantining tests without a linked issue would mask regressions in the main-only signal"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run `npx playwright test --config=playwright.mock-llm.config.ts` on a fresh checkout against pinned agent-server 1.50.1 and confirm the five named failures reproduce",
+      "After any candidate change, verify `gh run view <id> --json conclusion` returns success for a main push of the mock-llm-e2e job"
+    ],
+    "unknowns": [
+      "Whether PR #17555 or #17636 already resolves the five failures or is intended to close this issue",
+      "Whether maintainers want this aggregate issue closed by quarantine or by landing the linked fixes",
+      "Resolution of the repository AI disclosure policy conflict"
+    ],
+    "why": "The issue is an aggregate tracking report for five failing mock-LLM E2E tests, and its own triage explicitly declares the individual root-cause fixes out of scope, delegating them to #15482/#17555, #15481/#17636, and #16205/#17716. Two open PRs (#17555, #17636) already overlap the same code paths and semantics, so the actionable code work is already claimed elsewhere; the remaining in-scope action is quarantine bookkeeping, which is low-value and depends on unresolved duplicate coverage."
   },
   "adef651b4b3603057ec024e05e61f09b0eaec725bc670c797cde4c91bac81943": {
     "confidence": 0.7,
@@ -87117,6 +87267,38 @@
       "Exact endpoint set (v1/models vs /model/info) in scope for the fix"
     ],
     "why": "Issue describes a plausible discovery-vs-inference mismatch for Team-member allowed_models, with code anchors and a reproduction outline. However, the supplied duplicate assessment flags PR #41349 as semantic overlap requiring review, and PR #41808 already targets the adjacent /model/info allowed-models resolution path. Whether the root cause is already covered by an open PR is unresolved, which materially affects whether new code work is actionable."
+  },
+  "b4e6249d0b2ac56e79c599c763a2e3cad2b333333c14c2d4c9882ed31e119f90": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #7252 on the same executor file, while the issue presents the bug as unfixed on main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/google/adk/a2a/executor/a2a_agent_executor.py: replace raw str(e) with a generic/controlled error message",
+      "src/google/adk/a2a/executor/a2a_agent_executor_impl.py: same sanitization"
+    ],
+    "risks": [
+      "PR #7252 may already cover the same executor path, making a new fix duplicative",
+      "Changing the caller-visible error text is a behavior change that may need maintainer design sign-off",
+      "Assignment requirement is unmet"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py against the patched code and assert the TASK_STATE_FAILED message no longer contains traceback/file paths",
+      "Add a regression unit test asserting the failed status message equals the generic message while the exception is still logged with exc_info"
+    ],
+    "unknowns": [
+      "Whether PR #7252 already fixes or subsumes this exact str(e) leak",
+      "Whether maintainer assignment/design preference is required before implementation"
+    ],
+    "why": "Issue identifies a concrete code path (make_text_part(str(e)) in a2a_agent_executor.py and a2a_agent_executor_impl.py) and provides a self-contained repro, but the supplied duplicate assessment flags PR #7252 as semantic overlap on the same executor file with unresolved coverage, and the pre-task policy requires assignment (assignment_required, needs_assignment). These are materially blocking unknowns for deciding whether new code work is actionable."
   },
   "b4f21e67a17acea8194ee8997e6e276ed0e2ec573813c740de8389ba60e1d4fb": {
     "confidence": 0.6,
@@ -114472,6 +114654,42 @@
       "Whether the crash is reproducible on hardware available to the contributor"
     ],
     "why": "The issue's own author retracted the QSA kernel bounds root cause and now hypothesizes an overlap-scheduler race between host sequence_lengths snapshot and device-derived row ranges; the merged PR #38346 (compress gather clamp) is claimed by a second reporter to match the low-concurrency signature, but the original reporter explicitly says #37638 should not be credited and the overlap-path fix is still unconfirmed. Root cause is unresolved and duplicate/merged-fix coverage is contradictory."
+  },
+  "ea82a55004f92bf22f0190e238a2233d29d8ca4e12fd0ed0a49f1b2c26ddc5d6": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with best_score 6 while related_issue_assessment reports none"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "crates/goose/src/model_config.rs: allow user/config override for supports_vision on custom providers",
+      "crates/goose-providers/src/openai.rs / openai_compatible.rs: stop flattening None to false when override present",
+      "config.yaml schema / env var plumbing for per-provider or per-model vision assertion"
+    ],
+    "risks": [
+      "PR #12558/#12534 may already fix the same root cause, making a new PR duplicate",
+      "Broadening supports_vision override could change API behavior for existing custom providers",
+      "Maintainer may prefer capability probing over config override, affecting implementation choice"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting a custom OpenAI-compatible provider with supports_vision=true retains vision through model_config resolution",
+      "Reproduce with a local OpenAI-compatible vision endpoint and confirm image parts are not stripped",
+      "Run targeted unit tests in goose and goose-providers packages plus static checks"
+    ],
+    "unknowns": [
+      "Whether PR #12558 or #12534 already resolves the supports_vision root cause",
+      "Whether maintainers require assignment before accepting a contribution",
+      "Which of the three suggested fixes maintainers prefer"
+    ],
+    "why": "Issue has a clear, source-verified root cause (supports_vision resolved only via canonical catalog, flattened to false for custom OpenAI-compatible providers) and a concrete validation path. However, two open PRs (#12558, #12534) touch the same openai_compatible/supports_vision code path with semantic overlap, and the duplicate status is 'semantic_overlap_requires_review' — whether those PRs already cover the root cause is unresolved and materially determines whether new code work is actionable. Additionally, the repo policy requires assignment (needs_assignment), which is a blocking disclosure/ownership requirement."
   },
   "ea8c4d6a087e45855f487e879dbe1b52088e0e33062c845599cff3f09ea5202a": {
     "confidence": 0.8,
