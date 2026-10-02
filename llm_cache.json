@@ -45089,6 +45089,33 @@
     ],
     "why": "The issue identifies a concrete root cause: a PyTorch bug in trunc_normal_ that resets RNG state during CPU offloading, causing an infinite loop during weight initialization. It provides a minimal torch repro and a full torchtitan config, enabling a clear validation path. The fix is upstream in PyTorch, but torchtitan may need a workaround or version pin, making it actionable."
   },
+  "5ea7888f5c8f10b18ac21a5e600043ebf930210070d40ae503832e4a09e2deca": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue body attributes cause to zod-to-json-schema draft-07 literal; comments show zod v4 branch bypasses it and the SDK default is the cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Duplicate effort against open upstream PRs #2085/#2653",
+      "In-repo schema post-processing would diverge from SDK behavior and is not maintainer-endorsed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If upstream fix lands: bump @modelcontextprotocol/sdk in server-filesystem and assert tools/list inputSchema/outputSchema $schema equals https://json-schema.org/draft/2020-12/schema over stdio"
+    ],
+    "unknowns": [
+      "Whether maintainers want an interim in-repo workaround before upstream SDK release"
+    ],
+    "why": "Comments establish the root cause is outside this repo: the SDK's toJsonSchemaCompat/mapMiniTarget defaults to draft-07 and McpServer never passes target; zod-to-json-schema is not even on the code path for zod v4. The fix is tracked upstream (typescript-sdk#2084/#2085/#2653/#2677/#2721), so no actionable code change exists in modelcontextprotocol/servers beyond a dependency bump after upstream lands. The only in-repo option (post-processing SDK-generated schemas) is explicitly conditional on the SDK stalling."
+  },
   "5eca0334d6ee40043c2701508a9255982f8ce5d0428eb69c8b25d880b807bf30": {
     "confidence": 0.8,
     "contradictions": [
