@@ -81817,6 +81817,39 @@
     ],
     "why": "The issue provides a clear root cause: Inngest Realtime truncates oversized messages, and the pubsub fallback wraps truncated JSON as an unparseable string, causing terminal events to be lost and streams to hang. The fix is well-scoped: reduce live event payloads and salvage truncated terminal events. No competing PR or issue exists, and the maintainer has labeled it for triage, indicating interest."
   },
+  "aaa3476c74a9bd807c1cdf995f2181f2171971c9dc4e32cfa1ebb4194892564a": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/opencode/src/permission/index.ts — ensure config-defined deny rules do not strip the entire visible toolset in a way that produces an invalid/empty request",
+      "packages/opencode/src/session/llm/request.ts — guard or handle empty/near-empty tools field before sending to provider",
+      "Add a regression test covering a config-defined agent with `shell: deny` or `action: \"*\"` deny"
+    ],
+    "risks": [
+      "The gateway-side rejection logic is not in this repo, so the exact trigger (empty tools vs. other request shape) may need confirmation",
+      "Fixing the permission merge could change intended deny semantics for builtin vs. config-defined agents",
+      "The broader `action: \"*\"` deny case may require a different fix than the explicit `shell: deny` case"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a config-defined agent with `permissions: [{action: shell, resource: \"*\", effect: deny}]` and assert session creation succeeds and shell is denied",
+      "Add a unit test for Permission.disabled() with a wildcard deny rule to verify it does not strip all tools",
+      "Add a request-body test asserting the outgoing `tools` field is not empty when a config-defined deny rule is present"
+    ],
+    "unknowns": [
+      "Whether the gateway rejects specifically on an empty `tools` array or on another request-shape signal",
+      "Whether paid models are affected (reporter could not verify due to usage cap)"
+    ],
+    "why": "Issue reports a reproducible config-defined permission bug: a `shell: deny` (or broader `action: \"*\"` deny) rule on a config-defined agent causes session creation to fail with a misleading free-tier error. A commenter traced the likely mechanism to `Permission.disabled()` in packages/opencode/src/permission/index.ts stripping all tools, which then produces an empty `tools` field in the request built by session/llm/request.ts. The reproduction is concrete (3/3, bisected to the deny rule), and the code anchors are supplied. The remaining uncertainty is the gateway-side rejection behavior, which is outside this repo and does not block a local fix or regression test."
+  },
   "aad108cf94879fa8ddf4e6ced68f411ec57a665306feae8b2a2e040201288bee": {
     "confidence": 0.82,
     "contradictions": [],
@@ -109457,6 +109490,40 @@
       "Related issue status unknown due to timeout"
     ],
     "why": "Issue identifies a clear shallow-update bug in get_config causing recursive config override failure, with a concrete reproduction. However, open PR and related issue lookups timed out, so duplicate implementation cannot be excluded. Maintainer design confirmation is needed before starting work."
+  },
+  "e30b7eca9e7438159c733f1e482d1da36aa1b04668e869e2a0eae8ffbefb05d8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Model resolution/context-window fallback path (dist/extension.js contextWindow ?? 128e3) should not silently assign 128k to an undescribed model id",
+      "Settings/provider state migration between globalState.json per-mode ids and settings/providers.json single model field",
+      "Session record provider/model fields should reflect the mode actually in force"
+    ],
+    "risks": [
+      "Changing the 128k fallback could affect other providers/models that legitimately rely on the default",
+      "Unifying the two model stores may require a migration for existing globalState.json/providers.json files",
+      "Scope spans two distinct faults; a single PR may be too broad and should be split"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: resolve a model id absent from the fetched model list and assert the context window is not silently defaulted to 128000 without surfacing the unknown",
+      "Regression test: with planModeApiModelId != actModeApiModelId, assert the settings row for each mode reflects that mode's own id and that editing one mode does not mutate the other",
+      "Integration test: session record provider/model matches the route actually used for the active mode"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing the fallback, the model-list resolution, or both",
+      "Whether a state migration is acceptable for existing users"
+    ],
+    "why": "Issue provides two concrete, independently verifiable faults with file-level anchors: (1) contextWindow fallback of 128e3 in dist/extension.js applied to a model id (deepseek-v4-flash) absent from the fetched model list, causing Auto-Compact at ~107k on a 1M-context model; (2) per-mode model id split between globalState.json (planModeApiModelId/actModeApiModelId) and settings/providers.json (single model per provider), so the settings row can display an id the mode will not send. Reproduction steps and record paths are supplied, and the issue is unassigned with no duplicate PR/issue."
   },
   "e3239def4fcc53678346586034b10978c01824bce476b838243e9a121ca7a27e": {
     "confidence": 0.72,
