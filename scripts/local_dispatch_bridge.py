@@ -6155,11 +6155,12 @@ def _publication_review_context(
     request: dict[str, Any],
     value: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Recover one immutable, signed merge-review context from the ledger.
+    """Use the exact current merge context, or recover its signed preparation.
 
     PR follow-up state is mutable, so a later scan may replace the worktree
-    context after a result was reviewed.  Only the exact immutable preparation
-    and its signed merge scope may recover the historical review context.
+    context after a result was reviewed.  Authenticate the current private
+    context first; historical recovery still requires the exact immutable
+    preparation and its signed merge scope.
     """
 
     if value.get("handoffMode") != "controller_merge_complete":
@@ -6202,6 +6203,55 @@ def _publication_review_context(
         or Path(worktree_path).resolve() != Path(str(value.get("worktreePath") or "")).resolve()
     ):
         raise RuntimeError("publication independent review identity mismatch")
+
+    candidate = {
+        "key": key,
+        "issueUrl": request["issueUrl"],
+        "intentId": task_id,
+        "threadId": thread_id,
+        "worktreePath": worktree_path,
+    }
+    try:
+        with _task_worktree_private_descriptor(candidate) as opened:
+            context_raw = _read_task_context_bytes_from_private(opened)
+            context_stat = os.stat(
+                "task-context.json", dir_fd=opened.private_fd, follow_symlinks=False
+            )
+            current_context, _ = _verified_private_context_with_singleton_guard(
+                store, opened.worktree, context_raw, context_stat
+            )
+            current_followup = current_context.get("prFollowup")
+            current_evidence = (
+                current_followup.get("evidence") if isinstance(current_followup, dict) else None
+            )
+            if (
+                _task_context_has_exact_ledger_binding(store, current_context)
+                and all(
+                    current_context.get(field) == expected for field, expected in candidate.items()
+                )
+                and re.fullmatch(r"[0-9a-f]{64}", str(value.get("contextDigest") or ""))
+                and current_context.get("contextDigest") == value.get("contextDigest")
+                and isinstance(current_followup, dict)
+                and current_followup.get("wakeDigest") == wake_digest
+                and current_followup.get("prUrl") == pr_url
+                and current_followup.get("headSha") == previous_commit
+                and current_followup.get("preparedHeadSha") == previous_commit
+                and isinstance(current_evidence, dict)
+                and current_evidence.get("baseSha") == merge_base
+            ):
+                resolution_files = verify_controller_merge_tree_scope(
+                    opened.worktree,
+                    context=current_context,
+                    merge_commit=commit_sha,
+                    expected_head=previous_commit,
+                    expected_base=merge_base,
+                )
+                if resolution_files == value.get(
+                    "mergeResolutionFiles"
+                ) and resolution_files == value.get("controllerCommitChangedFiles"):
+                    return current_context
+    except (OSError, ValueError, RuntimeError):
+        pass
 
     preparation = store.historical_pr_followup_preparation(
         key=key,

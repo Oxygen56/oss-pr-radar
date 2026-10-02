@@ -34926,6 +34926,7 @@ def _published_tracking_merge_fixture(monkeypatch, tmp_path, *, required=False):
                     "taskActions": ["解决已发布PR的当前冲突"],
                     "evidence": {
                         "mergeConflict": True,
+                        "mergeConflictPreparationVersion": "conflict_files_v1",
                         "baseRefName": "main",
                         "baseSha": base_sha,
                         "mergeConflictFiles": ["runtime.py"],
@@ -35148,10 +35149,96 @@ def test_publication_request_keeps_authenticated_wake_after_followup_snapshot_dr
     assert request["probeReceipt"]["resultDigest"] == bound["resultDigest"]
     # Correct identity cannot promote the original conflict-only preparation
     # into permission for historical publication review.
+    (result_path.parent / "task-context.json").unlink()
     with pytest.raises(
         RuntimeError, match="publication independent review signed context mismatch"
     ):
         MODULE._publication_review_context(store, request=request, value=bound)
+
+
+@pytest.mark.parametrize("context_change", [None, "drift", "missing"])
+def test_publication_queue_uses_exact_current_merge_review_before_historical_recovery(
+    monkeypatch, tmp_path, context_change
+):
+    from oss_pr_radar.independent_review import _context_review_binding_digest
+
+    store, _managed, _worktree, result_path, context, _source = _published_tracking_merge_fixture(
+        monkeypatch, tmp_path
+    )
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["errors"] == [], first
+    normalized = json.loads(result_path.read_bytes())
+    _write_explicit_controller_review(tmp_path, normalized)
+    receipt_path = _receipt_path(
+        tmp_path,
+        key=normalized["key"],
+        commit_sha=normalized["commitSha"],
+        source_digest=_source_digest(normalized),
+    )
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["contextReviewBindingDigest"] = _context_review_binding_digest(context, normalized)
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert second["errors"] == [], second
+    assert len(second["publicationRequests"]) == 1
+    request_id = second["publicationRequests"][0]["requestId"]
+    request = store.publication_request(request_id)["request"]
+    value = MODULE._evidence_from_publication_request(request)
+    historical = store.historical_pr_followup_preparation(
+        key=value["key"],
+        task_id=value["taskId"],
+        thread_id=value["threadId"],
+        wake_digest=value["followupDigest"],
+    )
+    assert historical["snapshot"]["evidence"].get("mergeResolutionScopeReceipt") is None
+    assert (
+        historical["snapshot"]["evidence"]["mergeConflictPreparationVersion"] == "conflict_files_v1"
+    )
+    context_path = result_path.parent / "task-context.json"
+    if context_change == "drift":
+        changed = json.loads(context_path.read_bytes())
+        changed["prFollowup"]["wakeDigest"] = "f" * 64
+        changed["contextDigest"] = MODULE._task_context_digest(
+            changed, changed["prFollowup"]["preparedHeadSha"]
+        )
+        context_path.write_text(json.dumps(changed), encoding="utf-8")
+    elif context_change == "missing":
+        context_path.unlink()
+
+    broker_calls = []
+
+    def stop_at_broker(ledger, actual_request_id, *, review_context=None, **kwargs):
+        assert actual_request_id == request_id
+        assert review_context == context
+        review = MODULE._controller_review_result(
+            SimpleNamespace(runtime_root=tmp_path), value, review_context=review_context
+        )
+        assert review["verdict"] == "PASS"
+        broker_calls.append(actual_request_id)
+        return {"pending": True, "audit": {"reason": "TEST_STOP_AT_PROVIDER_AUDIT"}}
+
+    monkeypatch.setattr(MODULE, "broker_publication_request", stop_at_broker)
+    monkeypatch.setattr(
+        MODULE,
+        "_executor",
+        lambda *_args, **_kwargs: pytest.fail("must stop before public effects"),
+    )
+    queued = MODULE.run_publication_queue(SimpleNamespace(ledger=store.path))
+    assert queued["published"] == []
+    if context_change is None:
+        assert queued["errors"] == [], queued
+        assert broker_calls == [request_id]
+        assert queued["pending"] == [
+            {"requestId": request_id, "reason": "TEST_STOP_AT_PROVIDER_AUDIT"}
+        ]
+    else:
+        assert broker_calls == []
+        assert queued["errors"] == [
+            {
+                "requestId": request_id,
+                "error": "publication independent review signed context mismatch",
+            }
+        ]
 
 
 @pytest.mark.parametrize(
