@@ -14254,6 +14254,42 @@
     ],
     "why": "The issue clearly identifies a root cause (gpuDetection.js only checks compute capability, not CUDA runtime major version, so the CUDA-12-linked prebuilt pack is offered and silently fails on CUDA 13 hosts) and a concrete validation path. However, the supplied open-PR assessment reports PR #1982 with semantic overlap on the same CUDA/whisperCudaManager paths and status 'semantic_overlap_requires_review', and the issue's own recent comment explicitly asks maintainers to confirm the supported policy for preferring an existing bundled/distro whisper-server and the minimum compatibility check. That unresolved duplicate/coverage question and missing maintainer policy decision materially determine whether new code work is actionable."
   },
+  "1fcf341768754c93f3f31add2d87e50903fd68c4124e44dc5a3ea6168d132a24": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue suggests upstreaming the model repair as a PR, while open PR #38885 appears to already target the same provider-prefix repair on the same code paths"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/llms/custom_httpx/llm_http_handler.py: provider-keyed model repair in _execute_chat_completion_agentic_plan",
+      "litellm/litellm_core_utils/chat_completion_agentic_loop.py: same provider-keyed repair in the second copy",
+      "maybe_run_chat_completion_agentic_loop: stop swallowing follow-up failures into returning the original response"
+    ],
+    "risks": [
+      "PR #38885 may already implement the same provider-prefix repair, making a new PR duplicative",
+      "Changing the blanket except behavior could alter error-surfacing semantics for other agentic-loop callers",
+      "Fix must be applied to both copies of the plan-execution function to avoid divergent behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test with a hosted_vllm deployment whose engine id is 'zai-org/GLM-5.3-Flash' and websearch_interception enabled; assert the follow-up model is 'hosted_vllm/zai-org/GLM-5.3-Flash' and no BadRequestError occurs",
+      "Add a test asserting the dispatcher does not return the original tool-call response on follow-up failure and does not emit a dangling litellm_web_search function_call",
+      "Run targeted unit tests for the agentic loop and custom_httpx handler modules"
+    ],
+    "unknowns": [
+      "Whether PR #38885 fully covers the root cause and the secondary dispatcher-except defect",
+      "Whether PR #38885 is linked to or intended to close this issue",
+      "Whether maintainers have a preferred implementation for the dispatcher error-handling change"
+    ],
+    "why": "Issue provides a clear root cause (slash-presence guard in both copies of _execute_chat_completion_agentic_plan fails to re-attach provider prefix for org-style model ids) and a concrete suggested fix, but the supplied duplicate assessment flags PR #38885 ('fix(websearch): keep the provider prefix on the agentic follow-up model') as semantic_overlap_requires_review with overlapping paths and distinctive terms (follow_up, websearch_interception). Whether that open PR already covers the root cause is a materially blocking unknown that determines whether new code work is actionable."
+  },
   "1ffe0c41023964326b7c2176e35be3b05043214b194cb858c6ba8eb9dcdbf912": {
     "confidence": 0.55,
     "contradictions": [
@@ -15181,6 +15217,40 @@
       "No explicit maintainer approval or help-wanted label, but the issue is clearly a bug and the fix is straightforward; absence of assignment is not blocking."
     ],
     "why": "Issue provides a clear, reproducible bug with a precise root cause: keychain lookup is attempted for all servers even without OAuth, and the AsyncEntry constructor throws outside the try/catch, causing a 500 in headless environments. This is a user-visible bug with high impact and a clear minimal fix path."
+  },
+  "21ae7f1e85fe85fe4598332f7c7829cd2f1144e8c17ba79b5e8b88c647f5479d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue says #7822 prevents premature resharding for this pattern but support for executing the configuration remains open, while open_pr_assessment marks root_cause_coverage false and technical_complete false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "MFSDP v2 post_backward/reshard timing for frozen weights when hooked module inputs require no gradients",
+      "regression test in tests/unit_tests/distributed/mfsdp_v2/test_fully_shard.py"
+    ],
+    "risks": [
+      "PR #7822 may already cover the root cause with a rejection guard, making a new fix redundant",
+      "Distinguishing a genuine mathematical/semantic error from hook-timing behavior may require careful PyTorch autograd analysis",
+      "Multi-GPU hardware requirement limits validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Check out reproduction commit 1b2ef3b18eed64a4cdba349e1dcbbfea1cc8aea1 and run the two-rank pytest command to confirm the failure",
+      "After a fix, verify the nested trainable linear's weight gradient is produced without accessing released storage",
+      "Run the full MFSDP v2 suite on two GPUs to check for regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers intend the rejection guard in #7822 as the final resolution or expect a full execution fix",
+      "Whether a new PR would duplicate #7822's scope"
+    ],
+    "why": "Issue describes a concrete MFSDP v2 correctness bug with a reproduction commit and command, but the supplied evidence shows PR #7822 already adds a conservative rejection guard and converts the repro into a passing rejection test. The issue itself states support for executing the configuration remains open, so the actionable code work is ambiguous: it is unclear whether a new contribution should implement the actual fix or whether the guard is the accepted resolution. This unresolved duplicate/coverage question materially determines whether code work is actionable."
   },
   "21af8bea0a75125c6628c314a659c3a2432da963e645fbbac7c23e99050bb34a": {
     "confidence": 0.82,
@@ -23983,6 +24053,33 @@
       "Exact confidence thresholds and model behavior for human speech in different BirdNET versions."
     ],
     "why": "Issue provides a clear root cause (top-K truncation before privacy filter), concrete code anchors, and a reproducible scenario. The suggested fix is targeted and testable."
+  },
+  "3454ada79a0aa896e582dd6e782711610b9da0bbbf9c7343c8d8b368fbc25433": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/openai/responses/llm.py: extend `_rejects_effort_none` to cover `gpt-6.1-sol` (and consider a positive allowlist for models that accept `none`)"
+    ],
+    "risks": [
+      "Hardcoding model names is brittle; a positive allowlist for models that accept `none` may be preferred by maintainers",
+      "Behavior change could affect other models if the check is broadened too far"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a param-building regression test asserting `_build_response_params` omits `reasoning` for `gpt-6.1-sol` when unconfigured, for both `OpenAIResponsesLLMService` and `OpenAIResponsesHttpLLMService`",
+      "Run the issue's minimal repro to confirm no `reasoning={\"effort\": \"none\"}` is sent and no HTTP 400 occurs"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the minimal model-list extension or the longer-term positive allowlist approach"
+    ],
+    "why": "Issue provides a concrete, source-anchored root cause: `_rejects_effort_none` omits `gpt-6.1-sol`, so `_maybe_disable_reasoning` injects `{\"effort\": \"none\"}` and OpenAI returns HTTP 400. A minimal fix and a param-building regression test are clearly specified, and the same failure class was previously fixed for `gpt-6-astra` (#5749)."
   },
   "346284a7106448a91473cebf26b5623c2c4c94562ef2b560f02894b4e59b2fd2": {
     "confidence": 0.82,
@@ -46270,6 +46367,35 @@
       "Whether the proposed fix has been implemented in any PR; the open PR #53367 appears to address the same issue but lacks tests, so independent implementation may still be valuable."
     ],
     "why": "The issue provides a precise root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue qualifies as a kernel/algorithmic bug with a clear validation path via numerical regression or runtime assertion checks."
+  },
+  "61fac43bfb15ed4c017411e9e15dc67659c1129fd015516008c432b2f3889ecc": {
+    "confidence": 0.82,
+    "contradictions": [
+      "candidate.algorithm_evidence claims qualified=true with evaluation_method mechanism, but the issue describes health-check result aggregation, not an evaluation methodology"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/health_endpoints/_health_endpoints.py: aggregate health-check results by model_id with fallback to model-param mapping"
+    ],
+    "risks": [
+      "Misclassified track: this is proxy plumbing, not an algorithm contribution",
+      "A commenter has already claimed the fix and pushed a branch, risking duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Unit test _aggregate_health_check_results with two deployments sharing litellm_params.model but distinct model_id, asserting per-deployment healthy/unhealthy counts and error attribution"
+    ],
+    "unknowns": [
+      "Whether the commenter's branch has already been opened as a PR"
+    ],
+    "why": "The issue is a well-evidenced proxy health-check aggregation bug, but it is ordinary proxy/API plumbing (mapping endpoint results to deployments by model_id), not an LLM algorithm contribution. The track=llm_algorithm label is a misclassification: there is no training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The 'evaluation_method' mechanism signal is spurious keyword matching on health-check aggregation. Additionally, a commenter states they are already working on a fix and has pushed a branch, indicating the opportunity is being covered."
   },
   "620b645b07a697658c61e04902e20dc27e8cba2bfaab41029d83953e78846686": {
     "confidence": 0.85,
@@ -97213,6 +97339,47 @@
       "Whether maintainers prefer forwarding reasoning_effort to the provider versus raising UnsupportedParamsError under drop_params"
     ],
     "why": "Issue provides a concrete, reproducible defect: get_supported_openai_params omits reasoning_effort for gpt-4.1/gpt-4o, and drop_params silently strips it, converting a provider 400 into a silent 200 with reasoning_tokens:0. Reproduction is executable via get_optional_params and a direct OpenAI curl, and the code anchor litellm/litellm_core_utils/get_supported_openai_params.py is identified. No duplicate or merged fix covers this path; the closest PRs only share the reasoning_effort keyword with no code-path overlap."
+  },
+  "cb1f7249b999f45f2a8256c281c36a1d87a0b05dcc5c05b509bfbc832140af09": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.algorithm_evidence claims post_training_objective/PEFT/quantization mechanisms, but the issue is CLI option-plumbing rather than an algorithmic training-objective defect"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/serve.py: pass logits processors and reasoning parser into _stream_response for /v1/chat/completions streaming",
+      "src/soup_cli/utils/save_formats.py: set llm_int8_skip_modules=[] for 4bit_forced instead of unused bnb_4bit_skip_modules",
+      "src/soup_cli/commands/export.py: run _maybe_attach_export/_auto_deploy_ollama after non-GGUF and advanced-GGUF formats, or refuse --deploy ollama for formats Ollama cannot load",
+      "src/soup_cli/commands/generate.py: dedup preference rows on a stable key (prompt+chosen+rejected)",
+      "src/soup_cli/commands/train.py + utils/profiling.py: bind and step the profiler from a TrainerCallback.on_step"
+    ],
+    "risks": [
+      "Floating-point/random variance in numeric checks; fix seed and tolerance",
+      "Overlap with open PRs #1518 and #1521 on data score and advise slices; avoid those claimed items",
+      "Potential duplicate issue #1465 shares stack signatures on data_score.py; verify scope separation before touching that file"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "serve: TestClient with stubbed _generate_response, assert logits_processor is non-None and reasoning parser applied for stream=True on /v1/chat/completions",
+      "merge: assert BitsAndBytesConfig(**_build_merge_4bit_bnb_kwargs(forced=True)) != plain and that lm_head is quantized under forced",
+      "export: CliRunner per format asserting deploy/registry calls recorded for deployable formats and refusal for non-deployable ones",
+      "generate: preference template with --dedup-with prior file, assert duplicate rows dropped and 'Duplicates' reported",
+      "train --profile: run profile_training with profiler.step() per step and assert trace file written"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers wiring vs refusing each option on the missing path",
+      "Whether issue #1465 overlaps the still-free slices beyond data_score.py"
+    ],
+    "why": "Issue #1448 documents eight concrete option-ignored paths with executed reproductions, file:line anchors, and a suggested fix per site. The maintainer confirmed three slices are claimed (local-rl scheduled mode, data score benchmarks, advise --probe-model) and explicitly listed five still-free items: serve streaming constraint/reasoning-parser, merge 4bit_forced, export --deploy for eight formats, generate --dedup-with on preference rows, and train --profile trace. Those free slices have clear root causes and validation paths."
   },
   "cb2694a1ae6fdd6e87627687316a2e5d96520f0b817bd4c8dc166616b5cb084b": {
     "confidence": 0.85,
