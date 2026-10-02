@@ -16316,6 +16316,33 @@
     "wait_reason": null,
     "why": "Issue provides a precise root cause (missing else branch for HTTPS no-match), a failing test with exact expected/actual, and clear acceptance criteria. No competing PR or issue found. The fix is a minimal local change with regression coverage."
   },
+  "2362d912b30f51f9ffb0006ff85d070de1c2ec37fb0d669e2e75614643ab9333": {
+    "confidence": 0.88,
+    "contradictions": [
+      "Issue title attributes crash to long context (~312K tokens), but comment evidence shows trigger is a replay step with <=512 scheduled tokens and that short 2k-token prompts also crash."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Acting on this issue would duplicate already-merged fix #49302.",
+      "PR #51489 addresses a separate KVTransfer producer of the same empty-query state, not this regression."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new test needed; regression coverage is claimed by merged #49302 and verified on v0.28.0 image."
+    ],
+    "unknowns": [
+      "Whether maintainers want any residual follow-up (e.g., backport to v0.26.0) beyond the merged fix."
+    ],
+    "why": "Supplied evidence shows the root cause is already identified and fixed: comment evidence states this is the #48822 PIECEWISE-replay metadata-padding regression, fixed by merged PR #49302 (de6ec294), with single-variable validation (cherry-pick makes all failing cases pass, num_prefill_reqs 512->1) and confirmation that released v0.28.0 passes all cases. The issue is therefore a covered/duplicate opportunity, not an actionable new code contribution."
+  },
   "236afcda8e3f600285a07b386b41dce4b374cc582a5772e37720fd6748b8efe6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -32452,6 +32479,43 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports a concrete Azure OAuth failure, but the maintainer's diagnostic suggests a version/import mismatch: the reporter may be using mcp.server.fastmcp from the MCP SDK rather than the standalone fastmcp package. The reporter has not yet confirmed the actual code path or provided the requested traceback. Root cause is unconfirmed and the fix location is ambiguous."
+  },
+  "4628ee70108770774c7a4d8ecf8c40ea374189ea96fdf9a4b1acae8b436b8864": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment marks PR #6030 technical_complete=true but root_cause_coverage=false and lists failing Unit Tests/Coverage, while also reporting no material_competition_gaps"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/google/gemini_live/llm.py: move async with connect() inside failure handling so setup errors route through _handle_connection_error",
+      "Override _classify_error for google-genai APIError close codes (1007/1008 -> INVALID_REQUEST, permanent)",
+      "Pass force_treat_as_permanent=True and exception=error in _handle_connection_error give-up path and _handle_send_error",
+      "In _disconnect(), clear _bot_is_responding and push TTSStoppedFrame for an in-flight reply"
+    ],
+    "risks": [
+      "Behavior change to is_usable/ErrorFrame semantics could affect other GeminiLive consumers",
+      "Overlapping open PR #6030 may conflict or duplicate; compare before implementing",
+      "No maintainer design confirmation on preferred classification of APIError close codes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the issue's FakeLive/FakeSession harness asserting an ErrorFrame reaches on_pipeline_error when connect() raises APIError(1008)",
+      "Assert is_usable becomes False and ProcessorUnusablePolicy.END terminates the pipeline after MAX_CONSECUTIVE_FAILURES and on send-side ConnectionClosedError",
+      "Assert a mid-reply drop pushes TTSStoppedFrame and a subsequent EndFrame completes well under the 30s deferral timeout",
+      "Run the google/gemini_live unit tests and static checks for the touched package"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the proposed _classify_error mapping over an alternative handling of APIError close codes",
+      "Whether PR #6030 will be revised to cover the same root causes before a competing change lands"
+    ],
+    "why": "Issue #5997 provides a self-contained, network-free reproduction with expected/actual output for four distinct failure modes in GeminiLiveLLMService, plus concrete code anchors (_connection_task_handler, _handle_connection_error, _handle_send_error, _disconnect) and a proposed fix. Root cause is clear: connect() sits outside the try, APIError close codes are unclassified, and force_treat_as_permanent is missing. Open PR #6030 is directly related but has failing Unit Tests/Coverage and no root-cause coverage, so it does not fully cover the opportunity."
   },
   "46431016fb2186cfccfe34cbbe0c7e21b3a572f889f0f78b79763b899bd00388": {
     "confidence": 0.85,
@@ -107698,6 +107762,34 @@
     ],
     "why": "Issue reports two concrete Windows desktop bugs with clear root causes confirmed by maintainer analysis: missing CREATE_NO_WINDOW flag causing visible terminal and runtime termination, and CSS misalignment under reduced motion. Both fixes are small, independent, and actionable with no competing PR."
   },
+  "dee204cd429086b25e9e8c45a5931734754e8e91fc8a07b5f1b13abce6efa912": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue body hypothesizes zod-to-json-schema or zod v4 native generator as the cause; comments demonstrate neither is the actual path (SDK v4 branch overrides zod's 2020-12 default)"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No in-repo source change is actionable; at most a dependency bump on @modelcontextprotocol/sdk once an upstream fix ships"
+    ],
+    "risks": [
+      "Post-processing SDK-generated schemas in server-filesystem would be a workaround that duplicates upstream work and may conflict with the maintainer's chosen repair direction (spec-permits-draft-07 vs change-dialect)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If upstream fix lands: spawn server-filesystem over stdio, send tools/list, assert every inputSchema/outputSchema $schema is https://json-schema.org/draft/2020-12/schema and validate against a strict 2020-12 validator"
+    ],
+    "unknowns": [
+      "Which upstream typescript-sdk PR will land and whether it changes the default target or the validator expectation"
+    ],
+    "why": "Comments establish the root cause is in @modelcontextprotocol/typescript-sdk (mapMiniTarget defaulting to draft-7 in zod-json-schema-compat), not in this repo's server-filesystem source; the fix is already tracked upstream (typescript-sdk#2084/#2085/#2653/#2677/#2721) and the only in-repo action would be a dependency bump after upstream lands. No actionable code change exists in this repository now."
+  },
   "dee6e0f1baeb50e53cb188cae92dcc22f986a8436891d7e0232f4e8bbe0413df": {
     "confidence": 0.85,
     "contradictions": [],
@@ -122495,6 +122587,42 @@
       "Whether effect identity approach is acceptable to maintainers"
     ],
     "why": "Issue identifies a real architectural gap: capability hooks run outside durable units causing duplicate side effects on replay. Proposal is concrete and references existing code paths. However, maintainer design confirmation is required, and the comment raises a critical correctness concern about exactly-once semantics that needs resolution."
+  },
+  "fa6db143be14bcaea75608b5311830a1e1bffa1e6dd3264e72c6f604bb30cff3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment marks PR #58581 as semantic_overlap_requires_review with no direct code overlap, while the issue body names #55490/#43928 as likely fixes for step 2"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/fused_moe/expert_map_manager.py: avoid meta-tensor torch.nonzero in get_compressed_map_string",
+      "vllm/model_executor/model_loader/weight_cache/ipc_loader.py: make _fallback_load safe after a partial _build_model failure (static_forward_context cleanup or single-build path)",
+      "reject --enable-eplb with ipc_cache alongside the fix"
+    ],
+    "risks": [
+      "Fix may duplicate PR #55490/#43928 work on the expert-map path",
+      "Changing fallback semantics could mask other load failures",
+      "EPLB + ipc_cache zero_copy weight corruption is a separate, unverified hazard"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with tiny-random/qwen3-moe, TP=2, --enable-expert-parallel, --load-format ipc_cache, fallback=false; assert no NotImplementedError from torch.nonzero on meta tensor",
+      "Same config with default fallback=true; assert no 'Duplicate layer name: model.layers.0.self_attn.attn'",
+      "Regression test that a non-EP exception raised mid-_build_model still allows fallback to rebuild the model"
+    ],
+    "unknowns": [
+      "Whether PR #58581 or #55490 already fixes the meta-tensor expert-map crash",
+      "Whether the fallback rebuild path (step 3) is addressed by any open PR",
+      "Repository AI-disclosure policy conflict flagged in preTaskEvidence"
+    ],
+    "why": "Issue provides a detailed two-step root cause (meta-tensor torch.nonzero in ExpertMapManager.get_compressed_map_string, plus fallback rebuild hitting Duplicate layer name) and a concrete repro, but the supplied evidence contains a materially blocking unknown: PR #58581 is flagged as semantic_overlap_requires_review with no direct code overlap, and the issue itself cites three related PRs (#55490, #43928, #58876) that may already cover step 2. Whether the fix is already covered determines whether new code work is actionable."
   },
   "fa8c7c8729aadfc645244ce94fb51a645005dc545ad351be08bd0f4ca0817182": {
     "confidence": 0.85,
