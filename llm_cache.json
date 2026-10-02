@@ -5951,6 +5951,40 @@
     ],
     "why": "The issue reports a reproducible NaN bug in FP8 multimodal inference with compilation enabled, but the root cause is not identified. The workaround (--enforce-eager) suggests a torch.compile/cudagraph interaction, but the exact mechanism (e.g., quantization numerics, graph capture, tensor parallel) is unclear. The issue is a bug report without a proposed fix or maintainer confirmation, and the track requires a concrete algorithm mechanism. The evidence shows no maintainer involvement or design confirmation, and the open PRs are unrelated. Thus, a clean implementation is not yet actionable without maintainer guidance or deeper investigation."
   },
+  "0d1aff30d3e739ee1f0abb35b28ab0052721422129d4ded787c52771632fa210": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/openai/chat/gpt_5_transformation.py: extend GPT-5 family detection to gpt-6.1-sol and add a `none` branch to the chat reasoning-effort gate",
+      "litellm/llms/openai/responses/transformation.py: apply the gpt-6.1-sol effort contract (drop none/minimal, drop empty reasoning object) in map_openai_params",
+      "Regression tests covering both Chat Completions and Responses paths for none/minimal with drop_params=True and the reject-with-400 path when dropping is disabled"
+    ],
+    "risks": [
+      "Overlapping open PR #43935 may already cover the same fix, risking duplicate work if not differentiated by tighter scope or better root-cause/test coverage",
+      "Broadening family detection to gpt-6.1-sol could unintentionally change parameter mapping for other gpt-6.x models",
+      "Model cost map lag may mean the guard must be model-specific rather than relying on cost-map metadata"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against a clean v1.100.0 install to confirm all five assertions fail",
+      "After the fix, re-run the same script and assert family detection is True and unsupported efforts are absent from both chat and responses params",
+      "Add a negative test asserting a local 400 (not a forwarded request) when drop_params=False and effort is none/minimal",
+      "Run the targeted openai transformation unit tests to check no regression for existing gpt-5 family models"
+    ],
+    "unknowns": [
+      "Whether PR #43935 will be merged before an independent fix lands, which would make this redundant",
+      "Whether maintainers prefer a model-specific guard versus a general supports_none_reasoning_effort gate (referenced issue #40472)"
+    ],
+    "why": "Issue provides a concrete, self-contained reproduction (test_gpt61sol.py) with explicit failing assertions, names the exact code surfaces (OpenAIGPT5Config.is_model_gpt_5_model, chat effort gate missing a `none` branch, OpenAIResponsesAPIConfig mapper), and states expected behavior for drop_params=True vs. rejection. This is a user-visible parameter-translation bug with a clear minimal fix path. Open PR #43935 is directly related but is large (18 files, 821 additions) and lacks root-cause coverage evidence, so a tighter fix with focused regression tests remains viable."
+  },
   "0d1b885f08ddfc0d403b2169b2dca32aacaddddba016644051de6c02c10896ef": {
     "confidence": 0.85,
     "contradictions": [
@@ -22182,6 +22216,40 @@
       "Whether the private Ink layout-listener dependency is an acceptable tradeoff for the maintainers"
     ],
     "why": "Issue reports a real commit-phase layout feedback loop (useBoxMetrics -> heights -> offsets -> window/anchor -> remount) with a deterministic unique-key regression test, but the supplied triage evidence ties the field crash to duplicate history-item keys (#11500) whose fix (#11743) is still open/unmerged, and the reporter's own scope note concedes the regression does not prove the field crash is independent of that driver. Overlap with open PR #11761 (draft, same VirtualizedList paths) and merged #11565 leaves unresolved duplicate/coverage questions that determine whether new code work is actionable."
+  },
+  "307e393c103da19e62c4c38a8e5d447d0ffac36bda27ca8e792eb5664a8e15fe": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue proposes eviction in closeSessionAdmission, but triage confirms closeSessionAdmission is provider-route-only and the raw path never signals Session release to the executor"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/managed-runtime-tool-executor.ts: add bounded eviction of settled JournalEntry (delete on settle/acknowledge, or drop input/inputJson post-settle, or bounded ring)",
+      "packages/cli/src/serve/managed-runtime-tool-executor.ts: keep hasActiveSession/claimProviderSession O(active) rather than O(all entries)"
+    ],
+    "risks": [
+      "Evicting too early breaks late status/cancel/acknowledgeV3 lookups",
+      "Choosing the wrong eviction point (closeSessionAdmission is provider-only) leaves the raw path unfixed",
+      "Behavior change to status/cancel semantics for released Sessions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Regression test: run N raw-path execute calls across released Sessions and assert entries Map size stays bounded",
+      "Assert status/cancel still resolve for recently released Sessions within the chosen retention window",
+      "Assert hasActiveSession/claimProviderSession do not scan evicted entries"
+    ],
+    "unknowns": [
+      "Where the raw path should signal Session release / where eviction belongs (unresolved design decision, labeled need-discussion)",
+      "Whether status/cancel must still be answerable for released Sessions and for how long"
+    ],
+    "why": "The issue provides a concrete, code-anchored root cause (append-only `entries` Map in ManagedToolExecutor, no delete/clear, payload-proportional retention) and independent verification at the cited commit. However, the triage bot explicitly flags a materially blocking design unknown: the reporter's proposed eviction point (`closeSessionAdmission`) is provider-route-only, and the raw path never signals a Session release to the executor at all. The correct eviction point/mechanism is therefore undetermined, and the issue is labeled `need-discussion`. This is not ordinary implementation preference — the fix location itself is unresolved, which determines whether the code work is actionable."
   },
   "3084b594e8ef2e7a3cbf830b5b2346ca5dbbc2d549ec2c41f7cd4b094914875d": {
     "confidence": 0.8,
@@ -41688,6 +41756,41 @@
     ],
     "why": "Issue provides a detailed root cause analysis and a suggested fix, but the deterministic gate requires HUMAN_REVIEW and maintainer confirmation is pending. The issue is labeled 'needs triage' and the only comment is a triage acknowledgment. No maintainer has approved the proposed design or confirmed the fix approach."
   },
+  "58364e045f768d829b4d8a232f68eb7f7c23d4b668beeb9cc6d18eeda1eed0de": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Codex coding-agent run/session lifecycle completion-event handling",
+      "runWaiter resolution on run.completed/run.failed",
+      "sessionMap.isWorking clearing after Codex exit",
+      "streamOutput() EOF/terminal event handling"
+    ],
+    "risks": [
+      "Root cause is suspected, not confirmed; fix may target wrong layer",
+      "Bundled dist/server/index.js is build output; source fix location must be identified",
+      "Changing timeout/abort semantics could mask other lifecycle bugs"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce minimal prompt '只回复 OK' through Ekko Studio and measure latency vs native Codex CLI",
+      "Add regression test asserting run waiter resolves promptly on completion event rather than 120s timeout",
+      "Verify sessionMap.isWorking is cleared immediately after codex exec exits"
+    ],
+    "unknowns": [
+      "Exact source module corresponding to bundled dist/server/index.js",
+      "Whether maintainers have an existing design preference for the run-waiter lifecycle"
+    ],
+    "why": "Issue provides a concrete user-visible performance bug with reproduction steps, isolation testing, and static code anchors pointing to 120s waits in runAndWait()/streamOutput() and completion-event handling. No open PR or duplicate issue covers it. Track is agent_ai_infra, not llm_algorithm, so the algorithm-evidence requirement does not apply. Root cause is suspected rather than confirmed, but the evidence establishes a concrete validation path (reproduce 120s delay, instrument run waiter resolution, verify completion event handling)."
+  },
   "583cc0369435e052cefe0d85c81eba7b579d9b3714881bb3bdc521d8c948e304": {
     "confidence": 0.85,
     "contradictions": [
@@ -54229,6 +54332,38 @@
     ],
     "why": "Issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not construct a synthetic reproduction; only long real agentic sessions trigger it. A maintainer comment (ZJY0516) attributes it to tool-call/vLLM frontend, which is parser/plumbing rather than an llm_algorithm mechanism, and the candidate's own algorithm_evidence shows no formula or experiment signal. The linked PR #56635 ('fix glm frontend tool call parsing') already covers the frontend tool-call parsing path, and the duplicate assessment flags weak competition with missing root-cause coverage and no tests. Root cause is not established and the actionable code path is ambiguous."
   },
+  "715da292b0b027b442e824d7d4c5100e3fe3de282ab1f070c897ffc0bd340bcf": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Workspace selection persistence/validation logic that prunes non-existent paths from the recent workspaces list",
+      "Workspace switcher UI to allow removing an entry (optional per issue's 'and/or')"
+    ],
+    "risks": [
+      "Pruning on every dropdown open could cause unexpected removal of temporarily unavailable network/removable drives",
+      "Cross-platform path normalization (Windows drive-letter casing) may cause false negatives in existence checks"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that seeds a workspace list containing a deleted path and asserts it is pruned on load/dropdown open",
+      "Regression test that lastWorkspace is reset when its path no longer exists",
+      "Manual repro: open folder, delete it from disk, reopen switcher and confirm entry is gone or removable"
+    ],
+    "unknowns": [
+      "Exact source module/file in the desktop app that owns workspace-selection persistence is not identified in the supplied evidence"
+    ],
+    "why": "Issue provides ordered reproduction steps, a concrete persisted-state root cause (workspace list under cline.code.workspace-selection.v2 never validated against disk), and a clear expected behavior (prune dead paths and/or allow removal). No duplicate open PR/issue found. The suggested Python pruner is only a diagnostic sketch, not the actual fix, so it does not cover the opportunity."
+  },
   "716b4ed009f5f59d738d75e6825706c4fb5cc2c28f23c92c6a421c0dc52f2fab": {
     "confidence": 0.6,
     "contradictions": [
@@ -58112,6 +58247,40 @@
     ],
     "why": "Root cause is well-evidenced: ManagedToolExecutor.entries is append-only, payload-proportional, and only the raw path grows it. But the triage bot explicitly states the proposed eviction point (closeSessionAdmission) is provider-route-only and the raw path never signals a Session release to the executor, so a design decision is required before code. The issue is labeled need-discussion and the fix location is unresolved, making the concrete code change not yet actionable."
   },
+  "799d86e894740e6776197f88ced47314212591134c9d5d117ba067b5b0155d42": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER and gate HUMAN_REVIEW conflict with actionability_evidence showing no maintainer approval, no design confirmation, and no wait reasons"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sidecar hub-daemon lifecycle/reaping on parent exit",
+      "hub client connection validation (liveness/instance/version check before reuse of port 25463)"
+    ],
+    "risks": [
+      "Fix location ambiguous: process reaping vs. connection validation vs. port allocation could each resolve symptoms differently",
+      "Windows-specific process-parent semantics may not map cleanly to other platforms",
+      "Changing hub reuse behavior could break legitimate multi-client reuse of a healthy daemon"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: start app, note sidecar and hub daemon PIDs, quit app, verify hub daemon survives and port 25463 remains bound, relaunch and confirm 1006 flap",
+      "Regression: after fix, relaunch must either reap the orphan or reject the stale hub and spawn a fresh one; assert no 1006 on first prompt"
+    ],
+    "unknowns": [
+      "Which module owns hub-daemon spawn/reuse and orphan reaping",
+      "Whether a liveness/version handshake already exists and is simply not enforced",
+      "Whether the maintainers consider this a known/duplicate or already-planned fix"
+    ],
+    "why": "The issue gives a strong narrative (orphaned hub daemon on port 25463 reused by a fresh sidecar, causing 1006 flaps) and a workaround, but the supplied evidence contains no code anchors, no confirmed root-cause signal, and probe_ready=false. The pre-task evidence explicitly flags reproduction_or_validation_missing and no_code_surface, so the concrete code surface to change (daemon reaping vs. liveness/version handshake vs. port selection) is not established."
+  },
   "79b90688470676eef7388ae5bbadf26cbf5465a964662aada4299d7b1df541c3": {
     "confidence": 0.7,
     "contradictions": [
@@ -61309,6 +61478,37 @@
       "Whether the base SHA change invalidates the existing reproduction"
     ],
     "why": "The issue itself is a strong, concrete kernel-correctness report: C3x callers rebuild packed strides via make_cute_packed_stride and discard real leading strides, with a reproducible 8% mismatch matrix and a proposed stride fix. However, the supplied evidence shows the issue is already fully covered by open PRs: #55537 (common caller + SM90 tensorwise), #56248 (SM90 blockwise), #56659 (SM120 blockwise), and #56480 (SM100 paths) — the issue body's own coverage checklist marks every caller as having an open PR, and the last unclaimed caller (SM120 blockwise) is now claimed by #56659. The duplicate assessment status is 'semantic_overlap_requires_review' with direct code-path overlap on the shared test file, and the pre-task policy is 'ai_disclosure_conflict' with base_sha_changed. These are materially blocking unknowns for whether any new code work is actionable."
+  },
+  "8084865d130c32a6a260768a801fc89de086237ebb4f8174eb9b8efeb3bd7ae6": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP OAuth discovery/fallback logic in the GitHub MCP server auth path",
+      "Error classification for device-flow-capable servers that fail discovery"
+    ],
+    "risks": [
+      "Maintainer may prefer option 2 (distinct error) or option 3 (marketplace annotation) over the fallback implementation",
+      "Changing OAuth ordering could affect other MCP servers relying on discovery-first behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the bundled github MCP server config and confirm the DCR incompatibility error",
+      "Add a regression test asserting device-flow fallback is attempted when authorization-server discovery returns 404 and protected-resource metadata advertises device_authorization_endpoint",
+      "Verify the device-flow client against api.githubcopilot.com/mcp/ to confirm the fallback yields a usable bearer token"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix among the three options proposed in the issue"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: GitHub's authorization-server discovery endpoint 404s, so Cline's existing device-code grant is never reached. Reproduction steps and endpoint checks are supplied, and a commenter provides a minimal device-flow client to validate the fallback. No open PR or duplicate covers this fix; the two merged PRs only share the incidental token '404s' and have no code overlap."
   },
   "80a9c0a1272f9006ed767af9756e95b39494546dc7f2730887142890e6a6cace": {
     "confidence": 0.6,
@@ -70745,6 +70945,43 @@
       "Whether PR #52487 or related PRs already resolve the same root cause"
     ],
     "why": "The issue reports a concrete, reproducible greedy-equivalence failure (DFlash2 vs target-only diverging at token 30, K=1, --enforce-eager, prefix cache off), which is a valid LLM-algorithm correctness signal with a reference-vs-implementation test path. However, supplied evidence contains materially conflicting root-cause attributions: commenters point to BF16 numerical-path differences, GDN gate row misalignment (#51812, landed in v0.28.0), and multiple unrelated kernel defects (#54945/#54948, #54076/#53798, #55122), while the reporter's build predates the claimed fix. The duplicate/overlap assessment is unresolved (PR #52487 semantic overlap, issue #56605 shared stack signature), and the submission policy is flagged ai_disclosure_conflict, which is a repository-level disclosure requirement that gates whether code work is actionable. These unresolved coverage and policy facts determine whether a new contribution is warranted."
+  },
+  "945491e8cac7c7a255db707120e634538274314742e167f6cbd25a7c05565791": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Reporter attributes failure to a ~148k token ceiling; second commenter observes failure at ~375K tokens and cannot separate token ceiling from request-body/payload ceiling"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "provider catalog limit for opencode-go models (context/output limits)",
+      "error classification path mapping HTTP 400 to context overflow",
+      "provider response body persistence in logs/session messages"
+    ],
+    "risks": [
+      "Root cause may be payload-size rather than token-count, leading to a wrong fix",
+      "Changing catalog limits could affect other opencode-go models or plans",
+      "Classifying all 400s as context overflow could mask unrelated provider errors"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a session exceeding ~148k prompt tokens on opencode-go/qwen3.8-flash and assert a 400 is classified as context overflow and triggers compact-and-retry",
+      "Add a regression test asserting the provider 400 body is persisted in the session message/log",
+      "Verify catalog limit for opencode-go models matches the gateway's actual accept ceiling"
+    ],
+    "unknowns": [
+      "Whether the true trigger is a token limit or a request-body size limit",
+      "The actual provider 400 response body, which is never persisted",
+      "Whether an existing open PR (#52651) already covers the overflow-classification fix"
+    ],
+    "why": "Issue reports a deterministic, reproducible failure: opencode-go gateway rejects prompts around 148k tokens while catalog advertises 1M context, so preflight compaction never fires and the 400 is not classified as context overflow, permanently bricking the session. Concrete code paths are identified (provider catalog limits, error classification, response-body persistence) and a validation path exists via the documented reproduction and session logs. However, the exact root cause is ambiguous: the reporter and a second commenter cannot distinguish a token ceiling from a request-body/payload-size ceiling, and the provider body is never surfaced, so the precise fix target is uncertain."
   },
   "946dc5f45a0d46fa08af2eecb68b9f8261c069ff0a94bf8e32b5b5912047a877": {
     "confidence": 0.8,
@@ -122468,6 +122705,35 @@
       "Whether the natural all-zero lora_B tie fires in ordinary training runs at the first relora_steps interval"
     ],
     "why": "Issue identifies a concrete algorithm-conformance defect in ReLoRA restart logic: _prune_and_reset prunes lora_A/lora_B without merging B@A into the base weight, and strict > threshold masking can zero both factors on ties, producing a dead zero-gradient branch. Maintainer confirmed both claims with measured evidence (base weight delta 0, MSE 142.12 vs control 8.77e-13; nonzero A/B = 0 with requested keep = 4, grad norms 0.0). Root cause is localized to src/soup_cli/utils/relora.py and a reference-vs-implementation numerical test path exists."
+  },
+  "fdd930ca5bba83a316a7b9f5f2c7f937a1680e5e7d60d67d16c0721121d3a2bf": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.algorithm_evidence claims qualified=true with evaluation_method mechanism, but the issue body contains no training objective, model mechanism, numerical method, or evaluation methodology"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/health_endpoints/_health_endpoints.py aggregation keyed by model_id instead of litellm_params.model"
+    ],
+    "risks": [
+      "Misattribution fix may interact with PR #32161 which reuses the same mapping/aggregation helpers",
+      "Fallback to model-param mapping when model_id is absent preserves legacy behavior but may still misattribute in that edge case"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Unit test _aggregate_health_check_results with two deployments sharing litellm_params.model but distinct model_id, asserting per-deployment healthy/unhealthy counts and error attribution"
+    ],
+    "unknowns": [
+      "Whether maintainers consider this proxy health-check bug in scope for the llm_algorithm track"
+    ],
+    "why": "The issue describes a proxy health-check aggregation bug keyed by litellm_params.model, with a clear root cause and a concrete patch/test. However, track=llm_algorithm requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. This is ordinary proxy health-endpoint plumbing and DB persistence, not an algorithm contribution, so it falls under the explicitly rejected installation/CLI/config/wrapper/provider-integration/API-plumbing category."
   },
   "fddbf32df29d5f6b785936e46bb8a9730f20efad77dcf40db64426fcaf35da40": {
     "confidence": 0.7,
