@@ -2523,7 +2523,9 @@ def _exhaust_with_worker_binding_error(worker, lane: EventLane, event_id: str, k
         )
 
 
-def _exhaust_with_desktop_writer_collision(worker, lane: EventLane, event_id: str, key: str) -> None:
+def _exhaust_with_desktop_writer_collision(
+    worker, lane: EventLane, event_id: str, key: str
+) -> None:
     lane.reserve_handler_turn(key, event_id, f"client:{event_id}")
     assert lane.release_handler_reservation(
         event_id,
@@ -2657,7 +2659,9 @@ def test_prestart_desktop_writer_collision_requeues_only_proved_root_and_coalesc
     assert dict(recovery_row) == {"status": "coalesced", "attempts": 3}
 
 
-def test_prestart_desktop_writer_collision_repair_rejects_mismatched_event_binding(tmp_path, monkeypatch):
+def test_prestart_desktop_writer_collision_repair_rejects_mismatched_event_binding(
+    tmp_path, monkeypatch
+):
     worker = _event_worker_module()
     lane = EventLane(tmp_path / "events.db")
     key = "agentscope-ai/agentscope#2044"
@@ -3906,6 +3910,252 @@ def _make_exhausted_outcome_chain(worker, lane, key="agentscope-ai/agentscope#1"
             )
     lane.register_public_work(key, status="active", source="outcome-invalid")
     return root_id, recovery_id
+
+
+def _make_controller_rejected_prestart_chain(worker, root, monkeypatch):
+    from oss_pr_radar.ledger import RadarLedger
+
+    state = root / "state"
+    state.mkdir(mode=0o700)
+    ledger_dir = state / "ledger-releases"
+    ledger_dir.mkdir(mode=0o700)
+    store = RadarLedger(ledger_dir / "ledger.sqlite3")
+    (state / "current-ledger").symlink_to("ledger-releases/ledger.sqlite3")
+    key = "agentscope-ai/agentscope#1"
+    store.enqueue(
+        {
+            "intentId": "rejected-intent",
+            "key": key,
+            "repo": "agentscope-ai/agentscope",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/agentscope-ai/agentscope/issues/1",
+            "title": "Rejected duplicate",
+            "issuedAt": "2026-10-01T00:00:00Z",
+            "expiresAt": "2026-10-03T00:00:00Z",
+        }
+    )
+    store.record_stage(key, "AUDIT_NO_GO", reason="STRONG_EXISTING_PR")
+    with store.connect() as db:
+        db.execute(
+            "INSERT INTO task_quarantines(opportunity_key,reason,dedupe_key,payload_json,"
+            "status,created_at) VALUES(?,?,?,?,?,?)",
+            (
+                key,
+                "TASK_CONTEXT_BLOCKED",
+                "original-gate",
+                '{"original":true}',
+                "ACTIVE",
+                "2026-10-01T00:00:00Z",
+            ),
+        )
+    lane = EventLane(state / "agentscope-events.sqlite3")
+    root_id = "github:agentscope-ai/agentscope:1:issue_update:2026-10-02T00:35:36Z"
+    recovery_id = worker._outcome_recovery_event_id(root_id)
+    root_event = {
+        "eventId": root_id,
+        "eventKey": key,
+        "repo": "agentscope-ai/agentscope",
+        "number": 1,
+        "kind": "issue_update",
+        "updatedAt": "2026-10-02T00:35:36Z",
+    }
+    recovery = {
+        "eventId": recovery_id,
+        "eventKey": key,
+        "kind": "outcome_reconcile",
+        "rootEventId": root_id,
+        "eventIdSource": root_id,
+        "payload": {"eventId": root_id, "rootEventId": root_id, "publicKey": key},
+    }
+    paths = []
+    for event in (root_event, recovery):
+        event_id = event["eventId"]
+        lane.append(event)
+        lane.reserve_handler_turn(key, event_id, f"client:{event_id}")
+        lane.release_handler_reservation(
+            event_id,
+            {"error": "RuntimeError:agentscope-event-create: Traceback (truncated)"},
+            reason="handler_start_exception",
+        )
+        with lane.writer() as db:
+            db.execute(
+                "UPDATE event_lane_events SET status='needs_reconcile',attempts=? WHERE event_id=?",
+                (lane.max_attempts, event_id),
+            )
+        path = worker._event_artifact_path(
+            root,
+            worker.EVENT_RECEIPT_DIR,
+            event_id,
+            attempt=lane.max_attempts,
+            is_recovery=event_id == recovery_id,
+        )
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        receipt = {
+            "eventId": event_id,
+            "eventKey": key,
+            "model": "gpt-6-astra",
+            "ok": False,
+            "retryable": False,
+            "turnStarted": False,
+            "turnId": None,
+            "error": f"PermissionError:task action blocked by active quarantine: {key}",
+        }
+        for target, value in (
+            (path, receipt),
+            (
+                path.with_suffix(".request.json"),
+                {
+                    "eventId": event_id,
+                    "eventKey": key,
+                    "model": "gpt-6-astra",
+                    "threadId": CENTRAL_THREAD,
+                    "prompt": "Original request must remain intact",
+                },
+            ),
+            (path.with_suffix(".launch.json"), {"pid": 99999999, "model": "gpt-6-astra"}),
+        ):
+            target.write_text(json.dumps(value), encoding="utf-8")
+            target.chmod(0o600)
+            paths.append(target)
+    monkeypatch.setattr(
+        worker, "require_operational_authorization", lambda _root: _active_authorization()
+    )
+    monkeypatch.setattr(
+        worker.GitHubIssuePoller, "poll", lambda _self, **_kw: worker.PollResult("not_modified")
+    )
+    monkeypatch.setattr(worker, "_live_exhausted_recovery_evidence", lambda *_a, **_kw: None)
+    return lane, store, root_id, recovery_id, paths
+
+
+def test_run_once_watches_exact_controller_rejected_prestart_chain_without_rewriting_evidence(
+    tmp_path,
+    monkeypatch,
+):
+    worker = _event_worker_module()
+    lane, store, root_id, recovery_id, paths = _make_controller_rejected_prestart_chain(
+        worker,
+        tmp_path,
+        monkeypatch,
+    )
+    raw = {path: path.read_bytes() for path in paths}
+    with lane.connect() as db:
+        before_events = {
+            r["event_id"]: dict(r) for r in db.execute("SELECT * FROM event_lane_events")
+        }
+        before_turns = {
+            r["event_id"]: dict(r) for r in db.execute("SELECT * FROM event_lane_turns")
+        }
+    with store.connect() as db:
+        before_main = {
+            table: [dict(r) for r in db.execute(f"SELECT * FROM {table}")]
+            for table in ("opportunities", "intents", "task_quarantines", "events")
+        }
+    delivered = []
+    first = worker.run_once(tmp_path, deliver=delivered.append)
+    second = worker.run_once(tmp_path, deliver=delivered.append)
+    assert first["recoverySettlement"]["settled"] == 1
+    assert second["recoverySettlement"]["settled"] == 0
+    assert delivered == []
+    with lane.connect() as db:
+        after_events = {
+            r["event_id"]: dict(r) for r in db.execute("SELECT * FROM event_lane_events")
+        }
+        after_turns = {r["event_id"]: dict(r) for r in db.execute("SELECT * FROM event_lane_turns")}
+    assert after_events[root_id] == before_events[root_id] | {"status": "watch_only"}
+    assert after_events[recovery_id] == before_events[recovery_id] | {"status": "coalesced"}
+    assert after_turns[root_id] == before_turns[root_id] | {"status": "watch_only"}
+    assert after_turns[recovery_id] == before_turns[recovery_id] | {"status": "superseded"}
+    assert {path: path.read_bytes() for path in paths} == raw
+    with store.connect() as db:
+        after_main = {
+            table: [dict(r) for r in db.execute(f"SELECT * FROM {table}")] for table in before_main
+        }
+    assert after_main == before_main
+    marker = lane.state_value(f"controller-prestart-rejection:{root_id}")
+    assert marker["reason"] == "controller_prestart_rejected"
+    assert marker["controllerBinding"]["stage"] == "AUDIT_NO_GO"
+    assert "outcome" not in marker
+    # The closeout belongs to the original identity only. A genuinely later
+    # public revision still enters the ordinary observation/delivery path.
+    newer_id = "github:agentscope-ai/agentscope:1:issue_update:2026-10-02T04:00:00Z"
+    lane.append(
+        {
+            "eventId": newer_id,
+            "eventKey": "agentscope-ai/agentscope#1",
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+            "updatedAt": "2026-10-02T04:00:00Z",
+        }
+    )
+    worker.run_once(tmp_path, deliver=delivered.append)
+    assert [event["eventId"] for event in delivered] == [newer_id]
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "foreign_receipt",
+        "different_error",
+        "retryable",
+        "started",
+        "lane_turn",
+        "live_pid",
+        "not_exhausted",
+        "not_rejected",
+        "no_quarantine",
+        "auth_unavailable",
+    ],
+)
+def test_prestart_rejection_settlement_preserves_unproved_chain(tmp_path, monkeypatch, mismatch):
+    worker = _event_worker_module()
+    lane, store, root_id, recovery_id, paths = _make_controller_rejected_prestart_chain(
+        worker,
+        tmp_path,
+        monkeypatch,
+    )
+    if mismatch in {"foreign_receipt", "different_error", "retryable", "started"}:
+        receipt = json.loads(paths[0].read_bytes())
+        field, value = {
+            "foreign_receipt": ("eventId", "foreign-event"),
+            "different_error": ("error", "PermissionError:unrelated"),
+            "retryable": ("retryable", True),
+            "started": ("turnStarted", True),
+        }[mismatch]
+        receipt[field] = value
+        paths[0].write_text(json.dumps(receipt), encoding="utf-8")
+    elif mismatch in {"lane_turn", "not_exhausted"}:
+        with lane.writer() as db:
+            if mismatch == "lane_turn":
+                db.execute(
+                    "UPDATE event_lane_turns SET turn_id='real-turn' WHERE event_id=?", (root_id,)
+                )
+            else:
+                db.execute("UPDATE event_lane_events SET attempts=2 WHERE event_id=?", (root_id,))
+    elif mismatch == "live_pid":
+        monkeypatch.setattr(worker, "_receipt_has_live_bridge", lambda _value: True)
+    elif mismatch in {"not_rejected", "no_quarantine"}:
+        with store.connect() as db:
+            if mismatch == "not_rejected":
+                db.execute("UPDATE intents SET status='DISPATCHED'")
+            else:
+                db.execute("UPDATE task_quarantines SET status='CLEARED'")
+    else:
+
+        def unavailable(_root):
+            raise RuntimeError("operational authorization expired")
+
+        monkeypatch.setattr(worker, "require_operational_authorization", unavailable)
+    with lane.connect() as db:
+        before = {
+            table: [dict(r) for r in db.execute(f"SELECT * FROM {table}")]
+            for table in ("event_lane_events", "event_lane_turns")
+        }
+    assert worker._settle_exhausted_outcome_recoveries(tmp_path, lane)["settled"] == 0
+    with lane.connect() as db:
+        after = {table: [dict(r) for r in db.execute(f"SELECT * FROM {table}")] for table in before}
+    assert after == before
+    assert lane.state_value(f"controller-prestart-rejection:{root_id}") is None
 
 
 def test_exhausted_recovery_settles_only_after_external_claim_evidence(tmp_path):
