@@ -9367,10 +9367,14 @@ def _authenticated_pr_update_revalidation_fixture(tmp_path, *, mismatch=True, in
     return store, key, request, receipt
 
 
-@pytest.mark.parametrize("mismatch", [True, False])
+@pytest.mark.parametrize(
+    ("mismatch", "concurrent_writer"), [(True, False), (False, False), (False, True)]
+)
 def test_authenticated_pr_update_retirement_requires_new_observation(
-    tmp_path, monkeypatch, mismatch
+    tmp_path, monkeypatch, mismatch, concurrent_writer
 ):
+    import sqlite3
+
     import oss_pr_radar.ledger as ledger_module
     import oss_pr_radar.repo_probe as probe_module
 
@@ -9401,7 +9405,46 @@ def test_authenticated_pr_update_retirement_requires_new_observation(
                 "SELECT * FROM pr_followups WHERE opportunity_key=?", (key,)
             ).fetchone()
         )
-    reopened = RadarLedger(store.path)
+    competitor = None
+    writer_attempts = []
+    if concurrent_writer:
+        with store.connect() as connection:
+            connection.execute("CREATE TABLE revalidation_competitor (value INTEGER)")
+        competitor = sqlite3.connect(store.path, timeout=0, isolation_level=None)
+        native_revalidation_reason = ledger_module._pr_update_revalidation_reason
+
+        def classify_with_competing_writer(connection, **kwargs):
+            if not writer_attempts:
+                # The original row has already been read. Use a real second
+                # connection to contend before the native revalidation UPDATE.
+                try:
+                    competitor.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError as exc:
+                    assert exc.sqlite_errorcode == sqlite3.SQLITE_BUSY
+                    writer_attempts.append("busy")
+                else:
+                    competitor.execute("INSERT INTO revalidation_competitor VALUES (1)")
+                    competitor.execute("COMMIT")
+                    writer_attempts.append("committed")
+            return native_revalidation_reason(connection, **kwargs)
+
+        monkeypatch.setattr(
+            ledger_module, "_pr_update_revalidation_reason", classify_with_competing_writer
+        )
+    try:
+        reopened = RadarLedger(store.path)
+    finally:
+        if competitor is not None:
+            if competitor.in_transaction:
+                competitor.execute("ROLLBACK")
+            competitor.close()
+    if concurrent_writer:
+        assert writer_attempts == ["busy"]
+        with reopened.connect() as connection:
+            assert (
+                connection.execute("SELECT COUNT(*) FROM revalidation_competitor").fetchone()[0]
+                == 0
+            )
     reason = (
         "PR_UPDATE_SOURCE_WAKE_MISMATCH" if mismatch else "PR_UPDATE_AUTHENTICATED_PROBE_EXPIRED"
     )

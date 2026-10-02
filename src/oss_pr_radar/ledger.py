@@ -2176,51 +2176,54 @@ class RadarLedger:
                  AND o.stage IN ('FIX_READY','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')"""
         ).fetchall()
         for source in rows:
-            # Classification, denial and the existing observation barrier must
-            # become visible together. A failed native rearm preserves the row.
-            connection.execute("SAVEPOINT pr_update_revalidation")
-            try:
-                row = connection.execute(
-                    "SELECT * FROM publication_requests WHERE request_id=?",
-                    (source["request_id"],),
-                ).fetchone()
-                reason = _pr_update_revalidation_reason(connection, row=row, now=now)
-                if reason is None:
+            # Acquire the normal writer transaction before authenticating this
+            # row, while keeping earlier successful rows independently durable.
+            with self.transaction() as connection:
+                # Classification, denial and the existing observation barrier must
+                # become visible together. A failed native rearm preserves the row.
+                connection.execute("SAVEPOINT pr_update_revalidation")
+                try:
+                    row = connection.execute(
+                        "SELECT * FROM publication_requests WHERE request_id=?",
+                        (source["request_id"],),
+                    ).fetchone()
+                    reason = _pr_update_revalidation_reason(connection, row=row, now=now)
+                    if reason is None:
+                        connection.execute("ROLLBACK TO pr_update_revalidation")
+                        continue
+                    connection.execute(
+                        """UPDATE publication_requests SET reason=?,updated_at=?
+                           WHERE request_id=? AND reason<>?""",
+                        (reason, now, row["request_id"], reason),
+                    )
+                    self._event(
+                        connection,
+                        row["opportunity_key"],
+                        "PUBLICATION_BLOCKED",
+                        f"{row['request_id']}:{reason}",
+                        {
+                            "requestId": row["request_id"],
+                            "reason": reason,
+                            "previousReason": row["reason"],
+                            "evidenceDigest": row["evidence_digest"],
+                            "requestDigest": sha256_text(row["request_json"]),
+                        },
+                        now,
+                    )
+                    if not self._rearm_followup_for_publication_drift(
+                        connection,
+                        request_id=row["request_id"],
+                        key=row["opportunity_key"],
+                        request_json=row["request_json"],
+                        reason=reason,
+                        now=now,
+                    ):
+                        connection.execute("ROLLBACK TO pr_update_revalidation")
+                except Exception:
                     connection.execute("ROLLBACK TO pr_update_revalidation")
-                    continue
-                connection.execute(
-                    """UPDATE publication_requests SET reason=?,updated_at=?
-                       WHERE request_id=? AND reason<>?""",
-                    (reason, now, row["request_id"], reason),
-                )
-                self._event(
-                    connection,
-                    row["opportunity_key"],
-                    "PUBLICATION_BLOCKED",
-                    f"{row['request_id']}:{reason}",
-                    {
-                        "requestId": row["request_id"],
-                        "reason": reason,
-                        "previousReason": row["reason"],
-                        "evidenceDigest": row["evidence_digest"],
-                        "requestDigest": sha256_text(row["request_json"]),
-                    },
-                    now,
-                )
-                if not self._rearm_followup_for_publication_drift(
-                    connection,
-                    request_id=row["request_id"],
-                    key=row["opportunity_key"],
-                    request_json=row["request_json"],
-                    reason=reason,
-                    now=now,
-                ):
-                    connection.execute("ROLLBACK TO pr_update_revalidation")
-            except Exception:
-                connection.execute("ROLLBACK TO pr_update_revalidation")
-                raise
-            finally:
-                connection.execute("RELEASE pr_update_revalidation")
+                    raise
+                finally:
+                    connection.execute("RELEASE pr_update_revalidation")
 
     @staticmethod
     def _no_go_watermark(connection: sqlite3.Connection, key: str) -> dict[str, str | None] | None:
