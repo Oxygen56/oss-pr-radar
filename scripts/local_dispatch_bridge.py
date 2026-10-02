@@ -19687,6 +19687,15 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                 "independent_review_passed"
             } and not _local_changed_files(worktree):
                 authenticated = _read_authenticated_validation_result_if_present(candidate)
+                if authenticated is None:
+                    concurrent_deferred.append(
+                        {
+                            "key": str(candidate.get("key") or ""),
+                            "resultDigest": str(candidate.get("resultDigest") or ""),
+                            "reason": "VALIDATION_RESULT_MISSING",
+                        }
+                    )
+                    continue
                 value = authenticated[0] if authenticated is not None else {}
                 test_failures = unresolved_current_test_failures(value)
                 if test_failures:

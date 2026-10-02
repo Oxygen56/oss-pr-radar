@@ -23885,6 +23885,34 @@ def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     assert listed["controllerReviewPending"][0]["reason"] == "CONTROLLER_REVIEW_PENDING"
 
 
+def test_missing_validation_result_does_not_wait_for_independent_review(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path, authenticated=False)
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: None)
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["errors"] == []
+    assert ingested["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    candidate = store.validation_followup_candidates()[0]
+    context_path = result_path.parent / "task-context.json"
+    context_before = context_path.read_bytes()
+    result_path.unlink()
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+
+    assert listed["ok"] is True
+    assert listed["candidates"] == []
+    assert listed["controllerReviewPending"] == []
+    assert listed["concurrentDeferred"] == [
+        {
+            "key": candidate["key"],
+            "resultDigest": candidate["resultDigest"],
+            "reason": "VALIDATION_RESULT_MISSING",
+        }
+    ]
+    assert not result_path.exists()
+    assert context_path.read_bytes() == context_before
+    assert store.publication_work_items() == []
+
+
 def test_final_receipt_rebind_uses_current_valid_receipt_when_context_source_is_unavailable(
     tmp_path,
 ):
