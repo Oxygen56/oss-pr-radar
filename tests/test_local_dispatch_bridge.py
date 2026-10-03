@@ -13204,11 +13204,19 @@ def _audit_refresh_validation_result(tmp_path, *, omit_task_id=False):
 
 
 @pytest.mark.parametrize(
-    "recovery_completed,generated_build_case",
-    [(False, None), (True, None), (False, "core"), (False, "channel"), (False, "non_generated")],
+    "recovery_completed,generated_build_case,summarized_validation_check",
+    [
+        (False, None, False),
+        (True, None, False),
+        (False, "core", False),
+        (False, "channel", False),
+        (False, "non_generated", False),
+        (False, "core", True),
+        (False, "channel", True),
+    ],
 )
 def test_native_incomplete_validation_survives_same_binding_audit_refresh(
-    monkeypatch, tmp_path, recovery_completed, generated_build_case
+    monkeypatch, tmp_path, recovery_completed, generated_build_case, summarized_validation_check
 ):
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
     store, worktree, result_path = _controller_commit_result(
@@ -13216,6 +13224,7 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(
         controller_policy_complete=True,
         target_base_bound=True,
         validation_generated_build_failure=generated_build_case,
+        summarized_validation_check=summarized_validation_check,
         missing_quality=(
             "regression_test_verified",
             "relevant_tests_green",
@@ -16999,6 +17008,7 @@ def _controller_commit_result(
     omit_reported_code_paths: bool = False,
     target_base_bound: bool = False,
     validation_generated_build_failure: str | None = None,
+    summarized_validation_check: bool = False,
     complete_normal_validation_audit: bool = False,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
@@ -17281,6 +17291,16 @@ def _controller_commit_result(
                 "result": actual.stdout + actual.stderr,
             }
         ]
+        if summarized_validation_check:
+            assert validation_generated_build_failure in {"core", "channel"}
+            result["tests"][0].pop("cwd")
+            result["tests"][0]["result"] = (
+                "The targeted core regression command still fails before collection because "
+                "packages/core/dist/index.js is missing."
+                if validation_generated_build_failure == "core"
+                else "The real CLI development entry did not reach extension uninstall because "
+                "@qwen-code/channel-base/dist/index.js is missing."
+            )
     signed_result = dict(result)
     signed_result["handoffMode"] = "controller_commit_complete"
     signed_result["publication"] = dict(result["publication"]) | {"baseBranch": "main"}
@@ -21374,6 +21394,45 @@ def test_published_pr_authority_requires_exact_opportunity_reservation(tmp_path)
         )
         is None
     )
+
+
+@pytest.mark.parametrize("current_followup", [False, True])
+def test_validation_list_keeps_only_current_published_followup_stale(tmp_path, current_followup):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("independent_review_passed",),
+    )
+    initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert initial["ok"] and initial["validationDeferred"]
+    candidate = store.validation_followup_candidates()[0]
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    store.commit_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE events SET created_at=? WHERE event_type='VALIDATION_FOLLOWUP_SENT'",
+            (iso_z(datetime.now(UTC) - timedelta(hours=2)),),
+        )
+    _managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store, worktree, result_path, explicit_pr_followup=True, degrade_stage=False
+    )
+    if not current_followup:
+        value = json.loads(result_path.read_text())
+        value["followupDigest"] = "obsolete-published-followup"
+        result_path.write_text(json.dumps(value))
+    before = result_path.read_bytes()
+    assert len(store.stale_validation_followups()) == 1
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+
+    assert listed["errors"] == []
+    assert len(listed["stale"]) == int(current_followup), listed
+    assert listed["publishedStaleIgnored"] == (
+        []
+        if current_followup
+        else [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
+    )
+    assert result_path.read_bytes() == before
+    assert len(store.stale_validation_followups()) == 1
+    assert store.validation_followup_candidates() == []
 
 
 def test_published_pr_authority_repairs_degraded_pr_followup_wake_chain(tmp_path):

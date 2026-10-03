@@ -19869,6 +19869,8 @@ def _completed_generated_build_validation(
         ]
         if not any(
             "has not been built (missing packages/core/dist/index.js)" in output
+            or "packages/core/dist/index.js is missing" in output
+            or "@qwen-code/channel-base/dist/index.js is missing" in output
             or (
                 "ERR_MODULE_NOT_FOUND" in output
                 and "Cannot find module" in output
@@ -20132,7 +20134,7 @@ def _completed_generated_build_validation(
                     or argv[1] not in {"-lc", "-c"}
                     or argv[2] != test.get("command")
                     or item.get("cwd") != opened.worktree.as_uri()
-                    or test.get("cwd") != str(opened.worktree)
+                    or ("cwd" in test and test["cwd"] != str(opened.worktree))
                 ):
                     continue
                 output = str(item.get("aggregated_output") or "")
@@ -21002,7 +21004,55 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                         delivery_token=str(item.get("resultDigest") or ""),
                     )
         unresolved_with_recovery.append(value)
-    stale = store.stale_validation_followups(min_age_minutes=getattr(args, "min_age_minutes", 90))
+    stale_records = store.stale_validation_followups(
+        min_age_minutes=getattr(args, "min_age_minutes", 90)
+    )
+    stale = []
+    published_stale_ignored = []
+    current_results = (
+        getattr(store, "task_result_candidates_for_ingestion", lambda: [])()
+        if stale_records
+        else []
+    )
+    for item in stale_records:
+        current = next(
+            (
+                candidate
+                for candidate in current_results
+                if all(
+                    candidate.get(field) == item.get(field)
+                    for field in ("key", "intentId", "threadId", "worktreePath")
+                )
+                and candidate.get("stage") in PUBLISHED_TASK_STAGES
+            ),
+            None,
+        )
+        if current is not None:
+            try:
+                with _task_worktree_private_descriptor(current) as opened:
+                    value = json.loads(_read_task_result_bytes_from_private(opened))
+                    context = json.loads(_read_task_context_bytes_from_private(opened))
+                    if (
+                        isinstance(value, dict)
+                        and isinstance(context, dict)
+                        and store.task_result_binding_gate(current, value)
+                        and _private_context_matches_current_ledger(store, context)
+                        and _managed_published_pr_authority(
+                            ManagedLedger(store.path, ensure_schema=False),
+                            candidate=current,
+                            context=context,
+                            value=value,
+                        )
+                        is not None
+                    ):
+                        published_stale_ignored.append(
+                            {"key": item["key"], "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}
+                        )
+                        continue
+            except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                # Retain the original stale diagnostic when authority cannot be proved.
+                pass
+        stale.append(item)
     blocked_environment_keys = {str(item.get("key") or "") for item in blocked_environment}
     blocked_no_progress = [
         item
@@ -21017,6 +21067,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         "environmentBlocked": environment_blocked,
         "unresolved": unresolved_with_recovery,
         "stale": stale,
+        "publishedStaleIgnored": published_stale_ignored,
         "blockedNoProgress": blocked_no_progress,
         "reconciledNoProgress": reconciled_no_progress,
         "rearmedReviewFeedback": rearmed_review_feedback,
