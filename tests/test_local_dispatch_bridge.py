@@ -36409,7 +36409,7 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
     assert listed["ok"] and listed["errors"] == [], listed
     assert listed["rearmedReviewFeedback"] == [
         {"key": "a/b#1", "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"}
-    ], (listed, diagnostics)
+    ], json.dumps({"listed": listed, "diagnostics": diagnostics}, sort_keys=True)
     candidate = listed["candidates"][0]
     assert candidate["resultDigest"] == old_binding["resultDigest"]
     reserve = MODULE.validation_followup_reserve(
