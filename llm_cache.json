@@ -8064,6 +8064,32 @@
     ],
     "why": "Issue provides a concrete race condition with a reproducible script, clear expected behavior, and evidence of index desync under concurrent set_payload by filter. Root cause is localized to index maintenance during concurrent updates, with a clear validation path via the provided reproducer."
   },
+  "115379b618228f154867bcb06240313c4e9e7d6994eac4909a0f78e86a960873": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue attributes the crash to long context (~312K tokens), while reproduced evidence shows non-monotonic length dependence and a <=512-token replay trigger."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Issue title's 'long context' framing is misleading; the trigger is a replay step with <=512 scheduled tokens, so a new fix could target the wrong mechanism.",
+      "Duplicate/merged-fix coverage is unresolved for the KVTransfer empty-query variant (#51486/#51489)."
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new test needed: cherry-pick #49302 onto v0.26.0 and confirm num_prefill_reqs drops from 512 to 1 with no zero-length chunks; verify v0.28.0 passes cold and warm 312K requests."
+    ],
+    "unknowns": [
+      "Whether the KVTransfer empty-query path (#51486) is fully covered by #51489 or needs separate work."
+    ],
+    "why": "Supplied comments establish the root cause as the #48822 PIECEWISE-replay metadata-padding regression, already fixed by merged PR #49302 (de6ec294) and confirmed fixed in v0.26.1rc0/v0.27.x/v0.28.0; the remaining empty-query KVTransfer variant is covered by open PR #51489. No new code work is actionable."
+  },
   "116f8b0aa1f4533b69e1e45ce85f2c7f458ec24f44482ab9c8b4e205415864af": {
     "confidence": 0.8,
     "contradictions": [],
@@ -15482,6 +15508,44 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a clear regression with a minimal reproducer and suspected code path, but root cause is unconfirmed and no maintainer has acknowledged or assigned. The candidate is actionable but requires maintainer confirmation of the intended fix scope to avoid conflicting with ongoing work."
   },
+  "2149ddadf09b00d3171bf61b126292a755e988504f53284795256834f2becf47": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while issue body provides a specific traceback and tested workaround",
+      "algorithm_evidence.code_path_signal=false while issue body and open PRs cite concrete overlapping file paths"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/models/qwen4_exp/nvidia/ngram_embedding.py: from_quant_config dispatch for INCConfig",
+      "vllm/models/qwen4_exp/common/ngram_embedding.py: shared PLE method selection",
+      "vllm/model_executor/layers/quantization/inc/inc.py: per-layer quantization metadata lookup"
+    ],
+    "risks": [
+      "PR #58977 may already implement the same fix, making a new contribution duplicative",
+      "Assuming every INC checkpoint has an unquantized PLE could mis-handle checkpoints where PLE is actually quantized",
+      "Repository AI disclosure policy conflict blocks autonomous public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with Intel/Qwen3.8-Flash-Next-W4A16-AutoRound on 2x A100, TP=2, --enable-expert-parallel, confirming NotImplementedError at ngram_embedding.py:187",
+      "After fix, assert model loads and PLE uses unquantized embedding method while MoE still selects MARLIN WNA16 backend",
+      "Add regression test that a mixed INC checkpoint with unquantized PLE resolves PLE method from per-layer/checkpoint metadata rather than model-level INCConfig"
+    ],
+    "unknowns": [
+      "Whether PR #58977 already fixes this exact INCConfig PLE dispatch failure",
+      "Whether related issues #54765 and #56272 are open, closed, or already fixed",
+      "Whether the repository's AI disclosure policy permits this contribution path"
+    ],
+    "why": "Issue describes a concrete quantization-dispatch failure (INCConfig rejected by Qwen4ExpPLEEmbeddingMethod.from_quant_config) with traceback and a tested workaround, but the supplied evidence shows an open PR #58977 ('Support BF16 INC PLE embeddings in Qwen4Exp') with overlapping code paths and 9 semantic overlaps that may already cover the root cause; duplicate/merged-fix coverage is unresolved and the issue itself notes related mixed-quantization PLE issues (#54765, #56272) that are not assessed. Policy status is ai_disclosure_conflict, which is a repository disclosure requirement that blocks autonomous action."
+  },
   "2157666a01c6611d2766485a271f0397669624ec708a68262cc7b7566eb2239d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -22572,6 +22636,38 @@
       "Whether PR #59748 actually addresses the same root cause or is an independent parser change"
     ],
     "why": "The issue claims streaming reasoning deltas leak raw byte-level BPE glyphs, but the supplied contributor triage (he-yufeng) shows stock v0.21.0 and current main cannot produce this signature: every parser return is a substring of already-decoded delta_text, and in-process simulation of the exact serving chain reconstructs reasoning/content byte-exact with zero glyphs. The reporter's control experiments (clean content, clean non-streaming) are consistent with a deployment-local tokenizer/parser substitution rather than a vLLM code defect. Root cause is therefore not established in the repository, and the concrete validation path (repro.py) currently exonerates the code path."
+  },
+  "2e76fbe3fc567d460e74b97e5ad98e881126bb3484dfe8c9175ad1f688ea1734": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm-rust/crates/storage-clickhouse/src/read.rs: replace hardcoded max_result_rows=1000/throw with bounded keyset pagination or an explicit supported-limit contract for trace detail",
+      "Trace-detail API path: return paginated/partial spans or a useful limit response instead of generic HTTP 500"
+    ],
+    "risks": [
+      "Overlapping open PR #44364 may already cover the same fix; must compare before implementing",
+      "Removing the reader cap globally could regress memory/byte safeguards; keep bounded reads",
+      "Distinguish from PR #43937 (status-message bytes) and #43942 (investigation reads) to avoid duplicate scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test posting 999/1,000/1,001-span OTLP payloads and asserting trace-detail HTTP 200 with correct span counts",
+      "Add direct ClickHouse control test varying max_result_rows to confirm the row-cap root cause",
+      "Run targeted Rust storage-clickhouse unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #44364 will be merged before a competing fix lands",
+      "Maintainer preference between pagination vs explicit limit contract"
+    ],
+    "why": "Issue provides a precise, reproducible root cause: the Rust ClickHouse reader hardcodes max_result_rows=1000 with result_overflow_mode=throw, so a 1,001-span trace detail returns HTTP 500 (Code 396 TOO_MANY_ROWS_OR_BYTES). Boundary controls at 999/1,000/1,001 spans and a direct ClickHouse query isolating the row cap are supplied, giving a concrete reference-vs-implementation validation path. Open PR #44364 is directly related but lacks root-cause coverage, leaving room for a fix that adds bounded pagination plus regression tests."
   },
   "2e81fd2c2eff7905094b4dc538b214322b968d5e75006380572cf609dc30ab33": {
     "confidence": 0.55,
@@ -45218,6 +45314,37 @@
       "Concrete code path or reproduction steps beyond the error string"
     ],
     "why": "Issue is a bare provider error report with no reproduction evidence, no root-cause signal, and no code anchors beyond the error string `encrypted_content`. The bot comment lists five closely related issues (#48805, #48915, #48741, #48947, #48319) covering the same behavior, and the related-issue assessment flags #49247 as a potential duplicate. Two open PRs (#48908, #48918) already target stale encrypted reasoning recovery. Duplicate/merged-fix coverage is unresolved, which materially blocks whether new code work is actionable."
+  },
+  "5bf1526df6a0b901a9d6e0f08aaef05bab8c2aec1d06e57e38fbad9045976163": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "plugin-sandbox subprocess module resolution / cwd handling on Windows",
+      "package-name mismatch between @cline/cli-windows-x64 and @cline/cli-windows if confirmed"
+    ],
+    "risks": [
+      "Fix may need to handle both jiti and @cline/shared resolution paths",
+      "Changing sandbox cwd could affect other relative-path assumptions in the sandbox",
+      "Windows-specific behavior may be hard to validate in CI"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that launches the plugin-sandbox subprocess with a cwd outside the install root and asserts jiti and @cline/shared resolve",
+      "Reproduce on Windows global npm install: start cline, confirm code.log shows no 'Cannot find module jiti' ERROR entry and plugin commands load"
+    ],
+    "unknowns": [
+      "Whether the @cline/cli-windows vs @cline/cli-windows-x64 mismatch is a separate packaging bug or a symptom of the same resolution failure"
+    ],
+    "why": "Issue provides a concrete Windows-only reproduction, a specific error (Cannot find module 'jiti' / @cline/shared), a stated root cause (sandbox resolves modules relative to AppData\\Local\\Cline\\[eval] instead of the npm global install root), and a verified workaround. Two concrete fix directions are suggested (set cwd to package root or point createRequire/NODE_PATH at install dir). No open PR or duplicate issue covers it, and no maintainer design preference is recorded."
   },
   "5bf31c1c511c32742999b2776c6aaeef68a89356618185ba743d5f6376321a0c": {
     "confidence": 0.7,
@@ -88485,6 +88612,39 @@
     ],
     "why": "Issue reports a CLI argument error for MiniMax-H3, but root cause is unclear; a comment suggests adding --model-type diffusion as a workaround, indicating possible missing documentation or validation. No maintainer confirmation or design decision."
   },
+  "b41cf8566bc153053f027baeaf4a40dfc0c8b02ba81934a534be6ccdfe899554": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/anthropic-provider.ts: stop relying on TodoWrite or enable TaskCreate/TaskUpdate translation",
+      "packages/core/agents/main.yaml: update requested planning tools",
+      "packages/core/src/core/codex-app-server-provider.ts: set tools.update_plan.enabled=true in buildThreadConfigurationOverrides",
+      "add a check that requested builtin tools actually appear in the provider tool list"
+    ],
+    "risks": [
+      "CLAUDE_CODE_ENABLE_TASKS=false may be deprecated or removed in future Claude Code versions",
+      "Translating TaskCreate/TaskUpdate into plan updates may require mapping semantics beyond simple tool-name substitution",
+      "Codex 0.160.0 behavior was not directly tested by the reporter"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with Claude Code 2.1.281: request TodoWrite/TaskCreate/TaskUpdate and assert which tools are exposed",
+      "Reproduce with Codex 0.156.1: run codex exec with and without tools.update_plan.enabled=true and assert todo_list presence",
+      "Add a regression test that a multi-step agent turn emits plan update events for both providers"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the env-var workaround or native TaskCreate/TaskUpdate translation for Claude",
+      "Whether Codex 0.160.0 still honors tools.update_plan.enabled"
+    ],
+    "why": "Issue provides version-paired reproductions for both providers and names concrete code anchors (anthropic-provider.ts builtinTools, main.yaml, codex-app-server-provider.ts buildThreadConfigurationOverrides). Root cause is a silent tool-name drift after dependency upgrades, with a clear validation path (tool-list assertion / plan-update event regression). No duplicate PR or merged fix is reported."
+  },
   "b43386f344af075b179e374cd3881bde0b7f7e46245478a2e82e28d227f1fe73": {
     "confidence": 0.6,
     "contradictions": [
@@ -92807,6 +92967,48 @@
     ],
     "why": "Issue pinpoints a concrete wiring defect: apply_v028_speed_memory is called by 11 trainers but not SFTTrainerWrapper, so training.nvfp4/fp8_attention/kernel_auto_compose are accepted and silently no-op on task: sft. Evidence includes grep output, exact file/line anchors (v028_features.py:89/101/112, sft.py:1312/1551-1569, schema.py:4282/5716, test_trainer_coverage_v035.py:358-365), a runnable config-load reproduction with real ACCEPT/REJECT output, and a second gap (nvfp4 lacks a task gate). Acceptance criteria define reference-vs-implementation tests (patched apply_nvfp4/apply_fp8_attention call recording, apply_cut_ce call counting, per-flag coverage test). This is a quantization/numerical-method wiring correctness issue with a concrete validation path, not mere CLI plumbing."
   },
+  "bc52a2e47c5639ba6d4a8e163ae986bac59e17a832640215a12aa1a84ad10302": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and code_path_signal=true, but actionability_evidence.root_cause_signal=false and preTaskEvidence.codePathsPlan is empty",
+      "open_pr_assessment status semantic_overlap_requires_review with no direct_code_overlap and no issue reference, leaving duplicate coverage unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Triton fused MoE kernel (sm_120 default config) determinism",
+      "GDN chunked prefill over varlen batches",
+      "FA2 varlen attention path",
+      "per-request routed-expert capture alignment when multiple requests share a step"
+    ],
+    "risks": [
+      "Distinguishing a genuine kernel non-determinism from expected batch-variant floating-point behavior",
+      "sm_120-specific behavior may not reproduce on other hardware",
+      "Repository AI-disclosure policy conflict may block automated public action",
+      "Existing PR #59543 may partially overlap the code path"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run repro_upstream.py on stock vLLM 0.30.0 with Qwen3.6-35B-A3B-FP8 and confirm batch2_repeat > 0",
+      "Bisect by disabling each candidate kernel (e.g., force non-fused MoE, triton GDN prefill backend, alternate attention backend) to isolate the non-deterministic path",
+      "Add a regression test asserting bit-identical logprobs for repeated identical batches under fixed seed and max_num_seqs>1"
+    ],
+    "unknowns": [
+      "Which specific kernel (Triton fused MoE, GDN chunked prefill, or FA2 varlen) causes the run-to-run non-determinism",
+      "Whether PR #59543 or any other open PR already fixes this root cause",
+      "Whether the repository's AI-disclosure policy permits the required contribution workflow",
+      "Whether the non-determinism reproduces on non-sm_120 hardware"
+    ],
+    "why": "Issue reports a concrete, reproducible numerical non-determinism (batch2_repeat max |Δlogprob| 0.168) in a hybrid GDN+MoE model, with a minimal upstream repro script and code anchors (repro_upstream.py, mamba_ssm_cache_dtype). However, the root cause is explicitly unresolved: the reporter lists three unseparated candidate kernels (Triton fused MoE, GDN chunked prefill over varlen batches, FA2 varlen) and asks which one is non-deterministic. No code surface or fix location is identified, and the pre-task evidence flags duplicate_changed, policy_or_disclosure_uncertain, and no_code_surface. The open-PR assessment shows only semantic overlap (best_score 34, no direct code overlap, no issue reference), so duplicate/merged-fix coverage is unresolved. These are materially blocking unknowns for an actionable code contribution."
+  },
   "bc58acbf63f6d0dda3c46f9624709a588612ec8a649e7b7bb69a0ffcbec98dbd": {
     "confidence": 0.85,
     "contradictions": [
@@ -93757,6 +93959,40 @@
       "No maintainer confirmation or open PR; but issue is self-contained and actionable"
     ],
     "why": "The issue identifies a concrete performance bug in the vLLM connector's KV cache disk-to-device onboarding path, where per-layer NIXL descriptors cause ~10x throughput loss on network storage. Root cause is precisely located: layout_type is always LayerSeparate due to missing PyLayoutType registration and no FullyContiguous path. The fix is actionable and testable via NFS mountstats or nfsiostat, with clear expected vs actual behavior."
+  },
+  "be34f5b1bcd246515db06f8875a563faa1b18b04d4fbe8c46f31607d1cca2c80": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Codex coding-agent run/session lifecycle completion-event handling",
+      "runWaiter resolution and sessionMap.isWorking clearing",
+      "streamOutput() EOF/terminal event handling and 120000ms timeout path"
+    ],
+    "risks": [
+      "Root cause is suspected, not confirmed; fix may require deeper runtime tracing",
+      "Changing timeout/waiter behavior could affect other run types or external run completion semantics",
+      "Bundled dist/server/index.js is a build artifact; source-level fix location must be identified"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with minimal prompt '只回复 OK' through Ekko Studio and native Codex CLI, measuring completion latency",
+      "Add a regression test asserting the run waiter resolves promptly on Codex completion rather than at the 120s deadline",
+      "Run targeted unit tests for the coding-agent run/session and chat-run-socket modules"
+    ],
+    "unknowns": [
+      "Exact source module corresponding to the bundled dist/server/index.js anchors",
+      "Whether maintainers have an existing design preference for the completion-event fix"
+    ],
+    "why": "Issue provides a concrete user-visible performance bug with reproduction steps, isolation tests, logs, and static code anchors pointing to 120s waits in runAndWait()/streamOutput() and completion-event handling. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply. No open PR or duplicate issue covers it. Root cause is suspected rather than confirmed, but the evidence supports a concrete reference-vs-implementation validation path (native Codex ~5s vs Ekko ~120s) and targeted code investigation."
   },
   "be72e5ed70b5db940444bf630f4e6e22c4320ae7c1cf8387fb9adcb9f0e09468": {
     "confidence": 0.8,
@@ -125119,6 +125355,36 @@
       "No maintainer confirmation of the preferred fix approach, but this is normal review uncertainty and not a blocker"
     ],
     "why": "Issue provides a concrete, reproducible root cause: the pinned wolfi-base digest has drifted from the current apk python3 package, causing both the apk trigger failure and the uvloop source-build failure; the suggested fix (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never) is specific and actionable."
+  },
+  "f9ef2c597281f027e0ee5b05e3ca9bf9540dcdb292be1ebcfef7edb8f4f58463": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/litellm_pre_call_utils.py: key-level opted_out_global_guardrails propagation and team-level merge precedence",
+      "litellm/integrations/custom_guardrail.py: _get_admin_metadata / should_run_guardrail merge semantics"
+    ],
+    "risks": [
+      "Changing merge precedence could alter intended team-level override semantics for other metadata fields",
+      "Fix scope may need to be limited to opted_out_global_guardrails to avoid broad API behavior changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test creating a key with key-level opted_out_global_guardrails and a team whose metadata has an empty opted_out_global_guardrails list, asserting the guardrail is skipped",
+      "Add a control test with a key not belonging to a team to confirm existing behavior is preserved",
+      "Run targeted proxy guardrail unit tests and static checks on the touched modules"
+    ],
+    "unknowns": [
+      "Runtime confirmation of the exact merge order in v1.93.0 is absent; the root cause is a static-review hypothesis",
+      "Maintainer intent on key-vs-team precedence for opted_out_global_guardrails is not stated"
+    ],
+    "why": "Issue provides a controlled 4-key reproduction isolating team membership as the variable, plus concrete code anchors in litellm_pre_call_utils.py and custom_guardrail.py. The suspected root cause (team-level empty-list overwrite of key-level opted_out_global_guardrails) is a plausible, testable hypothesis with a clear validation path, though the reporter explicitly notes it is not runtime-confirmed."
   },
   "f9fa9e2a6bb92ede46746b42debb5e048d01c0fcc7d3a2eb98b9fa6dd68aefe1": {
     "confidence": 0.85,
