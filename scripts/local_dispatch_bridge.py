@@ -24455,6 +24455,38 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             # parking the task's normal recovery or stopping
                             # independent, fully verified contributions.
                             raise TaskResultEvidenceBlocked(RESULT_CONTEXT_DIGEST_MISMATCH)
+                    completed_review = _completed_review_feedback_validation(store, candidate, args)
+                    if completed_review is not None:
+                        review_candidate, completion = completed_review
+                        if (
+                            completion["rawSha256"] == hashlib.sha256(raw).hexdigest()
+                            and completion["contextDigest"] == context.get("contextDigest")
+                            and context.get("intentId") == candidate.get("intentId")
+                            and all(
+                                review_candidate.get(field) == candidate.get(field)
+                                for field in (
+                                    "key",
+                                    "issueUrl",
+                                    "intentId",
+                                    "threadId",
+                                    "worktreePath",
+                                    "stage",
+                                )
+                            )
+                            and _read_task_result_bytes_from_private(result_access) == raw
+                            and _read_task_context_bytes_from_private(result_access) == context_raw
+                        ):
+                            # Retain the rejected ready output. The normal
+                            # downstream list alone consumes this past
+                            # completion and prepares its missing review.
+                            validation_deferred.append(
+                                {
+                                    "key": candidate["key"],
+                                    "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE",
+                                    "missing": list(review_candidate["missing"]),
+                                }
+                            )
+                            continue
                     raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")

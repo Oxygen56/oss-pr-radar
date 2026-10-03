@@ -38,7 +38,7 @@ from oss_pr_radar.dispatch import (
 )
 from oss_pr_radar.independent_review import REVIEW_SCHEMA, _receipt_path, _source_digest
 from oss_pr_radar.ledger import LedgerError, RadarLedger
-from oss_pr_radar.local_publication import slow_advance_once
+from oss_pr_radar.local_publication import advance_once, slow_advance_once
 from oss_pr_radar.managed_lifecycle import ManagedLedger, import_open_pr_observations
 from oss_pr_radar.metrics import QUALITY_FIELDS
 from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest
@@ -36452,12 +36452,77 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
             diagnostics["returns"].append(observed)
         return completion_trace
 
+    calls = []
+    intake = {}
+    listed = {}
+
+    def runner(root, operation):
+        assert root == tmp_path
+        calls.append(operation)
+        if operation == "context-recover":
+            return MODULE.recover_task_contexts(args)
+        if operation == "ingest-results":
+            with store.connect() as connection:
+                before = [
+                    tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+                ]
+            intake.update(MODULE.ingest_task_results(args))
+            with store.connect() as connection:
+                after = [
+                    tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+                ]
+            assert before == after
+            assert result_path.read_bytes() == original_raw
+            assert input_path.read_bytes() == old_input
+            return intake
+        if operation == "drain-once":
+            listed.update(MODULE.validation_followup_list(args))
+            # Stop at the external task provider; the native delivery and
+            # actual worker prompt are exercised below with this candidate.
+            return {"ok": listed["ok"], "action": "none", "errors": listed["errors"]}
+        assert operation in {
+            "independent-review-run",
+            "title-reconcile",
+            "cleanup-reconcile",
+            "publication-run",
+            "publication-feedback-list",
+            "recovery-list",
+        }
+        return {"ok": True, "updated": [], "published": [], "errors": []}
+
     previous_trace = sys.gettrace()
     try:
         sys.settrace(completion_trace)
-        listed = MODULE.validation_followup_list(args)
+        advanced = advance_once(tmp_path, runner=runner)
     finally:
         sys.settrace(previous_trace)
+    assert calls == [
+        "context-recover",
+        "ingest-results",
+        "independent-review-run",
+        "title-reconcile",
+        "cleanup-reconcile",
+        "publication-run",
+        "publication-feedback-list",
+        "recovery-list",
+        "drain-once",
+    ]
+    assert advanced["ok"] and advanced["errors"] == [], advanced
+    assert intake["ok"] and intake["errors"] == [], intake
+    assert advanced["resultsIngested"] == intake["ingested"] == []
+    assert advanced["publicationRequests"] == intake["publicationRequests"] == []
+    assert advanced["published"] == []
+    assert (
+        advanced["validationDeferred"]
+        == intake["validationDeferred"]
+        == [
+            {
+                "key": "a/b#1",
+                "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE",
+                "missing": ["independent_review_passed"],
+            }
+        ]
+    )
     assert listed["ok"] and listed["errors"] == [], listed
     assert listed["rearmedReviewFeedback"] == [
         {"key": "a/b#1", "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"}
