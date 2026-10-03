@@ -15796,7 +15796,15 @@ def _completed_validation_input_task_id(
     ):
         return None
     if value.get("handoffMode") == "controller_commit_required" and (
-        value.get("previousControllerCommitSha") != historical["head_sha"]
+        (
+            value.get("previousControllerCommitSha") != historical["head_sha"]
+            and not (
+                "taskId" not in value
+                and "previousControllerCommitSha" not in value
+                and expired_publication is None
+                and validation_context_digest is None
+            )
+        )
         or command(["git", "rev-parse", "HEAD"], cwd=result_access.worktree)
         != historical["head_sha"]
     ):

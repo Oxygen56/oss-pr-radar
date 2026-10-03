@@ -30814,9 +30814,16 @@ def _completed_validation_result_with_omitted_task_id(tmp_path, monkeypatch):
     return store, worktree, result_path, source_path
 
 
-@pytest.mark.parametrize("handoff", ["controller_commit_complete", "controller_commit_required"])
+@pytest.mark.parametrize(
+    ("handoff", "omit_previous_parent"),
+    [
+        ("controller_commit_complete", False),
+        ("controller_commit_required", False),
+        ("controller_commit_required", True),
+    ],
+)
 def test_native_completed_validation_normalizes_omitted_task_id_before_parent_check(
-    tmp_path, monkeypatch, handoff
+    tmp_path, monkeypatch, handoff, omit_previous_parent
 ):
     store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
         tmp_path, monkeypatch
@@ -30825,6 +30832,8 @@ def test_native_completed_validation_normalizes_omitted_task_id_before_parent_ch
     if handoff == "controller_commit_required":
         value = json.loads(result_path.read_text())
         value.update(handoffMode=handoff, commitSha=None, previousControllerCommitSha=head)
+        if omit_previous_parent:
+            value.pop("previousControllerCommitSha")
         value.pop("headSha", None)
         value.pop("codePaths", None)
         runtime = worktree / "runtime.py"
@@ -30910,7 +30919,16 @@ def test_native_completed_validation_normalizes_omitted_task_id_before_parent_ch
 
 
 @pytest.mark.parametrize(
-    "mismatch", ["task_id", "context", "input", "previous_head", "precommit_head", "handoff_mode"]
+    "mismatch",
+    [
+        "task_id",
+        "context",
+        "input",
+        "previous_head",
+        "null_previous_head",
+        "precommit_head",
+        "handoff_mode",
+    ],
 )
 def test_native_completed_validation_does_not_normalize_conflicting_identity_or_input(
     tmp_path, monkeypatch, mismatch
@@ -30929,11 +30947,11 @@ def test_native_completed_validation_does_not_normalize_conflicting_identity_or_
         input_path.chmod(0o600)
         input_path.write_text(json.dumps(source))
         input_path.chmod(0o400)
-    elif mismatch == "previous_head":
+    elif mismatch in {"previous_head", "null_previous_head"}:
         value.update(
             handoffMode="controller_commit_required",
             commitSha=None,
-            previousControllerCommitSha="f" * 40,
+            previousControllerCommitSha=None if mismatch == "null_previous_head" else "f" * 40,
         )
     elif mismatch == "precommit_head":
         value.update(
