@@ -36343,11 +36343,73 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
     )
     assert store.validation_followup_candidates() == []
     args = SimpleNamespace(ledger=store.path, key="a/b#1", runtime_root=tmp_path)
-    listed = MODULE.validation_followup_list(args)
+    traced_functions = {
+        str(SCRIPT): {
+            "_completed_review_feedback_validation",
+            "_completed_validation_input_task_id",
+            "_controller_review_result",
+        },
+        RadarLedger.task_result_candidates_for_ingestion.__code__.co_filename: {
+            "task_result_candidates_for_ingestion",
+            "record_completed_review_feedback_no_progress",
+            "rearm_validation_no_progress_for_review",
+        },
+    }
+    diagnostics = {
+        "calls": {name: 0 for names in traced_functions.values() for name in names},
+        "returns": [],
+    }
+
+    def completion_trace(frame, event, returned):
+        name = frame.f_code.co_name
+        if name not in traced_functions.get(frame.f_code.co_filename, set()):
+            return None
+        if event == "call":
+            diagnostics["calls"][name] += 1
+        elif event == "return":
+            values = frame.f_locals
+            observed = {
+                "function": name,
+                "line": frame.f_lineno,
+                "returnKind": type(returned).__name__,
+            }
+            if isinstance(returned, bool):
+                observed["returned"] = returned
+            candidate = values.get("candidate")
+            if isinstance(candidate, dict):
+                observed["candidate"] = {
+                    key: candidate.get(key) for key in ("key", "intentId", "stage")
+                }
+            if name == "task_result_candidates_for_ingestion" and isinstance(returned, list):
+                observed["candidates"] = [
+                    {key: value.get(key) for key in ("key", "intentId", "stage")}
+                    for value in returned
+                ]
+            for key in ("prior", "historical_audit", "current_audit", "review", "delivery"):
+                if key in values:
+                    observed[key + "Present"] = values[key] is not None
+            authorities = values.get("authorities")
+            if isinstance(authorities, list):
+                observed["authorityCount"] = len(authorities)
+                observed["authorityDigests"] = [
+                    payload.get("contextDigest") for _row, payload in authorities
+                ]
+            for key in ("old_digest", "current_digest"):
+                if key in values:
+                    observed[key] = values[key]
+            diagnostics["returns"].append(observed)
+        return completion_trace
+
+    previous_trace = sys.gettrace()
+    try:
+        sys.settrace(completion_trace)
+        listed = MODULE.validation_followup_list(args)
+    finally:
+        sys.settrace(previous_trace)
     assert listed["ok"] and listed["errors"] == [], listed
     assert listed["rearmedReviewFeedback"] == [
         {"key": "a/b#1", "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"}
-    ]
+    ], (listed, diagnostics)
     candidate = listed["candidates"][0]
     assert candidate["resultDigest"] == old_binding["resultDigest"]
     reserve = MODULE.validation_followup_reserve(
