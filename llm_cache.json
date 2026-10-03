@@ -46756,6 +46756,42 @@
     ],
     "why": "The issue identifies a concrete root cause: a PyTorch bug in trunc_normal_ that resets RNG state during CPU offloading, causing an infinite loop during weight initialization. It provides a minimal torch repro and a full torchtitan config, enabling a clear validation path. The fix is upstream in PyTorch, but torchtitan may need a workaround or version pin, making it actionable."
   },
+  "5ea0f04a4f30d466f2377e9e1547d91048022562a834c0fce127b29470ac0eb0": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue proposes accepting reconnect_on_error=True, while PR #6031 title suggests a reconnect fix but its root_cause_coverage is false and it does not reference the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: stop forcing reconnect_on_error=False and default it to True",
+      "src/pipecat/services/sarvam/stt.py: complete in-flight utterance on each drop in _reconnect_websocket",
+      "src/pipecat/services/sarvam/stt.py: classify 4000 and non-rate-limit 1003 closes as permanent",
+      "src/pipecat/services/sarvam/stt.py: give a failed first connect bounded retry or mark permanent"
+    ],
+    "risks": [
+      "PR #6031 may already implement the same fix, making a new contribution duplicative",
+      "Changing reconnect defaults could alter behavior for existing pipelines relying on fail-fast",
+      "Reconnect backoff interacting with QuickFailureTracker may need tuning to avoid tight loops"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py 'drop' scenario and assert 2 handshakes, transcripts from both connections, is_usable True",
+      "Run repro.py 'connect' scenario and assert retry then transcript, or unusable if all attempts fail",
+      "Add regression tests for 1006, 1011, 1003 rate-limit, and 4000 close codes",
+      "Verify SarvamRealtimeSTTService(reconnect_on_error=True) no longer raises TypeError"
+    ],
+    "unknowns": [
+      "Whether PR #6031 fully covers the root cause described in issue #6001",
+      "Whether maintainers intend #6031 to close #6001 or prefer a separate fix"
+    ],
+    "why": "Issue #6001 is a well-evidenced, reproducible bug in SarvamRealtimeSTTService (forced reconnect_on_error=False, no retry on failed first connect), but open PR #6031 already targets the same file and semantics ('reconnect SarvamRealtimeSTTService when its websocket drops') without referencing the issue. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review', which is a materially blocking unknown for whether new code work is actionable."
+  },
   "5ea7888f5c8f10b18ac21a5e600043ebf930210070d40ae503832e4a09e2deca": {
     "confidence": 0.9,
     "contradictions": [
@@ -48322,6 +48358,40 @@
       "Whether the AI disclosure policy blocks public submission (policy status ai_disclosure_conflict)"
     ],
     "why": "Issue provides ordered reproduction steps and expected/actual SSE event pairs; bot comment supplies concrete code anchors showing Agent V2 node discards AgentBackendStreamInternalEvent/AgentBackendAgentMessageDeltaInternalEvent after counter aggregation instead of dispatching agent_log-equivalent events, while legacy AgentNode does via _dispatch_agent_log. This is a concrete, testable streaming-event propagation fix."
+  },
+  "619c83c27fc74365cb431820c92d94f4187c93e806323ffb814a09ab79d9aeb2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/function_call/glm4_moe_detector.py: merge response_format JSON grammar into full_assistant_ebnf",
+      "python/sglang/srt/entrypoints/openai/serving_chat.py: pass format into get_structure_constraint and clear request.response_format",
+      "prompt construction: state final answer must be the JSON only"
+    ],
+    "risks": [
+      "Prompt-instruction component is model-dependent and may need tuning",
+      "Exotic schemas degrade to any-JSON-object rather than erroring",
+      "JsonSchemaResponseFormat.schema_ alias requires by_alias=True to avoid silent looser grammar"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test reproducing tools-only vs tools+response_format on glm47 parser, asserting tool_calls emitted and no fabricated JSON",
+      "Verify grammar byte-identical to current output when no response_format is present",
+      "Test json_object and json_schema variants, streaming and non-streaming, on both GLM models"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the merged-grammar approach over a 400 for auto+format",
+      "Exact upstream file/line state on current main for serving_chat.py integration point"
+    ],
+    "why": "Issue provides a concrete root cause (to_sampling_params drops tool constraint when response_format present; glm47 full_assistant_ebnf grammar forbids tool tokens), a minimal reproducible engine-level repro with temperature 0, and a concrete proposed fix merging the format JSON grammar into the glm47 full-assistant EBNF plus a prompt instruction. Code anchors and validation path are supplied. No duplicate/merged fix covers this; related issue #42373 concerns DeepSeekV31Detector streaming, a different parser and mechanism."
   },
   "61a0b44af332bd910173fecb92339ec5f33bde91319a07c867fd2d874d9d6b5b": {
     "confidence": 0.8,
@@ -58679,6 +58749,40 @@
     ],
     "why": "The issue gives a clear root cause (Watsonx pass-through body key model_id is never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied open-PR assessment shows PR #41470 already directly covers the same code path (auth_utils.py) with the same distinctive terms (model_id, virtual_key) and is explicitly linked to this issue. Duplicate/coverage status is human_review_required, which is a materially blocking unknown for whether independent code work is actionable."
   },
+  "7466b9bac8ec7a554b588900db290cf4219a879553a0452096f45e914163f986": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Open PR #58977 overlaps the same PLE code paths and semantics but is not linked to this issue and its root-cause coverage is unverified"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/models/qwen4_exp/nvidia/ngram_embedding.py: Qwen4ExpPLEEmbeddingMethod.from_quant_config dispatch for INCConfig",
+      "vllm/models/qwen4_exp/common/ngram_embedding.py: PLE method selection from per-layer/checkpoint quantization metadata"
+    ],
+    "risks": [
+      "PR #58977 may already implement the same fix, making a new contribution duplicative",
+      "Assuming every INC checkpoint has an unquantized PLE could mis-handle checkpoints where PLE is quantized",
+      "Repository AI disclosure policy conflict may block automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with `vllm serve Intel/Qwen3.8-Flash-Next-W4A16-AutoRound --tensor-parallel-size 2 --enable-expert-parallel` and confirm the NotImplementedError at from_quant_config",
+      "After fix, verify model loads and PLE uses unquantized embedding method while body uses MARLIN WNA16 MoE backend",
+      "Add regression test asserting INCConfig with unquantized PLE metadata selects the unquantized PLE method"
+    ],
+    "unknowns": [
+      "Whether PR #58977 already fixes this exact INCConfig PLE dispatch failure",
+      "Whether the repository's ai_disclosure_conflict policy permits this contribution",
+      "Whether per-layer/checkpoint quantization metadata is available to distinguish quantized vs unquantized PLE"
+    ],
+    "why": "Issue describes a concrete PLE quantization-dispatch failure with traceback and a tested workaround, but the supplied evidence contains a materially blocking unknown: open PR #58977 ('Support BF16 INC PLE embeddings in Qwen4Exp') overlaps the exact code paths (vllm/models/qwen4_exp/common/ngram_embedding.py, nvidia/ngram_embedding.py) and semantics, yet its root-cause coverage is unverified and it does not reference this issue. Whether the fix is already covered determines if new code work is actionable. Additionally, the repository policy status is ai_disclosure_conflict, which is an unresolved disclosure requirement."
+  },
   "746c29f9b63ead5e6ba0ae81b53ae8195e7e58338c14c5ca04475675668d1a9f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -60487,6 +60591,32 @@
       "Maintainer design preference on whether to keep a version gate or use provider-wide gating."
     ],
     "why": "The issue provides a clear, reproducible bug with two independent root causes (guard skipped without input processors, and model-id regex gating) and concrete code anchors. The proposed fix is well-scoped and testable."
+  },
+  "784bdbf3d3f6bf79436f6e9c772ff1e9150f363a0eb4befc3eb1c8d5378ff70c": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue title attributes the crash to long context (~312K tokens), while comment evidence shows the trigger is a replay step with <=512 scheduled tokens and that a cold 312,768-token request passes."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "The separate KVTransfer empty-query producer (#51486) is addressed by open PR #51489, not #49302; conflating the two could misdirect work.",
+      "Title's 'long context' framing is misleading per comment evidence; a naive long-context repro may not trigger the bug."
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new test needed; verify against merged #49302 by running the reported <=512-token replay-step repro on v0.26.0 vs v0.26.1rc0/v0.28.0 and confirming num_prefill_reqs drops from 512 to 1 with no zero-length chunks."
+    ],
+    "unknowns": [
+      "Whether any residual failure mode remains after #49302 that is not covered by the merged fix or by open PR #51489."
+    ],
+    "why": "The supplied evidence already identifies the root cause and a merged fix: comment evidence states this is the #48822 PIECEWISE-replay metadata-padding regression, fixed by #49302 (de6ec294), with single-variable validation (cherry-pick makes failing cases pass, num_prefill_reqs 512->1) and confirmation that v0.28.0 passes all cases. A second independent reporter on H200 confirms the same diagnosis and notes the fix is merged in v0.26.1rc0/v0.27.x. The issue is therefore covered by an existing merged fix, making new code work low-value."
   },
   "784e3fa9c2baf2cab0372a63094c80fe2f6feb0c59eb69a1357a4f17b6e3df94": {
     "confidence": 0.8,
@@ -64368,6 +64498,39 @@
       "Whether the base SHA change invalidates the existing reproduction"
     ],
     "why": "The issue itself is a strong, concrete kernel-correctness report: C3x callers rebuild packed strides via make_cute_packed_stride and discard real leading strides, with a reproducible 8% mismatch matrix and a proposed stride fix. However, the supplied evidence shows the issue is already fully covered by open PRs: #55537 (common caller + SM90 tensorwise), #56248 (SM90 blockwise), #56659 (SM120 blockwise), and #56480 (SM100 paths) — the issue body's own coverage checklist marks every caller as having an open PR, and the last unclaimed caller (SM120 blockwise) is now claimed by #56659. The duplicate assessment status is 'semantic_overlap_requires_review' with direct code-path overlap on the shared test file, and the pre-task policy is 'ai_disclosure_conflict' with base_sha_changed. These are materially blocking unknowns for whether any new code work is actionable."
+  },
+  "807b13208607f787f5d74225011cd1c5e6c0e9629061160de6787dd7f5d1aabc": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #7252 overlapping the same file, while the issue body presents the bug as unfixed on main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/google/adk/a2a/executor/a2a_agent_executor.py: replace make_text_part(str(e)) with a generic/controlled error message",
+      "src/google/adk/a2a/executor/a2a_agent_executor_impl.py: same change for consistency"
+    ],
+    "risks": [
+      "Open PR #7252 touches the same executor file and may already fix or conflict with this change",
+      "Changing the failed-status message could affect callers relying on error detail",
+      "Issue is unassigned and policy requires assignment before contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that runs the issue's repro (FailingModel raising RuntimeError with traceback text) and asserts the TASK_STATE_FAILED status message does not contain the exception text or file paths",
+      "Run targeted unit tests for the a2a executor package"
+    ],
+    "unknowns": [
+      "Whether PR #7252 already addresses the raw-exception-text leak or only the long-running-call behavior",
+      "Whether maintainers require assignment before a fix PR is accepted"
+    ],
+    "why": "Issue describes a concrete leak of raw exception text via make_text_part(str(e)) in a2a_agent_executor.py and a2a_agent_executor_impl.py, with a self-contained repro. However, supplied evidence shows an open PR #7252 with semantic overlap on the same file (a2a_agent_executor.py) and distinctive term 'a2aagentexecutor', and duplicate status is 'semantic_overlap_requires_review'. Whether that PR already covers this root cause is unresolved, which materially determines whether new code work is actionable."
   },
   "8084865d130c32a6a260768a801fc89de086237ebb4f8174eb9b8efeb3bd7ae6": {
     "confidence": 0.72,
@@ -113815,6 +113978,38 @@
       "Whether the synthetic-zero measurement method is representative or worst-case-only"
     ],
     "why": "The issue reports a real long-context spec-decode regression with profiled ~182 ms/cycle drafter attention cost, but the supplied comment thread materially contradicts the proposed mechanism: one commenter retracts the 'drafter rescans full KV' explanation (DFlash is single-pass), another attributes the cost to missing DCP sharding in DFlashSpeculator.propose, and the magnitude is unexplained (~17x beyond geometry). Direction 1 (per-seq-len disable hook) is also already covered by open PR #48944 and a separate proposal #54801, so the actionable code path is unresolved."
+  },
+  "e335e1819988ef0a72d21b05e84dba645b7f59c20c9f31d134759a84239528df": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER and gate HUMAN_REVIEW conflict with score 10 and NO_OBJECTION-style framing"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "pkg/ingress/kube/annotations/match.go",
+      "plugins/golang-filter/mcp-session/common/match.go"
+    ],
+    "risks": [
+      "Implementing before maintainer approval violates the repository's agent-assisted contribution policy",
+      "Changing response metadata lifecycle could alter unrelated gw-error-format rules"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a fake-host regression that invokes the response-header callback followed by a nonmatching body callback and asserts original status/headers/body are preserved",
+      "Add a regression confirming the matching-body conversion path is unchanged"
+    ],
+    "unknowns": [
+      "No maintainer approval or Design Issue exists",
+      "No public reproduction or failing test is supplied",
+      "Assignment and AI disclosure requirements remain unresolved"
+    ],
+    "why": "The issue is a planning-only Proposal that explicitly forbids implementation until maintainer approval and a linked Design Issue exist. Supplied evidence shows no reproduction, no root-cause code anchor beyond `match.responsebody`, no maintainer approval, and unresolved policy/disclosure and assignment requirements. These are materially blocking unknowns for actionable code work."
   },
   "e337a431eaeeee17432fdef990b6629091629b75d7a51ca436fca08687927566": {
     "confidence": 0.8,
