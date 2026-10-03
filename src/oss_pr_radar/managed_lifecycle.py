@@ -3771,6 +3771,14 @@ class ManagedLedger:
                         "pr_key": pr_key,
                         "idempotency_key": idempotency_key,
                     }
+                    if (
+                        event_type == "TASK_RESULT_RECORDED"
+                        and existing_event["opportunity_key"] is None
+                        and existing_result is not None
+                    ):
+                        # record_result emits task-owned events without an issue key.
+                        # The exact result above and separate publication event bind it.
+                        identity.pop("opportunity_key")
                     identity_matches = all(
                         existing_event[field] == value for field, value in identity.items()
                     )

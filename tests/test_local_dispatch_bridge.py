@@ -19795,11 +19795,16 @@ def test_published_fix_ready_file_repairs_current_result_and_binds_pr(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("advanced_stage", "distinct_reservation_head"),
-    [("CI_GREEN", False), ("MAINTAINER_ACCEPTED", False), ("CI_GREEN", True)],
+    ("advanced_stage", "distinct_reservation_head", "prior_managed_result"),
+    [
+        ("CI_GREEN", False, False),
+        ("MAINTAINER_ACCEPTED", False, False),
+        ("CI_GREEN", True, False),
+        ("CI_GREEN", True, True),
+    ],
 )
 def test_published_fix_ready_replay_preserves_immutable_binding_stage(
-    tmp_path, advanced_stage, distinct_reservation_head
+    tmp_path, advanced_stage, distinct_reservation_head, prior_managed_result
 ):
     store, worktree, result_path = _controller_commit_result(tmp_path)
     reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
@@ -19819,6 +19824,29 @@ def test_published_fix_ready_replay_preserves_immutable_binding_stage(
     original_raw = result_path.read_bytes()
     value = json.loads(result_path.read_text(encoding="utf-8"))
     result_digest = MODULE._task_result_digest(value, original_raw)
+    prior_event = None
+    if prior_managed_result:
+        result = managed.record_result(
+            task_id="intent-1",
+            result_digest=result_digest,
+            worker_state="patched",
+            pr_key="a/b#9",
+            head_sha=current_head,
+            commit_sha=current_head,
+            validation={"passed": True, "evidence": list(value["quality"])},
+            prior_head_sha=reservation_head,
+            new_head_sha=current_head,
+            source="dispatch-result",
+            provenance={
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "stage": "FIX_READY",
+                "probeLevel": "REPRODUCED_VALIDATED",
+            },
+        )
+        assert result["advanced"] is True
+        prior_event = managed.event_by_idempotency_key(f"result:{result['result_key']}")
+        assert prior_event["event_type"] == "PATCHED"
+        assert prior_event["opportunity_key"] is None
     with store.connect() as connection:
         publication_counts_before = {
             table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
@@ -19836,6 +19864,11 @@ def test_published_fix_ready_replay_preserves_immutable_binding_stage(
     assert first_binding["stage"] == "PR_OPEN"
     assert first_binding["publicationCommitSha"] == reservation_head
     assert first_binding["headSha"] == first_binding["commitSha"] == current_head
+    binding_key = f"published-task-result:intent-1:a/b#9:{current_head}:{result_digest}"
+    first_binding_event = managed.event_by_idempotency_key(binding_key)
+    assert first_binding_event["opportunity_key"] == "a/b#1"
+    if prior_event is not None:
+        assert managed.event_by_idempotency_key(prior_event["idempotency_key"]) == prior_event
 
     store.record_stage("a/b#1", advanced_stage, evidence={"checks": "green"})
     replayed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
@@ -19845,6 +19878,9 @@ def test_published_fix_ready_replay_preserves_immutable_binding_stage(
     restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
     assert restored["stage"] == advanced_stage
     assert managed.current_published_result_for_task("intent-1") == first_binding
+    assert managed.event_by_idempotency_key(binding_key) == first_binding_event
+    if prior_event is not None:
+        assert managed.event_by_idempotency_key(prior_event["idempotency_key"]) == prior_event
     assert result_path.read_bytes() == original_raw
     with managed._connection() as connection:
         binding_rows = connection.execute(
@@ -20787,7 +20823,11 @@ def test_invalid_published_backfill_does_not_mutate_authorized_task(tmp_path):
         )
 
 
-def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(tmp_path):
+@pytest.mark.parametrize(
+    "conflict",
+    ["published_binding_payload", "result_without_exact_row", "foreign_result_opportunity"],
+)
+def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(tmp_path, conflict):
     store, worktree, result_path = _controller_commit_result(tmp_path)
     managed, context, pr_url = _bind_published_pr_authority_fixture(
         store,
@@ -20807,17 +20847,42 @@ def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(t
     )
     result_digest = "a" * 64
     head_sha = str(value["headSha"])
-    event_key = f"published-task-result:intent-1:a/b#9:{head_sha}:{result_digest}"
+    published_binding = conflict == "published_binding_payload"
+    result_key = f"intent-1|a/b#9|{head_sha}|{result_digest}"
+    event_key = (
+        f"published-task-result:intent-1:a/b#9:{head_sha}:{result_digest}"
+        if published_binding
+        else f"result:{result_key}"
+    )
     managed.record_event(
-        event_type="PUBLISHED_TASK_RESULT_BOUND",
+        event_type="PUBLISHED_TASK_RESULT_BOUND" if published_binding else "PATCHED",
         idempotency_key=event_key,
-        opportunity_key="a/b#1",
+        opportunity_key=(
+            "a/b#1"
+            if published_binding
+            else "a/b#2"
+            if conflict == "foreign_result_opportunity"
+            else None
+        ),
         task_id="intent-1",
         pr_key="a/b#9",
         state="IMPLEMENTATION_READY",
         source="dispatch-result",
         payload={"wrong": True},
     )
+    if conflict == "foreign_result_opportunity":
+        managed.record_result(
+            task_id="intent-1",
+            result_digest=result_digest,
+            worker_state="patched",
+            pr_key="a/b#9",
+            head_sha=head_sha,
+            commit_sha=head_sha,
+            validation={"passed": True, "evidence": ["reviewed fixture"]},
+            prior_head_sha="d" * 40,
+            new_head_sha=head_sha,
+            source="dispatch-result",
+        )
     candidate = next(
         item
         for item in store.task_result_candidates()
@@ -20832,6 +20897,12 @@ def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(t
             dict(row)
             for row in connection.execute(
                 "SELECT * FROM managed_results ORDER BY result_key"
+            ).fetchall()
+        ]
+        events_before = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM managed_lifecycle_events ORDER BY event_id"
             ).fetchall()
         ]
 
@@ -20850,6 +20921,12 @@ def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(t
                 "SELECT * FROM managed_results ORDER BY result_key"
             ).fetchall()
         ] == results_before
+        assert [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM managed_lifecycle_events ORDER BY event_id"
+            ).fetchall()
+        ] == events_before
         assert (
             connection.execute(
                 """SELECT COUNT(*) FROM events
