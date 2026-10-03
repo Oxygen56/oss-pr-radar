@@ -29894,6 +29894,45 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports duplicate command registration in WSL but lacks root cause evidence; comment suggests environment cleanup, not a code defect. No maintainer confirmation or code anchor beyond extension name."
   },
+  "3e4f44e92064e1c87c0fba401db6ce6e817b612cefd601b92ce51d1b9b3e3da6": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while issue_body provides a clear traceback and root-cause hypothesis",
+      "open_pr_assessment marks PR #58977 as semantic_overlap_requires_review with overlapping PLE paths but root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/models/qwen4_exp/nvidia/ngram_embedding.py: PLE quant-method dispatch for INCConfig",
+      "vllm/models/qwen4_exp/common/ngram_embedding.py: shared PLE embedding method selection",
+      "vllm/model_executor/layers/quantization/inc/inc.py: per-layer/checkpoint quantization metadata exposure"
+    ],
+    "risks": [
+      "PR #58977 may already implement the same fix, making this duplicate work",
+      "Assuming every INC checkpoint has an unquantized PLE would be incorrect; per-layer metadata must be checked",
+      "Repository AI-disclosure policy conflict may block automated contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with Intel/Qwen3.8-Flash-Next-W4A16-AutoRound on TP=2 + expert parallel and confirm the NotImplementedError at from_quant_config",
+      "Add a regression test asserting PLE selects the unquantized embedding method when the checkpoint marks PLE as unquantized while the body is INC/AutoRound W4A16",
+      "Verify MARLIN WNA16 MoE backend still selected and model initializes past the PLE dispatch point"
+    ],
+    "unknowns": [
+      "Whether PR #58977 already fixes this exact INCConfig PLE dispatch failure",
+      "Whether the repository's AI-disclosure policy permits this contribution",
+      "Whether per-layer checkpoint quantization metadata is available to distinguish quantized vs unquantized PLE"
+    ],
+    "why": "Issue describes a concrete quantization-dispatch failure (INCConfig rejected by Qwen4ExpPLEEmbeddingMethod.from_quant_config) with traceback and a tested workaround, but the supplied evidence contains materially blocking unknowns: an open PR #58977 ('Support BF16 INC PLE embeddings in Qwen4Exp') overlaps the exact code paths and may already cover the root cause, and the pre-task policy status is ai_disclosure_conflict with base_sha_changed/duplicate_changed, which determines whether code work is actionable."
+  },
   "3e4fb90f75e655149bf06546f2b034c02f34e53bdcabb436483691782df37673": {
     "confidence": 0.7,
     "contradictions": [
@@ -45707,6 +45746,33 @@
     ],
     "why": "Issue identifies two concrete, separable algorithm defects in ReLoRA callback: (A) _prune_and_reset never merges B@A into base weight before pruning/reinit, contradicting the module docstring's ReLoRA conformance claim; (B) strict `abs(t) > threshold` mask zeroes all tied-magnitude entries, killing both LoRA factors and producing zero gradients. Maintainer confirmed both with real peft LoRA model runs, including a merge-then-reset control (MSE 8.77e-13) and kernel-level tie reproduction (ones(10), prune_ratio=0.9 -> 0 kept). Root cause is localized to src/soup_cli/utils/relora.py with clear code anchors."
   },
+  "5c962ce24cb4fb92ee2d34ddce9f854917b97a78b9cf5181039cbdef429f29e2": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue title attributes crash to long context (~312K tokens), but comment evidence shows non-monotonic length behavior and a <=512-token replay-step trigger."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Issue title's 'long context' framing is misleading; actual trigger is a replay step with <=512 scheduled tokens.",
+      "Duplicate/covered-fix status means any new implementation would risk conflicting with merged #49302."
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new test needed; regression coverage belongs to #49302 and its existing tests."
+    ],
+    "unknowns": [
+      "Whether maintainers want this issue formally closed as fixed by #49302 rather than a new code contribution."
+    ],
+    "why": "Issue is already diagnosed and resolved: comment evidence identifies the root cause as the #48822 PIECEWISE-replay metadata-padding regression, fixed by merged PR #49302 (de6ec294), with single-variable validation (cherry-pick makes failing cases pass, num_prefill_reqs 512->1) and confirmation that v0.28.0 passes all cases. A second independent reporter confirms the same assertion on H200 and states the fix is merged. No new code work is actionable."
+  },
   "5cbba08bfaf7da5508509ad9d9759f071866fd4327a842a0c06d19e02437b201": {
     "confidence": 0.7,
     "contradictions": [],
@@ -61035,6 +61101,42 @@
       "Whether PR #40377 or #33463 already implement any of the three gaps in native WS forwarding"
     ],
     "why": "Issue provides a concrete, code-anchored root cause: the native Responses WebSocket path never calls _restore_encrypted_content_item_ids_in_input before forwarding frames, and never applies the encrypted_content_affinity pre-call check, unlike the HTTP path. Reproduction steps are ordered and isolate each gap, and the issue explicitly rules out the two overlapping PRs (#40377 bridge path, #33463 deployment defaults) as not touching native WS encrypted-content handling."
+  },
+  "7a1b7d7da04f9075c8d7e7b60a369f455c0fa56a180cd3c35d9c553aff72410a": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims draft layer is BF16/unquantized, but open PR #59833 title describes loading ModelOpt NVFP4 MLA projections into BF16 fused_qkv_a_proj, suggesting overlapping but possibly different fix scope"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/models/glm5next/common/mtp.py: build draft MoE with per-layer quant awareness (honor exclude_modules / absence of scale tensors)",
+      "vllm/model_executor/layers/fused_moe/routed_experts.py: ensure expert buffer shape matches checkpoint dtype for excluded layers"
+    ],
+    "risks": [
+      "Existing PR #59833 touches the same mtp.py path and may already address the root cause",
+      "ai_disclosure_conflict policy may block automated public contribution",
+      "Requires SM120 hardware and the specific NVFP4 checkpoint to reproduce"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Load nvidia/GLM-5.3-Flash-NVFP4 with --speculative-config mtp and TP=8 on SM120; confirm no 128-vs-256 shape error at weight load",
+      "Compare draft expert weight dtype/shape against checkpoint bytes for layers.45 to confirm BF16 vs NVFP4-packed",
+      "Run without --speculative-config as control to confirm baseline load/serve still works"
+    ],
+    "unknowns": [
+      "Whether PR #59833 or #59845 already fixes this exact draft-layer quant inheritance",
+      "Whether the repository's ai_disclosure_conflict policy permits this contribution",
+      "Whether the fix belongs in mtp.py construction or in the quant_config exclude_modules handling"
+    ],
+    "why": "Issue provides a concrete traceback and a plausible checkpoint-vs-buffer mismatch (BF16 draft experts [4096,256] vs NVFP4-packed buffer [4096,128]), but the supplied evidence does not establish whether the root cause is the draft layer inheriting the global quant_config or an existing open PR already covering it. Three open PRs (#59833, #59740, #59845) show semantic overlap on bf16/checkpoint/nvfp4 and one overlaps vllm/models/glm5next/common/mtp.py, so duplicate/merged-fix coverage is unresolved. Additionally the repository policy status is ai_disclosure_conflict, which is a materially blocking disclosure requirement."
   },
   "7a28f2ec9a63ee03e9743c32f8862c907bdcaa02e29a635884368103dd28b7a2": {
     "confidence": 0.85,
@@ -112189,6 +112291,39 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue describes a reproducible degenerate output on DeepSeek-V4-Flash with SM120, but the root cause is not identified. Existing PR #49636 and #50455 overlap semantically with the issue's code paths and may already address the bug, requiring manual comparison before creating a new task."
   },
+  "e15f81b80d3b0519e5b73c0f888ef3a6030ce30d4228b7216a5377012cd0378e": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #41163 on the same MCP server path, while actionability_evidence marks the issue probe_ready with a clear root cause"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: warm tool-name mapping after reload_servers_from_database()",
+      "litellm/types/mcp_server/mcp_server_manager.py: treat cold mapping as unknown in _get_mcp_server_from_tool_name / _server_exposes_tool"
+    ],
+    "risks": [
+      "Overlapping open PR #41163 may already implement or conflict with the fix",
+      "Warming mapping on every reload could add startup latency or duplicate tool listings",
+      "Single-flight warm path may race with concurrent tools/call"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: DB-managed MCP server, list tools, restart proxy, call tool without re-list, assert 404",
+      "Regression: after fix, same sequence returns tool result; multi-worker test confirms per-replica warm mapping"
+    ],
+    "unknowns": [
+      "Whether PR #41163 already fixes the cold tool-name mapping root cause",
+      "Whether maintainers have a preferred fix location (reload-time warm vs lazy single-flight warm)"
+    ],
+    "why": "Issue describes a plausible cold-mapping root cause with code anchors and ordered repro steps, but the supplied duplicate assessment flags PR #41163 as semantic overlap on the same MCP server path (litellm/proxy/_experimental/mcp_server/server.py) with no direct issue link and no root-cause coverage confirmation. Whether that open PR already covers or conflicts with the proposed fix is unresolved, which materially determines whether independent code work is actionable."
+  },
   "e1641464b989e32f0b53f7c220a042806eb9622b7f7c852d72b8dfb1bb01c03d": {
     "confidence": 0.6,
     "contradictions": [
@@ -113068,6 +113203,44 @@
       "Whether a .NET-specific PR is already in progress"
     ],
     "why": "Issue reports a clear .NET bug where web_search_options is sent unsupported, with a reproduced root cause in ChatClientAgentRunOptionsConverter. However, the deterministic gate is HUMAN_REVIEW and design confirmation is needed; existing PRs are Python-only and not directly competing."
+  },
+  "e2e0013c53c20c356f3990b50ebed16b6194d7838d0e9767b09704a43b3f031f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes 'capability fields override' while PR #9672 documents 'instance wins', so the intended rule is unresolved",
+      "Pre-task evidence marks duplicate as semantic_overlap_requires_review while also listing the issue as actionable"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/capabilities/native_or_local.py (native/local resolution and combine precedence)",
+      "pydantic_ai_slim/pydantic_ai/capabilities/_merge.py (merge_field_values treating native=True as stated)",
+      "pydantic_ai_slim/pydantic_ai/capabilities/web_fetch.py, web_search.py, x_search.py, mcp.py, image_generation.py (_requires_native and field-override semantics)",
+      "docs/capabilities/*.md and capabilities/AGENTS.md documenting the chosen rule"
+    ],
+    "risks": [
+      "PR #9672 already modifies the same resolution paths and may cover or conflict with the fix",
+      "Changing precedence alters public behavior and existing pinned tests (test_instance_native_config_is_merged_for_fallback)",
+      "Silent dropping of restriction fields (domain filters, allowed_tools) is a security-relevant behavior change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test asserting the chosen precedence for WebFetch(native=WebFetchTool(), allowed_domains=['a.com']) and the two-capability ordering case",
+      "Add regression tests for MCP allowed_tools/headers/authorization_token and XSearch allowed_x_handles beside an explicit native instance",
+      "Run tests/test_fallback_native_factory.py and tests/test_capability_image_generation.py to confirm subagent vs direct-generator consistency"
+    ],
+    "unknowns": [
+      "Maintainer's decision on the precedence rule (capability-override vs instance-wins)",
+      "Whether PR #9672 already resolves the root cause or must be superseded",
+      "Whether assignment is required before implementation per repo policy"
+    ],
+    "why": "The issue is a design/behavior question ('which rule should NativeOrLocalTool capabilities follow?') explicitly addressed to a maintainer, with no agreed resolution. The supplied evidence shows an open PR #9672 with semantic overlap on the same code paths (native_or_local.py, _merge.py, mcp.py, image_generation.py) that already changes the same behavior, and the issue itself states it was found while working on #9672. The pre-task evidence flags duplicate status 'semantic_overlap_requires_review', assignmentRequired=true, and reproduction_or_validation_missing. Whether code work is actionable depends on the unresolved duplicate coverage and the maintainer's chosen rule, which are materially blocking unknowns."
   },
   "e2e31d240c1ab119e410c5b2e1f16c635a158849be7dc2361f5b5420570ec62f": {
     "confidence": 0.85,
@@ -122310,6 +122483,40 @@
       "Whether any open PR is actively being worked on"
     ],
     "why": "Issue clearly describes a stale-fact retrieval bug in mem0 v3 ADD-only extraction, with concrete scenario and community reproduction. However, multiple closed PRs (#5240, #4969, #4965) already attempt fixes, and the deterministic gate requires HUMAN_REVIEW. No open PR or maintainer direction confirmed, so starting new work risks duplication."
+  },
+  "f421a431e229ec1b6dfa4db31a8d87045bec81f3e1769826436ef04b3b1276ab": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Codex coding-agent run waiter resolution on completion events",
+      "sessionMap.isWorking clearing / markExternalRunCompleted path",
+      "streamOutput terminal/EOF handling and 120000 ms timeout usage"
+    ],
+    "risks": [
+      "Root cause is suspected, not confirmed; fix may require additional instrumentation before a minimal patch is clear",
+      "Changing timeout/waiter semantics could affect legitimate long-running Codex runs",
+      "Bundled dist/server/index.js anchors may not map cleanly to source modules"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with minimal prompt '只回复 OK' through Ekko Studio vs native Codex CLI and measure latency",
+      "Add a regression test that emits a Codex completion event and asserts the run waiter resolves and isWorking clears without waiting for the 120000 ms deadline",
+      "Run targeted unit tests for the coding-agent run/session lifecycle and static checks"
+    ],
+    "unknowns": [
+      "Exact source-level location of the completion-event/waiter mismatch is not confirmed",
+      "Whether maintainers have a preferred fix direction for the 120000 ms timeout path"
+    ],
+    "why": "Issue provides a concrete user-visible performance bug with ordered reproduction, expected/actual behavior, isolation tests ruling out MCP servers and config differences, and static code anchors pointing to 120000 ms waits in runAndWait()/streamOutput() and completion-event handling. No open PR or duplicate issue covers it. Root cause is suspected rather than confirmed, but the evidence supports a concrete reference-vs-implementation timing test and a bounded fix in the run/session lifecycle."
   },
   "f429df40641962ea641722b7221e875fdd479837938f38e7e872b26dee76ae57": {
     "confidence": 0.85,
