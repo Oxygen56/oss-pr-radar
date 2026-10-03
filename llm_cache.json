@@ -21535,6 +21535,41 @@
     ],
     "why": "The issue provides a precise root cause chain (index_kpool>1 excludes flashmla_kv, no CUDA bf16-query x fp8-KV backend), concrete reproduction commands, and a validation path via PR #36904 which has been validated on SM90 and SM121. The evidence includes kernel-level tests, negative controls, and output parity checks, establishing a concrete reference-vs-implementation test."
   },
+  "2cd525e6f2d9645195d7fb262998e7ef7c54c961995d2f57afac981206d52d2d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "preTaskEvidence.duplicate.status='none' vs related_issue_assessment.status='potential_overlap'",
+      "preTaskEvidence.policy.status='ai_disclosure_conflict' with aiDisclosureConflict=true while candidate.actionability_evidence.needs_confirmation=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/qwen3_omni_moe_thinker.py: get_mrope_input_positions must emit exactly seq_len positions and correct per-branch st advancement for image/audio/video/audio-in-video"
+    ],
+    "risks": [
+      "Unresolved AI-disclosure/authorization policy conflict may block any public contribution regardless of technical merit",
+      "Potential duplicate/overlapping issue coverage (#59642, #59828) is not conclusively ruled out",
+      "Fixing the off-by-one could alter audio-in-video position structure and regress Qwen2.5-Omni-compatible behavior if not carefully scoped"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add synthetic-input unit tests in tests/model_executor/test_qwen3_omni_mrope.py covering media-at-prompt-end (expect no RuntimeError) and media-then-text (expect positions.shape == (3, seq_len)) with PlaceholderRange(offset=1, length=4) over a 6-token prompt",
+      "Run the new test on CPU without weights to confirm before/after behavior"
+    ],
+    "unknowns": [
+      "Whether the repository's AI-disclosure/authorization requirement is satisfied for this contribution",
+      "Whether #59642/#59828 actually cover the same M-RoPE offset defect or only share generic stack signatures",
+      "Whether the linked PR #58890 already resolves this issue"
+    ],
+    "why": "The issue describes a concrete M-RoPE off-by-one in Qwen3-Omni position bookkeeping with a plausible root cause (PlaceholderRange.offset double-counting the modality-start token) and a synthetic CPU-testable validation path, which fits the llm_algorithm track. However, the supplied evidence contains materially blocking unknowns: the preTaskEvidence reports policy status 'ai_disclosure_conflict' with aiDisclosureConflict=true, and the candidate risk notes 'base_sha_changed, duplicate_changed, policy_or_disclosure_uncertain'. A repository disclosure/authorization requirement that is unresolved determines whether code work is actionable. Additionally, related_issue_assessment flags potential overlap with #59642/#59828 via shared stack signatures, and the duplicate status is inconsistent ('none' in preTaskEvidence vs 'potential_overlap' in related_issue_assessment), so duplicate coverage is not resolved."
+  },
   "2ce03d3d0a2d0af56eb1b08b32d2f655bfc1824d3df534f2394cced5f75c57a7": {
     "confidence": 0.7,
     "contradictions": [
@@ -22114,6 +22149,42 @@
       "Exact maintainer design preference for retract self-containment vs separate flush"
     ],
     "why": "Issue provides detailed root cause, code anchors, measured impact, and expected behavior. Existing PRs are incomplete or draft, leaving clear competition opportunity."
+  },
+  "2e67ee34ceda53f23fc8c1b20a3434f47550eeaa7888865d376f6d03f97aa966": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asserts a vLLM streaming reasoning detokenization bug, while contributor triage and in-process simulation show stock v0.21.0 and main produce byte-exact clean output",
+      "Issue labels include tool-calling and algorithm mechanisms (distributed_training, numerics_quantization) that are unrelated to the reported detokenization symptom"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "No confirmed vLLM module change; if anything, vllm/reasoning/deepseek_r1_reasoning_parser.py or vllm/entrypoints/openai/chat_completion/serving.py only after a stock-code reproduction is demonstrated"
+    ],
+    "risks": [
+      "Fixing a non-reproducible stock-code symptom could add dead code or mask a deployment-local tokenizer misconfiguration",
+      "The related PR #59748 touches the same parser path but has no regression test and unlinked issue, so overlap is unresolved",
+      "AI disclosure policy conflict blocks automated public action regardless of technical merit"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied in-process repro.py against the reporter's exact /models/deepseek directory and transformers 5.8.1 to confirm whether glyphs appear with stock code",
+      "Check AutoTokenizer.from_pretrained('/models/deepseek').encode('你好') == [108386] to rule out the LlamaTokenizerFast shim (huggingface/transformers#49252)",
+      "If stock code is clean, capture the reporter's actual serving stack (custom parser, patched detokenizer, or wrapper) before proposing any vLLM change"
+    ],
+    "unknowns": [
+      "Whether the reporter's deployment uses a modified parser, custom detokenizer, or wrapper not present in stock vLLM",
+      "Whether the local /models/deepseek tokenizer files trigger the LlamaTokenizerFast shim bug",
+      "Whether PR #59748 actually addresses the same root cause or is an independent parser change"
+    ],
+    "why": "The issue claims streaming reasoning deltas leak raw byte-level BPE glyphs, but the supplied contributor triage (he-yufeng) shows stock v0.21.0 and current main cannot produce this signature: every parser return is a substring of already-decoded delta_text, and in-process simulation of the exact serving chain reconstructs reasoning/content byte-exact with zero glyphs. The reporter's control experiments (clean content, clean non-streaming) are consistent with a deployment-local tokenizer/parser substitution rather than a vLLM code defect. Root cause is therefore not established in the repository, and the concrete validation path (repro.py) currently exonerates the code path."
   },
   "2e81fd2c2eff7905094b4dc538b214322b968d5e75006380572cf609dc30ab33": {
     "confidence": 0.55,
@@ -34482,6 +34553,36 @@
       "Whether maintainers require the legal_confirmation/disclosure step before a PR is accepted"
     ],
     "why": "Issue reports two distinct defects: (A) missing response_format propagation in omni_handler.py, which is a concrete, code-anchored fix; and (B) an FFmpeg/swscale MMXEXT color-corruption defect that is external to this repository and not fixable by a Dynamo code change. The candidate is also flagged as semantic_overlap_requires_review with open PR #13707 touching the same omni_handler.py/output_formatter.py paths and the 'base64' keyword, so duplicate coverage is unresolved. The actionability evidence itself records root_cause_signal=false and maintainer_approved=false, and the pre-task policy is legal_confirmation."
+  },
+  "49ab6076fd57f1d599b57759c8bdf84cc03f72efc1574b475b30240fef119825": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm-rust/crates/storage-clickhouse/src/read.rs: replace the fixed max_result_rows=1000/throw behavior with bounded pagination or an explicit supported-limit contract for trace detail",
+      "Trace-detail API path: return a useful bounded/partial response instead of a generic HTTP 500 when span count exceeds the reader cap"
+    ],
+    "risks": [
+      "Removing the reader cap globally could regress memory/byte safeguards; fix should bound or paginate rather than drop limits",
+      "PR #43937 addresses the same visible error via status-message bounding but not the row-count path; ensure the fix targets the row cap specifically",
+      "PR #43942 introduces bounded reads for investigations but the ordinary trace-detail path still fails at 1,001 spans, so overlap must be checked"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression coverage using the issue's rows_repro.py boundary fixtures (999/1,000/1,001 small spans) asserting 200 with correct returned span counts and no Code 396",
+      "Run targeted storage-clickhouse Rust tests and the trace-detail proxy tests; verify memory/byte/authorization safeguards remain in place"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer pagination vs. an explicit supported-limit response contract for trace detail"
+    ],
+    "why": "Issue provides a concrete, reproducible boundary failure: the Rust ClickHouse reader hardcodes max_result_rows=1000 with result_overflow_mode=throw, so a stored 1,001-span trace returns HTTP 500 (Code 396 TOO_MANY_ROWS_OR_BYTES). The 999/1,000/1,001 controls and direct ClickHouse cap comparison isolate the row-count guard from byte/timeout causes, and the code anchor read.rs is identified on both pinned and current-main snapshots."
   },
   "49afc90b028f635e937e23f7b2faafb893149b6b2c1f1cabe485e63457da82a7": {
     "confidence": 0.55,
@@ -48877,6 +48978,34 @@
     ],
     "why": "Issue provides a clear regression with exact broken/working versions, isolated variables, and a reproducible command. Root cause is localized to generation/sampling for Qwen3.5-arch, with code anchors. No competing PR covers this path."
   },
+  "653504d2bf7f1154f3019b0ece8b771e83a56425c8568243419514950feb0bd0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "livekit/agents/cli/log.py: configure the root StreamHandler (and job subprocess logging) with errors='replace' or UTF-8 stream reconfiguration so non-ASCII log lines are not dropped"
+    ],
+    "risks": [
+      "Fix must also cover the job subprocess, not only the parent process",
+      "Reconfiguring sys.stdout may fail when stdout is not a TextIOWrapper; errors='replace' on the handler is the safer minimal change",
+      "Changing encoding behavior could alter existing log output expectations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that emits a non-ASCII log record through the CLI root handler with a cp1252-encoded stream and asserts the message is written (or degraded) rather than raising UnicodeEncodeError",
+      "Reproduce the issue snippet on a cp1252 console and confirm the Arabic log line appears after the fix"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer handler-level errors='replace' versus stream reconfigure/UTF-8 startup"
+    ],
+    "why": "Issue provides a concrete root cause (StreamHandler(sys.stdout) without errors/encoding at cli/log.py:208 combined with ensure_ascii=False JSON serialization at log.py:147), a minimal reproduction, and a specific regression path; the fix is a small, well-scoped logging change with a clear validation test."
+  },
   "653995c6ac822c38b619a8bc9779d2887e6f66fbb80fefffd36fef45afc952bd": {
     "confidence": 0.85,
     "contradictions": [],
@@ -55221,6 +55350,42 @@
       "Whether a deterministic synthetic reproduction can be constructed at all"
     ],
     "why": "The issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not reproduce it synthetically; only long real agentic sessions trigger it. A maintainer comment attributes it to 'tool call / vllm frontend', which is parser/frontend plumbing rather than an LLM algorithm mechanism (training objective, kernel algorithm, quantization/numerical method, or evaluation methodology). The candidate's algorithm_evidence claims model_architecture/distributed_training/numerics_quantization/evaluation_method, but the supplied evidence shows no formula, no experiment, and no concrete algorithmic root cause — the code anchors are collect_env.py, finished_reason, clear_thinking, bash, max_tokens, and glm parser files, i.e. frontend/parser plumbing. Additionally, the pre-task policy status is ai_disclosure_conflict, which is a materially blocking disclosure requirement, and there is a potential duplicate issue #56583 sharing stack/failure signatures. These unknowns determine whether code work is actionable."
+  },
+  "7095cb254f0fb8286cdfbb1b1082ff8aedd54f4e7f0bd0ec582c3935ac044505": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue proposes a narrow supports_vision override while maintainer comment asks for broader custom-provider capability work"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/model_config.rs: allow user/config override for supports_vision on custom providers",
+      "crates/goose-providers/src/openai.rs and openai_compatible.rs: stop flattening None to false when an override is present",
+      "config.yaml schema / provider entry to accept supports_vision (and possibly context limits, thinking effort)"
+    ],
+    "risks": [
+      "Open PRs #12558/#12534 may already cover the same openai format path, creating duplicate work",
+      "Maintainer comment suggests broader scope (context limits, thinking effort) than the minimal vision override",
+      "Changing None->false semantics could alter behavior for existing custom providers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test mirroring apply_canonical_limits_leaves_unknown_providers_untouched but asserting an explicit user override yields supports_vision=Some(true)",
+      "Regression test that a custom OpenAI-compatible provider with supports_vision=true forwards image parts instead of dropping them",
+      "Compare against PR #12558/#12534 to confirm no duplicate coverage before implementing"
+    ],
+    "unknowns": [
+      "Whether PR #12558/#12534 already resolve the supports_vision gap",
+      "Whether assignment is required before contribution per repo policy",
+      "Maintainer-preferred fix option (config override vs env var vs capability probing)"
+    ],
+    "why": "Issue has a clear, source-verified root cause (supports_vision resolved only via canonical catalog, None flattened to false in openai/openai_compatible, no user override) and a concrete validation path. However, two supplied facts materially block actionability: (1) policy status is needs_assignment with assignmentRequired=true and no assignees, and (2) duplicate status is semantic_overlap_requires_review with open PRs #12558/#12534 touching the same openai format path and distinctive keywords (openai_compatible, supports_vision), so coverage is unresolved. A maintainer comment also indicates the fix should be broader (context limits, thinking effort for custom providers), which affects scope."
   },
   "70a91257ccf59a6276f5df537f67d07050f4f7f093164083350e0a19c2292bd3": {
     "confidence": 0.85,
@@ -61854,6 +62019,39 @@
     ],
     "wait_reason": null,
     "why": "Issue clearly describes a bug in variable expansion within test vars, provides a minimal reproduction, and references a prior fix for a similar issue. No competing PR or maintainer assignment found, and the fix is localized to the variable expansion logic."
+  },
+  "7e17ebbe8311b58707a1edb0e8b8f437e3d09f80a876f74fac1ba696133a8d7d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue says #7822 adds a rejection guard and leaves execution support open, while open_pr_assessment reports semantic overlap with #7822 but no direct code overlap and no root-cause coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "MFSDP v2 backward hook timing / frozen-weight resharding logic",
+      "tests/unit_tests/distributed/mfsdp_v2/test_fully_shard.py regression coverage"
+    ],
+    "risks": [
+      "PR #7822 may already cover the actionable root cause, making a new contribution duplicative",
+      "Distinguishing a genuine correctness fix from a conservative rejection guard requires comparing implementation boundaries",
+      "CUDA illegal-memory-access behavior may be hardware/driver dependent"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied two-rank repro command at commit 1b2ef3b18eed64a4cdba349e1dcbbfea1cc8aea1 and confirm the 'Frozen weight was resharded before backward consumed it' failure",
+      "After a fix, verify the nested trainable linear's weight gradient is produced without accessing released storage, and run the full MFSDP v2 suite on two GPUs"
+    ],
+    "unknowns": [
+      "Whether PR #7822's guard fully resolves the issue or whether a distinct execution-support fix is still needed",
+      "Whether the issue is intended to be closed by #7822 or tracked separately"
+    ],
+    "why": "Issue describes a concrete MFSDP v2 correctness bug (frozen weight resharded before backward consumes it) with a reproduction command and a referenced regression test, but the supplied evidence shows PR #7822 already adds a conservative rejection guard and converts the repro into a passing rejection test, while the issue explicitly says support for executing the configuration remains open. The duplicate/coverage status is 'semantic_overlap_requires_review' with best_score 34 and direct_code_overlap false, so it is unresolved whether the remaining work is a distinct implementation or already covered by #7822."
   },
   "7e729c92d762a857a1097595a739f38539eeb99455b05f885afd32c26da7823d": {
     "confidence": 0.85,
@@ -87571,6 +87769,35 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a crash but explicitly lacks reproducible evidence (single run, no heap profile, root cause unknown). Maintainer claims fix in 2.2.4, but reporter's verification failed at startup with a different crash (pthread_create EAGAIN), leaving the original OOM unresolved and unverified. No open PR or related issue; actionable fix requires maintainer confirmation and additional diagnostics."
   },
+  "b4bbec62572b7f47c2221ded2a3142000cdd8d4921c7b433c18acb1d4bd1c1f6": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate track=llm_algorithm and algorithm_evidence qualified=true conflict with the actual proxy health-check plumbing nature of the issue"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/health_endpoints/_health_endpoints.py aggregation keyed by model_id"
+    ],
+    "risks": [
+      "Fixing aggregation may change persisted health status semantics for alias deployments",
+      "Fallback path for endpoints lacking model_id must preserve prior behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Unit test _aggregate_health_check_results with two deployments sharing litellm_params.model but distinct model_id, asserting per-deployment healthy/unhealthy counts and error attribution"
+    ],
+    "unknowns": [
+      "Whether the announced fix branch has already produced an open PR that fully covers this issue"
+    ],
+    "why": "The issue is a proxy health-check aggregation bug (misattribution of results keyed by litellm_params.model instead of model_id). Although the candidate is labeled track=llm_algorithm, the work is ordinary proxy/API plumbing in litellm/proxy/health_endpoints/_health_endpoints.py, not a training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The algorithm_evidence 'evaluation_method' match is a keyword artifact from 'exact match'/'evaluation' wording, not a real algorithmic mechanism. Additionally, a contributor has already announced a fix branch and PR link in the issue comments, indicating the opportunity is being covered."
+  },
   "b4c865ee4f28e46fa5eb1375ba1416e0b94e298336cb0f94e5b180866b839cf9": {
     "confidence": 0.7,
     "contradictions": [
@@ -107493,6 +107720,30 @@
     ],
     "why": "The issue presents a clear, code-anchored root cause (Azure pass-through route resolves no model, so can_key_call_model is skipped and the raw-relay branch forwards with gateway credentials) and a concrete reproduction. However, the supplied evidence contains a materially blocking unknown: an open PR (#40030) is flagged as semantic_overlap_requires_review with overlapping pass-through paths, and the pre-task evidence explicitly says duplicate status requires human comparison and forbids auto-creating a duplicate task. Until that overlap is resolved, whether code work is actionable is undetermined."
   },
+  "dc1426d4a3431f8607619670e067e005d9518b6b8043496a9086b5567dc8ebaf": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Reporter could not verify 2.2.4 due to EAGAIN startup crash, while pilichoumao reproduced 2.2.4 green in a clean environment; the EAGAIN is attributed to host thread/pid limits, not a 2.2.4 regression."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "The reporter's separate 2.2.4 startup failure (pthread_create EAGAIN) is an environment/resource-limit issue, not a code defect in this repo.",
+      "The match_list field-name mismatch and silent config-drop observation is a separate documentation/validation concern, not the OOM root cause."
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Upgrade gateway image to 2.2.4 and re-run the direct POST initialize repro; expect HTTP 200 and no panic (already demonstrated by pilichoumao)."
+    ],
+    "unknowns": [],
+    "why": "Maintainer (johnlanni, COLLABORATOR) identified the root cause as an Envoy/Go-filter cgo ABI mismatch and pointed to commit 152f14b, stating it is fixed in 2.2.4. Independent reproduction by pilichoumao confirms 2.2.3 red / 2.2.4 green on the same stack with identical config and payload, and the crash is gone. The issue is therefore already covered by an existing fix; no new code contribution is actionable."
+  },
   "dc1a4d60ab2c91e05080df74f4056409360a02d9758aee0e5b7b998909159ca2": {
     "confidence": 0.85,
     "contradictions": [
@@ -109519,6 +109770,39 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly describes a user-visible bug in CondensePlusContextChatEngine.astream_chat where zero retrieved nodes short-circuit to a hardcoded 'Empty Response'. However, a maintainer explicitly stated the desired fix must be an opt-in option, not default behavior, and multiple closed PRs exist with overlapping fixes. The deterministic gate is HUMAN_REVIEW, and design confirmation is required before starting new work."
+  },
+  "e01c3012728926788cffe4be07879dca413ef271556a327462ca73131d713346": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims platform-side Cloud regression while candidate proposes OSS code paths unrelated to the reported error"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "api/services/credentials/query.py",
+      "web/app/components/plugins/marketplace/query.ts"
+    ],
+    "risks": [
+      "Cloud-only regression may not be reproducible in the OSS repo, making a code fix unverifiable",
+      "ai_disclosure_conflict policy blocks public submission",
+      "base_sha_changed invalidates the pre-task base"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the minimal Start→LLM→End workflow locally and confirm whether the phantom sys.query reference originates from variable-pool mapping",
+      "Add a regression test asserting Workflow-mode LLM nodes do not require #sys.query#"
+    ],
+    "unknowns": [
+      "Whether the bug is reproducible in the OSS codebase",
+      "Actual root cause in the variable-pool mapping",
+      "How the ai_disclosure_conflict policy is to be resolved"
+    ],
+    "why": "Issue reports a Cloud-only regression with a plausible but unconfirmed backend hypothesis (mapping_user_inputs_to_variable_pool). No root-cause evidence, no code anchor beyond the error string, and the failure is not reproducible from the public repo since it is Cloud-side. The candidate's own actionability evidence marks root_cause_signal=false and the pre-task policy is ai_disclosure_conflict, which is a materially blocking unknown for public contribution."
   },
   "e021154c474f13f5d69760fb1b23e3a19f211dd77b5cf53b15ad8db7cc8c7eaf": {
     "confidence": 0.8,
