@@ -36253,7 +36253,7 @@ def _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
             "targetBase": old_context["targetBase"],
             "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
         },
-        dedupe_key="completed-review-feedback:current-audit",
+        dedupe_key="intent-1:completed-review-feedback:current-audit",
     )
     MODULE.write_task_context(
         store, issue_url=source["issueUrl"], thread_id="thread-1", cwd=worktree
