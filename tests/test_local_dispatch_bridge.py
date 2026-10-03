@@ -31034,6 +31034,14 @@ def _completed_validation_result_with_omitted_task_id(
         target_base_bound=target_base_bound,
         complete_normal_validation_audit=complete_normal_validation_audit,
     )
+    if complete_normal_validation_audit:
+        initial_context_path = result_path.parent / "task-context.json"
+        initial_context_raw = initial_context_path.read_bytes()
+        initial_result_raw = result_path.read_bytes()
+        old_recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+        assert old_recovered["ok"], old_recovered
+        assert initial_context_path.read_bytes() == initial_context_raw
+        assert result_path.read_bytes() == initial_result_raw
     initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
     assert initial["validationDeferred"]
     bind_validation_runtime(monkeypatch, tmp_path)
@@ -36270,8 +36278,6 @@ def _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
         }
     )
     rollout.write_text("".join(json.dumps(item) + "\n" for item in records))
-    old_recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
-    assert old_recovered["ok"], old_recovered
     with store.connect() as connection:
         old_authority = connection.execute(
             "SELECT payload_json FROM events WHERE opportunity_key=? "
@@ -36284,6 +36290,25 @@ def _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
     assert json.loads(old_authority[0])["contextDigest"] == source["contextDigest"]
     assert json.loads(context_path.read_text())["contextDigest"] == source["contextDigest"]
     assert input_path.read_bytes() == source_raw and result_path.read_bytes() == failed_raw
+    with store.connect() as connection:
+        followup_times = {
+            row["event_type"]: parse_time(row["created_at"])
+            for row in connection.execute(
+                "SELECT event_type,created_at FROM events WHERE opportunity_key=? "
+                "AND event_type IN ('TASK_RESULT_VALIDATION_DEFERRED',"
+                "'VALIDATION_FOLLOWUP_RESERVED','VALIDATION_FOLLOWUP_SENT') "
+                "AND json_extract(payload_json,'$.intentId')=? "
+                "AND json_extract(payload_json,'$.threadId')=? "
+                "AND json_extract(payload_json,'$.resultDigest')=? ORDER BY id",
+                ("a/b#1", "intent-1", "thread-1", digest),
+            ).fetchall()
+        }
+    assert (
+        parse_time(json.loads(old_authority[0])["authorityObservedAt"])
+        < followup_times["TASK_RESULT_VALIDATION_DEFERRED"]
+        <= followup_times["VALIDATION_FOLLOWUP_RESERVED"]
+        <= followup_times["VALIDATION_FOLLOWUP_SENT"]
+    )
     live_audit = json.loads(json.dumps(old_context["liveAudit"]))
     live_audit["capturedAt"] = iso_z(datetime.now(UTC))
     live_audit["evidence"].update(
