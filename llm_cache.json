@@ -13057,6 +13057,36 @@
     ],
     "why": "The issue reports a reproducible bug in grammar-constrained request cancellation with overlap, but lacks root cause analysis and maintainer confirmation. The track is agent_ai_infra, not llm_algorithm, so the algorithm evidence gate is not applicable. The candidate is actionable but requires maintainer input to confirm priority and design direction."
   },
+  "1bd025fc83cccec41c179ddb0f24eef7dfd6790102a462d370948f22efc51c63": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Open PR #17860 is marked COVERAGE with direct code overlap, yet duplicate status is human_review_required rather than confirmed duplicate"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/components/features/settings/meta-llm-profiles/default-meta-profile.ts: complete truncated anti-pattern bullet and add {{ model_table }} token to DEFAULT_ROUTER_FLASH_META_PROFILE_PROMPT"
+    ],
+    "risks": [
+      "Overlap with open PR #17860 may make this redundant",
+      "Repository AI disclosure policy conflict flagged (ai_disclosure_conflict) may block automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting DEFAULT_ROUTER_FLASH_META_PROFILE_PROMPT contains {{ model_table }} and no truncated bullet",
+      "Run existing tests under __tests__/components/settings/meta-llm-profiles/"
+    ],
+    "unknowns": [
+      "Whether PR #17860 already resolves the issue or leaves independent work",
+      "Whether the AI disclosure policy conflict permits any contribution"
+    ],
+    "why": "Issue describes a concrete, verifiable defect in DEFAULT_ROUTER_FLASH_META_PROFILE_PROMPT (truncated bullet, missing {{ model_table }} placeholder) with clear acceptance criteria and a bounded fix path. However, open PR #17860 directly overlaps the same file and code identifiers with reference_relation COVERAGE, and the duplicate assessment status is human_review_required. Whether independent implementation space exists is unresolved, which materially determines actionability."
+  },
   "1bd46a7a4350c60a39971fac5016aad553dbbb09f4b4e80dd9eaca13e9217347": {
     "confidence": 0.7,
     "contradictions": [
@@ -27788,6 +27818,38 @@
     ],
     "why": "The issue provides a detailed root cause analysis with code anchors and a concrete reproduction path. Although recent comments indicate the hydration path may already exist on the default branch, the issue also identifies separate bugs (env var resolution and over-broad scope) that remain actionable. The evidence is sufficient to proceed with a focused fix and regression tests."
   },
+  "3a58750c180f05c93715cd5a030073be26a48de7a383c8b6983b18e49646aea1": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm-rust/crates/storage-clickhouse/src/read.rs: replace hardcoded max_result_rows=1000/throw with bounded keyset pagination or an explicit partial/load-more contract for trace detail",
+      "Trace-detail API path: return a useful bounded response instead of generic HTTP 500 when span count exceeds the reader cap",
+      "Regression test covering exact 999/1,000/1,001-span boundary with small payloads"
+    ],
+    "risks": [
+      "Must retain memory/byte/authorization safeguards rather than globally removing the reader limit",
+      "Avoid expanding API behavior beyond the bounded-pagination contract",
+      "Open PR #44364 may already cover part of the fix; compare before implementing to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's rows_repro.py against the pinned proxy to confirm 999/1,000 return 200 and 1,001 returns 500",
+      "Add a regression test that ingests 999, 1,000, and 1,001 small spans and asserts trace detail returns 200 with correct span counts or an explicit bounded/partial contract",
+      "Run targeted Rust storage-clickhouse unit tests and static checks after the fix"
+    ],
+    "unknowns": [
+      "Whether PR #44364's bounded keyset reads already resolve the 1,001-span trace-detail path or only a different code path"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: the Rust ClickHouse reader hardcodes max_result_rows=1000 with result_overflow_mode=throw, so a stored 1,001-span trace fails trace detail with Code 396. The 999/1,000/1,001 boundary controls and direct ClickHouse cap comparison isolate a row-count failure rather than bytes or timeout. Open PR #44364 is directly related but lacks root-cause coverage, leaving a concrete gap for a bounded-pagination fix with regression tests."
+  },
   "3a6f0d56a3543532944cc49b60184fafb68c9d4932f6c0826cea4c3a78b3cc21": {
     "confidence": 0.85,
     "contradictions": [
@@ -28770,6 +28832,46 @@
       "Whether maintainers consider a service-level watchdog in scope."
     ],
     "why": "The issue reports a plausible production stall in DeepgramFluxSTTService, but the reporter's own amendment retracts the key claim: stored evidence only shows no EndOfTurn/transcript, not that Flux stopped sending messages. The root cause (server silence vs. client-side event handling) is unresolved, and the reporter explicitly states the failure is not reproducible on demand and is planning a stock repro. No reproduction or validation path currently exists."
+  },
+  "3c48fa6a4c30860865806ab27c91f483c1426608debd09d73c1a81ba862c2217": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Verification Plan item 5 expects a trailing-newline VERSION, but real v2.2.3/v2.2.4 updater outputs contain no trailing newline; verifier left TASK-4534002 incomplete pending maintainer clarification"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/standalone.go: strict installed-version read (TrimSpace, reject empty/invalid) without changing tolerant Agent.Version()",
+      "hgctl/pkg/installer/installer_docker.go: after successful updater run, reopen stored file-backed Profile and replace only HigressVersion",
+      "hgctl/pkg/upgrade.go: propagate strict-read/save errors without claiming rollback",
+      "focused hgctl/pkg/installer tests for whitespace, updater failure, unreadable/empty/malformed VERSION, save failure, and overlay non-persistence"
+    ],
+    "risks": [
+      "Persisting the in-memory DockerInstaller Profile instead of the re-read stored Profile could leak overlays/defaulted fields",
+      "Runtime upgrade succeeding while metadata persistence fails must be reported honestly (no rollback claim)",
+      "Fresh-install VERSION normalization remains out of scope (#4567) and could be conflated with this change",
+      "Verification item 5's trailing-newline runtime case is not reproducible with real v2.2.3/v2.2.4 artifacts; only deterministic tests cover it"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "go test ./pkg/installer -count=1 and go test ./... -count=1 from hgctl",
+      "Field-by-field comparison of saved Profile vs pre-upgrade stored Profile excluding higressVersion, including --set gateway.httpPort=18080 overlay asserted not persisted",
+      "Deterministic whitespace/trailing-newline normalization test plus controlled local-docker upgrade verifying stored install-local-docker.yaml contains trimmed version with no config drift",
+      "Regression test that display-only Agent.Upgrade reads stay tolerant of a missing VERSION file while the strict sync path returns the underlying error"
+    ],
+    "unknowns": [
+      "Maintainer preference between real-runtime VERSION verification plus deterministic whitespace tests versus a canonical trailing-newline fixture for item 5",
+      "Whether the assignment/AI-disclosure policy gate (assignmentRequired=true, aiDisclosureConflict=true) is satisfied for the implementing contributor"
+    ],
+    "why": "Maintainer-approved design (#4534) with explicit root cause: DockerInstaller.Upgrade returns without persisting the stored Profile, so higressVersion stays stale; Agent.Version hides read errors. Design pins the write mechanism (re-read stored file-backed Profile, replace only HigressVersion), whitespace normalization, and cross-effects. Runtime red/green evidence (baseline stored v1.0.0 vs fixed v2.2.4, overlay not persisted) plus focused/full hgctl tests passing confirms a concrete validation path."
   },
   "3c4dcf10d1d8dc26eedfe23463cc73ab6da4d8f795ed7e500b7f80967637a3a2": {
     "confidence": 0.9,
@@ -127841,6 +127943,44 @@
       "Whether SM110 hardware is available for independent validation"
     ],
     "why": "Issue reports an SM110 illegal memory access in Qwen GDN prefill warmup, but the supplied evidence is contradictory about coverage: PR #53835 (merged) is said to add 11.0f to FUSED_GDN_DECODE_ARCHS, yet the maintainer comment says the traceback still points at the prefill warmup path and asks for retest on main/nightly. Open draft PR #56618 already targets the same file with a fail-closed fallback and includes a test, so the remaining actionable gap is unresolved."
+  },
+  "ffc3881db3464a6fc5db1dc74ebe6a37b6dbac727d087667ffec5fba47096915": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while algorithm_evidence.score=9 and depth=high",
+      "open_pr_assessment reports semantic_overlap_requires_review but direct_code_overlap=false and root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Identify the non-deterministic kernel in the multi-sequence path (Triton fused MoE / GDN chunked prefill / FA2 varlen)",
+      "Add a deterministic reduction or fixed-seed path for the affected kernel",
+      "Add a numerical regression test asserting batch-repeat logprob stability"
+    ],
+    "risks": [
+      "Non-determinism may be inherent to the Triton MoE default config on sm_120 rather than a fixable bug",
+      "Fixing may require hardware (sm_120) not available to the contributor",
+      "Overlap with PR #59543 is semantic only and may not cover the root cause"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run repro_upstream.py on sm_120 with Qwen3.6-35B-A3B-FP8 and confirm batch2_repeat > 0",
+      "Bisect by disabling each candidate kernel (e.g. --gdn-prefill-backend triton, enforce_eager, MoE config) to isolate the source",
+      "After fix, assert batch2_repeat == 0.0 across 20 prompts with fixed seed and tolerance"
+    ],
+    "unknowns": [
+      "Which kernel actually causes the run-to-run non-determinism",
+      "Whether PR #59543 or any other open PR already addresses this root cause",
+      "Whether the reporter's environment (sm_120) is required to reproduce"
+    ],
+    "why": "Issue reports a concrete, reproducible numerical non-determinism (batch2_repeat max |Δlogprob| 0.168) with a minimal upstream script, but the root cause is explicitly unresolved: the reporter lists three candidate kernels (Triton fused MoE, GDN chunked prefill over varlen batches, FA2 varlen) and cannot separate them. No code anchor or fix surface is identified, and the only overlapping open PR (#59543) is a hidden-states feature with no direct code overlap, so duplicate coverage is unresolved."
   },
   "ffc8e3e14b2b7ffde9c37623f8a479b8689436bdc9e0414b93445e0080b74660": {
     "confidence": 0.55,
