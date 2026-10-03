@@ -24173,6 +24173,39 @@
     ],
     "why": "The issue describes a clear ACP contract violation where provider unreachability is reported as a successful end_turn, but the root cause is not pinpointed and the fix requires design decisions on the ACP protocol (new stopReason vs structured error). The deterministic gate is HUMAN_REVIEW, and there is a potential duplicate issue #10751 that needs triage. No maintainer approval or design confirmation exists, so work should wait for maintainer guidance."
   },
+  "3323d3fc2746f82eb42bb68874e5e12ef8d3f8ba4e72b2c5c41da132ff6dc3b6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "megatron/core/fusions/fused_softmax.py: gate fused dispatch on window_size being None (or extend kernel to accept window)",
+      "megatron/core/transformer/dot_product_attention.py: verify window_size/masked_softmax_fusion propagation",
+      "Add CUDA regression test covering window_size != None with scaled_masked_softmax_fusion=True"
+    ],
+    "risks": [
+      "Fix disables fusion for all window_size configs, causing a performance regression; may need kernel-level window support instead",
+      "Numerical tolerance must be fixed (e.g., atol) to distinguish true masking from bf16 rounding",
+      "Requires CUDA hardware with fused Apex extension present; CPU-only CI cannot validate"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on CUDA with bf16, window_size=(4,0), scaled_masked_softmax_fusion=True, input [8,1,32,32]; assert probs[0,0,31,0] ~ 0 and in-window probs[0,0,31,31] > 0",
+      "Add regression test exercising actual fused-kernel eligibility on CUDA, not just torch fallback",
+      "Run existing fused-softmax and sliding-window test suites to confirm no regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer disabling fusion vs. extending the Apex kernel to support window_size",
+      "Whether the referenced historical PR #2771 (merged, no direct code overlap) already covers any part of this fused path"
+    ],
+    "why": "Issue provides a concrete, reproducible kernel-algorithm bug: FusedScaleMaskSoftmax dispatch ignores window_size, so the fused Apex softmax applies full causal softmax instead of sliding-window masking. Root cause is anchored to fused_softmax.py dispatch and dot_product_attention.py call path, with a minimal reproduction and expected/actual numeric pair on real hardware."
+  },
   "332777f45663d9764ca3cb3cf9e3468d641e671706195ac437604f91dc3fcff6": {
     "confidence": 0.7,
     "contradictions": [
@@ -34811,6 +34844,30 @@
     ],
     "why": "Issue provides concrete reproduction steps, multiple example trajectories, and a detailed root-cause analysis pointing to the parent agent processing empty streaming events after code-explorer completion. The evidence includes code anchors and a clear validation path via trajectory replay."
   },
+  "49740f5e5e4bc9b428b97d043e5d2626003b5332be263809bf3290053f08199a": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Reporter claims 2.2.4 still crashes at ClusterManager init (EAGAIN), while an independent clean-environment run shows 2.2.4 starts and returns 200; the former is attributed to host thread limits."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Reporter's 2.2.4 EAGAIN startup failure is a separate environment/thread-limit issue, not evidence of an unfixed crash path.",
+      "The match_list field-name/silent-drop observation is a distinct docs/validation concern, not this crash."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Upgrade to Higress 2.2.4 and re-run the direct POST initialize repro to confirm HTTP 200 and no panic (already demonstrated by pilichoumao)."
+    ],
+    "unknowns": [],
+    "why": "Maintainer (johnlanni) identified the root cause as an Envoy/Go-filter cgo ABI mismatch, fixed by commit 152f14b1 and released in 2.2.4. Independent reproduction confirms 2.2.3 red / 2.2.4 green on the identical stack, so the crash is already covered by an existing fix; no new code contribution is actionable."
+  },
   "49749822407b4b09e8223039a749407e0fc3d3f8b5847a7510fc418f9359aac6": {
     "confidence": 0.55,
     "contradictions": [
@@ -37410,6 +37467,46 @@
       "Whether any of PRs #955/#961/#965 will be extended to cover this issue's root cause"
     ],
     "why": "Issue #806 identifies a concrete, code-anchored defect: training.use_flash_attn and training.use_liger are consumed only by SFTTrainerWrapper._setup_transformers (trainer/sft.py:1293, 882, 1351-1356), yet commands/train.py:1192-1214 validates them for every task and autopilot/decisions.py:344-346 enables them regardless of task. The issue supplies a reproducible probe (build_soup_config on a preference JSONL yielding dpo/grpo/pretrain with both flags true, then soup train exiting 1 on missing packages) and explicit acceptance criteria, including a CPU tiny-model test with a stubbed get_attn_implementation asserting the kwarg reaches from_pretrained. This is a real behavioral bug with a clear root cause and a concrete validation path, not installation/CLI plumbing alone."
+  },
+  "4decf12b47ed9a0c6ff60bd0a4da856fc9da9a892273fb42e619029efbafacb5": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and score=9, but actionability_evidence.root_cause_signal=false",
+      "open_pr_assessment status is semantic_overlap_requires_review with best_score=34, yet no PR directly references the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Identify the non-deterministic kernel in the multi-sequence path (Triton fused MoE, GDN chunked prefill varlen, or FA2 varlen)",
+      "Fix the per-request capture misalignment when multiple requests share a step (routed experts differ from token 0)",
+      "Add a numerical regression test comparing lone vs batched logprobs with fixed seed and tolerance"
+    ],
+    "risks": [
+      "Root cause may be a known limitation of non-batch-invariant mode rather than a fixable defect",
+      "PR #59543 may already cover the same code path, risking duplicate work",
+      "AI disclosure policy conflict may block automated public actions",
+      "Distinguishing mathematical error from floating-point/random variation requires careful baseline and tolerance control"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run repro_upstream.py on stock vLLM 0.30.0 with Qwen3.6-35B-A3B-FP8 and confirm alone_repeat=0.0, alone_vs_batch2~0.198, batch2_repeat~0.168",
+      "Isolate each candidate kernel (disable Triton fused MoE, force triton GDN prefill backend, enforce_eager) to attribute the non-determinism",
+      "After fix, verify batch2_repeat returns to 0.0 and alone_vs_batch2 is within expected batch-invariance tolerance"
+    ],
+    "unknowns": [
+      "Which specific kernel causes the run-to-run non-determinism",
+      "Whether PR #59543 actually addresses the same root cause",
+      "Whether the maintainers consider this a defect or expected non-batch-invariant behavior",
+      "Whether the AI disclosure conflict permits any automated contribution"
+    ],
+    "why": "Issue reports a concrete, reproducible numerical non-determinism in vLLM's multi-sequence path for Qwen3.6-35B-A3B (hybrid GDN + MoE), with a minimal repro script and measured deltas. However, the root cause is explicitly unresolved: the reporter lists three candidate kernels (Triton fused MoE, GDN chunked prefill over varlen batches, FA2 varlen) and cannot separate them. No code anchor or root-cause signal is present (root_cause_signal=false), and the duplicate assessment flags PR #59543 as semantic overlap requiring human review. These are materially blocking unknowns for an actionable code contribution."
   },
   "4df7143e7317362b76688d977a79cad0b3a6e7701a42454414d6dbe5592fa36a": {
     "confidence": 0.8,
@@ -55696,6 +55793,37 @@
       "Whether the AI disclosure conflict can be resolved for this repository"
     ],
     "why": "Issue describes a concrete dense-DP IPC payload selection bug with a plausible root cause (data_parallel_rank reset to 0 vs preserved data_parallel_index) and a reproduction script, but an open PR #56950 already directly references the issue with the same fix direction and tests, and the supplied duplicate assessment flags unresolved overlap. The AI disclosure policy conflict is also unresolved, which materially affects whether code work is actionable."
+  },
+  "700d2abc03df3787d9be102f34a566ec1e20cfc7867ce69f621265456987eede": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue is marked ready-for-dev but an open PR #17860 already directly overlaps the same file and identifiers"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/components/features/settings/meta-llm-profiles/default-meta-profile.ts: complete truncated anti-pattern bullet and add {{ model_table }} token before Task:/{{ instance_text }}"
+    ],
+    "risks": [
+      "Duplicate/overlapping open PR #17860 may already resolve the issue",
+      "Repository AI disclosure policy conflict flagged",
+      "No maintainer pre-approval"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting DEFAULT_ROUTER_FLASH_META_PROFILE_PROMPT contains {{ model_table }} and no truncated bullet",
+      "Run existing tests under __tests__/components/settings/meta-llm-profiles/"
+    ],
+    "unknowns": [
+      "Whether PR #17860 fully resolves the issue or leaves independent implementation space",
+      "Whether maintainers consider the issue already covered"
+    ],
+    "why": "Issue is a concrete, well-scoped bug in DEFAULT_ROUTER_FLASH_META_PROFILE_PROMPT (truncated anti-pattern bullet and missing {{ model_table }} placeholder), but open PR #17860 already directly covers the same file and code identifiers, and the duplicate status is human_review_required. Coverage by an existing open PR is a materially blocking unknown for independent contribution value."
   },
   "7033f3b5166d07f0e32629832bc6ea669218a9f7a2e60490a4f8661747c3d4b0": {
     "confidence": 0.8,
@@ -78073,6 +78201,40 @@
       "Exact implementation details for each sub-issue are not fully specified, but the issue provides enough direction for actionable work."
     ],
     "why": "The issue is a detailed audit of the Moonshot provider against the official API spec, with clear root causes for each gap (e.g., unsupported fields sent to models, missing strict schema control, MIME type validation). It provides concrete validation paths via the official OpenAPI document and first-party guides, and the issue tracks sub-issues with merged PRs, demonstrating actionable progress."
+  },
+  "9d6b38d94e5c9e6556e27f712aa2d76e8e3c28c97781e3f2699182e8c49d238b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/smolagents/serialization.py: make SafeSerializer.dumps catch JSON encoding TypeError and route to pickle fallback when allow_pickle=True",
+      "Safe-only mode (allow_pickle=False) should raise SerializationError instead of raw TypeError",
+      "Nested final-answer serializer in _patch_final_answer_with_exception should follow the same fallback/error behavior"
+    ],
+    "risks": [
+      "Broadening the caught exception could mask unrelated JSON encoding errors; scope the catch to the fallback path",
+      "Changing safe-only error type from TypeError to SerializationError is a minor behavior change that should be documented/tested",
+      "Nested final-answer serializer change must not alter FinalAnswerException semantics for supported types"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using np.array([1+2j], dtype=np.complex128) with allow_pickle=True, asserting round-trip equality via np.testing.assert_array_equal",
+      "Add cases for datetime64[D] and S3 byte-string arrays",
+      "Add safe-only tests asserting SerializationError for these dtypes",
+      "Run targeted serialization unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer catching TypeError specifically or a broader encoding error in the fallback path"
+    ],
+    "why": "Issue provides a concrete, offline reproduction with traceback and root cause: the ndarray encoder emits raw obj.tolist() values, json.dumps raises TypeError, and the pickle fallback only catches SerializationError, so allow_pickle=True is bypassed. Code anchors point to src/smolagents/serialization.py and the nested final-answer serializer. No duplicate open PR/issue found; #2625 and #2870 are explicitly distinguished as different failure modes."
   },
   "9d7f03904a9e9d534ca07582928246c323c37c300c91056cb53bde9c8fbbc154": {
     "confidence": 0.82,
