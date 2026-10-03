@@ -64,7 +64,10 @@ from oss_pr_radar.independent_review import (  # noqa: E402
     verify_controller_merge_tree_scope,
 )
 from oss_pr_radar.ledger import (  # noqa: E402
+    GENERATED_BUILD_CONTRACT,
+    GENERATED_BUILD_REARM_REASON,
     RECOVERABLE_CONTEXT_INTENT_STATUSES,
+    REVIEW_FEEDBACK_CONTRACT,
     LedgerError,
     RadarLedger,
     bind_dispatched_recovery_prompt,
@@ -80,6 +83,7 @@ from oss_pr_radar.managed_lifecycle import (  # noqa: E402
     reconcile_managed_pr_states,
 )
 from oss_pr_radar.metrics import (  # noqa: E402
+    VALIDATION_DEPENDENCY_FAILURE_MARKERS,
     assess_submit_ready,
     is_validation_dependency_failure,
     rolling_quality,
@@ -530,7 +534,11 @@ def benign_policy_recovery_prompt(issue_url: str) -> str:
 
 VALIDATION_RECOVERY_PROMPT = (
     "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
-    "读取当前任务文件，只补仍缺少的验证；未完成的检查重新运行，不恢复旧进程。"
+    "必须读取并验证当前 `.oss-pr-radar/task-context.json`，它是本轮身份和授权的唯一来源；"
+    "新结果的 contextDigest、taskId（上下文 intentId）、key、issueUrl、threadId、worktreePath"
+    "必须来自该当前上下文。旧不可变 validation-input 仅作历史修复、提交、基线和检查目的的参考，"
+    "不得复制旧 contextDigest、tests、成功叙述或签名。只补仍缺少的验证；"
+    "未完成的检查重新运行，如实保留失败，不恢复旧进程。"
     "生成新结果时删除输入里的 reproductionReceipt、probeReceipt 和 resultDigest，"
     "这些签名字段由系统重新生成。"
     "保持离线，不安装依赖，不请求权限，也不执行任何 GitHub 公开操作。"
@@ -955,6 +963,8 @@ def _is_immediate_recovery(state: dict[str, Any] | None) -> bool:
     if code in IMMEDIATE_RECOVERY_ERROR_CODES:
         return True
     message = str(state.get("message") or "").casefold()
+    if code == "other" and message == "workspace routing discovery timed out":
+        return True
     return code == "other" and any(
         marker in message
         for marker in (
@@ -2646,6 +2656,8 @@ def _validation_result_context_refresh_proof(
             turnId=completion["receipt"]["turnId"],
             sourceResultBytesBase64=base64.b64encode(raw).decode("ascii"),
         )
+        if completion.get("recovery") is not None:
+            proof["recovery"] = completion["recovery"]
     return proof
 
 
@@ -3076,11 +3088,11 @@ def _private_context_matches_current_ledger(
     for field, value in current.items():
         observed = context.get(field)
         if field == "prFollowup" and isinstance(observed, dict) and isinstance(value, dict):
-            # ``preparedHeadSha`` is a controller-local preparation marker;
-            # older ledger projections intentionally omit it while retaining
-            # the authenticated snapshot fields.
+            # Older projections omit this preparation marker; bound follow-up
+            # snapshots now include it and must retain their exact head match.
             observed = dict(observed)
-            observed.pop("preparedHeadSha", None)
+            if "preparedHeadSha" not in value:
+                observed.pop("preparedHeadSha", None)
         if observed != value:
             return False
     return True
@@ -6155,11 +6167,12 @@ def _publication_review_context(
     request: dict[str, Any],
     value: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Recover one immutable, signed merge-review context from the ledger.
+    """Use the exact current merge context, or recover its signed preparation.
 
     PR follow-up state is mutable, so a later scan may replace the worktree
-    context after a result was reviewed.  Only the exact immutable preparation
-    and its signed merge scope may recover the historical review context.
+    context after a result was reviewed.  Authenticate the current private
+    context first; historical recovery still requires the exact immutable
+    preparation and its signed merge scope.
     """
 
     if value.get("handoffMode") != "controller_merge_complete":
@@ -6202,6 +6215,55 @@ def _publication_review_context(
         or Path(worktree_path).resolve() != Path(str(value.get("worktreePath") or "")).resolve()
     ):
         raise RuntimeError("publication independent review identity mismatch")
+
+    candidate = {
+        "key": key,
+        "issueUrl": request["issueUrl"],
+        "intentId": task_id,
+        "threadId": thread_id,
+        "worktreePath": worktree_path,
+    }
+    try:
+        with _task_worktree_private_descriptor(candidate) as opened:
+            context_raw = _read_task_context_bytes_from_private(opened)
+            context_stat = os.stat(
+                "task-context.json", dir_fd=opened.private_fd, follow_symlinks=False
+            )
+            current_context, _ = _verified_private_context_with_singleton_guard(
+                store, opened.worktree, context_raw, context_stat
+            )
+            current_followup = current_context.get("prFollowup")
+            current_evidence = (
+                current_followup.get("evidence") if isinstance(current_followup, dict) else None
+            )
+            if (
+                _task_context_has_exact_ledger_binding(store, current_context)
+                and all(
+                    current_context.get(field) == expected for field, expected in candidate.items()
+                )
+                and re.fullmatch(r"[0-9a-f]{64}", str(value.get("contextDigest") or ""))
+                and current_context.get("contextDigest") == value.get("contextDigest")
+                and isinstance(current_followup, dict)
+                and current_followup.get("wakeDigest") == wake_digest
+                and current_followup.get("prUrl") == pr_url
+                and current_followup.get("headSha") == previous_commit
+                and current_followup.get("preparedHeadSha") == previous_commit
+                and isinstance(current_evidence, dict)
+                and current_evidence.get("baseSha") == merge_base
+            ):
+                resolution_files = verify_controller_merge_tree_scope(
+                    opened.worktree,
+                    context=current_context,
+                    merge_commit=commit_sha,
+                    expected_head=previous_commit,
+                    expected_base=merge_base,
+                )
+                if resolution_files == value.get(
+                    "mergeResolutionFiles"
+                ) and resolution_files == value.get("controllerCommitChangedFiles"):
+                    return current_context
+    except (OSError, ValueError, RuntimeError):
+        pass
 
     preparation = store.historical_pr_followup_preparation(
         key=key,
@@ -6310,20 +6372,32 @@ def _publication_review_context(
     return review_context
 
 
+def _drain_pr_followup_identity(candidate: dict[str, Any]) -> tuple[str, ...] | None:
+    identity = tuple(
+        candidate.get(field)
+        for field in ("key", "intentId", "threadId", "worktreePath", "wakeDigest")
+    )
+    if not all(isinstance(value, str) and value for value in identity):
+        return None
+    return identity
+
+
 def _higher_priority_existing_work(
     args: argparse.Namespace,
     *,
     intent_key: str,
+    _drain_isolated_pr_followups: tuple[tuple[str, ...], ...] = (),
 ) -> list[dict[str, str]]:
     """Keep scarce task capacity on work already closest to a useful outcome."""
 
     priorities: list[dict[str, str]] = []
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
-    for item in [
-        *pr_state["candidates"],
-        *pr_state["restoreRequired"],
-        *pr_state["unresolved"],
-    ]:
+    for item in pr_state["candidates"]:
+        if _drain_pr_followup_identity(item) in _drain_isolated_pr_followups:
+            continue
+        if item.get("key") != intent_key:
+            priorities.append({"kind": "pr_followup", "key": str(item.get("key") or "")})
+    for item in [*pr_state["restoreRequired"], *pr_state["unresolved"]]:
         if item.get("key") != intent_key:
             priorities.append({"kind": "pr_followup", "key": str(item.get("key") or "")})
 
@@ -6348,7 +6422,11 @@ def _higher_priority_existing_work(
     return priorities
 
 
-def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
+def claim_intent(
+    args: argparse.Namespace,
+    *,
+    _drain_isolated_pr_followups: tuple[tuple[str, ...], ...] = (),
+) -> dict[str, Any]:
     store = ledger(args.ledger)
     pending = {item["intentId"]: item for item in store.pending()}
     intent = pending.get(args.intent_id)
@@ -6399,7 +6477,15 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
             "reason": "task_wip_limit",
         }
     if intent.get("mode") != "shadow":
-        priority_work = _higher_priority_existing_work(args, intent_key=str(intent["key"]))
+        priority_work = _higher_priority_existing_work(
+            args,
+            intent_key=str(intent["key"]),
+            **(
+                {"_drain_isolated_pr_followups": _drain_isolated_pr_followups}
+                if _drain_isolated_pr_followups
+                else {}
+            ),
+        )
         if priority_work:
             return {
                 "ok": True,
@@ -13906,6 +13992,42 @@ def _read_authenticated_validation_result(
 
     raw = _read_controlled_validation_result(candidate)
     expected = str(candidate["resultDigest"])
+    review_correction = candidate.get("reviewFeedbackCorrection")
+    if candidate.get("reviewFeedbackContract") == REVIEW_FEEDBACK_CONTRACT:
+        if not isinstance(review_correction, dict) or hashlib.sha256(
+            raw
+        ).hexdigest() != review_correction.get("rawSha256"):
+            raise ValidationResultChanged(
+                expected=expected, observed=hashlib.sha256(raw).hexdigest()
+            )
+        store = RadarLedger(Path(candidate["_reviewFeedbackLedgerPath"]), read_only=True)
+        current = [
+            item
+            for item in store.task_result_candidates_for_ingestion()
+            if item.get("key") == candidate.get("key")
+            and all(
+                item.get(k) == candidate.get(k) for k in ("intentId", "threadId", "worktreePath")
+            )
+        ]
+        if len(current) != 1 or current[0].get("stage") != "VALIDATION_PENDING":
+            raise RuntimeError("completed controller-review correction task is not current")
+        proved = _completed_review_feedback_validation(
+            store,
+            candidate | current[0],
+            argparse.Namespace(ledger=store.path, runtime_root=STATE.parent),
+            expected=review_correction,
+        )
+        if proved is None:
+            raise RuntimeError("completed controller-review correction binding is invalid")
+        binding = review_correction["sourceBinding"]
+        source_raw = _validation_snapshot_bytes(
+            candidate=candidate,
+            reservation_digest=review_correction["reservationDigest"],
+            snapshot_id=binding["snapshotId"],
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest=binding["snapshotDigest"],
+        )
+        return json.loads(source_raw), source_raw
     correction = candidate.get("expiryCorrection")
     if isinstance(correction, dict) and hashlib.sha256(raw).hexdigest() == correction.get(
         "failedEvidenceDigest"
@@ -14070,6 +14192,17 @@ def _ensure_validation_snapshot(
             snapshot_digest = existing_digest
         else:
             _value, raw = _read_authenticated_validation_result(candidate)
+            if candidate.get("reviewFeedbackContract") == REVIEW_FEEDBACK_CONTRACT:
+                with _task_worktree_private_descriptor(candidate) as opened:
+                    context = json.loads(_read_task_context_bytes_from_private(opened))
+                review = candidate["reviewFeedbackCorrection"]["review"]
+                updated = dict(
+                    _value, independentReview=review, contextDigest=context["contextDigest"]
+                )
+                updated_raw = (canonical_json(updated) + "\n").encode("utf-8")
+                if _task_result_digest(updated, updated_raw) != _task_result_digest(_value, raw):
+                    raise RuntimeError("controller-review snapshot changed its signed source")
+                raw = updated_raw
             snapshot_digest = hashlib.sha256(raw).hexdigest()
             temporary_name = f".validation-input-{os.getpid()}-{time.time_ns()}.tmp"
             descriptor = -1
@@ -15469,6 +15602,167 @@ def _expired_publication_context_is_unpublished(
     )
 
 
+def _completed_validation_recovery_receipt(
+    store: RadarLedger,
+    *,
+    candidate: dict[str, Any],
+    validation_sent: tuple[dict[str, Any], dict[str, Any]],
+    source_raw: bytes,
+    result_access: _ValidationWorktreeDirectory,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Prove the exact native recovery of an interrupted validation delivery."""
+    binding = {key: candidate.get(key) for key in ("intentId", "threadId", "worktreePath")}
+    raw = _read_task_result_bytes_from_private(result_access)
+    if raw == source_raw or _active_task_turn_for_result(candidate) is not None:
+        return None
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT id,event_type,dedupe_key,payload_json,created_at FROM events
+               WHERE opportunity_key=? AND event_type IN (
+                 'THREAD_RECOVERY_RESERVED','THREAD_RECOVERY_SENT',
+                 'THREAD_RECOVERY_DELIVERY_ABANDONED','THREAD_RECOVERY_RETRY_EXHAUSTED',
+                 'TASK_TURN_DELIVERY_STARTED') ORDER BY id""",
+            (candidate["key"],),
+        ).fetchall()
+    events = [(dict(row), json.loads(row["payload_json"])) for row in rows]
+    events = [
+        (row, payload)
+        for row, payload in events
+        if all(payload.get(k) == v for k, v in binding.items())
+    ]
+    reserved = next(
+        (item for item in reversed(events) if item[0]["event_type"] == "THREAD_RECOVERY_RESERVED"),
+        None,
+    )
+    if reserved is None:
+        return None
+    reservation, payload = reserved
+    nonce = str(payload.get("recoveryNonce") or "")
+    if (
+        reservation["id"] <= validation_sent[0]["id"]
+        or payload.get("recoveryKind") != "VALIDATION_FOLLOWUP_RESULT"
+        or payload.get("followupDigest") != validation_sent[1].get("resultDigest")
+        or not re.fullmatch(r"[0-9a-f]{64}", nonce)
+        or reservation["dedupe_key"] != nonce
+    ):
+        return None
+    abandoned = [
+        row
+        for row, _ in events
+        if row["event_type"] == "THREAD_RECOVERY_DELIVERY_ABANDONED"
+        and row["id"] < reservation["id"]
+    ]
+    epoch = max((row["created_at"] for row in abandoned), default="")
+    expected_nonce = sha256_text(
+        f"{candidate['key']}|{binding['threadId']}|{validation_sent[0]['created_at']}|"
+        f"VALIDATION_FOLLOWUP_RESULT|{payload['followupDigest']}|{epoch}|recovery-v3"
+    )
+    if nonce != expected_nonce or any(
+        row["id"] > reservation["id"]
+        and row["event_type"]
+        in {"THREAD_RECOVERY_DELIVERY_ABANDONED", "THREAD_RECOVERY_RETRY_EXHAUSTED"}
+        and (row["dedupe_key"] == nonce or payload.get("reservationDigest") == nonce)
+        for row, payload in events
+    ):
+        return None
+    sent = next(
+        (
+            row
+            for row, p in reversed(events)
+            if row["event_type"] == "THREAD_RECOVERY_SENT"
+            and row["dedupe_key"] == nonce
+            and p.get("recoveryNonce") == nonce
+        ),
+        None,
+    )
+    delivery = next(
+        (
+            row
+            for row, p in reversed(events)
+            if row["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+            and p.get("deliveryKind") == "recovery"
+            and p.get("deliveryToken") == nonce
+        ),
+        None,
+    )
+    if sent is None or delivery is None or not (reservation["id"] < delivery["id"] < sent["id"]):
+        return None
+    receipt_key = _task_turn_delivery_file_key(
+        delivery_kind="recovery", thread_id=str(binding["threadId"]), delivery_token=nonce
+    )
+    receipt = json.loads(
+        _read_owned_regular_file(
+            STATE / "task_turn_receipts" / f"{receipt_key}.json",
+            label="completed validation recovery receipt",
+            reject_dangerous_writes=True,
+        )
+    )
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("ok") is not True
+        or receipt.get("deliveryKind") != "recovery"
+        or receipt.get("deliveryToken") != nonce
+        or receipt.get("threadId") != binding["threadId"]
+        or receipt.get("turnStatus") != "completed"
+        or not receipt.get("turnId")
+    ):
+        return None
+    _, rollout_path = _validated_task_turn_thread(candidate)
+    latest = latest_thread_turn_state(rollout_path)
+    if (
+        not latest
+        or latest.get("status") != "completed"
+        or latest.get("turnId") != receipt["turnId"]
+    ):
+        return None
+    journal = _read_owned_regular_file(
+        Path(str(rollout_path)), label="validation recovery journal", reject_dangerous_writes=True
+    )
+    started_at = completed_at = None
+    session_matches = False
+    for line in journal.splitlines():
+        record = json.loads(line)
+        event = record.get("payload") or {}
+        if record.get("type") == "session_meta":
+            session_matches = event.get("id") == binding["threadId"]
+        if record.get("type") != "event_msg" or event.get("turn_id") != receipt["turnId"]:
+            continue
+        if event.get("type") == "task_started":
+            started_at = parse_time(record["timestamp"])
+        elif event.get("type") == "task_complete" and not event.get("error"):
+            completed_at = parse_time(record["timestamp"])
+    result_stat = os.stat("result.json", dir_fd=result_access.private_fd, follow_symlinks=False)
+    result_time = datetime.fromtimestamp(result_stat.st_mtime, UTC)
+    if (
+        not session_matches
+        or started_at is None
+        or completed_at is None
+        or not (
+            parse_time(validation_sent[0]["created_at"])
+            <= parse_time(reservation["created_at"])
+            <= parse_time(delivery["created_at"])
+            <= started_at
+            <= result_time
+            <= completed_at
+        )
+        or not (
+            parse_time(delivery["created_at"]) <= parse_time(sent["created_at"]) <= completed_at
+        )
+    ):
+        return None
+    return receipt, {
+        "recoveryNonce": nonce,
+        "reservedEventId": reservation["id"],
+        "deliveryEventId": delivery["id"],
+        "sentEventId": sent["id"],
+        "turnId": receipt["turnId"],
+        "startedAt": iso_z(started_at),
+        "completedAt": iso_z(completed_at),
+        "sourceResultDigest": validation_sent[1]["resultDigest"],
+        "resultBytesDigest": hashlib.sha256(raw).hexdigest(),
+    }
+
+
 def _completed_validation_input_task_id(
     store: RadarLedger,
     managed_ledger: ManagedLedger,
@@ -15553,7 +15847,15 @@ def _completed_validation_input_task_id(
     ):
         return None
     if value.get("handoffMode") == "controller_commit_required" and (
-        value.get("previousControllerCommitSha") != historical["head_sha"]
+        (
+            value.get("previousControllerCommitSha") != historical["head_sha"]
+            and not (
+                "taskId" not in value
+                and "previousControllerCommitSha" not in value
+                and expired_publication is None
+                and validation_context_digest is None
+            )
+        )
         or command(["git", "rev-parse", "HEAD"], cwd=result_access.worktree)
         != historical["head_sha"]
     ):
@@ -15574,7 +15876,7 @@ def _completed_validation_input_task_id(
         ):
             return None
         rows = connection.execute(
-            """SELECT id,event_type,payload_json FROM events
+            """SELECT id,event_type,payload_json,created_at FROM events
                WHERE opportunity_key=? AND event_type IN
                  ('VALIDATION_FOLLOWUP_RESERVED','VALIDATION_FOLLOWUP_SENT') ORDER BY id""",
             (candidate["key"],),
@@ -15711,11 +16013,27 @@ def _completed_validation_input_task_id(
         or receipt.get("threadId") != binding["threadId"]
         or receipt.get("deliveryToken") != historical["result_digest"]
         or receipt.get("reservationDigest") != reservation
-        or receipt.get("turnStatus") != "completed"
         or not isinstance(receipt.get("turnId"), str)
         or not receipt["turnId"]
     ):
         return None
+    recovery_proof = None
+    if receipt.get("turnStatus") != "completed":
+        if validation_context_digest is None or receipt.get("turnStatus") not in {
+            "failed",
+            "interrupted",
+        }:
+            return None
+        recovery = _completed_validation_recovery_receipt(
+            store,
+            candidate=candidate,
+            validation_sent=sent,
+            source_raw=snapshot,
+            result_access=result_access,
+        )
+        if recovery is None:
+            return None
+        receipt, recovery_proof = recovery
     context_stat = os.stat(
         "task-context.json", dir_fd=result_access.private_fd, follow_symlinks=False
     )
@@ -15729,6 +16047,8 @@ def _completed_validation_input_task_id(
         return None
     if completion_proof is not None:
         completion_proof.update(receipt=receipt, reservation=reserved[1])
+        if recovery_proof is not None:
+            completion_proof["recovery"] = recovery_proof
     return task_id
 
 
@@ -19119,6 +19439,37 @@ def _validation_prefetch_plan(
             elif isinstance(item, str):
                 failed.append({"command": "", "summary": item, "exitCode": 127})
     dependency_failures = [item for item in failed if _is_validation_dependency_failure(item)]
+    if candidate.get("generatedBuildContract") == GENERATED_BUILD_CONTRACT:
+        channel_package = (worktree / "node_modules/@qwen-code/channel-base").resolve()
+        if (
+            worktree in channel_package.parents
+            and (channel_package / "package.json").is_file()
+            and not (channel_package / "dist/index.js").exists()
+        ):
+            manifest = json.loads((channel_package / "package.json").read_text(encoding="utf-8"))
+            if isinstance(manifest, dict) and manifest.get("name") == "@qwen-code/channel-base":
+                remaining = []
+                for failure in dependency_failures:
+                    text = "\n".join(
+                        str(failure.get(field) or "")
+                        for field in ("command", "summary", "outcome", "result")
+                    )
+                    if not (
+                        (
+                            (
+                                "ERR_MODULE_NOT_FOUND" in text
+                                and "Cannot find module" in text
+                                and "/@qwen-code/channel-base/dist/index.js'" in text
+                            )
+                            or "@qwen-code/channel-base/dist/index.js is missing" in text
+                        )
+                        and not any(
+                            marker != "node_modules" and marker in text.casefold()
+                            for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS
+                        )
+                    ):
+                        remaining.append(failure)
+                dependency_failures = remaining
     if not dependency_failures:
         return [], []
 
@@ -19441,18 +19792,903 @@ def _execute_validation_prefetch(
     return completed
 
 
+def _completed_generated_build_validation(
+    store: RadarLedger, candidate: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Prove the observed normal, unchanged completion before the build instructions existed."""
+    if candidate.get("stage") != "VALIDATION_PENDING":
+        return None
+    with store.connect() as connection:
+        prior_rows = connection.execute(
+            """SELECT id,event_type,dedupe_key,payload_json FROM events
+               WHERE opportunity_key=? AND event_type IN (
+                 'TASK_RESULT_VALIDATION_DEFERRED','VALIDATION_FOLLOWUP_RESERVED',
+                 'VALIDATION_FOLLOWUP_SENT','TASK_TURN_DELIVERY_STARTED')
+               AND json_extract(payload_json,'$.intentId')=?
+               AND json_extract(payload_json,'$.threadId')=?
+               AND json_extract(payload_json,'$.worktreePath')=? ORDER BY id""",
+            (
+                candidate["key"],
+                candidate["intentId"],
+                candidate["threadId"],
+                candidate["worktreePath"],
+            ),
+        ).fetchall()
+    prior_events = [(dict(row), json.loads(row["payload_json"])) for row in prior_rows]
+    prior_latest = {
+        kind: next(
+            (
+                (row, payload)
+                for row, payload in reversed(prior_events)
+                if row["event_type"] == kind
+            ),
+            None,
+        )
+        for kind in (
+            "TASK_RESULT_VALIDATION_DEFERRED",
+            "VALIDATION_FOLLOWUP_RESERVED",
+            "VALIDATION_FOLLOWUP_SENT",
+        )
+    }
+    prior_deferred, prior_reserved, prior_sent = prior_latest.values()
+    if prior_deferred is None or prior_reserved is None or prior_sent is None:
+        return None
+    expected_digest = prior_deferred[1].get("resultDigest")
+    prior_reservation_digest = prior_reserved[1].get("reservationDigest")
+    prior_delivery = next(
+        (
+            (row, payload)
+            for row, payload in reversed(prior_events)
+            if row["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+            and payload.get("deliveryKind") == "validation-followup"
+            and payload.get("reservationDigest") == prior_reservation_digest
+            and payload.get("resultDigest") == expected_digest
+        ),
+        None,
+    )
+    if (
+        prior_delivery is None
+        or prior_deferred[1].get("expiredPublication") is not None
+        or set(prior_deferred[1].get("missing") or [])
+        != {"regression_test_verified", "relevant_tests_green", "independent_review_passed"}
+        or prior_reserved[1].get("resultDigest") != expected_digest
+        or prior_reserved[1].get("generatedBuildContract") is not None
+        or prior_reserved[1].get("expiryPromptRevision") is not None
+        or prior_sent[1].get("resultDigest") != expected_digest
+        or prior_sent[0]["dedupe_key"] != expected_digest
+        or not (prior_reserved[0]["id"] < prior_delivery[0]["id"] < prior_sent[0]["id"])
+    ):
+        return None
+    candidate = candidate | {"resultDigest": expected_digest}
+    with _task_worktree_private_descriptor(candidate) as opened:
+        context_raw = _read_task_context_bytes_from_private(opened)
+        context = json.loads(context_raw)
+        raw = _read_task_result_bytes_from_private(opened)
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            return None
+        failed_outputs = [
+            str(t.get("result") or t.get("stderr") or "")
+            for t in value.get("tests") or []
+            if isinstance(t, dict) and type(t.get("exitCode")) is int and t["exitCode"] != 0
+        ]
+        if not any(
+            "has not been built (missing packages/core/dist/index.js)" in output
+            or "packages/core/dist/index.js is missing" in output
+            or "@qwen-code/channel-base/dist/index.js is missing" in output
+            or (
+                "ERR_MODULE_NOT_FOUND" in output
+                and "Cannot find module" in output
+                and "/@qwen-code/channel-base/dist/index.js'" in output
+            )
+            for output in failed_outputs
+        ):
+            return None
+        authenticated, authenticated_raw = _read_authenticated_validation_result(candidate)
+        if authenticated != value or authenticated_raw != raw:
+            return None
+        if (
+            value.get("schemaVersion") != TASK_RESULT_SCHEMA
+            or context.get("schemaVersion") != TASK_CONTEXT_SCHEMA
+            or context.get("stage") != "VALIDATION_PENDING"
+            or context.get("taskStage") != "IMPLEMENTATION_READY"
+            or context.get("publicationReceipt") is not None
+            or context.get("prFollowup") is not None
+            or context.get("codePathTombstoneReceipt") is not None
+            or (context.get("liveAudit") or {}).get("evidence", {}).get("policy", {}).get("status")
+            != "NORMAL"
+            or _controller_policy_verification(context) is None
+            or _publication_block_reason(context, value)
+            or _task_live_audit_refresh_due(context)
+            or value.get("stage") != "FIX_READY"
+            or value.get("handoffMode") != "controller_commit_complete"
+            or value.get("followupDigest")
+            or not isinstance(value.get("quality"), dict)
+            or value["quality"].get("regression_test_verified") is not False
+            or value["quality"].get("relevant_tests_green") is not False
+            or value["quality"].get("independent_review_passed") is not False
+            or _active_task_turn_for_result(candidate) is not None
+            or _local_changed_files(opened.worktree)
+            or value.get("commitSha") != command(["git", "rev-parse", "HEAD"], cwd=opened.worktree)
+        ):
+            return None
+        digest = _task_result_digest(value, raw)
+        candidate = candidate | {"resultDigest": digest}
+        completion: dict[str, Any] = {}
+        if value.get("contextDigest") == context.get("contextDigest"):
+            task_id = _completed_validation_input_task_id(
+                store,
+                ManagedLedger(store.path, ensure_schema=False),
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=opened,
+                context_raw=context_raw,
+                completion_proof=completion,
+            )
+            if task_id != candidate["intentId"]:
+                return None
+            reservation_digest = completion["reservation"]["reservationDigest"]
+        else:
+            proof = _validation_result_context_refresh_proof(
+                store,
+                candidate=candidate,
+                context=context,
+                value=value,
+                worktree=opened.worktree,
+                raw=raw,
+            )
+            if proof is None or proof.get("recovery") is not None:
+                return None
+            reservation_digest = proof["reservationDigest"]
+        with store.connect() as connection:
+            rows = connection.execute(
+                """SELECT id,event_type,payload_json,created_at FROM events
+                   WHERE opportunity_key=? AND event_type IN (
+                     'TASK_RESULT_VALIDATION_DEFERRED','VALIDATION_FOLLOWUP_RESERVED',
+                     'VALIDATION_FOLLOWUP_SENT','TASK_TURN_DELIVERY_STARTED') ORDER BY id""",
+                (candidate["key"],),
+            ).fetchall()
+        identity = {k: candidate[k] for k in ("intentId", "threadId", "worktreePath")}
+        events = [(dict(r), json.loads(r["payload_json"])) for r in rows]
+        events = [(r, p) for r, p in events if all(p.get(k) == v for k, v in identity.items())]
+        latest = {
+            kind: next(((r, p) for r, p in reversed(events) if r["event_type"] == kind), None)
+            for kind in (
+                "TASK_RESULT_VALIDATION_DEFERRED",
+                "VALIDATION_FOLLOWUP_RESERVED",
+                "VALIDATION_FOLLOWUP_SENT",
+            )
+        }
+        deferred, reserved, sent = latest.values()
+        delivery = next(
+            (
+                (r, p)
+                for r, p in reversed(events)
+                if r["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+                and p.get("deliveryKind") == "validation-followup"
+                and p.get("reservationDigest") == reservation_digest
+            ),
+            None,
+        )
+        if (
+            deferred is None
+            or reserved is None
+            or sent is None
+            or delivery is None
+            or deferred[1].get("expiredPublication") is not None
+            or deferred[1].get("resultDigest") != digest
+            or set(deferred[1].get("missing") or [])
+            != {"regression_test_verified", "relevant_tests_green", "independent_review_passed"}
+            or reserved[1].get("reservationDigest") != reservation_digest
+            or reserved[1].get("generatedBuildContract") is not None
+            or reserved[1].get("expiryPromptRevision") is not None
+            or sent[1].get("resultDigest") != digest
+        ):
+            return None
+        candidate = candidate | {"missing": list(deferred[1].get("missing") or [])}
+        binding = store.validation_followup_delivery_binding(
+            thread_id=candidate["threadId"],
+            result_digest=digest,
+            reservation_digest=reservation_digest,
+            **_ledger_binding_kwargs(candidate),
+        )
+        if binding is None:
+            return None
+        snapshot = _validation_snapshot_bytes(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_id=binding["snapshotId"],
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest=binding["snapshotDigest"],
+        )
+        projected = _validation_worktree_input_bytes(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            worktree_input_path=binding["worktreeInputPath"],
+            worktree_input_digest=binding["worktreeInputDigest"],
+        )
+        source = json.loads(snapshot)
+        if snapshot != projected or _task_result_digest(source, snapshot) != digest:
+            return None
+        for historical_value in (value, source):
+            if not verify_probe_receipt(
+                historical_value.get("reproductionReceipt")
+                or historical_value.get("probeReceipt")
+                or {},
+                repo=candidate["key"].rsplit("#", 1)[0],
+                base_sha=historical_value.get("selectedBaseSha"),
+                code_paths=list(historical_value.get("codePaths") or []),
+                required_level=REPRODUCED_VALIDATED,
+                issue_url=candidate["issueUrl"],
+                task_id=candidate["intentId"],
+                thread_id=candidate["threadId"],
+                head_sha=historical_value.get("headSha"),
+                commit_sha=historical_value.get("commitSha"),
+                result_digest=digest,
+                enforce_freshness=False,
+            ):
+                return None
+        receipt_key = _task_turn_delivery_file_key(
+            delivery_kind="validation-followup",
+            thread_id=candidate["threadId"],
+            delivery_token=digest,
+            validation_reservation_digest=reservation_digest,
+        )
+        receipt_raw = _read_owned_regular_file(
+            STATE / "task_turn_receipts" / f"{receipt_key}.json",
+            label="completed generated-build validation receipt",
+            reject_dangerous_writes=True,
+        )
+        receipt = json.loads(receipt_raw)
+        if (
+            receipt.get("ok") is not True
+            or receipt.get("turnStatus") != "completed"
+            or receipt.get("turnError")
+            or receipt.get("error")
+            or receipt.get("threadId") != candidate["threadId"]
+            or receipt.get("deliveryKind") != "validation-followup"
+            or receipt.get("deliveryToken") != digest
+            or receipt.get("reservationDigest") != reservation_digest
+        ):
+            return None
+        _cwd, rollout_path = _validated_task_turn_thread(candidate)
+        latest_turn = latest_thread_turn_state(rollout_path)
+        if (
+            not latest_turn
+            or latest_turn.get("status") != "completed"
+            or latest_turn.get("turnId") != receipt.get("turnId")
+        ):
+            return None
+        journal = _read_owned_regular_file(
+            Path(str(rollout_path)),
+            label="completed validation build journal",
+            reject_dangerous_writes=True,
+        )
+        started_at = completed_at = None
+        prompts = []
+        commands = []
+        session_matches = False
+        for line in journal.splitlines():
+            record = json.loads(line)
+            payload = record.get("payload") or {}
+            if record.get("type") == "session_meta":
+                session_matches = payload.get("id") == candidate["threadId"]
+            if record.get("type") != "event_msg" or payload.get("turn_id") != receipt["turnId"]:
+                continue
+            if payload.get("type") == "task_started":
+                started_at = parse_time(record["timestamp"])
+            elif payload.get("type") == "task_complete":
+                if payload.get("error"):
+                    return None
+                completed_at = parse_time(record["timestamp"])
+            elif (
+                payload.get("type") == "item_completed"
+                and payload.get("thread_id") == candidate["threadId"]
+            ):
+                item = payload.get("item") or {}
+                if item.get("type") == "UserMessage":
+                    content = item.get("content")
+                    if (
+                        not isinstance(content, list)
+                        or len(content) != 1
+                        or content[0].get("type") != "text"
+                        or not isinstance(content[0].get("text"), str)
+                    ):
+                        return None
+                    prompts.append((record["timestamp"], content[0]["text"]))
+                elif item.get("type") == "CommandExecution":
+                    commands.append(item)
+        if (
+            not session_matches
+            or started_at is None
+            or completed_at is None
+            or len(prompts) != 1
+            or not (
+                parse_time(delivery[0]["created_at"])
+                <= started_at
+                <= parse_time(prompts[0][0])
+                <= completed_at
+            )
+            or not (
+                parse_time(delivery[0]["created_at"])
+                <= parse_time(sent[0]["created_at"])
+                <= completed_at
+            )
+            or "系统续跑：继续验证同一个修复" not in prompts[0][1]
+            or binding["worktreeInputPath"] not in prompts[0][1]
+            or "普通离线构建属于 run_tests 的前置步骤" in prompts[0][1]
+        ):
+            return None
+        failures = []
+        for test in value.get("tests") or []:
+            if (
+                not isinstance(test, dict)
+                or type(test.get("exitCode")) is not int
+                or test["exitCode"] == 0
+            ):
+                continue
+            for item in commands:
+                argv = item.get("command")
+                if (
+                    item.get("status") != "failed"
+                    or type(item.get("exit_code")) is not int
+                    or item["exit_code"] != test["exitCode"]
+                    or not isinstance(argv, list)
+                    or len(argv) != 3
+                    or argv[1] not in {"-lc", "-c"}
+                    or argv[2] != test.get("command")
+                    or item.get("cwd") != opened.worktree.as_uri()
+                    or ("cwd" in test and test["cwd"] != str(opened.worktree))
+                ):
+                    continue
+                output = str(item.get("aggregated_output") or "")
+                if "has not been built (missing packages/core/dist/index.js)" in output:
+                    failures.append("core_dist_missing")
+                elif (
+                    "ERR_MODULE_NOT_FOUND" in output
+                    and "Cannot find module" in output
+                    and "/@qwen-code/channel-base/dist/index.js'" in output
+                ):
+                    failures.append("channel_base_dist_missing")
+        if (
+            not failures
+            or _read_task_result_bytes_from_private(opened) != raw
+            or _read_task_context_bytes_from_private(opened) != context_raw
+        ):
+            return None
+        return candidate, {
+            "contextDigest": context["contextDigest"],
+            "reservationDigest": reservation_digest,
+            "reservation": reserved[1],
+            "sentEventId": sent[0]["id"],
+            "delivery": delivery[1],
+            "turnId": receipt["turnId"],
+            "startedAt": iso_z(started_at),
+            "completedAt": iso_z(completed_at),
+            "rawSha256": hashlib.sha256(raw).hexdigest(),
+            "inputSha256": hashlib.sha256(snapshot).hexdigest(),
+            "receiptSha256": hashlib.sha256(receipt_raw).hexdigest(),
+            "journalSha256": hashlib.sha256(journal).hexdigest(),
+            "promptSha256": sha256_text(prompts[0][1]),
+            "generatedFailures": sorted(set(failures)),
+        }
+
+
+def _completed_review_feedback_validation(
+    store: RadarLedger,
+    candidate: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    expected: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Consume past completion only; never authorize its rejected ready output."""
+    if candidate.get("stage") != "VALIDATION_PENDING":
+        return None
+    identity = {k: candidate.get(k) for k in ("intentId", "threadId", "worktreePath")}
+    if not all(identity.values()):
+        return None
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT id,event_type,dedupe_key,payload_json,created_at FROM events
+               WHERE opportunity_key=? AND event_type IN (
+                 'TASK_RESULT_VALIDATION_DEFERRED','VALIDATION_FOLLOWUP_RESERVED',
+                 'VALIDATION_FOLLOWUP_SENT','TASK_TURN_DELIVERY_STARTED',
+                 'TASK_CONTEXT_AUTHORITY_BOUND','AUDIT_PASS','AUDIT_SNAPSHOT') ORDER BY id""",
+            (candidate["key"],),
+        ).fetchall()
+    events = [(dict(row), json.loads(row["payload_json"])) for row in rows]
+    bound = [(r, p) for r, p in events if all(p.get(k) == v for k, v in identity.items())]
+    deferred = next(
+        (
+            (r, p)
+            for r, p in reversed(bound)
+            if r["event_type"] == "TASK_RESULT_VALIDATION_DEFERRED"
+        ),
+        None,
+    )
+    sent = next(
+        ((r, p) for r, p in reversed(bound) if r["event_type"] == "VALIDATION_FOLLOWUP_SENT"), None
+    )
+    if deferred is None or sent is None:
+        return None
+    digest = deferred[1].get("resultDigest")
+    reserved = next(
+        (
+            (r, p)
+            for r, p in reversed(bound)
+            if r["event_type"] == "VALIDATION_FOLLOWUP_RESERVED"
+            and p.get("resultDigest") == digest
+            and r["id"] < sent[0]["id"]
+            and (
+                not sent[1].get("reservationDigest")
+                or p.get("reservationDigest") == sent[1]["reservationDigest"]
+            )
+        ),
+        None,
+    )
+    if (
+        reserved is None
+        or deferred[1].get("expiredPublication") is not None
+        or set(deferred[1].get("missing") or []) != {"independent_review_passed"}
+        or sent[1].get("resultDigest") != digest
+        or sent[0]["dedupe_key"] != digest
+        or reserved[1].get("generatedBuildContract") is not None
+        or reserved[1].get("reviewFeedbackContract") is not None
+        or reserved[1].get("expiryPromptRevision") is not None
+        or not (deferred[0]["id"] < reserved[0]["id"] < sent[0]["id"])
+    ):
+        return None
+    candidate = candidate | {"resultDigest": digest, "missing": list(deferred[1]["missing"])}
+    reservation = reserved[1]["reservationDigest"]
+    delivery = store.validation_followup_delivery_binding(
+        thread_id=candidate["threadId"],
+        result_digest=digest,
+        reservation_digest=reservation,
+        **_ledger_binding_kwargs(candidate),
+    )
+    if not delivery:
+        return None
+    delivery_event = next(
+        (
+            (r, p)
+            for r, p in reversed(bound)
+            if r["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+            and p.get("deliveryKind") == "validation-followup"
+            and p.get("reservationDigest") == reservation
+        ),
+        None,
+    )
+    if delivery_event is None or not (reserved[0]["id"] < delivery_event[0]["id"] < sent[0]["id"]):
+        return None
+    receipt_key = _task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id=candidate["threadId"],
+        delivery_token=digest,
+        validation_reservation_digest=reservation,
+    )
+    receipt_path = STATE / "task_turn_receipts" / f"{receipt_key}.json"
+    if not receipt_path.exists():
+        return None
+    receipt_raw = _read_owned_regular_file(
+        receipt_path, label="completed review-feedback receipt", reject_dangerous_writes=True
+    )
+    initial_receipt = json.loads(receipt_raw)
+    if (
+        initial_receipt.get("ok") is not True
+        or initial_receipt.get("turnStatus") != "completed"
+        or initial_receipt.get("turnError")
+        or initial_receipt.get("error")
+        or initial_receipt.get("deliveryKind") != "validation-followup"
+        or initial_receipt.get("threadId") != candidate["threadId"]
+        or initial_receipt.get("deliveryToken") != digest
+        or initial_receipt.get("reservationDigest") != reservation
+    ):
+        return None
+    snapshot = _validation_snapshot_bytes(
+        candidate=candidate,
+        reservation_digest=reservation,
+        snapshot_id=delivery["snapshotId"],
+        snapshot_path=delivery["snapshotPath"],
+        snapshot_digest=delivery["snapshotDigest"],
+    )
+    projected = _validation_worktree_input_bytes(
+        candidate=candidate,
+        reservation_digest=reservation,
+        worktree_input_path=delivery["worktreeInputPath"],
+        worktree_input_digest=delivery["worktreeInputDigest"],
+    )
+    if snapshot != projected:
+        return None
+    source = json.loads(snapshot)
+    with _task_worktree_private_descriptor(candidate) as opened:
+        context_raw = _read_task_context_bytes_from_private(opened)
+        context = json.loads(context_raw)
+        raw = _read_task_result_bytes_from_private(opened)
+        value = json.loads(raw)
+        if (
+            not isinstance(value, dict)
+            or source.get("schemaVersion") != TASK_RESULT_SCHEMA
+            or value.get("schemaVersion") != TASK_RESULT_SCHEMA
+            or context.get("schemaVersion") != TASK_CONTEXT_SCHEMA
+            or context.get("stage") != "VALIDATION_PENDING"
+            or context.get("taskStage") != "IMPLEMENTATION_READY"
+            or context.get("prFollowup") is not None
+            or context.get("publicationReceipt") is not None
+            or context.get("codePathTombstoneReceipt") is not None
+            or (context.get("liveAudit") or {}).get("evidence", {}).get("policy", {}).get("status")
+            != "NORMAL"
+            or _controller_policy_verification(context) is None
+            or _publication_block_reason(context, source)
+            or _task_live_audit_refresh_due(context)
+            or _active_task_turn_for_result(candidate) is not None
+            or value.get("stage") != "FIX_READY"
+            or value.get("handoffMode") != "controller_commit_complete"
+            or value.get("followupDigest")
+            or value.get("reproductionReceipt")
+            or value.get("probeReceipt")
+            or not isinstance(value.get("quality"), dict)
+            or not assess_submit_ready(value["quality"]).ready
+            or source.get("stage") != "FIX_READY"
+            or source.get("handoffMode") != "controller_commit_complete"
+            or source.get("quality", {}).get("independent_review_passed") is not False
+            or any(
+                source.get(k) != value.get(k) or value.get(k) != context.get(k)
+                for k in ("key", "issueUrl", "threadId", "worktreePath")
+            )
+            or source.get("taskId") != candidate["intentId"]
+            or ("taskId" in value and value["taskId"] != candidate["intentId"])
+            or source.get("commitSha") != value.get("commitSha")
+            or source.get("headSha") != source.get("commitSha")
+            or value.get("contextDigest") != source.get("contextDigest")
+            or _local_changed_files(opened.worktree)
+            or source.get("commitSha") != command(["git", "rev-parse", "HEAD"], cwd=opened.worktree)
+        ):
+            return None
+        old_digest = source.get("contextDigest")
+        current_digest = context.get("contextDigest")
+        worktree = opened.worktree
+        binding = identity
+        if (
+            re.fullmatch(r"[0-9a-f]{64}", old_digest) is None
+            or current_digest != _task_context_digest(context, None)
+            or context.get("targetBase") is None
+            or source.get("commitSha") != command(["git", "rev-parse", "HEAD"], cwd=worktree)
+            or _local_changed_files(worktree)
+        ):
+            return None
+        validate_target_base(context["targetBase"])
+        with store.connect() as connection:
+            rows = connection.execute(
+                """SELECT id,event_type,payload_json,created_at FROM events
+                   WHERE opportunity_key=? AND event_type IN (
+                     'TASK_CONTEXT_AUTHORITY_BOUND','AUDIT_PASS','AUDIT_SNAPSHOT',
+                     'VALIDATION_FOLLOWUP_RESERVED','VALIDATION_FOLLOWUP_SENT',
+                     'TASK_RESULT_VALIDATION_DEFERRED') ORDER BY id""",
+                (candidate["key"],),
+            ).fetchall()
+        events = [(dict(row), json.loads(row["payload_json"])) for row in rows]
+        authority_fields = (
+            "taskId",
+            "threadId",
+            "contextDigest",
+            "hasContinuation",
+            "continuationDedupeKey",
+            "probeReceiptDigest",
+            "tombstoneReceiptDigest",
+            "implementationClaimed",
+        )
+        authorities = [
+            (row, payload)
+            for row, payload in events
+            if row["event_type"] == "TASK_CONTEXT_AUTHORITY_BOUND"
+            and payload.get("taskId") == binding["intentId"]
+            and payload.get("threadId") == binding["threadId"]
+        ]
+        prior = next(
+            ((row, p) for row, p in reversed(authorities) if p.get("contextDigest") == old_digest),
+            None,
+        )
+        if prior is None or authorities[-1][1].get("contextDigest") != current_digest:
+            return None
+        for row, authority in authorities:
+            if row["id"] < prior[0]["id"]:
+                continue
+            state = {field: authority.get(field) for field in authority_fields}
+            if (
+                authority.get("authorityStateDigest") != sha256_json(state)
+                or state["hasContinuation"] is not False
+                or state["implementationClaimed"] is not True
+                or state["continuationDedupeKey"] is not None
+                or state["tombstoneReceiptDigest"] is not None
+                or state["probeReceiptDigest"] != prior[1].get("probeReceiptDigest")
+                or authority.get("revocationObservedAt")
+            ):
+                return None
+        audits = [
+            (row, p) for row, p in events if row["event_type"] in {"AUDIT_PASS", "AUDIT_SNAPSHOT"}
+        ]
+        historical_audit = next(
+            (
+                (row, p)
+                for row, p in reversed(audits)
+                if isinstance(p.get("liveAudit"), dict)
+                and p.get("targetBase") == context["targetBase"]
+                and parse_time(row["created_at"]) <= parse_time(prior[1]["authorityObservedAt"])
+                and _task_context_digest(dict(context, liveAudit=p["liveAudit"]), None)
+                == old_digest
+            ),
+            None,
+        )
+        current_audit = next(
+            (
+                (row, p)
+                for row, p in reversed(audits)
+                if p.get("liveAudit") == context.get("liveAudit")
+                and p.get("targetBase") == context["targetBase"]
+                and isinstance(p.get("authorization"), dict)
+            ),
+            None,
+        )
+        if historical_audit is None or current_audit is None:
+            return None
+        evidence = context["liveAudit"]["evidence"]
+        authorization = current_audit[1]["authorization"]
+        if (
+            authorization.get("status") != "ALLOW"
+            or authorization.get("evidence_digest") != evidence.get("digest")
+            or evidence.get("complete") is not True
+            or not evidence.get("completeness")
+        ) or any(status != "COMPLETE" for status in evidence["completeness"].values()):
+            return None
+        if not verify_probe_receipt(
+            source.get("reproductionReceipt") or source.get("probeReceipt") or {},
+            repo=candidate["key"].rsplit("#", 1)[0],
+            base_sha=source.get("selectedBaseSha"),
+            code_paths=list(source.get("codePaths") or []),
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=candidate["issueUrl"],
+            task_id=candidate["intentId"],
+            thread_id=candidate["threadId"],
+            head_sha=source.get("headSha"),
+            commit_sha=source.get("commitSha"),
+            result_digest=digest,
+            enforce_freshness=False,
+        ):
+            return None
+        review = _controller_review_result(args, source, review_context=context)
+        if not review or review.get("verdict") not in {"FAIL", "HOLD"}:
+            return None
+        completion = {}
+        if (
+            _completed_validation_input_task_id(
+                store,
+                ManagedLedger(store.path, ensure_schema=False),
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=opened,
+                context_raw=context_raw,
+                validation_context_digest=old_digest,
+                completion_proof=completion,
+            )
+            != candidate["intentId"]
+            or completion.get("recovery") is not None
+        ):
+            return None
+        receipt = completion["receipt"]
+        if (
+            receipt.get("turnError")
+            or receipt.get("error")
+            or receipt.get("turnStatus") != "completed"
+        ):
+            return None
+        _cwd, rollout = _validated_task_turn_thread(candidate)
+        latest = latest_thread_turn_state(rollout)
+        if (
+            not latest
+            or latest.get("status") != "completed"
+            or latest.get("turnId") != receipt.get("turnId")
+        ):
+            return None
+        journal = _read_owned_regular_file(
+            Path(str(rollout)),
+            label="completed review-feedback journal",
+            reject_dangerous_writes=True,
+        )
+        prompts = []
+        started_at = completed_at = None
+        session = False
+        for line in journal.splitlines():
+            record = json.loads(line)
+            payload = record.get("payload") or {}
+            if record.get("type") == "session_meta":
+                session = payload.get("id") == candidate["threadId"]
+            if record.get("type") != "event_msg" or payload.get("turn_id") != receipt["turnId"]:
+                continue
+            if payload.get("type") == "task_started":
+                started_at = parse_time(record["timestamp"])
+            elif payload.get("type") == "task_complete":
+                if payload.get("error"):
+                    return None
+                completed_at = parse_time(record["timestamp"])
+            elif (
+                payload.get("type") == "item_completed"
+                and payload.get("thread_id") == candidate["threadId"]
+            ):
+                item = payload.get("item") or {}
+                if item.get("type") == "UserMessage":
+                    content = item.get("content")
+                    if (
+                        not isinstance(content, list)
+                        or len(content) != 1
+                        or content[0].get("type") != "text"
+                        or not isinstance(content[0].get("text"), str)
+                    ):
+                        return None
+                    prompts.append((record["timestamp"], content[0]["text"]))
+        finding_messages = [
+            str(f.get("message") or "") for f in review.get("findings") or [] if isinstance(f, dict)
+        ]
+        if (
+            not session
+            or started_at is None
+            or completed_at is None
+            or len(prompts) != 1
+            or not (
+                parse_time(delivery_event[0]["created_at"])
+                <= started_at
+                <= parse_time(prompts[0][0])
+                <= completed_at
+            )
+            or not (parse_time(sent[0]["created_at"]) <= completed_at)
+            or binding["worktreePath"] != str(opened.worktree)
+            or delivery["worktreeInputPath"] not in prompts[0][1]
+            or (
+                finding_messages
+                and any(message and message in prompts[0][1] for message in finding_messages)
+            )
+            or "本轮控制器审查意见" in prompts[0][1]
+            or source.get("independentReview") == review
+            or not (
+                started_at.timestamp()
+                <= os.stat("result.json", dir_fd=opened.private_fd, follow_symlinks=False).st_mtime
+                <= completed_at.timestamp()
+            )
+            or _read_owned_regular_file(
+                receipt_path,
+                label="completed review-feedback receipt",
+                reject_dangerous_writes=True,
+            )
+            != receipt_raw
+            or _read_task_result_bytes_from_private(opened) != raw
+            or _read_task_context_bytes_from_private(opened) != context_raw
+        ):
+            return None
+        delivery_event = next(
+            (
+                (r, p)
+                for r, p in reversed(bound)
+                if r["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+                and p.get("deliveryKind") == "validation-followup"
+                and p.get("reservationDigest") == reservation
+            ),
+            None,
+        )
+        if delivery_event is None or not (
+            reserved[0]["id"] < delivery_event[0]["id"] < sent[0]["id"]
+        ):
+            return None
+        proof = {
+            "contextDigest": current_digest,
+            "reservationDigest": reservation,
+            "reservation": reserved[1],
+            "sentEventId": sent[0]["id"],
+            "delivery": delivery_event[1],
+            "sourceBinding": delivery,
+            "turnId": receipt["turnId"],
+            "rawSha256": hashlib.sha256(raw).hexdigest(),
+            "inputSha256": hashlib.sha256(snapshot).hexdigest(),
+            "receiptSha256": hashlib.sha256(receipt_raw).hexdigest(),
+            "journalSha256": hashlib.sha256(journal).hexdigest(),
+            "reviewMarker": sha256_json(review),
+            "review": review,
+            "startedAt": iso_z(started_at),
+            "completedAt": iso_z(completed_at),
+        }
+        if expected is not None and any(
+            expected.get(k) != proof[k]
+            for k in (
+                "reservationDigest",
+                "reservation",
+                "sentEventId",
+                "delivery",
+                "sourceBinding",
+                "turnId",
+                "rawSha256",
+                "inputSha256",
+                "receiptSha256",
+                "journalSha256",
+                "reviewMarker",
+                "review",
+            )
+        ):
+            return None
+        return candidate, proof
+
+
 def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     quarantined_reader = getattr(store, "quarantined_validation_followups", lambda: [])
     quarantined = list(quarantined_reader())
     reconciled_no_progress = store.reconcile_validation_no_progress()
+    completed_review_feedback = []
+    review_completion_errors = []
+    for current in getattr(store, "task_result_candidates_for_ingestion", lambda: [])():
+        if current.get("stage") != "VALIDATION_PENDING":
+            continue
+        try:
+            with opportunity_action_guard(
+                ledger_action_guard_root(store.path), str(current["key"])
+            ):
+                completed = _completed_review_feedback_validation(store, current, args)
+                if completed is None:
+                    continue
+                candidate, proof = completed
+                if store.record_completed_review_feedback_no_progress(candidate, completion=proof):
+                    rearmed = store.rearm_validation_no_progress_for_review(
+                        key=candidate["key"],
+                        result_digest=candidate["resultDigest"],
+                        review_marker=proof["reviewMarker"],
+                        reason="CONTROLLER_REVIEW_FEEDBACK_AVAILABLE",
+                        intent_id=candidate["intentId"],
+                        worktree_path=candidate["worktreePath"],
+                    )
+                    completed_review_feedback.append({"key": candidate["key"], "rearmed": rearmed})
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            review_completion_errors.append({"key": current["key"], "error": str(exc)[:300]})
+    completed_generated_build = []
+    completion_errors = list(review_completion_errors)
+    for current in getattr(store, "task_result_candidates_for_ingestion", lambda: [])():
+        if current.get("stage") != "VALIDATION_PENDING":
+            continue
+        try:
+            with opportunity_action_guard(
+                ledger_action_guard_root(store.path), str(current["key"])
+            ):
+                completed = _completed_generated_build_validation(store, current)
+                if completed is None:
+                    continue
+                candidate, completion = completed
+                if store.record_completed_generated_build_no_progress(
+                    candidate, completion=completion
+                ):
+                    rearmed = store.rearm_validation_no_progress_for_review(
+                        key=candidate["key"],
+                        result_digest=candidate["resultDigest"],
+                        review_marker=GENERATED_BUILD_CONTRACT,
+                        reason=GENERATED_BUILD_REARM_REASON,
+                        intent_id=candidate["intentId"],
+                        worktree_path=candidate["worktreePath"],
+                    )
+                    completed_generated_build.append({"key": candidate["key"], "rearmed": rearmed})
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            completion_errors.append({"key": current["key"], "error": str(exc)[:300]})
     blocked_reader = getattr(store, "validation_prefetch_blocked", lambda: [])
     prefetch_blocked = {
         (str(item["key"]), str(item["resultDigest"])): item for item in blocked_reader()
     }
-    rearmed_review_feedback: list[dict[str, str]] = []
+    rearmed_review_feedback: list[dict[str, str]] = [
+        {"key": item["key"], "reason": GENERATED_BUILD_REARM_REASON}
+        for item in completed_generated_build
+        if item["rearmed"]
+    ] + [
+        {"key": item["key"], "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"}
+        for item in completed_review_feedback
+        if item["rearmed"]
+    ]
     blocked_environment: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = list(completion_errors)
     concurrent_deferred: list[dict[str, Any]] = []
     for blocked in store.validation_no_progress():
         try:
@@ -19613,6 +20849,15 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                 "independent_review_passed"
             } and not _local_changed_files(worktree):
                 authenticated = _read_authenticated_validation_result_if_present(candidate)
+                if authenticated is None:
+                    concurrent_deferred.append(
+                        {
+                            "key": str(candidate.get("key") or ""),
+                            "resultDigest": str(candidate.get("resultDigest") or ""),
+                            "reason": "VALIDATION_RESULT_MISSING",
+                        }
+                    )
+                    continue
                 value = authenticated[0] if authenticated is not None else {}
                 test_failures = unresolved_current_test_failures(value)
                 if test_failures:
@@ -19689,19 +20934,24 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             )
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
-    wip_limited, active_task_count, task_limit = _global_task_wip(store)
     queued_deferred: list[dict[str, Any]] = []
-    if wip_limited and candidates:
-        queued_deferred = [
-            item
-            | {
-                "reason": "global_task_wip_limit",
-                "activeTaskCount": active_task_count,
-                "taskLimit": task_limit,
-            }
-            for item in candidates
-        ]
-        candidates = []
+    admitted_candidates: list[dict[str, Any]] = []
+    for candidate in candidates:
+        wip_limited, active_task_count, task_limit = _global_task_wip(
+            store, exclude_intent_id=str(candidate.get("intentId") or "") or None
+        )
+        if wip_limited:
+            queued_deferred.append(
+                candidate
+                | {
+                    "reason": "global_task_wip_limit",
+                    "activeTaskCount": active_task_count,
+                    "taskLimit": task_limit,
+                }
+            )
+        else:
+            admitted_candidates.append(candidate)
+    candidates = admitted_candidates
     unresolved = store.unresolved_validation_followups()
     activity: dict[str, int] = {}
     rollout_paths: dict[str, str | None] = {}
@@ -19759,7 +21009,55 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                         delivery_token=str(item.get("resultDigest") or ""),
                     )
         unresolved_with_recovery.append(value)
-    stale = store.stale_validation_followups(min_age_minutes=getattr(args, "min_age_minutes", 90))
+    stale_records = store.stale_validation_followups(
+        min_age_minutes=getattr(args, "min_age_minutes", 90)
+    )
+    stale = []
+    published_stale_ignored = []
+    current_results = (
+        getattr(store, "task_result_candidates_for_ingestion", lambda: [])()
+        if stale_records
+        else []
+    )
+    for item in stale_records:
+        current = next(
+            (
+                candidate
+                for candidate in current_results
+                if all(
+                    candidate.get(field) == item.get(field)
+                    for field in ("key", "intentId", "threadId", "worktreePath")
+                )
+                and candidate.get("stage") in PUBLISHED_TASK_STAGES
+            ),
+            None,
+        )
+        if current is not None:
+            try:
+                with _task_worktree_private_descriptor(current) as opened:
+                    value = json.loads(_read_task_result_bytes_from_private(opened))
+                    context = json.loads(_read_task_context_bytes_from_private(opened))
+                    if (
+                        isinstance(value, dict)
+                        and isinstance(context, dict)
+                        and store.task_result_binding_gate(current, value)
+                        and _private_context_matches_current_ledger(store, context)
+                        and _managed_published_pr_authority(
+                            ManagedLedger(store.path, ensure_schema=False),
+                            candidate=current,
+                            context=context,
+                            value=value,
+                        )
+                        is not None
+                    ):
+                        published_stale_ignored.append(
+                            {"key": item["key"], "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}
+                        )
+                        continue
+            except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                # Retain the original stale diagnostic when authority cannot be proved.
+                pass
+        stale.append(item)
     blocked_environment_keys = {str(item.get("key") or "") for item in blocked_environment}
     blocked_no_progress = [
         item
@@ -19774,6 +21072,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         "environmentBlocked": environment_blocked,
         "unresolved": unresolved_with_recovery,
         "stale": stale,
+        "publishedStaleIgnored": published_stale_ignored,
         "blockedNoProgress": blocked_no_progress,
         "reconciledNoProgress": reconciled_no_progress,
         "rearmedReviewFeedback": rearmed_review_feedback,
@@ -19846,6 +21145,29 @@ def _validation_gap_summary(candidate: dict[str, Any]) -> str:
 
 
 def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
+    review_note = ""
+    if candidate.get("reviewFeedbackContract") == REVIEW_FEEDBACK_CONTRACT and candidate.get(
+        "snapshotId"
+    ):
+        raw = _validation_snapshot_bytes(
+            candidate=candidate,
+            reservation_digest=candidate["reservationDigest"],
+            snapshot_id=candidate["snapshotId"],
+            snapshot_path=candidate["snapshotPath"],
+            snapshot_digest=candidate["snapshotDigest"],
+        )
+        source = json.loads(raw)
+        review = source.get("independentReview")
+        if (
+            not isinstance(review, dict)
+            or sha256_json(review) != candidate["reviewFeedbackCorrection"]["reviewMarker"]
+        ):
+            raise RuntimeError("immutable controller-review feedback binding is invalid")
+        review_note = (
+            "本轮控制器审查意见（只用于修订同一已有修复，不能作为通过证明）：\n"
+            + canonical_json(review)
+            + "\n按这些精确意见修改同一个最小修复，并真实复现修复前失败、修复后通过。\n"
+        )
     missing_summary = _validation_gap_summary(candidate)
     prefetch = bool(candidate.get("prefetchCommands"))
     dependency_note = (
@@ -19920,12 +21242,36 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
             + PLAIN_LANGUAGE_STATUS_PROMPT
         )
     return (
-        "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
-        "读取当前任务文件，并只在已绑定的工作区继续。\n\n"
+        (
+            "系统续跑：按本轮控制器审查意见修订同一个已有修复，不要创建新任务。"
+            if review_note
+            else "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
+        )
+        + (
+            "必须读取并验证当前 `.oss-pr-radar/task-context.json`，它是本轮身份的唯一来源；新输出使用其中的 contextDigest、intentId（作为taskId）、key、issueUrl、threadId和worktreePath。不可变输入只作历史修复与检查目标参照，禁止复制历史contextDigest、tests、签名或审查通过结论。independent_review_passed 必须保留 false，独立复核只能由系统写入。"
+            if review_note
+            else ""
+        )
+        + review_note
+        + "读取当前任务文件，并只在已绑定的工作区继续。\n\n"
         + input_note
         + f"本轮需要解决：{missing_summary}。{dependency_note}\n\n"
         + "先检查绑定工作区已准备的 `.venv/bin/python`；存在时必须进入该工作区后明确使用这个解释器。"
         "登录 shell 可能重置 PATH，不要依赖裸 `python3` 或沿用旧的依赖不可用判断。"
+        "重新运行检查前，先读取仓库贡献指南和构建脚本，确认实际入口及回归需要的生成产物。"
+        "普通离线构建属于 run_tests 的前置步骤：工具和依赖已经安装时，必须按仓库规定的"
+        "依赖顺序执行必要的本地构建或生成命令，例如仓库要求的 `npm run build`；"
+        "不能只重复测试后将缺少 dist 或打包文件再次交回。真实基线和修复源码都必须先满足"
+        "各自适用的生成前置，再运行同一真实行为回归；由缺少生成产物造成的测试收集或入口启动失败"
+        "不能当作 issue 的修复前失败证明。构建命令和随后检查都须实际执行并如实记录结果。"
+        "构建前检查脚本及钩子，保持离线，只使用已安装的本地工具；不得执行依赖安装或下载、"
+        "prepare/husky、会下载工具的 npx、网络或发布钩子，也不得写入 Git 元数据。"
+        "只在绑定工作区或任务规则允许的验证临时目录生成产物。构建前为脚本可能改写的"
+        "无关已跟踪生成文件保存原始字节副本，构建后按副本恢复原始字节，保留原修复；"
+        "不要使用 Git 重置命令，也不要修改索引、配置、hooks、分支或提交。"
+        "若所需工具或依赖缺失，或没有符合这些限制的普通构建入口，诚实保留实际缺口，"
+        "交由系统原有依赖准备流程处理，不自行安装、伪造生成文件、模拟 SDK 或标记通过。"
+        "构建或检查仍失败时保留真实失败；构建成功也不能代替修复前失败、修复后通过和独立复核。"
         "确认当前环境后重新运行真实用户入口和原先未完成的核心检查。"
         + "按已加载的受控任务规则更新结果：核心回归必须证明修复前失败、修复后通过；"
         "必须使用项目真实实现和当前依赖环境，不能用模拟旧行为或替换缺失 SDK 导入的"
@@ -21013,6 +22359,189 @@ def _publication_payload_from_evidence(evidence: dict[str, Any], issue_url: str)
     }
 
 
+def _published_followup_publication_metadata(
+    store: RadarLedger,
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+    result_access: _ValidationWorktreeDirectory,
+) -> tuple[dict[str, str], dict[str, str]] | None:
+    """Read metadata only for a finalized merge carrying its old PR receipt.
+
+    The tracking snapshot is not publication authority.  Recover the exact
+    metadata from its consumed publication's immutable evidence, without
+    reusing that publication's commit, permit, or independent review.
+    """
+
+    tracking = value.get("publication")
+    if (
+        not isinstance(tracking, dict)
+        or set(tracking) != {"baseBranch", "branch", "commitSha", "prUrl", "status"}
+        or value.get("stage") != "FIX_READY"
+        or value.get("handoffMode") != "controller_merge_complete"
+        or candidate.get("stage") not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+    ):
+        return None
+
+    def require(condition: bool) -> None:
+        if not condition:
+            raise TaskResultEvidenceBlocked("PUBLISHED_FOLLOWUP_METADATA_BINDING_INVALID")
+
+    receipt = context.get("publicationReceipt")
+    followup = context.get("prFollowup")
+    require(isinstance(receipt, dict) and isinstance(followup, dict))
+    assert isinstance(receipt, dict) and isinstance(followup, dict)
+    issue_url = str(candidate.get("issueUrl") or "")
+    issue_match = ISSUE_URL.fullmatch(issue_url)
+    task_id = str(candidate.get("intentId") or "")
+    thread_id = str(candidate.get("threadId") or "")
+    worktree = str(result_access.worktree)
+    commit_sha = str(value.get("commitSha") or "")
+    branch = str(value.get("branch") or "")
+    pr_url = str(receipt.get("prUrl") or "")
+    publication_head = str(receipt.get("commitSha") or "")
+    previous_head = str(value.get("previousCommitSha") or "")
+    require(
+        issue_match is not None
+        and bool(task_id)
+        and bool(thread_id)
+        and bool(pr_url)
+        and bool(followup.get("wakeDigest"))
+        and value.get("followupDigest") == followup.get("wakeDigest")
+        and value.get("contextDigest") == context.get("contextDigest")
+        and value.get("taskId", value.get("intentId")) == task_id
+        and context.get("intentId") == task_id
+        and value.get("headSha") == commit_sha
+        and previous_head == followup.get("headSha")
+        and previous_head == followup.get("preparedHeadSha", previous_head)
+        and commit_sha != previous_head
+        and value.get("prUrl") == pr_url == followup.get("prUrl") == tracking.get("prUrl")
+        and publication_head == tracking.get("commitSha")
+        and branch == receipt.get("branch") == tracking.get("branch")
+        and tracking.get("status") == "PR_OPEN"
+        and receipt.get("status") in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+        and all(
+            value.get(field) == context.get(field) == candidate.get(field)
+            for field in ("key", "issueUrl", "threadId", "worktreePath")
+        )
+        and candidate.get("worktreePath") == worktree
+    )
+    assert issue_match is not None
+    snapshot = _publication_git_snapshot(result_access.worktree)
+    require(snapshot == {"commitSha": commit_sha, "branch": branch, "status": ""})
+    result_digest = _task_result_digest(value, raw)
+    current_probe = value.get("reproductionReceipt") or value.get("probeReceipt")
+    require(
+        value.get("resultDigest") == result_digest
+        and isinstance(current_probe, dict)
+        and verify_probe_receipt(
+            current_probe,
+            repo=issue_match.group(1),
+            base_sha=str(value.get("selectedBaseSha") or ""),
+            code_paths=list(value.get("codePaths") or []),
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=issue_url,
+            task_id=task_id,
+            thread_id=thread_id,
+            head_sha=commit_sha,
+            commit_sha=commit_sha,
+            result_digest=result_digest,
+        )
+    )
+    published = managed_ledger.published_pr_for_opportunity(
+        str(candidate["key"]), pr_url=pr_url, publication_head_sha=publication_head
+    )
+    require(
+        isinstance(published, dict)
+        and published.get("state") == "OPEN"
+        and published.get("head_sha") == previous_head
+    )
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT r.*,p.issue_url AS permit_issue_url,
+                      p.commit_sha AS permit_commit_sha,p.branch AS permit_branch,p.pr_url
+               FROM publication_requests r
+               JOIN publication_permits p ON p.request_id=r.request_id
+               WHERE r.opportunity_key=? AND r.status='CONSUMED'
+                 AND p.status='CONSUMED' AND p.pr_url=? AND r.commit_sha=?
+               ORDER BY p.updated_at DESC LIMIT 2""",
+            (candidate["key"], pr_url, publication_head),
+        ).fetchall()
+    require(len(rows) == 1)
+    row = dict(rows[0])
+    source = json.loads(row["request_json"])
+    require(isinstance(source, dict))
+    require(
+        row["thread_id"] == thread_id
+        and row["worktree_path"] == worktree
+        and row["branch"] == branch == row["permit_branch"]
+        and row["permit_issue_url"] == issue_url
+        and row["permit_commit_sha"] == publication_head
+        and row["evidence_digest"] == source.get("evidenceDigest")
+        and all(
+            source.get(field) == expected
+            for field, expected in {
+                "requestId": row["request_id"],
+                "opportunityKey": candidate["key"],
+                "intentId": task_id,
+                "issueUrl": issue_url,
+                "threadId": thread_id,
+                "worktreePath": worktree,
+                "branch": branch,
+                "commitSha": publication_head,
+                "headSha": publication_head,
+            }.items()
+        )
+    )
+    historical, _source_digest = publication_evidence_from_request(source)
+    historical_digest = _task_result_digest(
+        historical, base64.b64decode(source["evidenceRawBase64"], validate=True)
+    )
+    historical_probe = historical.get("reproductionReceipt") or historical.get("probeReceipt")
+    require(
+        historical.get("threadId") == thread_id
+        and isinstance(historical_probe, dict)
+        and verify_probe_receipt(
+            historical_probe,
+            repo=issue_match.group(1),
+            base_sha=str(source.get("selectedBaseSha") or ""),
+            code_paths=list(source.get("codePaths") or []),
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=issue_url,
+            task_id=task_id,
+            thread_id=thread_id,
+            head_sha=publication_head,
+            commit_sha=publication_head,
+            result_digest=historical_digest,
+            enforce_freshness=False,
+        )
+    )
+    publication = historical.get("publication")
+    require(isinstance(publication, dict))
+    assert isinstance(publication, dict)
+    body_path = Path(str(publication.get("bodyFile") or "")).expanduser()
+    require(body_path.is_absolute() and body_path.parent == result_access.private_dir)
+    body_raw = _read_owned_regular_file(
+        Path(body_path.name),
+        label="published followup PR body",
+        reject_dangerous_writes=True,
+        directory_fd=result_access.private_fd,
+    )
+    payload = _publication_payload_from_evidence(historical, issue_url)
+    require(
+        payload == source.get("publication")
+        and payload["baseBranch"] == tracking.get("baseBranch")
+        and hashlib.sha256(body_raw).hexdigest() == payload["bodyDigest"]
+    )
+    metadata = {
+        field: str(publication[field]) for field in ("headOwner", "baseBranch", "title", "bodyFile")
+    }
+    return metadata, {"sourceRequestId": row["request_id"], "sourceEvidenceDigest": _source_digest}
+
+
 def _request_publication_from_task_result(
     store: RadarLedger,
     *,
@@ -21098,6 +22627,7 @@ def _request_publication_from_task_result(
         target_base=target_base,
         target_base_bound="targetBase" in value,
         replacement_of_request_id=replacement_of_request_id,
+        followup_wake_digest=value.get("followupDigest") or None,
     )
     publication_evidence_from_request(request["request"])
     if (
@@ -21808,18 +23338,13 @@ def _backfill_authoritative_fix_ready_result(
     # legitimate PR_OPEN -> CI_GREEN transition into a conflicting rewrite of
     # that binding event.  A first binding still snapshots the current stage.
     binding_stage = restored_stage
-    context_publication = (
-        context.get("publicationReceipt")
-        if isinstance(context.get("publicationReceipt"), dict)
-        else {}
-    )
     current_published = managed_adapter.ledger.current_published_result_for_task(task_id)
     if current_published is not None and all(
         current_published.get(field) == expected
         for field, expected in {
             "prKey": str(published_pr["pr_key"]),
             "prUrl": str(published_pr["pr_url"]),
-            "publicationCommitSha": str(context_publication.get("commitSha") or ""),
+            "publicationCommitSha": str(published_pr["publication_head_sha"]),
             "headSha": head_sha,
             "commitSha": commit_sha,
             "resultDigest": result_digest,
@@ -22991,6 +24516,38 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             # parking the task's normal recovery or stopping
                             # independent, fully verified contributions.
                             raise TaskResultEvidenceBlocked(RESULT_CONTEXT_DIGEST_MISMATCH)
+                    completed_review = _completed_review_feedback_validation(store, candidate, args)
+                    if completed_review is not None:
+                        review_candidate, completion = completed_review
+                        if (
+                            completion["rawSha256"] == hashlib.sha256(raw).hexdigest()
+                            and completion["contextDigest"] == context.get("contextDigest")
+                            and context.get("intentId") == candidate.get("intentId")
+                            and all(
+                                review_candidate.get(field) == candidate.get(field)
+                                for field in (
+                                    "key",
+                                    "issueUrl",
+                                    "intentId",
+                                    "threadId",
+                                    "worktreePath",
+                                    "stage",
+                                )
+                            )
+                            and _read_task_result_bytes_from_private(result_access) == raw
+                            and _read_task_context_bytes_from_private(result_access) == context_raw
+                        ):
+                            # Retain the rejected ready output. The normal
+                            # downstream list alone consumes this past
+                            # completion and prepares its missing review.
+                            validation_deferred.append(
+                                {
+                                    "key": candidate["key"],
+                                    "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE",
+                                    "missing": list(review_candidate["missing"]),
+                                }
+                            )
+                            continue
                     raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")
@@ -23117,6 +24674,39 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             elif stage == "FIX_READY":
                 if not isinstance(quality, dict):
                     raise RuntimeError("FIX_READY requires a quality object")
+                metadata_history = None
+                tracking_publication = value.get("publication")
+                if (
+                    isinstance(tracking_publication, dict)
+                    and set(tracking_publication)
+                    in (
+                        {"branch", "commitSha", "prUrl", "status"},
+                        {"baseBranch", "branch", "commitSha", "prUrl", "status"},
+                    )
+                    and value.get("handoffMode")
+                    in {"controller_merge_required", "controller_merge_complete"}
+                    and candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+                ):
+                    # Finalization itself can rewrite authentication fields.
+                    # Preserve the actual input before that existing write.
+                    original_raw = _read_task_result_bytes_from_private(result_access)
+                    original_digest = _task_result_digest(json.loads(original_raw), original_raw)
+                    original_bytes_digest = hashlib.sha256(original_raw).hexdigest()
+                    history_id = sha256_json(
+                        {
+                            "kind": "published-followup-metadata",
+                            **_ledger_binding_kwargs(candidate),
+                            "sourceRawDigest": original_bytes_digest,
+                        }
+                    )
+                    metadata_history = _ensure_validation_snapshot(
+                        candidate | {"resultDigest": original_digest},
+                        reservation_digest=history_id,
+                    )
+                    if metadata_history["snapshotDigest"] != original_bytes_digest:
+                        raise TaskResultEvidenceBlocked(
+                            "PUBLISHED_FOLLOWUP_METADATA_HISTORY_CHANGED"
+                        )
                 if quality.get("policy_verified") is not True and controller_policy is not None:
                     value = dict(value)
                     quality = dict(quality)
@@ -23139,6 +24729,52 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     managed_ledger=managed_adapter.ledger,
                     write_result=False,
                 )
+                recovered_metadata = _published_followup_publication_metadata(
+                    store,
+                    managed_adapter.ledger,
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    raw=raw,
+                    result_access=result_access,
+                )
+                if recovered_metadata is not None:
+                    metadata, source_binding = recovered_metadata
+                    if metadata_history is None:
+                        raise TaskResultEvidenceBlocked(
+                            "PUBLISHED_FOLLOWUP_METADATA_HISTORY_MISSING"
+                        )
+                    managed_adapter.ledger.record_event(
+                        event_type="PUBLISHED_FOLLOWUP_METADATA_RECOVERED",
+                        idempotency_key=(
+                            f"published-followup-metadata:{metadata_history['snapshotId']}"
+                        ),
+                        opportunity_key=str(candidate["key"]),
+                        task_id=str(candidate["intentId"]),
+                        state=str(candidate["stage"]),
+                        source="result-ingestion",
+                        provenance=source_binding,
+                        payload={"originalResultSnapshot": metadata_history},
+                    )
+                    value = dict(value)
+                    value["publication"] = dict(value["publication"]) | metadata
+                    value["quality"] = dict(value["quality"], independent_review_passed=False)
+                    value.pop("independentReview", None)
+                    previous_scope = value.pop("controllerCodePathScope", None)
+                    if isinstance(previous_scope, dict):
+                        value["codePaths"] = previous_scope["reported"]
+                    value, raw = _bind_final_reproduction_receipt(
+                        candidate=candidate,
+                        context=context,
+                        value=value,
+                        result_access=result_access,
+                        managed_ledger=managed_adapter.ledger,
+                        write_result=False,
+                    )
+                    # Review migration may only compare payloads that already
+                    # include the restored metadata.  The old payload's PASS
+                    # is never authority for this newly signed envelope.
+                    reported_review_value = dict(value)
                 controller_scope = value.get("controllerCodePathScope")
                 reviewed_code_paths = _validated_changed_files(
                     controller_scope.get("reported")
@@ -26462,6 +28098,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
     deferred_followups: list[dict[str, Any]] = []
     isolated_followups: list[dict[str, Any]] = []
+    isolated_priority_followups: list[tuple[str, ...]] = []
     restored_followup_threads: set[str] = set()
     if pr_state.get("restoreRequired"):
         restore_candidate = pr_state["restoreRequired"][0]
@@ -26478,6 +28115,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             restore_failure = restore_target(candidate)
             if restore_failure:
                 return restore_failure
+        candidate_identity = _drain_pr_followup_identity(candidate)
         try:
             reserved = pr_followup_reserve(
                 argparse.Namespace(
@@ -26498,6 +28136,9 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     "reason": path_error,
                 }
             )
+            if path_error == "PR_FOLLOWUP_BRANCH_IN_USE":
+                if candidate_identity is not None:
+                    isolated_priority_followups.append(candidate_identity)
             continue
         if reserved.get("deferred"):
             deferred_followups.append(
@@ -26695,7 +28336,12 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 lease_minutes=30,
                 prepare=True,
                 task_project_id=args.project_id,
-            )
+            ),
+            **(
+                {"_drain_isolated_pr_followups": tuple(isolated_priority_followups)}
+                if isolated_priority_followups
+                else {}
+            ),
         )
         if not claim.get("authorized"):
             decision = claim.get("decision") or {}

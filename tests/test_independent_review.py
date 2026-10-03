@@ -757,10 +757,27 @@ def test_migrate_legacy_review_state_refuses_active_legacy_reviewer(tmp_path):
             module.migrate_legacy_review_state(runtime_root)
 
 
-def test_review_waits_for_child_owned_validation(tmp_path, monkeypatch):
-    control, _worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
+@pytest.mark.parametrize("live_audit_refreshed", [False, True])
+def test_review_waits_for_child_owned_validation(tmp_path, monkeypatch, live_audit_refreshed):
+    control, worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value["quality"]["relevant_tests_green"] = False
+    if live_audit_refreshed:
+        value["quality"]["regression_test_verified"] = False
+        value["contextDigest"] = "original-context"
+        context = {
+            "key": candidate["key"],
+            "issueUrl": candidate["issueUrl"],
+            "threadId": candidate["threadId"],
+            "worktreePath": candidate["worktreePath"],
+            "contextDigest": "original-context",
+            "liveAudit": {"evidence": {"digest": "original-audit"}},
+        }
+        context_path = worktree / ".oss-pr-radar" / "task-context.json"
+        context_path.write_text(json.dumps(context), encoding="utf-8")
+        context["contextDigest"] = "refreshed-context"
+        context["liveAudit"] = {"evidence": {"digest": "refreshed-audit"}}
+        context_path.write_text(json.dumps(context), encoding="utf-8")
     result_path.write_text(json.dumps(value), encoding="utf-8")
 
     class FakeLedger:

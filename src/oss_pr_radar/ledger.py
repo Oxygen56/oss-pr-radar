@@ -33,6 +33,10 @@ from .task_quarantine import record as record_quarantine
 from .task_quarantine import require_clear as require_quarantine_clear
 from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
+GENERATED_BUILD_CONTRACT = "ordinary_offline_generated_build_v1"
+GENERATED_BUILD_REARM_REASON = "GENERATED_BUILD_PREREQUISITES_INSTRUCTIONS_UPDATED"
+REVIEW_FEEDBACK_CONTRACT = "controller_review_feedback_handoff_v1"
+
 STAGES = (
     "DISCOVERED",
     "EVIDENCE_COMPLETE",
@@ -58,6 +62,10 @@ PR_UPDATE_REARM_REASONS = {
     "EXISTING_PR_BASE_DRIFT",
     "EXISTING_PR_HEAD_DRIFT",
     "NON_FAST_FORWARD_PR_UPDATE",
+}
+PR_UPDATE_REVALIDATION_REASONS = {
+    "PR_UPDATE_SOURCE_WAKE_MISMATCH",
+    "PR_UPDATE_AUTHENTICATED_PROBE_EXPIRED",
 }
 PR_FOLLOWUP_REARM_BARRIER_EVENT = "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER"
 MANAGED_REPLAY_REPLACEMENT_CREATED_EVENT = "MANAGED_REPLAY_REPLACEMENT_CREATED"
@@ -1434,6 +1442,142 @@ def _managed_replay_creation_snapshot(
     return original
 
 
+def _pr_update_revalidation_reason(
+    connection: sqlite3.Connection, *, row: sqlite3.Row, now: str
+) -> str | None:
+    """Authenticate a retired update for new work, never for publication."""
+    from .managed_lifecycle import ManagedLedger
+    from .metrics import QUALITY_FIELDS
+
+    try:
+        request = json.loads(row["request_json"])
+        if (
+            row["status"] != "BLOCKED"
+            or row["reason"]
+            not in {"BLOCKED_REPRODUCTION_REQUIRED", *PR_UPDATE_REVALIDATION_REASONS}
+            or not isinstance(request, dict)
+            or request.get("publicationKind") != "PR_UPDATE"
+            or request.get("requestId") != row["request_id"]
+            or any(
+                request.get(field) != row[column]
+                for field, column in (
+                    ("opportunityKey", "opportunity_key"),
+                    ("threadId", "thread_id"),
+                    ("commitSha", "commit_sha"),
+                    ("branch", "branch"),
+                    ("worktreePath", "worktree_path"),
+                    ("evidenceDigest", "evidence_digest"),
+                )
+            )
+            or _managed_replay_creation_snapshot(connection, row=row, request=request) != request
+            or row["permit_id"] is not None
+            or connection.execute(
+                "SELECT 1 FROM publication_permits WHERE request_id=? LIMIT 1",
+                (row["request_id"],),
+            ).fetchone()
+            is not None
+        ):
+            return None
+        # Even a historical native reservation is external-work authority.
+        if (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='managed_publication_reservations'"
+            ).fetchone()
+            is not None
+            and connection.execute(
+                "SELECT 1 FROM managed_publication_reservations WHERE request_id=? LIMIT 1",
+                (row["request_id"],),
+            ).fetchone()
+            is not None
+        ):
+            return None
+        raw = base64.b64decode(request["evidenceRawBase64"].encode("ascii"), validate=True)
+        value = json.loads(raw)
+        if hashlib.sha256(raw).hexdigest() != row["evidence_digest"] or not isinstance(value, dict):
+            return None
+        source_wake = str(value.get("followupDigest") or "")
+        request_wake = str(request.get("followupWakeDigest") or "")
+        quality = value.get("quality")
+        receipt = request.get("probeReceipt")
+        intent = request.get("intent")
+        issue = ISSUE_URL_RE.fullmatch(str(request.get("issueUrl") or ""))
+        if (
+            value.get("schemaVersion") != "radar-task-result-v1"
+            or value.get("stage") != "FIX_READY"
+            or value.get("handoffMode") != "controller_merge_complete"
+            or issue is None
+            or PR_URL_RE.fullmatch(str(request.get("existingPrUrl") or "")) is None
+            or re.fullmatch(r"[0-9a-f]{64}", source_wake) is None
+            or re.fullmatch(r"[0-9a-f]{64}", request_wake) is None
+            or not isinstance(quality, dict)
+            or quality != request.get("quality")
+            or any(quality.get(field) is not True for field in QUALITY_FIELDS)
+            or not isinstance(intent, dict)
+            or intent.get("autoSubmitAuthorized") is not True
+            or intent.get("publicSubmissionAllowed") is not True
+            or intent.get("authorizationSource") != "signed_live_revalidation_required"
+            or intent.get("publicationMode") not in {"canary", "active"}
+            or value.get("reproductionReceipt") != receipt
+            or not _managed_replay_receipt_valid_at(
+                receipt, source=request, bound_at=row["created_at"]
+            )
+            or any(
+                value.get(field) != request.get(expected)
+                for field, expected in (
+                    ("key", "opportunityKey"),
+                    ("issueUrl", "issueUrl"),
+                    ("threadId", "threadId"),
+                    ("taskId", "intentId"),
+                    ("worktreePath", "worktreePath"),
+                    ("resultDigest", "resultDigest"),
+                    ("commitSha", "commitSha"),
+                    ("headSha", "commitSha"),
+                    ("branch", "branch"),
+                    ("previousCommitSha", "previousCommitSha"),
+                    ("prUrl", "existingPrUrl"),
+                    ("selectedBaseSha", "selectedBaseSha"),
+                    ("codePaths", "codePaths"),
+                )
+            )
+        ):
+            return None
+        unsigned = dict(value)
+        # The controller's context digest is immutable snapshot metadata, not
+        # signed result authority. Retiring this request cannot validate its
+        # old context/scope or authorize a grant; new preparation must do so.
+        for field in (
+            "reproductionReceipt",
+            "probeReceipt",
+            "resultDigest",
+            "independentReview",
+            "contextDigest",
+        ):
+            unsigned.pop(field, None)
+        if unsigned.pop("controllerPolicyVerification", None) is not None:
+            unsigned["quality"] = dict(unsigned["quality"], policy_verified=True)
+        if sha256_json(unsigned) != request.get("resultDigest"):
+            return None
+        database = connection.execute("PRAGMA database_list").fetchone()["file"]
+        authorization = ManagedLedger(
+            Path(database), ensure_schema=False
+        ).implementation_authorization_receipt(
+            task_id=str(request.get("intentId") or ""),
+            thread_id=str(request.get("threadId") or ""),
+            worktree_path=str(request.get("worktreePath") or ""),
+            repo=issue.group(1),
+            issue_url=str(request["issueUrl"]),
+        )
+        if authorization is None:
+            return None
+        if source_wake != request_wake:
+            return "PR_UPDATE_SOURCE_WAKE_MISMATCH"
+        if parse_time(str(receipt.get("expiresAt") or "")) <= parse_time(now):
+            return "PR_UPDATE_AUTHENTICATED_PROBE_EXPIRED"
+    except (KeyError, TypeError, ValueError, LedgerError, sqlite3.Error):
+        return None
+    return None
+
+
 def _validate_managed_replay_lineage_authority(
     connection: sqlite3.Connection,
     *,
@@ -2021,6 +2165,69 @@ class RadarLedger:
                     reason=row["reason"],
                     now=now,
                 )
+            self._rearm_authenticated_pr_updates(connection, now=now)
+
+    def _rearm_authenticated_pr_updates(self, connection: sqlite3.Connection, *, now: str) -> None:
+        rows = connection.execute(
+            """SELECT r.* FROM publication_requests r
+               JOIN opportunities o ON o.key=r.opportunity_key
+               WHERE r.status='BLOCKED'
+                 AND r.reason IN (
+                   'BLOCKED_REPRODUCTION_REQUIRED',
+                   'PR_UPDATE_SOURCE_WAKE_MISMATCH',
+                   'PR_UPDATE_AUTHENTICATED_PROBE_EXPIRED'
+                 )
+                 AND o.stage IN ('FIX_READY','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')"""
+        ).fetchall()
+        for source in rows:
+            # Acquire the normal writer transaction before authenticating this
+            # row, while keeping earlier successful rows independently durable.
+            with self.transaction() as connection:
+                # Classification, denial and the existing observation barrier must
+                # become visible together. A failed native rearm preserves the row.
+                connection.execute("SAVEPOINT pr_update_revalidation")
+                try:
+                    row = connection.execute(
+                        "SELECT * FROM publication_requests WHERE request_id=?",
+                        (source["request_id"],),
+                    ).fetchone()
+                    reason = _pr_update_revalidation_reason(connection, row=row, now=now)
+                    if reason is None:
+                        connection.execute("ROLLBACK TO pr_update_revalidation")
+                        continue
+                    connection.execute(
+                        """UPDATE publication_requests SET reason=?,updated_at=?
+                           WHERE request_id=? AND reason<>?""",
+                        (reason, now, row["request_id"], reason),
+                    )
+                    self._event(
+                        connection,
+                        row["opportunity_key"],
+                        "PUBLICATION_BLOCKED",
+                        f"{row['request_id']}:{reason}",
+                        {
+                            "requestId": row["request_id"],
+                            "reason": reason,
+                            "previousReason": row["reason"],
+                            "evidenceDigest": row["evidence_digest"],
+                            "requestDigest": sha256_text(row["request_json"]),
+                        },
+                        now,
+                    )
+                    if not self._rearm_followup_for_publication_drift(
+                        connection,
+                        request_id=row["request_id"],
+                        key=row["opportunity_key"],
+                        request_json=row["request_json"],
+                        reason=reason,
+                        now=now,
+                    ):
+                        connection.execute("ROLLBACK TO pr_update_revalidation")
+                except Exception:
+                    connection.execute("ROLLBACK TO pr_update_revalidation")
+                    raise
+                finally:
+                    connection.execute("RELEASE pr_update_revalidation")
 
     @staticmethod
     def _no_go_watermark(connection: sqlite3.Connection, key: str) -> dict[str, str | None] | None:
@@ -5704,7 +5911,7 @@ class RadarLedger:
             validation_rows = connection.execute(
                 f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
                           i.worktree_path,s.created_at AS dispatched_at,
-                          s.dedupe_key AS followup_digest,
+                          CASE WHEN (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1') THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END AS followup_digest,
                           (SELECT MAX(abandoned.created_at) FROM events abandoned
                            WHERE abandoned.opportunity_key=o.key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
@@ -5718,7 +5925,31 @@ class RadarLedger:
                    )
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
-                     AND s.dedupe_key=d.dedupe_key
+                     AND ((s.dedupe_key=d.dedupe_key
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events build_reserved
+                         WHERE build_reserved.opportunity_key=s.opportunity_key
+                           AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                           AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
+                           AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
+                           AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
+                           AND json_extract(build_reserved.payload_json,'$.resultDigest')=d.dedupe_key
+                           AND build_reserved.id>s.id))
+                     OR ((json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                       AND json_extract(s.payload_json,'$.resultDigest')=d.dedupe_key
+                       AND EXISTS (
+                         SELECT 1 FROM events build_reserved
+                         WHERE build_reserved.opportunity_key=s.opportunity_key
+                           AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                           AND build_reserved.dedupe_key=s.dedupe_key
+                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                           AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
+                           AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
+                           AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
+                           AND json_extract(build_reserved.payload_json,'$.resultDigest')=d.dedupe_key
+                           AND json_extract(s.payload_json,'$.reservationDigest')=build_reserved.dedupe_key
+                           AND s.id>build_reserved.id)))
                      AND json_extract(s.payload_json,'$.threadId')=
                          json_extract(d.payload_json,'$.threadId')
                    JOIN intents i ON i.opportunity_key=o.key
@@ -5746,7 +5977,7 @@ class RadarLedger:
                          AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'VALIDATION_FOLLOWUP_RESULT'
-                         AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=CASE WHEN (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1') THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
@@ -7910,6 +8141,268 @@ class RadarLedger:
         )
         return True
 
+    def record_completed_generated_build_no_progress(
+        self, candidate: dict[str, Any], *, completion: dict[str, Any]
+    ) -> bool:
+        """Retain one proven normal completion whose authenticated result was unchanged."""
+        binding_fields = {
+            "intentId": candidate["intentId"],
+            "threadId": candidate["threadId"],
+            "worktreePath": candidate["worktreePath"],
+        }
+        with self.transaction() as connection:
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=candidate["key"],
+                intent_id=candidate["intentId"],
+                thread_id=candidate["threadId"],
+                worktree_path=candidate["worktreePath"],
+            )
+            opportunity = connection.execute(
+                "SELECT stage FROM opportunities WHERE key=?", (candidate["key"],)
+            ).fetchone()
+            if (
+                binding is None
+                or opportunity is None
+                or opportunity["stage"] != "VALIDATION_PENDING"
+            ):
+                return False
+            require_quarantine_clear(
+                connection,
+                opportunity_key=candidate["key"],
+                operation="completed validation intake",
+            )
+            rows = connection.execute(
+                """SELECT id,event_type,payload_json,created_at FROM events
+                   WHERE opportunity_key=? AND event_type IN (
+                     'TASK_RESULT_VALIDATION_DEFERRED','VALIDATION_FOLLOWUP_RESERVED',
+                     'VALIDATION_FOLLOWUP_SENT','TASK_TURN_DELIVERY_STARTED',
+                     'TASK_CONTEXT_AUTHORITY_BOUND') ORDER BY id""",
+                (candidate["key"],),
+            ).fetchall()
+            events = [(row, json.loads(row["payload_json"])) for row in rows]
+            bound = [
+                (r, p) for r, p in events if all(p.get(k) == v for k, v in binding_fields.items())
+            ]
+            latest = {
+                kind: next(((r, p) for r, p in reversed(bound) if r["event_type"] == kind), None)
+                for kind in (
+                    "TASK_RESULT_VALIDATION_DEFERRED",
+                    "VALIDATION_FOLLOWUP_RESERVED",
+                    "VALIDATION_FOLLOWUP_SENT",
+                )
+            }
+            deferred, reserved, sent = latest.values()
+            delivery = next(
+                (
+                    (r, p)
+                    for r, p in reversed(bound)
+                    if r["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+                    and p.get("deliveryKind") == "validation-followup"
+                    and p.get("reservationDigest") == completion["reservationDigest"]
+                ),
+                None,
+            )
+            authority = next(
+                (
+                    (r, p)
+                    for r, p in reversed(events)
+                    if r["event_type"] == "TASK_CONTEXT_AUTHORITY_BOUND"
+                    and p.get("taskId") == candidate["intentId"]
+                    and p.get("threadId") == candidate["threadId"]
+                ),
+                None,
+            )
+            if (
+                deferred is None
+                or reserved is None
+                or sent is None
+                or delivery is None
+                or authority is None
+                or authority[1].get("contextDigest") != completion["contextDigest"]
+                or deferred[1].get("expiredPublication") is not None
+                or deferred[1].get("resultDigest") != candidate["resultDigest"]
+                or set(deferred[1].get("missing") or [])
+                != {"regression_test_verified", "relevant_tests_green", "independent_review_passed"}
+                or self._normalized_validation_missing(deferred[1].get("missing"))
+                != self._normalized_validation_missing(candidate["missing"])
+                or reserved[1] != completion["reservation"]
+                or reserved[1].get("generatedBuildContract") is not None
+                or reserved[1].get("expiryPromptRevision") is not None
+                or reserved[1].get("resultDigest") != candidate["resultDigest"]
+                or sent[1].get("resultDigest") != candidate["resultDigest"]
+                or sent[0]["id"] != completion["sentEventId"]
+                or not (deferred[0]["id"] < reserved[0]["id"] < sent[0]["id"])
+                or (
+                    sent[1].get("reservationDigest") is not None
+                    and sent[1]["reservationDigest"] != completion["reservationDigest"]
+                )
+                or delivery[1] != completion["delivery"]
+                or not (reserved[0]["id"] < delivery[0]["id"] < sent[0]["id"])
+                or connection.execute(
+                    """SELECT 1 FROM publication_requests WHERE opportunity_key=?
+                       AND thread_id=? AND worktree_path=? LIMIT 1""",
+                    (candidate["key"], candidate["threadId"], candidate["worktreePath"]),
+                ).fetchone()
+                is not None
+            ):
+                return False
+            prior = connection.execute(
+                """SELECT 1 FROM events WHERE opportunity_key=?
+                   AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS' AND dedupe_key=?""",
+                (candidate["key"], candidate["resultDigest"]),
+            ).fetchone()
+            if prior is not None:
+                return False
+            self._event(
+                connection,
+                candidate["key"],
+                "VALIDATION_FOLLOWUP_NO_PROGRESS",
+                candidate["resultDigest"],
+                {
+                    **binding_fields,
+                    "resultDigest": candidate["resultDigest"],
+                    "previousResultDigest": candidate["resultDigest"],
+                    "missing": list(self._normalized_validation_missing(candidate["missing"])),
+                    "progressMarker": deferred[1].get("progressMarker"),
+                    "reason": "COMPLETED_UNCHANGED_GENERATED_BUILD_INPUT",
+                    "generatedBuildCompletion": completion,
+                },
+                iso_z(datetime.now(UTC)),
+            )
+        return True
+
+    def record_completed_review_feedback_no_progress(
+        self, candidate: dict[str, Any], *, completion: dict[str, Any]
+    ) -> bool:
+        """Retain one completed normal turn which did not receive its exact private review."""
+        binding_fields = {
+            "intentId": candidate["intentId"],
+            "threadId": candidate["threadId"],
+            "worktreePath": candidate["worktreePath"],
+        }
+        with self.transaction() as connection:
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=candidate["key"],
+                intent_id=candidate["intentId"],
+                thread_id=candidate["threadId"],
+                worktree_path=candidate["worktreePath"],
+            )
+            opportunity = connection.execute(
+                "SELECT stage FROM opportunities WHERE key=?", (candidate["key"],)
+            ).fetchone()
+            if (
+                binding is None
+                or opportunity is None
+                or opportunity["stage"] != "VALIDATION_PENDING"
+            ):
+                return False
+            require_quarantine_clear(
+                connection,
+                opportunity_key=candidate["key"],
+                operation="completed validation intake",
+            )
+            rows = connection.execute(
+                """SELECT id,event_type,payload_json,created_at FROM events
+                   WHERE opportunity_key=? AND event_type IN (
+                     'TASK_RESULT_VALIDATION_DEFERRED','VALIDATION_FOLLOWUP_RESERVED',
+                     'VALIDATION_FOLLOWUP_SENT','TASK_TURN_DELIVERY_STARTED',
+                     'TASK_CONTEXT_AUTHORITY_BOUND') ORDER BY id""",
+                (candidate["key"],),
+            ).fetchall()
+            events = [(row, json.loads(row["payload_json"])) for row in rows]
+            bound = [
+                (r, p) for r, p in events if all(p.get(k) == v for k, v in binding_fields.items())
+            ]
+            latest = {
+                kind: next(((r, p) for r, p in reversed(bound) if r["event_type"] == kind), None)
+                for kind in (
+                    "TASK_RESULT_VALIDATION_DEFERRED",
+                    "VALIDATION_FOLLOWUP_RESERVED",
+                    "VALIDATION_FOLLOWUP_SENT",
+                )
+            }
+            deferred, reserved, sent = latest.values()
+            delivery = next(
+                (
+                    (r, p)
+                    for r, p in reversed(bound)
+                    if r["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+                    and p.get("deliveryKind") == "validation-followup"
+                    and p.get("reservationDigest") == completion["reservationDigest"]
+                ),
+                None,
+            )
+            authority = next(
+                (
+                    (r, p)
+                    for r, p in reversed(events)
+                    if r["event_type"] == "TASK_CONTEXT_AUTHORITY_BOUND"
+                    and p.get("taskId") == candidate["intentId"]
+                    and p.get("threadId") == candidate["threadId"]
+                ),
+                None,
+            )
+            if (
+                deferred is None
+                or reserved is None
+                or sent is None
+                or delivery is None
+                or authority is None
+                or authority[1].get("contextDigest") != completion["contextDigest"]
+                or deferred[1].get("expiredPublication") is not None
+                or deferred[1].get("resultDigest") != candidate["resultDigest"]
+                or set(deferred[1].get("missing") or []) != {"independent_review_passed"}
+                or self._normalized_validation_missing(deferred[1].get("missing"))
+                != self._normalized_validation_missing(candidate["missing"])
+                or reserved[1] != completion["reservation"]
+                or reserved[1].get("generatedBuildContract") is not None
+                or reserved[1].get("reviewFeedbackContract") is not None
+                or reserved[1].get("expiryPromptRevision") is not None
+                or reserved[1].get("resultDigest") != candidate["resultDigest"]
+                or sent[1].get("resultDigest") != candidate["resultDigest"]
+                or sent[0]["id"] != completion["sentEventId"]
+                or not (deferred[0]["id"] < reserved[0]["id"] < sent[0]["id"])
+                or (
+                    sent[1].get("reservationDigest") is not None
+                    and sent[1]["reservationDigest"] != completion["reservationDigest"]
+                )
+                or delivery[1] != completion["delivery"]
+                or not (reserved[0]["id"] < delivery[0]["id"] < sent[0]["id"])
+                or connection.execute(
+                    """SELECT 1 FROM publication_requests WHERE opportunity_key=?
+                       AND thread_id=? AND worktree_path=? LIMIT 1""",
+                    (candidate["key"], candidate["threadId"], candidate["worktreePath"]),
+                ).fetchone()
+                is not None
+            ):
+                return False
+            prior = connection.execute(
+                """SELECT 1 FROM events WHERE opportunity_key=?
+                   AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS' AND dedupe_key=?""",
+                (candidate["key"], candidate["resultDigest"]),
+            ).fetchone()
+            if prior is not None:
+                return False
+            self._event(
+                connection,
+                candidate["key"],
+                "VALIDATION_FOLLOWUP_NO_PROGRESS",
+                candidate["resultDigest"],
+                {
+                    **binding_fields,
+                    "resultDigest": candidate["resultDigest"],
+                    "previousResultDigest": candidate["resultDigest"],
+                    "missing": list(self._normalized_validation_missing(candidate["missing"])),
+                    "progressMarker": deferred[1].get("progressMarker"),
+                    "reason": "COMPLETED_WITHOUT_CONTROLLER_REVIEW_FEEDBACK",
+                    "reviewFeedbackCorrection": completion,
+                },
+                iso_z(datetime.now(UTC)),
+            )
+        return True
+
     def reconcile_validation_no_progress(self) -> int:
         """Backfill no-progress markers for current validation results."""
 
@@ -8125,6 +8618,14 @@ class RadarLedger:
                     "reviewMarker": review_marker,
                     "reason": reason,
                     "evidenceFingerprint": evidence_fingerprint,
+                    **(
+                        {"reviewFeedbackCorrection": no_progress["reviewFeedbackCorrection"]}
+                        if reason == "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"
+                        and isinstance(no_progress.get("reviewFeedbackCorrection"), dict)
+                        and no_progress["reviewFeedbackCorrection"].get("reviewMarker")
+                        == review_marker
+                        else {}
+                    ),
                 },
                 now,
             )
@@ -8381,6 +8882,42 @@ class RadarLedger:
                 }
             )
             refresh = self.publication_target_base_refresh(candidates[-1])
+            if not candidates[-1].get("expiredPublication"):
+                with self.connect() as connection:
+                    build_rearm = connection.execute(
+                        """SELECT payload_json FROM events WHERE opportunity_key=?
+                           AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                           AND json_extract(payload_json,'$.intentId')=?
+                           AND json_extract(payload_json,'$.threadId')=?
+                           AND json_extract(payload_json,'$.worktreePath')=?
+                           AND json_extract(payload_json,'$.resultDigest')=?
+                           ORDER BY id DESC LIMIT 1""",
+                        (
+                            row["key"],
+                            row["intent_id"],
+                            row["thread_id"],
+                            row["worktree_path"],
+                            candidates[-1]["resultDigest"],
+                        ),
+                    ).fetchone()
+                if build_rearm is not None:
+                    build_payload = json.loads(build_rearm["payload_json"])
+                    correction = build_payload.get("reviewFeedbackCorrection")
+                    if (
+                        build_payload.get("reason") == "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"
+                        and isinstance(correction, dict)
+                        and build_payload.get("reviewMarker") == correction.get("reviewMarker")
+                    ):
+                        candidates[-1].update(
+                            reviewFeedbackContract=REVIEW_FEEDBACK_CONTRACT,
+                            reviewFeedbackCorrection=correction,
+                            _reviewFeedbackLedgerPath=str(self.path),
+                        )
+                    if (
+                        build_payload.get("reviewMarker") == GENERATED_BUILD_CONTRACT
+                        and build_payload.get("reason") == GENERATED_BUILD_REARM_REASON
+                    ):
+                        candidates[-1]["generatedBuildContract"] = GENERATED_BUILD_CONTRACT
             if candidates[-1].get("expiredPublication"):
                 correction = self._expired_validation_correction(candidates[-1])
                 if correction is not None:
@@ -8632,6 +9169,23 @@ class RadarLedger:
                     "attempt": attempt,
                     "reservationDigest": reservation_digest,
                     **(
+                        {
+                            "reviewFeedbackContract": REVIEW_FEEDBACK_CONTRACT,
+                            "reviewFeedbackCorrection": candidate["reviewFeedbackCorrection"],
+                            "reviewFeedbackMarker": candidate["reviewFeedbackCorrection"][
+                                "reviewMarker"
+                            ],
+                        }
+                        if candidate.get("reviewFeedbackContract") == REVIEW_FEEDBACK_CONTRACT
+                        else {}
+                    ),
+                    **(
+                        {"generatedBuildContract": GENERATED_BUILD_CONTRACT}
+                        if candidate.get("generatedBuildContract") == GENERATED_BUILD_CONTRACT
+                        and not candidate.get("expiredPublication")
+                        else {}
+                    ),
+                    **(
                         {"expiredPublication": candidate["expiredPublication"]}
                         if isinstance(candidate.get("expiredPublication"), dict)
                         else {}
@@ -8676,7 +9230,16 @@ class RadarLedger:
                        SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                          AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {_intent_event_binding_clause("i", "s")}
-                         AND s.dedupe_key=CASE WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                         AND s.dedupe_key=CASE
+                           WHEN (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                           THEN json_extract(r.payload_json,'$.reservationDigest')
+                           WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL) OR (
+                           s.id>r.id AND json_extract(s.payload_json,'$.reservationDigest')=
+                               json_extract(r.payload_json,'$.reservationDigest')
+                           AND json_extract(s.payload_json,'$.resultDigest')=
+                               json_extract(r.payload_json,'$.resultDigest')
+                         ))
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
@@ -8726,7 +9289,16 @@ class RadarLedger:
                        JOIN events s ON s.opportunity_key=r.opportunity_key
                         AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                         AND {_intent_event_binding_clause("i", "s")}
-                        AND s.dedupe_key=CASE WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                        AND s.dedupe_key=CASE
+                           WHEN (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                           THEN json_extract(r.payload_json,'$.reservationDigest')
+                           WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL) OR (
+                           s.id>r.id AND json_extract(s.payload_json,'$.reservationDigest')=
+                               json_extract(r.payload_json,'$.reservationDigest')
+                           AND json_extract(s.payload_json,'$.resultDigest')=
+                               json_extract(r.payload_json,'$.resultDigest')
+                         ))
                        WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                          AND json_extract(r.payload_json,'$.threadId')=i.thread_id
                          AND json_extract(r.payload_json,'$.resultDigest')=?
@@ -8766,7 +9338,11 @@ class RadarLedger:
                 row["key"],
                 "VALIDATION_FOLLOWUP_SENT",
                 reservation_payload["reservationDigest"]
-                if reservation_payload.get("expiryPromptRevision")
+                if (
+                    reservation_payload.get("generatedBuildContract") == GENERATED_BUILD_CONTRACT
+                    or reservation_payload.get("reviewFeedbackContract") == REVIEW_FEEDBACK_CONTRACT
+                )
+                or reservation_payload.get("expiryPromptRevision")
                 else result_digest,
                 {
                     "intentId": reservation_payload.get("intentId"),
@@ -8774,8 +9350,27 @@ class RadarLedger:
                     "worktreePath": reservation_payload.get("worktreePath"),
                     "resultDigest": result_digest,
                     **(
+                        {
+                            "reviewFeedbackContract": REVIEW_FEEDBACK_CONTRACT,
+                            "reviewFeedbackMarker": reservation_payload["reviewFeedbackMarker"],
+                        }
+                        if reservation_payload.get("reviewFeedbackContract")
+                        == REVIEW_FEEDBACK_CONTRACT
+                        else {}
+                    ),
+                    **(
+                        {"generatedBuildContract": GENERATED_BUILD_CONTRACT}
+                        if reservation_payload.get("generatedBuildContract")
+                        == GENERATED_BUILD_CONTRACT
+                        else {}
+                    ),
+                    **(
                         {"reservationDigest": reservation_payload["reservationDigest"]}
-                        if reservation_payload.get("expiryPromptRevision")
+                        if reservation_payload.get("generatedBuildContract")
+                        == GENERATED_BUILD_CONTRACT
+                        or reservation_payload.get("reviewFeedbackContract")
+                        == REVIEW_FEEDBACK_CONTRACT
+                        or reservation_payload.get("expiryPromptRevision")
                         else {}
                     ),
                 },
@@ -8797,7 +9392,16 @@ class RadarLedger:
                      SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                        AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                        AND {_intent_event_binding_clause("i", "s")}
-                       AND s.dedupe_key=CASE WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                       AND s.dedupe_key=CASE
+                           WHEN (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                           THEN json_extract(r.payload_json,'$.reservationDigest')
+                           WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL) OR (
+                           s.id>r.id AND json_extract(s.payload_json,'$.reservationDigest')=
+                               json_extract(r.payload_json,'$.reservationDigest')
+                           AND json_extract(s.payload_json,'$.resultDigest')=
+                               json_extract(r.payload_json,'$.resultDigest')
+                         ))
                    )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
@@ -8831,6 +9435,24 @@ class RadarLedger:
                 or row["dedupe_key"],
                 "missing": list(json.loads(row["payload_json"]).get("missing") or []),
                 "reservedAt": row["created_at"],
+                **(
+                    {
+                        "reviewFeedbackContract": REVIEW_FEEDBACK_CONTRACT,
+                        "reviewFeedbackCorrection": json.loads(row["payload_json"])[
+                            "reviewFeedbackCorrection"
+                        ],
+                        "_reviewFeedbackLedgerPath": str(self.path),
+                    }
+                    if json.loads(row["payload_json"]).get("reviewFeedbackContract")
+                    == REVIEW_FEEDBACK_CONTRACT
+                    else {}
+                ),
+                **(
+                    {"generatedBuildContract": GENERATED_BUILD_CONTRACT}
+                    if json.loads(row["payload_json"]).get("generatedBuildContract")
+                    == GENERATED_BUILD_CONTRACT
+                    else {}
+                ),
                 **(
                     {"expiredPublication": json.loads(row["payload_json"])["expiredPublication"]}
                     if isinstance(json.loads(row["payload_json"]).get("expiredPublication"), dict)
@@ -8880,7 +9502,14 @@ class RadarLedger:
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {_intent_event_binding_clause("i", "sent")}
-                         AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
+                         AND (((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL)
+                              AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest'))
+                           OR ((json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                              AND sent.dedupe_key=json_extract(r.payload_json,'$.reservationDigest')
+                              AND sent.id>r.id
+                              AND json_extract(sent.payload_json,'$.reservationDigest')=r.dedupe_key
+                              AND json_extract(sent.payload_json,'$.resultDigest')=
+                                  json_extract(r.payload_json,'$.resultDigest')))
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
@@ -8967,7 +9596,14 @@ class RadarLedger:
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {_intent_event_binding_clause("i", "sent")}
-                         AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
+                         AND (((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL)
+                              AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest'))
+                           OR ((json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                              AND sent.dedupe_key=json_extract(r.payload_json,'$.reservationDigest')
+                              AND sent.id>r.id
+                              AND json_extract(sent.payload_json,'$.reservationDigest')=r.dedupe_key
+                              AND json_extract(sent.payload_json,'$.resultDigest')=
+                                  json_extract(r.payload_json,'$.resultDigest')))
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
@@ -9051,7 +9687,31 @@ class RadarLedger:
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND {_intent_event_binding_clause("i", "s")}
-                     AND s.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                     AND ((s.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events build_reserved
+                         WHERE build_reserved.opportunity_key=s.opportunity_key
+                           AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                           AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
+                           AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
+                           AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
+                           AND json_extract(build_reserved.payload_json,'$.resultDigest')=json_extract(d.payload_json,'$.resultDigest')
+                           AND build_reserved.id>s.id))
+                     OR ((json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                       AND json_extract(s.payload_json,'$.resultDigest')=json_extract(d.payload_json,'$.resultDigest')
+                       AND EXISTS (
+                         SELECT 1 FROM events build_reserved
+                         WHERE build_reserved.opportunity_key=s.opportunity_key
+                           AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                           AND build_reserved.dedupe_key=s.dedupe_key
+                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                           AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
+                           AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
+                           AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
+                           AND json_extract(build_reserved.payload_json,'$.resultDigest')=json_extract(d.payload_json,'$.resultDigest')
+                           AND json_extract(s.payload_json,'$.reservationDigest')=build_reserved.dedupe_key
+                           AND s.id>build_reserved.id)))
                      AND json_extract(s.payload_json,'$.threadId')=
                          json_extract(d.payload_json,'$.threadId')
                    WHERE o.stage IN (
@@ -9085,7 +9745,7 @@ class RadarLedger:
                          AND {_intent_event_binding_clause("i", "recovery")}
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'VALIDATION_FOLLOWUP_RESULT'
-                         AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=CASE WHEN (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1') THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END
                      )
                    ORDER BY s.created_at""",
                 (cutoff,),
@@ -11398,7 +12058,13 @@ class RadarLedger:
         target_base_bound: bool = False,
         evidence_raw_base64: str | None = None,
         replacement_of_request_id: str | None = None,
+        followup_wake_digest: str | None = None,
     ) -> dict[str, Any]:
+        if followup_wake_digest is not None and (
+            not isinstance(followup_wake_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", followup_wake_digest) is None
+        ):
+            raise LedgerError("publication follow-up wake digest is invalid")
         now = iso_z(datetime.now(UTC))
         request_identity = [
             issue_url,
@@ -11539,7 +12205,8 @@ class RadarLedger:
                     {
                         "existingPrUrl": previous_publication["pr_url"],
                         "previousCommitSha": previous_commit_sha,
-                        "followupWakeDigest": followup["wake_digest"] if followup else None,
+                        "followupWakeDigest": followup_wake_digest
+                        or (followup["wake_digest"] if followup else None),
                     }
                 )
             if replacement_source_request is not None:
@@ -13881,7 +14548,7 @@ class RadarLedger:
         reason: str,
         now: str,
     ) -> bool:
-        if reason not in PR_UPDATE_REARM_REASONS:
+        if reason not in PR_UPDATE_REARM_REASONS | PR_UPDATE_REVALIDATION_REASONS:
             return False
         try:
             request = json.loads(request_json)
@@ -13889,6 +14556,16 @@ class RadarLedger:
             return False
         if request.get("publicationKind") != "PR_UPDATE":
             return False
+        if reason in PR_UPDATE_REVALIDATION_REASONS:
+            source = connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=? AND opportunity_key=?",
+                (request_id, key),
+            ).fetchone()
+            if (
+                source is None
+                or _pr_update_revalidation_reason(connection, row=source, now=now) != reason
+            ):
+                return False
         connection.execute(
             """UPDATE publication_permits SET status='EXPIRED',updated_at=?
                WHERE request_id=? AND status='ACTIVE'""",
@@ -13925,13 +14602,29 @@ class RadarLedger:
                 and barrier_payload.get("rearmAfter")
             )
         followup = connection.execute(
-            """SELECT pr_url,head_sha,wake_digest,checked_at FROM pr_followups
+            """SELECT pr_url,head_sha,wake_digest,checked_at,intent_id,thread_id,worktree_path
+               FROM pr_followups
                WHERE opportunity_key=?""",
             (key,),
         ).fetchone()
         if followup is None or request.get("existingPrUrl") != followup["pr_url"]:
             return False
         if reason != "EXISTING_PR_HEAD_DRIFT" and previous_commit != followup["head_sha"]:
+            return False
+        if reason in PR_UPDATE_REVALIDATION_REASONS and (
+            followup["intent_id"] != intent_id
+            or followup["thread_id"] != thread_id
+            or not _resolved_path_equal(str(followup["worktree_path"] or ""), worktree_path)
+            or connection.execute(
+                """SELECT 1 FROM publication_requests published
+                   JOIN publication_permits permit ON permit.request_id=published.request_id
+                   WHERE published.opportunity_key=?
+                     AND published.thread_id=? AND published.worktree_path=?
+                     AND permit.status='CONSUMED' AND permit.pr_url=?""",
+                (key, thread_id, worktree_path, followup["pr_url"]),
+            ).fetchone()
+            is None
+        ):
             return False
         request_row = connection.execute(
             """SELECT thread_id,worktree_path,status,reason FROM publication_requests
@@ -15484,6 +16177,24 @@ class RadarLedger:
                         followup_identity[2],
                     ),
                 )
+                if (
+                    required
+                    and previous is not None
+                    and all(incoming_identity)
+                    and incoming_identity == previous_identity == followup_identity
+                    and previous["pr_url"] == pr_url
+                    and previous["head_sha"] == head_sha == binding["commitSha"]
+                ):
+                    self._refresh_pr_followup_rebind_quarantine(
+                        connection,
+                        key=key,
+                        identity=followup_identity,
+                        pr_url=pr_url,
+                        head_sha=head_sha,
+                        wake_digest=str(wake_digest or ""),
+                        checked_at=checked_at,
+                        now=now,
+                    )
                 inserted += int(previous is None)
                 updated += int(previous is not None)
         return {
@@ -15492,6 +16203,141 @@ class RadarLedger:
             "updated": updated,
             "staleHeadSuppressed": stale_head_suppressed,
         }
+
+    def _refresh_pr_followup_rebind_quarantine(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        key: str,
+        identity: tuple[str, str, str],
+        pr_url: str,
+        head_sha: str,
+        wake_digest: str,
+        checked_at: str,
+        now: str,
+    ) -> None:
+        """Keep one authenticated parent-drift gate attached to its fresh snapshot."""
+
+        gates = connection.execute(
+            "SELECT * FROM task_quarantines WHERE opportunity_key=? AND status='ACTIVE'",
+            (key,),
+        ).fetchall()
+        if len(gates) != 1 or gates[0]["reason"] != "PR_FOLLOWUP_REBIND_REQUIRED":
+            return
+        gate = gates[0]
+        try:
+            payload = json.loads(gate["payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            return
+        if (
+            not isinstance(payload, dict)
+            or set(payload)
+            != {
+                "previousWakeDigest",
+                "replacementWakeDigest",
+                "expectedPreparedHeadSha",
+                "observedHeadSha",
+                "reason",
+            }
+            or payload.get("reason") != "PR_FOLLOWUP_REBIND_REQUIRED"
+            or any(
+                not re.fullmatch(r"[0-9a-f]{64}", str(payload.get(field) or ""))
+                for field in ("previousWakeDigest", "replacementWakeDigest")
+            )
+            or any(
+                not re.fullmatch(r"[0-9a-f]{40}", str(payload.get(field) or ""))
+                for field in ("expectedPreparedHeadSha", "observedHeadSha")
+            )
+            or payload["expectedPreparedHeadSha"] == payload["observedHeadSha"]
+            or gate["dedupe_key"] != sha256_text(canonical_json(payload))
+            or not re.fullmatch(r"[0-9a-f]{64}", wake_digest)
+            or payload["replacementWakeDigest"] == wake_digest
+            or parse_time(checked_at) <= parse_time(gate["created_at"])
+        ):
+            return
+        origin = connection.execute(
+            """SELECT payload_json FROM events WHERE opportunity_key=?
+               AND event_type='PR_FOLLOWUP_REBIND_REQUIRED' AND dedupe_key=?
+               AND created_at=?""",
+            (key, payload["replacementWakeDigest"], gate["created_at"]),
+        ).fetchone()
+        if origin is None:
+            return
+        try:
+            authenticated_payload = json.loads(origin["payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            return
+        if authenticated_payload != payload:
+            return
+        preparations = connection.execute(
+            """SELECT payload_json FROM events WHERE opportunity_key=?
+               AND event_type='PR_FOLLOWUP_PREPARATION_BOUND' AND dedupe_key=?
+               AND created_at<?""",
+            (key, payload["previousWakeDigest"], gate["created_at"]),
+        ).fetchall()
+        matching = []
+        for preparation in preparations:
+            try:
+                source = json.loads(preparation["payload_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(source, dict):
+                continue
+            snapshot = source.get("snapshot")
+            bound = _resolve_event_intent_binding(connection, opportunity_key=key, payload=source)
+            if (
+                bound is not None
+                and (bound["intent_id"], bound["thread_id"], bound["worktree_path"]) == identity
+                and isinstance(snapshot, dict)
+                and snapshot.get("prUrl") == pr_url
+                and snapshot.get("headSha") == head_sha
+                and snapshot.get("wakeDigest") == payload["previousWakeDigest"]
+                and snapshot.get("preparedHeadSha") == payload["expectedPreparedHeadSha"]
+            ):
+                matching.append(source)
+        if len(matching) != 1:
+            return
+        replacement = payload | {"replacementWakeDigest": wake_digest}
+        replacement_key = sha256_text(canonical_json(replacement))
+        created = record_quarantine(
+            connection,
+            opportunity_key=key,
+            reason="PR_FOLLOWUP_REBIND_REQUIRED",
+            dedupe_key=replacement_key,
+            payload=replacement,
+            created_at=now,
+        )
+        if created["status"] != "ACTIVE":
+            raise LedgerError("PR follow-up replacement quarantine is not active")
+        self._event(connection, key, "PR_FOLLOWUP_REBIND_REQUIRED", wake_digest, replacement, now)
+        evidence = {
+            "revalidated": True,
+            "repair": "PR_FOLLOWUP_REBIND_SNAPSHOT_REFRESHED",
+            "previousReplacementWakeDigest": payload["replacementWakeDigest"],
+            "replacementWakeDigest": wake_digest,
+            "replacementDedupeKey": replacement_key,
+            "payloadDigest": sha256_json(payload),
+        }
+        if (
+            clear_quarantine_exact(
+                connection,
+                opportunity_key=key,
+                reason="PR_FOLLOWUP_REBIND_REQUIRED",
+                dedupe_key=gate["dedupe_key"],
+                evidence=evidence,
+                cleared_at=now,
+            )
+            != 1
+        ):
+            raise LedgerError("PR follow-up source quarantine changed during refresh")
+        self._event(
+            connection,
+            key,
+            "TASK_QUARANTINE_CLEARED",
+            f"followup-refresh:{gate['dedupe_key']}:{wake_digest}",
+            evidence | {"reason": "PR_FOLLOWUP_REBIND_REQUIRED", "dedupeKey": gate["dedupe_key"]},
+            now,
+        )
 
     def suspend_pr_followups(self, *, source_generated_at: str, reason: str) -> list[str]:
         """Stop task wakes when their verified cloud snapshot is too old."""
@@ -15539,7 +16385,7 @@ class RadarLedger:
     ) -> bool:
         if (
             request_row["status"] != "BLOCKED"
-            or request_row["reason"] not in PR_UPDATE_REARM_REASONS
+            or request_row["reason"] not in PR_UPDATE_REARM_REASONS | PR_UPDATE_REVALIDATION_REASONS
         ):
             return False
         try:
@@ -15551,6 +16397,13 @@ class RadarLedger:
             or request.get("requestId") != request_row["request_id"]
             or request.get("publicationKind") != "PR_UPDATE"
             or request.get("existingPrUrl") != followup_pr_url
+        ):
+            return False
+        if request_row["reason"] in PR_UPDATE_REVALIDATION_REASONS and (
+            _pr_update_revalidation_reason(
+                connection, row=request_row, now=iso_z(datetime.now(UTC))
+            )
+            != request_row["reason"]
         ):
             return False
         event_rows = connection.execute(
@@ -17516,8 +18369,16 @@ class RadarLedger:
                        WHERE sent.opportunity_key=marker.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {sent_binding}
-                         AND sent.dedupe_key=
-                             json_extract(marker.payload_json,'$.resultDigest')
+                         AND sent.dedupe_key=CASE
+                           WHEN (json_extract(marker.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(marker.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1')
+                           THEN json_extract(marker.payload_json,'$.reservationDigest')
+                           ELSE json_extract(marker.payload_json,'$.resultDigest') END
+                         AND ((json_extract(marker.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(marker.payload_json,'$.reviewFeedbackContract') IS NULL) OR (
+                           json_extract(sent.payload_json,'$.reservationDigest')=
+                               json_extract(marker.payload_json,'$.reservationDigest')
+                           AND json_extract(sent.payload_json,'$.resultDigest')=
+                               json_extract(marker.payload_json,'$.resultDigest')
+                         ))
                          AND json_extract(sent.payload_json,'$.threadId')=
                              json_extract(marker.payload_json,'$.threadId')
                          AND sent.id>=CASE
@@ -20448,11 +21309,57 @@ class RadarLedger:
                             binding=binding,
                             dedupe_key=(
                                 str(candidate_row["dedupe_key"])
-                                if json.loads(candidate_row["payload_json"]).get(
+                                if (
+                                    json.loads(candidate_row["payload_json"]).get(
+                                        "generatedBuildContract"
+                                    )
+                                    == GENERATED_BUILD_CONTRACT
+                                    or json.loads(candidate_row["payload_json"]).get(
+                                        "reviewFeedbackContract"
+                                    )
+                                    == REVIEW_FEEDBACK_CONTRACT
+                                )
+                                or json.loads(candidate_row["payload_json"]).get(
                                     "expiryPromptRevision"
                                 )
                                 else delivery_token
                             ),
+                            after_id=int(candidate_row["id"])
+                            if (
+                                json.loads(candidate_row["payload_json"]).get(
+                                    "generatedBuildContract"
+                                )
+                                == GENERATED_BUILD_CONTRACT
+                                or json.loads(candidate_row["payload_json"]).get(
+                                    "reviewFeedbackContract"
+                                )
+                                == REVIEW_FEEDBACK_CONTRACT
+                            )
+                            else None,
+                            payload_field="reservationDigest"
+                            if (
+                                json.loads(candidate_row["payload_json"]).get(
+                                    "generatedBuildContract"
+                                )
+                                == GENERATED_BUILD_CONTRACT
+                                or json.loads(candidate_row["payload_json"]).get(
+                                    "reviewFeedbackContract"
+                                )
+                                == REVIEW_FEEDBACK_CONTRACT
+                            )
+                            else None,
+                            payload_value=reservation_digest
+                            if (
+                                json.loads(candidate_row["payload_json"]).get(
+                                    "generatedBuildContract"
+                                )
+                                == GENERATED_BUILD_CONTRACT
+                                or json.loads(candidate_row["payload_json"]).get(
+                                    "reviewFeedbackContract"
+                                )
+                                == REVIEW_FEEDBACK_CONTRACT
+                            )
+                            else None,
                         )
                         and not bound_event_exists(
                             connection,
