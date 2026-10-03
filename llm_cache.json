@@ -7157,6 +7157,38 @@
     ],
     "why": "Issue provides a clear root cause: schema validation errors in structured output during context compression are not retried, aborting the agent. Reproduction steps and expected behavior are concrete, with code anchors and a regression test plan. Existing PRs overlap semantically but do not directly address this bug, so the contribution remains actionable."
   },
+  "0f95717fa7136c0f41e7dda82d434a37029e128bf9875f50ca69ad492b0c57e9": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER with gate HUMAN_REVIEW while actionability_evidence reports needs_confirmation=false and design_confirmation=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "libs/prebuilt/langgraph/prebuilt/chat_agent_executor.py: handle BaseTool/StructuredTool instances in bound_tools before dict access",
+      "add regression test covering pre-bound BaseTool in model.kwargs['tools']"
+    ],
+    "risks": [
+      "PR #8819 may already cover the same code path, risking duplicate work",
+      "Changing _should_bind_tools behavior could alter tool-binding decisions for existing dict-shaped tool configs"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's minimal snippet calling _should_bind_tools on a RunnableBinding whose kwargs['tools'] contains a StructuredTool; assert no AttributeError and correct bound-tool name detection",
+      "Run targeted prebuilt chat_agent_executor unit tests"
+    ],
+    "unknowns": [
+      "Whether an assignee is required before contributing (policy status needs_assignment, no assignees)",
+      "Whether PR #8819 already fixes or conflicts with this root cause"
+    ],
+    "why": "Issue provides a clear traceback and root cause in _should_bind_tools assuming dict-shaped bound tools, but the submission policy is needs_assignment and the candidate has no assignee, which is a materially blocking unknown for whether code work is actionable. Additionally, PR #8819 shows semantic overlap on create_react_agent and pregel/main.py requiring manual comparison before any duplicate work."
+  },
   "0faf4ca7c6e804935aece2a5de8ca8de47bfe01257087f3e3a9cc219f292c01f": {
     "confidence": 0.85,
     "contradictions": [
@@ -10689,6 +10721,40 @@
       "Whether maintainers want the prompt bullet restored versus a new setting (not blocking; triage recommends the prompt change)."
     ],
     "why": "Triage evidence confirms the shipped RECAP_SYSTEM_PROMPT lacks the language-matching bullet that the design doc says should be present, and the default 'auto' path injects only a soft hint against an English prompt/example, so English output is expected. The remaining gap is a concrete, minimal prompt change in packages/core/src/services/sessionRecap.ts, with a clear reproduction (non-English session + recap) and a regression path via sideQuery/sessionRecap tests."
+  },
+  "17a5b9e707e74978c0cbf3fbc7f812cdc7cb0829e498ee338bc56f9fa1c05e94": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter reports zero usage data for llama.cpp connections, but collaborator could not reproduce on latest dev and observed correct token counts from `timings` in both single-model and router mode",
+      "Reporter states two related issues were closed as fixed but still fails for them, without a current-version reproduction"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Analytics/usage extraction path for OpenAI-compatible streaming responses (timings/usage parsing)",
+      "Possibly request-side stream_options include_usage handling for OpenAI-compatible connections"
+    ],
+    "risks": [
+      "Fixing a non-reproducible issue may add unnecessary fallback estimation logic",
+      "Unmarked estimated token counts could pollute analytics if a fallback is added without clear labeling"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on latest dev with the reporter's exact llama-server build and router config; capture the final `data:` stream chunk to confirm presence/absence of `timings` and `usage`",
+      "Add a regression test feeding a streamed llama.cpp-style response with `timings` (and one without) through the usage extraction path and assert analytics token counts"
+    ],
+    "unknowns": [
+      "Whether the reporter is on the latest dev/llama.cpp build where the collaborator's reproduction succeeds",
+      "The actual final streamed chunk from the reporter's llama-server (presence of `timings`/`usage`)",
+      "Whether the failure is version-specific, build-specific, or a genuine parsing gap in a specific code path"
+    ],
+    "why": "The reporter's symptom (no analytics usage for llama.cpp OpenAI-compatible connections) is contradicted by a collaborator's reproduction on latest dev showing token usage recorded via llama-server's `timings` object, including router mode and both provider settings. The reporter's own follow-up says previously-fixed related issues still don't work for them, but no fresh reproduction on current versions or stream payload is provided. Root cause is therefore unresolved: it may be a stale-version issue, a specific llama.cpp build/config, or a genuine parsing gap, and the supplied evidence does not determine which."
   },
   "17aaed2e5d362f7ab569b036fbaae67139cad3c456a048182fe3460d34f7a492": {
     "confidence": 0.85,
@@ -27844,6 +27910,43 @@
       "Whether related issue/PR already covers this bug"
     ],
     "why": "Issue reports a Triton illegal memory access in Qwen3.5 with vLLM 0.23.0, but root cause is unconfirmed; maintainer asked to try latest release, and related issue/PR lookup timed out, so duplicate coverage cannot be excluded."
+  },
+  "3accdb60eb47ae05dc349b511e3fe164e8c058bb15250259dc951f544304de20": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims streaming reasoning path returns convert_ids_to_tokens output, but contributor audit and in-process simulation show no such call exists in vllm/entrypoints, vllm/parser, or vllm/reasoning",
+      "algorithm_evidence lists distributed_training and numerics_quantization mechanisms, but the issue describes a detokenization/parser bug with no distributed or quantization component"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/reasoning/deepseek_r1_reasoning_parser.py (only if a real defect is confirmed)",
+      "vllm/entrypoints/openai/chat_completion/serving.py (streaming delta path)"
+    ],
+    "risks": [
+      "Root cause may be a deployment-specific tokenizer shim (LlamaTokenizerFast vs byte-level BPE, huggingface/transformers#49252) rather than a vLLM bug",
+      "Open PR #59748 may already cover the same code path, making a new contribution duplicative",
+      "Algorithm evidence (distributed_training, numerics_quantization) is not grounded in the issue text"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the contributor's in-process repro script against the reporter's exact model dir and transformers version to confirm whether stock code emits glyphs",
+      "Add a regression test that streams CJK reasoning tokens through DeepSeekR1ReasoningParser and asserts byte-exact UTF-8 reconstruction",
+      "Compare against open PR #59748 to determine whether it already fixes the same root cause"
+    ],
+    "unknowns": [
+      "Whether the reporter's deployment uses a modified or third-party tokenizer/parser path that bypasses detokenization",
+      "Whether PR #59748 already resolves the same root cause and would make a new fix redundant",
+      "Whether the reporter's local /models/deepseek tokenizer files trigger the separate LlamaTokenizerFast shim bug"
+    ],
+    "why": "The issue reports raw byte-level BPE glyphs in streaming reasoning deltas, but the supplied contributor analysis (he-yufeng) shows stock v0.21.0 cannot produce this signature: the parser only slices already-detokenized delta_text, and in-process simulation of the exact serving chain reconstructs byte-exact clean output. The reporter's own control experiments (clean content, clean non-streaming) indicate the detokenizer output is clean, so the root cause is likely in the reporter's deployment, not vLLM. Additionally, PR #59748 semantically overlaps the same code path (deepseek_r1_reasoning_parser.py, byte_level) and is open, so duplicate coverage is unresolved. The candidate's algorithm_evidence claims distributed_training/numerics_quantization mechanisms, which are not supported by the issue text (no tensor parallel, no quantization, no distributed invariant involved)."
   },
   "3ad4589f086d91ec6a521c23ee805d747a1ca96ec982c4c30624161af109c0e7": {
     "confidence": 0.85,
@@ -64491,6 +64594,35 @@
     ],
     "why": "Issue reports a reproducible distributed-training hang with all ranks spinning at 100% util and low power, consistent with a collective desync. Contributor identifies root cause as per-rank sampling divergence in DSPARK leading to divergent batch composition and NCCL shape mismatch. A concrete fix PR #33614 is referenced, and the issue includes detailed logs, environment, and a willingness to run bisection experiments, providing a clear validation path."
   },
+  "83546a712f2fb807ee21184cf3086aa1f3d9cd12be45f33fb900b15e1d82b20f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body proposes a fix while open PR #44320 already implements the same model_id-first attribution on the same file"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/health_endpoints/_health_endpoints.py: attribute health check results by model_id before falling back to litellm_params.model mapping"
+    ],
+    "risks": [
+      "PR #44320 may already cover the fix, making a new implementation redundant",
+      "Fallback behavior for endpoints lacking model_id must preserve prior semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test calling _aggregate_health_check_results with two deployments sharing litellm_params.model but different model_id, asserting each gets its own healthy/unhealthy counts and error_message"
+    ],
+    "unknowns": [
+      "Whether PR #44320 is technically complete or will be merged, which determines if independent implementation space exists"
+    ],
+    "why": "The issue itself is a well-evidenced, concrete bug with a clear root cause in _aggregate_health_check_results and a reproducible test, but the supplied open-PR assessment shows PR #44320 already directly references this issue, overlaps the same code path (litellm/proxy/health_endpoints/_health_endpoints.py), and implements the same model_id-first attribution fix. The duplicate status is human_review_required, so whether independent implementation space remains is unresolved."
+  },
   "835f97b5e22869caf5d3c47d96886d2316c46873c590e74054803ba3a251feb5": {
     "confidence": 0.8,
     "contradictions": [
@@ -73776,6 +73908,45 @@
       "Whether maintainers consider the remaining prefill investigation an actionable code change"
     ],
     "why": "The issue reports an SM110 illegal memory access in Qwen GDN prefill warmup, and a commenter proposes a concrete root cause (SM110 missing from FUSED_GDN_DECODE_ARCHS in CMakeLists.txt) plus a workaround (VLLM_GDN_DECODE_KERNEL=triton). However, a contributor states the build gap is already addressed by merged PR #53835 and that the prefill warmup traceback may be a separate follow-up; the supplied duplicate assessment is 'human_review_required' with no confirmed direct coverage. Whether the reported prefill failure is already fixed on main or remains an actionable code change is therefore unresolved."
+  },
+  "9538131c17636184a635b9a41ba5720e65b5564b470a8efcfa4790332d231c5c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Contributor comments disagree on classification: one routes auto-fixable, another swaps to needs-human citing API contract decisions",
+      "PR #15592 semantically overlaps (api_chat_slots, store_unavailable) but references_issue=false and its body excludes the member-identity refusal and 503 code"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/dashboard/chat_handlers.py: validate/resolve agent before get_or_create_slot and refuse unresolved name-only agents",
+      "src/kiro_crew/dashboard/chat_handlers.py: stop passing an unresolved requested name to resolve_member_execution; defer slot.agent_kind write until selection succeeds",
+      "src/kiro_crew/dashboard/state.py: add a slot-removal seam and roll back newborn slots on post-publication failure before the suspend_slots_push flush",
+      "src/kiro_crew/dashboard/handlers/memory.py: classify selection/identity failures as 4xx instead of 503 store_unavailable"
+    ],
+    "risks": [
+      "Changing the deliberate keep-name-verbatim legacy path to a 409 refusal is a behavior change for existing callers",
+      "Adding a project field to the create body is new public API surface",
+      "A second fix may collide with PR #15592's slot-rollback rewrite if it lands first",
+      "Rollback implemented after the suspension flush would still publish the half-created slot"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Handler test: POST /api/chat/slots {\"name\":\"ghost\",\"agent\":\"project-only-agent\"} as owner returns 4xx and leaves state._slots unchanged with no broadcast frame",
+      "Regression test: injected failure after get_or_create_slot leaves state._slots unchanged and broadcasts nothing (verifies rollback ordering vs suspend_slots_push exit)",
+      "Positive test: project-agent create with a project scope returns 200 with agent_kind != member and a spawnable session"
+    ],
+    "unknowns": [
+      "Whether the repository requires assignment before work (policy needs_assignment, no assignee)",
+      "Whether PR #15592 or #13335 already covers the ghost-slot rollback root cause",
+      "Maintainer decision on 409 refusal semantics, project field, and memory-store binding for project agents"
+    ],
+    "why": "The issue provides an unusually detailed root-cause chain (project-scoped agent resolution missing at create time, slot published before validation, unresolved name fed to resolve_member_execution, broad except mapped to 503 store_unavailable, no rollback), and a contributor comment confirms reproduction on main. However, the supplied evidence contains materially blocking unknowns: the submission policy is needs_assignment with assignmentRequired=true and no assignee, and the open-PR assessment flags semantic overlap requiring review (PR #15592 'run slot creation as one transaction' and PR #13335) with no direct issue linkage, so duplicate/coverage is unresolved. Maintainer comments also state the remaining work is API contract decisions (409 refusal semantics, project field, memory-store binding), which are not derivable edits."
   },
   "95476a4b1f53da1f9a6b572f774f1ba1e6f2ac0def314b316b137d0e95283fd2": {
     "confidence": 0.8,
@@ -84472,6 +84643,40 @@
     ],
     "why": "Issue reports a concrete multimodal conversion failure with a clear reproduction command and traceback. A recent comment identifies the root cause as outdated code in v0.14.1, fixed upstream by PR #32605, which changed the model spec mechanism and flag name. This makes the issue actionable as a regression test or documentation update, though the fix may already be merged."
   },
+  "ac4cb9c2d2af070633363bb03a77ad8a20121b58879281e329552309e9da3664": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue says #7822 adds a conservative rejection guard and converts the repro into a passing rejection test, while also stating support for executing the configuration remains open — unclear whether the remaining work is implementation or already resolved by the guard"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "MFSDP v2 backward hook timing / frozen-weight resharding logic",
+      "tests/unit_tests/distributed/mfsdp_v2/test_fully_shard.py regression coverage"
+    ],
+    "risks": [
+      "PR #7822 may already cover the root cause with a rejection guard, making further code work redundant",
+      "Distinguishing a genuine mathematical/semantic error from hook-timing behavior requires fixed seed, tolerance, and multi-GPU hardware",
+      "CUDA illegal memory access risk if the saved-tensor guard is removed without a correct fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the documented 2-rank repro at commit 1b2ef3b18eed64a4cdba349e1dcbbfea1cc8aea1 and confirm the 'Frozen weight was resharded before backward consumed it' failure",
+      "After any change, verify the nested trainable linear's weight gradient is produced without accessing released storage, and run the full MFSDP v2 suite on 2 GPUs"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the rejection guard in #7822 the intended resolution or expect full execution support",
+      "Whether any other open PR (e.g., #7815) already addresses the same root cause",
+      "Exact expected behavior for the frozen-weight-with-non-grad-inputs configuration beyond rejection"
+    ],
+    "why": "The issue describes a concrete MFSDP v2 correctness bug (frozen weights resharded before backward consumes them) with a reproduction commit and command, but the supplied evidence shows PR #7822 already adds a conservative rejection guard and converts the repro into a passing rejection test. The issue itself states support for executing the configuration remains open, so the actionable code work is ambiguous: it is unclear whether the remaining task is to implement full support or whether the guard is the accepted resolution. This unresolved duplicate/coverage question is materially blocking."
+  },
   "ac553920bd412a17a26482b4718dff959c811094b3d3fdd52c4485e5bcb18249": {
     "confidence": 0.8,
     "contradictions": [
@@ -93441,6 +93646,44 @@
     ],
     "why": "Issue provides a concrete, reproducible bug: build_context normalizes memory:// URIs through generate_permalink(), which rewrites explicitly-set permalinks (underscores/camelCase) and silently returns zero results, while the literal path works. Root cause is clearly identified in the service layer with a minimal repro and expected/actual outputs. No open PR or issue directly covers this; the three merged PRs only share the build_context keyword and do not address permalink normalization."
   },
+  "bedeb8c24f8afeeb100219412009cb7ae22ea04a6b8c182b00203d673de04655": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims command 'Continue: Open config.json' opens settings.json, but comment states current command is 'Continue: Open Settings' and no redirect was reproduced"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/config-yaml/src/schemas/mcp/json.ts",
+      "ConfigHandler.openConfigProfile",
+      "openEditorAndRevealRange error handling and polling cleanup"
+    ],
+    "risks": [
+      "Fixing the file-opening hang may not address the reported settings.json redirection or config error loop",
+      "Without reproduction details, the fix could target the wrong path",
+      "Behavior changes in shared editor-opening helper may affect other callers"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression tests for openEditorAndRevealRange when openTextDocument rejects",
+      "Add regression tests for showTextDocument rejection releasing the opening flag",
+      "Add test asserting polling intervals are cleared on success and failure"
+    ],
+    "unknowns": [
+      "Exact Continue and VS Code versions",
+      "Whether the issue occurs in local or remote window",
+      "Full config file path",
+      "Config-loading error from Continue output channel",
+      "Redacted config containing Ollama model entry"
+    ],
+    "why": "The issue reports a config error loop and settings.json redirection, but the supplied evidence shows no reproduction, no logs, and no confirmed root cause for the reported redirection. The only concrete finding is a separate unhandled-rejection/hang in openEditorAndRevealRange, which does not establish the reported bug's root cause or a validation path for the claimed behavior."
+  },
   "beecc287bc9f8cdb13af4d81a38799af1eeea85a3668d8ca65e47ed566c2f268": {
     "confidence": 0.7,
     "contradictions": [],
@@ -98920,6 +99163,44 @@
       "Whether the divergence persists on the latest vLLM version with the suggested fix applied."
     ],
     "why": "Issue provides a concrete greedy-equivalence failure with reproducible commands, expected/actual token divergence at a fixed position, and multiple independent reports isolating the problem to speculative verification numerical paths or state handling. The evidence includes a clear validation path via logit-level A/B and FP32 comparisons, and the issue is algorithmically relevant to LLM inference correctness."
+  },
+  "c9b4ffda3869faff36055f56d47be9d30fda782ea93d76363908299aa75a44af": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue provides a detailed repro and candidate causes",
+      "open_pr_assessment reports semantic overlap with PR #59543 but no direct code overlap or issue reference"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Identify and fix the non-deterministic kernel in the multi-sequence path (candidate: Triton fused MoE default config on sm_120, GDN chunked prefill varlen, or FA2 varlen)",
+      "Add a numerical regression test asserting run-to-run determinism for identical batches"
+    ],
+    "risks": [
+      "Root cause not isolated; fix may target the wrong kernel",
+      "Existing PR #59543 has semantic overlap and may already cover part of the path",
+      "Repository policy requires AI disclosure; automated public action is blocked",
+      "Distinguishing genuine numerical bug from expected floating-point non-determinism requires careful baseline control"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied repro_upstream.py on stock vLLM 0.30.0 with Qwen3.6-35B-A3B-FP8 and confirm batch2_repeat > 0",
+      "Bisect by disabling each candidate kernel (e.g., force a deterministic MoE config, switch GDN prefill backend, disable FA2 varlen) to isolate the source",
+      "Add a regression test that scores the same batch twice and asserts max |Δ logprob| == 0 within tolerance"
+    ],
+    "unknowns": [
+      "Which kernel is actually non-deterministic between identical runs",
+      "Whether PR #59543 already addresses the same code path",
+      "Whether the repository's AI disclosure policy permits the required contribution workflow"
+    ],
+    "why": "Issue reports a concrete, reproducible numerical non-determinism in vLLM's multi-sequence path for Qwen3.6-35B-A3B (hybrid GDN + MoE), with a minimal upstream repro and measured deltas. However, the root cause is explicitly unresolved: the reporter lists three candidate kernels (Triton fused MoE, GDN chunked prefill over varlen batches, FA2 varlen) and cannot separate them. The supplied evidence also flags a semantic-overlap PR (#59543) that requires manual comparison, and a policy/disclosure conflict (ai_disclosure_conflict) that blocks automated public action. These are materially blocking unknowns for deciding whether a specific code fix is actionable."
   },
   "c9c0ce64d75ea5fdc88037cd7e48ab8d6b73241671c6bc2fb39bb767291f54ec": {
     "confidence": 0.72,
@@ -107288,6 +107569,30 @@
       "Whether #1448/#1440 already cover the same doc-vs-CLI mismatches"
     ],
     "why": "Issue documents concrete, reproducible doc-vs-CLI mismatches with exact file:line anchors, executed evidence, and acceptance criteria. Remaining work (8 doc spellings, decontamination wording, guard generalization) is actionable; the UI plugin registry has an explicit maintainer ruling pending but is separable and does not block the rest."
+  },
+  "d9850c81f1f17fccf83e593934d856435ed503053d727ca59dcfbcbfd27c2909": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Reporter could not validate 2.2.4 due to EAGAIN startup crash, while another commenter validated 2.2.4 green on a clean environment; the discrepancy is explained by host thread/pids limits, not by the fix."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "The reporter's 2.2.4 startup failure (pthread_create EAGAIN) is an environment/resource-limit issue, not a code regression, and does not reopen the OOM bug."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Upgrade gateway image to 2.2.4 and re-run the direct POST initialize repro; expect HTTP 200 with no panic (already demonstrated by pilichoumao)."
+    ],
+    "unknowns": [],
+    "why": "Maintainer (johnlanni) identified the root cause as an Envoy/Go-filter cgo ABI mismatch, fixed by commit 152f14b and released in 2.2.4. An independent commenter reproduced 2.2.3 red / 2.2.4 green on the same stack, confirming the fix. The crash is already covered by a shipped fix, so no new code contribution is actionable."
   },
   "d991b32a94ede3b515b261d244c1fcfae818f94136971f1ab0a7511776fb2e76": {
     "confidence": 0.8,
