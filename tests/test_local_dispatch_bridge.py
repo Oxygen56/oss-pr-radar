@@ -36270,6 +36270,20 @@ def _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
         }
     )
     rollout.write_text("".join(json.dumps(item) + "\n" for item in records))
+    old_recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert old_recovered["ok"], old_recovered
+    with store.connect() as connection:
+        old_authority = connection.execute(
+            "SELECT payload_json FROM events WHERE opportunity_key=? "
+            "AND event_type='TASK_CONTEXT_AUTHORITY_BOUND' "
+            "AND json_extract(payload_json,'$.taskId')=? "
+            "AND json_extract(payload_json,'$.threadId')=? ORDER BY id DESC LIMIT 1",
+            ("a/b#1", "intent-1", "thread-1"),
+        ).fetchone()
+    assert old_authority is not None
+    assert json.loads(old_authority[0])["contextDigest"] == source["contextDigest"]
+    assert json.loads(context_path.read_text())["contextDigest"] == source["contextDigest"]
+    assert input_path.read_bytes() == source_raw and result_path.read_bytes() == failed_raw
     live_audit = json.loads(json.dumps(old_context["liveAudit"]))
     live_audit["capturedAt"] = iso_z(datetime.now(UTC))
     live_audit["evidence"].update(
@@ -36292,6 +36306,19 @@ def _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
     recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
     assert recovered["ok"], recovered
     current = json.loads(context_path.read_text())
+    with store.connect() as connection:
+        authority_digests = [
+            json.loads(row[0])["contextDigest"]
+            for row in connection.execute(
+                "SELECT payload_json FROM events WHERE opportunity_key=? "
+                "AND event_type='TASK_CONTEXT_AUTHORITY_BOUND' "
+                "AND json_extract(payload_json,'$.taskId')=? "
+                "AND json_extract(payload_json,'$.threadId')=? ORDER BY id",
+                ("a/b#1", "intent-1", "thread-1"),
+            ).fetchall()
+        ]
+    assert source["contextDigest"] in authority_digests
+    assert authority_digests[-1] == current["contextDigest"]
     assert current["contextDigest"] != source["contextDigest"]
     assert current["targetBase"] == old_context["targetBase"]
     assert current["liveAudit"]["evidence"]["digest"] == "b" * 64
