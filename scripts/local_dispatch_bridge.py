@@ -22262,18 +22262,13 @@ def _backfill_authoritative_fix_ready_result(
     # legitimate PR_OPEN -> CI_GREEN transition into a conflicting rewrite of
     # that binding event.  A first binding still snapshots the current stage.
     binding_stage = restored_stage
-    context_publication = (
-        context.get("publicationReceipt")
-        if isinstance(context.get("publicationReceipt"), dict)
-        else {}
-    )
     current_published = managed_adapter.ledger.current_published_result_for_task(task_id)
     if current_published is not None and all(
         current_published.get(field) == expected
         for field, expected in {
             "prKey": str(published_pr["pr_key"]),
             "prUrl": str(published_pr["pr_url"]),
-            "publicationCommitSha": str(context_publication.get("commitSha") or ""),
+            "publicationCommitSha": str(published_pr["publication_head_sha"]),
             "headSha": head_sha,
             "commitSha": commit_sha,
             "resultDigest": result_digest,

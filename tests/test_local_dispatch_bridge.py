@@ -19794,25 +19794,48 @@ def test_published_fix_ready_file_repairs_current_result_and_binds_pr(tmp_path):
     assert context["resultDigest"] == reviewed_digest
 
 
-@pytest.mark.parametrize("advanced_stage", ["CI_GREEN", "MAINTAINER_ACCEPTED"])
-def test_published_fix_ready_replay_preserves_immutable_binding_stage(tmp_path, advanced_stage):
+@pytest.mark.parametrize(
+    ("advanced_stage", "distinct_reservation_head"),
+    [("CI_GREEN", False), ("MAINTAINER_ACCEPTED", False), ("CI_GREEN", True)],
+)
+def test_published_fix_ready_replay_preserves_immutable_binding_stage(
+    tmp_path, advanced_stage, distinct_reservation_head
+):
     store, worktree, result_path = _controller_commit_result(tmp_path)
     reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
     reviewed_value["independentReview"] = MODULE.controller_review_result(
         MODULE.ROOT, reviewed_value
     )
     result_path.write_text(json.dumps(reviewed_value), encoding="utf-8")
-    managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+    current_head = str(reviewed_value["headSha"])
+    reservation_head = "d" * 40 if distinct_reservation_head else current_head
+    managed, context, _pr_url = _bind_published_pr_authority_fixture(
         store,
         worktree,
         result_path,
+        reservation_head_sha=reservation_head,
     )
+    assert context["publicationReceipt"]["commitSha"] == current_head
+    original_raw = result_path.read_bytes()
     value = json.loads(result_path.read_text(encoding="utf-8"))
-    result_digest = MODULE._task_result_digest(value, result_path.read_bytes())
+    result_digest = MODULE._task_result_digest(value, original_raw)
+    with store.connect() as connection:
+        publication_counts_before = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "publication_requests",
+                "publication_permits",
+                "publication_effects",
+                "managed_publication_reservations",
+            )
+        }
 
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
     assert first["ok"] is True, first["errors"]
-    assert managed.current_published_result_for_task("intent-1")["stage"] == "PR_OPEN"
+    first_binding = managed.current_published_result_for_task("intent-1")
+    assert first_binding["stage"] == "PR_OPEN"
+    assert first_binding["publicationCommitSha"] == reservation_head
+    assert first_binding["headSha"] == first_binding["commitSha"] == current_head
 
     store.record_stage("a/b#1", advanced_stage, evidence={"checks": "green"})
     replayed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
@@ -19821,7 +19844,8 @@ def test_published_fix_ready_replay_preserves_immutable_binding_stage(tmp_path, 
     assert replayed["ignored"] == [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
     restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
     assert restored["stage"] == advanced_stage
-    assert managed.current_published_result_for_task("intent-1")["stage"] == "PR_OPEN"
+    assert managed.current_published_result_for_task("intent-1") == first_binding
+    assert result_path.read_bytes() == original_raw
     with managed._connection() as connection:
         binding_rows = connection.execute(
             """SELECT payload_json FROM managed_lifecycle_events
@@ -19833,8 +19857,13 @@ def test_published_fix_ready_replay_preserves_immutable_binding_stage(tmp_path, 
                WHERE task_id='intent-1' AND pr_key='a/b#9'"""
         ).fetchall()
     assert [json.loads(row["payload_json"])["stage"] for row in binding_rows] == ["PR_OPEN"]
+    assert [json.loads(row["payload_json"]) for row in binding_rows] == [first_binding]
     assert [row["worker_state"] for row in result_rows] == ["PR_OPEN"]
     with store.connect() as connection:
+        assert {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in publication_counts_before
+        } == publication_counts_before
         marker_rows = connection.execute(
             """SELECT payload_json FROM events
                WHERE opportunity_key='a/b#1'

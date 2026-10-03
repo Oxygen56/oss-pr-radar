@@ -879,19 +879,19 @@ class ManagedAdapter:
             )
             if publication_receipt or durable_receipt is not None:
                 effective_publication_receipt = publication_receipt or context_publication_receipt
-                publication_commit_sha = str(effective_publication_receipt.get("commitSha") or "")
+                receipt_head_sha = str(effective_publication_receipt.get("commitSha") or "")
                 publication_pr_url = str(effective_publication_receipt.get("prUrl") or "")
                 pr_url = str(
                     value.get("prUrl") or publication.get("prUrl") or publication_pr_url or ""
                 )
                 pr_key = pr_key_from_url(pr_url) if pr_url else None
                 bound_pr = (
-                    ledger.published_pr_for_opportunity(
+                    ledger.published_pr_authority_for_opportunity(
                         opportunity_key,
                         pr_url=publication_pr_url,
-                        publication_head_sha=publication_commit_sha,
+                        receipt_head_sha=receipt_head_sha,
                     )
-                    if publication_pr_url and publication_commit_sha
+                    if publication_pr_url and receipt_head_sha
                     else None
                 )
                 if (
@@ -915,6 +915,9 @@ class ManagedAdapter:
                     )
                 ):
                     raise PermissionError("published task result is not bound to the current PR")
+                # Updated PR receipts follow the current head; the original
+                # finalized reservation remains the durable publication anchor.
+                publication_commit_sha = str(bound_pr["publication_head_sha"])
                 published_validation = dict(validation)
                 published_validation.pop("reproductionReceiptAuthenticated", None)
                 published_validation.update(
