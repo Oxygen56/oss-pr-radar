@@ -13203,15 +13203,19 @@ def _audit_refresh_validation_result(tmp_path, *, omit_task_id=False):
     return store, worktree, result_path, old_context, current_context
 
 
-@pytest.mark.parametrize("recovery_completed", [False, True])
+@pytest.mark.parametrize(
+    "recovery_completed,generated_build_case",
+    [(False, None), (True, None), (False, "core"), (False, "channel"), (False, "non_generated")],
+)
 def test_native_incomplete_validation_survives_same_binding_audit_refresh(
-    monkeypatch, tmp_path, recovery_completed
+    monkeypatch, tmp_path, recovery_completed, generated_build_case
 ):
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         controller_policy_complete=True,
         target_base_bound=True,
+        validation_generated_build_failure=generated_build_case,
         missing_quality=(
             "regression_test_verified",
             "relevant_tests_green",
@@ -13274,7 +13278,9 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(
             if response_id == 1
             else {
                 "turn": {
-                    "id": "native-incomplete-validation-recovery"
+                    "id": "native-incomplete-validation-generated-build"
+                    if observed.get("generated_retry")
+                    else "native-incomplete-validation-recovery"
                     if observed.get("recovery")
                     else "native-incomplete-validation"
                 }
@@ -13284,7 +13290,9 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(
 
     def complete_validation(*_args, **_kwargs):
         turn_id = (
-            "native-incomplete-validation-recovery"
+            "native-incomplete-validation-generated-build"
+            if observed.get("generated_retry")
+            else "native-incomplete-validation-recovery"
             if observed.get("recovery")
             else "native-incomplete-validation"
         )
@@ -13320,6 +13328,79 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(
                     + "\n"
                 )
             return {"turnId": turn_id, "status": "failed", "error": error}
+        if generated_build_case is not None:
+            source_raw = (worktree / observed["worktree_input_path"]).read_bytes()
+            source = json.loads(source_raw)
+            sent_prompt = next(
+                message["params"]["input"][0]["text"]
+                for message in reversed(_task_turn_messages(process))
+                if message.get("method") == "turn/start"
+            )
+            assert ("普通离线构建属于 run_tests 的前置步骤" in sent_prompt) == bool(
+                observed.get("generated_retry")
+            )
+            native_items = [
+                {
+                    "type": "UserMessage",
+                    "id": "native-user-message",
+                    "client_id": "native-client",
+                    "content": [{"type": "text", "text": sent_prompt, "text_elements": []}],
+                }
+            ]
+            for test in source["tests"]:
+                actual = subprocess.run(
+                    ["/bin/zsh", "-lc", test["command"]],
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                )
+                assert actual.returncode == test["exitCode"] == 1
+                native_items.append(
+                    {
+                        "type": "CommandExecution",
+                        "status": "failed",
+                        "command": ["/bin/zsh", "-lc", test["command"]],
+                        "cwd": worktree.as_uri(),
+                        "exit_code": actual.returncode,
+                        "stdout": actual.stdout,
+                        "stderr": actual.stderr,
+                        "aggregated_output": actual.stdout + actual.stderr,
+                    }
+                )
+            with rollout.open("a") as handle:
+                for item in native_items:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "type": "event_msg",
+                                "timestamp": iso_z(datetime.now(UTC)),
+                                "payload": {
+                                    "type": "item_completed",
+                                    "thread_id": "thread-1",
+                                    "turn_id": turn_id,
+                                    "item": item,
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+                handle.write(
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "timestamp": iso_z(datetime.now(UTC)),
+                            "payload": {"type": "task_complete", "turn_id": turn_id},
+                        }
+                    )
+                    + "\n"
+                )
+            observed.update(
+                raw=result_path.read_bytes(),
+                source_raw=source_raw,
+                checks=source["tests"],
+                quality=source["quality"],
+            )
+            return {"turnId": turn_id, "status": "completed"}
         source_path = worktree / observed["worktree_input_path"]
         source_raw = source_path.read_bytes()
         source = json.loads(source_raw)
@@ -13382,6 +13463,11 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(
             return original_popen(argv, **kwargs)
         is_recovery = argv[argv.index("--delivery-kind") + 1] == "recovery"
         observed["recovery"] = is_recovery
+        observed["generated_retry"] = (
+            generated_build_case is not None
+            and "--reservation-digest" in argv
+            and argv[argv.index("--reservation-digest") + 1] != reserved["reservationDigest"]
+        )
         worker_args = SimpleNamespace(
             ledger=store.path,
             delivery_kind="recovery" if is_recovery else "validation-followup",
@@ -13412,8 +13498,18 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(
         assert completed["ok"] and completed["turnStatus"] == expected_status, completed
         return SimpleNamespace(pid=os.getpid())
 
+    original_prompt = MODULE._validation_followup_prompt
+
+    def old_prompt(candidate):
+        prompt = original_prompt(candidate)
+        start = prompt.index("重新运行检查前，先读取仓库贡献指南和构建脚本")
+        end = prompt.index("确认当前环境后重新运行真实用户入口", start)
+        return prompt[:start] + prompt[end:]
+
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     with monkeypatch.context() as delivery:
+        if generated_build_case is not None:
+            delivery.setattr(MODULE, "_validation_followup_prompt", old_prompt)
         delivery.setattr(MODULE, "ledger", lambda _path: store)
         delivery.setattr(MODULE, "_app_server_action_session", action_session)
         delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
@@ -13517,6 +13613,146 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(
             ]
             == "failed"
         )
+    if generated_build_case is not None:
+        consumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+        assert (
+            consumed["ok"] and consumed["ingested"] == [] and consumed["publicationRequests"] == []
+        ), consumed
+        assert result_path.read_bytes() == observed["raw"]
+        assert store.validation_followup_candidates() == []
+        assert (
+            store.reconcile_validation_no_progress() == 0 and store.validation_no_progress() == []
+        )
+        assert "resultDigest" not in candidate
+        before = result_path.read_bytes()
+        input_path = worktree / observed["worktree_input_path"]
+        immutable_input = input_path.read_bytes()
+        with store.connect() as connection:
+            historical_rows = [
+                tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+            ]
+        receipt_key = MODULE._task_turn_delivery_file_key(
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=reserved["resultDigest"],
+            validation_reservation_digest=reserved["reservationDigest"],
+        )
+        receipt_path = MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json"
+        receipt_raw = receipt_path.read_bytes()
+        if generated_build_case == "core":
+            for change in ({"turnStatus": "failed"}, {"reservationDigest": "f" * 64}):
+                receipt_path.write_text(json.dumps(json.loads(receipt_raw) | change))
+                rejected = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+                assert rejected["candidates"] == [] and store.validation_no_progress() == [], (
+                    rejected
+                )
+                receipt_path.write_bytes(receipt_raw)
+            journal_before = rollout.read_bytes()
+            with rollout.open("a") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "timestamp": iso_z(datetime.now(UTC)),
+                            "payload": {
+                                "type": "task_started",
+                                "turn_id": "still-active-validation",
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+            rejected = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+            assert rejected["candidates"] == [] and store.validation_no_progress() == [], rejected
+            rollout.write_bytes(journal_before)
+        reopened = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+        if generated_build_case == "non_generated":
+            assert reopened["candidates"] == [] and store.validation_no_progress() == [], reopened
+            assert result_path.read_bytes() == before and input_path.read_bytes() == immutable_input
+            return
+        assert reopened["errors"] == [] and len(reopened["candidates"]) == 1, reopened
+        fresh = reopened["candidates"][0]
+        assert fresh["generatedBuildContract"] == MODULE.GENERATED_BUILD_CONTRACT
+        new_reserved = MODULE.validation_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path, thread_id="thread-1", result_digest=reserved["resultDigest"]
+            )
+        )
+        assert (
+            new_reserved["ok"]
+            and new_reserved["reservationDigest"] != reserved["reservationDigest"]
+        )
+        assert "普通离线构建属于 run_tests 的前置步骤" in new_reserved["prompt"]
+        unresolved = store.unresolved_validation_followups()
+        assert (
+            len(unresolved) == 1
+            and unresolved[0]["reservationDigest"] == new_reserved["reservationDigest"]
+        )
+        with monkeypatch.context() as delivery:
+            delivery.setattr(MODULE, "ledger", lambda _path: store)
+            delivery.setattr(MODULE, "_app_server_action_session", action_session)
+            delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+            delivery.setattr(MODULE, "_read_app_server_response", read_response)
+            delivery.setattr(MODULE, "_wait_for_app_server_terminal_turn", complete_validation)
+            delivery.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+            delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+            new_delivered = MODULE.validation_followup_deliver(
+                SimpleNamespace(
+                    ledger=store.path, thread_id="thread-1", result_digest=reserved["resultDigest"]
+                )
+            )
+        assert new_delivered["ok"] and new_delivered["turnStatus"] == "completed", new_delivered
+        assert store.unresolved_validation_followups() == []
+        assert result_path.read_bytes() == before and input_path.read_bytes() == immutable_input
+        assert json.loads(before)["quality"] == observed["quality"]
+        assert all(
+            json.loads(before)["quality"][name] is False
+            for name in (
+                "regression_test_verified",
+                "relevant_tests_green",
+                "independent_review_passed",
+            )
+        )
+        second = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+        assert second["candidates"] == [] and second["errors"] == [], second
+        with store.connect() as connection:
+            sent_rows = connection.execute(
+                "SELECT id,dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id"
+            ).fetchall()
+            assert len(sent_rows) == 2
+            assert sent_rows[0]["dedupe_key"] == reserved["resultDigest"]
+            assert sent_rows[1]["dedupe_key"] == new_reserved["reservationDigest"]
+            new_sent = json.loads(sent_rows[1]["payload_json"])
+            assert new_sent["resultDigest"] == reserved["resultDigest"]
+            assert new_sent["reservationDigest"] == new_reserved["reservationDigest"]
+            reserved_id = connection.execute(
+                "SELECT id FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' AND dedupe_key=?",
+                (new_reserved["reservationDigest"],),
+            ).fetchone()[0]
+            assert sent_rows[1]["id"] > reserved_id
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'"
+                ).fetchone()[0]
+                == 1
+            )
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'"
+                ).fetchone()[0]
+                == 1
+            )
+            assert [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT * FROM events WHERE id<=? ORDER BY id", (historical_rows[-1][0],)
+                )
+            ] == historical_rows
+            assert (
+                connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+            )
+            assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+        return
     after = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
     assert after["errors"] == [], after["errors"]
     assert after["ok"], after
@@ -16754,6 +16990,7 @@ def _controller_commit_result(
     probe_code_paths: tuple[str, ...] = ("runtime.py",),
     omit_reported_code_paths: bool = False,
     target_base_bound: bool = False,
+    validation_generated_build_failure: str | None = None,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -16967,6 +17204,25 @@ def _controller_commit_result(
             "policyDigest": "d" * 64,
             "policyStatus": "NORMAL",
         }
+    if validation_generated_build_failure is not None:
+        if validation_generated_build_failure == "core":
+            command_text = "test -f packages/core/dist/index.js || { printf '%s\\n' 'workspace package has not been built (missing packages/core/dist/index.js)'; exit 1; }"
+        elif validation_generated_build_failure == "channel":
+            command_text = "node --input-type=module -e \"import(process.cwd() + '/node_modules/@qwen-code/channel-base/dist/index.js')\""
+        else:
+            command_text = "cat tests/fixtures/input.json"
+        actual = subprocess.run(
+            ["/bin/zsh", "-lc", command_text], cwd=worktree, capture_output=True, text=True
+        )
+        assert actual.returncode == 1, actual.stderr
+        result["tests"] = [
+            {
+                "command": command_text,
+                "cwd": str(worktree),
+                "exitCode": actual.returncode,
+                "result": actual.stdout + actual.stderr,
+            }
+        ]
     signed_result = dict(result)
     signed_result["handoffMode"] = "controller_commit_complete"
     signed_result["publication"] = dict(result["publication"]) | {"baseBranch": "main"}

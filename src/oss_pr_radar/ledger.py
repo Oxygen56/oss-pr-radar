@@ -33,6 +33,9 @@ from .task_quarantine import record as record_quarantine
 from .task_quarantine import require_clear as require_quarantine_clear
 from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
+GENERATED_BUILD_CONTRACT = "ordinary_offline_generated_build_v1"
+GENERATED_BUILD_REARM_REASON = "GENERATED_BUILD_PREREQUISITES_INSTRUCTIONS_UPDATED"
+
 STAGES = (
     "DISCOVERED",
     "EVIDENCE_COMPLETE",
@@ -5907,7 +5910,7 @@ class RadarLedger:
             validation_rows = connection.execute(
                 f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
                           i.worktree_path,s.created_at AS dispatched_at,
-                          s.dedupe_key AS followup_digest,
+                          CASE WHEN json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END AS followup_digest,
                           (SELECT MAX(abandoned.created_at) FROM events abandoned
                            WHERE abandoned.opportunity_key=o.key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
@@ -5921,7 +5924,31 @@ class RadarLedger:
                    )
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
-                     AND s.dedupe_key=d.dedupe_key
+                     AND ((s.dedupe_key=d.dedupe_key
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events build_reserved
+                         WHERE build_reserved.opportunity_key=s.opportunity_key
+                           AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                           AND json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                           AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
+                           AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
+                           AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
+                           AND json_extract(build_reserved.payload_json,'$.resultDigest')=d.dedupe_key
+                           AND build_reserved.id>s.id))
+                     OR (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                       AND json_extract(s.payload_json,'$.resultDigest')=d.dedupe_key
+                       AND EXISTS (
+                         SELECT 1 FROM events build_reserved
+                         WHERE build_reserved.opportunity_key=s.opportunity_key
+                           AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                           AND build_reserved.dedupe_key=s.dedupe_key
+                           AND json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                           AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
+                           AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
+                           AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
+                           AND json_extract(build_reserved.payload_json,'$.resultDigest')=d.dedupe_key
+                           AND json_extract(s.payload_json,'$.reservationDigest')=build_reserved.dedupe_key
+                           AND s.id>build_reserved.id)))
                      AND json_extract(s.payload_json,'$.threadId')=
                          json_extract(d.payload_json,'$.threadId')
                    JOIN intents i ON i.opportunity_key=o.key
@@ -5949,7 +5976,7 @@ class RadarLedger:
                          AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'VALIDATION_FOLLOWUP_RESULT'
-                         AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=CASE WHEN json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
@@ -8113,6 +8140,137 @@ class RadarLedger:
         )
         return True
 
+    def record_completed_generated_build_no_progress(
+        self, candidate: dict[str, Any], *, completion: dict[str, Any]
+    ) -> bool:
+        """Retain one proven normal completion whose authenticated result was unchanged."""
+        binding_fields = {
+            "intentId": candidate["intentId"],
+            "threadId": candidate["threadId"],
+            "worktreePath": candidate["worktreePath"],
+        }
+        with self.transaction() as connection:
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=candidate["key"],
+                intent_id=candidate["intentId"],
+                thread_id=candidate["threadId"],
+                worktree_path=candidate["worktreePath"],
+            )
+            opportunity = connection.execute(
+                "SELECT stage FROM opportunities WHERE key=?", (candidate["key"],)
+            ).fetchone()
+            if (
+                binding is None
+                or opportunity is None
+                or opportunity["stage"] != "VALIDATION_PENDING"
+            ):
+                return False
+            require_quarantine_clear(
+                connection,
+                opportunity_key=candidate["key"],
+                operation="completed validation intake",
+            )
+            rows = connection.execute(
+                """SELECT id,event_type,payload_json,created_at FROM events
+                   WHERE opportunity_key=? AND event_type IN (
+                     'TASK_RESULT_VALIDATION_DEFERRED','VALIDATION_FOLLOWUP_RESERVED',
+                     'VALIDATION_FOLLOWUP_SENT','TASK_TURN_DELIVERY_STARTED',
+                     'TASK_CONTEXT_AUTHORITY_BOUND') ORDER BY id""",
+                (candidate["key"],),
+            ).fetchall()
+            events = [(row, json.loads(row["payload_json"])) for row in rows]
+            bound = [
+                (r, p) for r, p in events if all(p.get(k) == v for k, v in binding_fields.items())
+            ]
+            latest = {
+                kind: next(((r, p) for r, p in reversed(bound) if r["event_type"] == kind), None)
+                for kind in (
+                    "TASK_RESULT_VALIDATION_DEFERRED",
+                    "VALIDATION_FOLLOWUP_RESERVED",
+                    "VALIDATION_FOLLOWUP_SENT",
+                )
+            }
+            deferred, reserved, sent = latest.values()
+            delivery = next(
+                (
+                    (r, p)
+                    for r, p in reversed(bound)
+                    if r["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+                    and p.get("deliveryKind") == "validation-followup"
+                    and p.get("reservationDigest") == completion["reservationDigest"]
+                ),
+                None,
+            )
+            authority = next(
+                (
+                    (r, p)
+                    for r, p in reversed(events)
+                    if r["event_type"] == "TASK_CONTEXT_AUTHORITY_BOUND"
+                    and p.get("taskId") == candidate["intentId"]
+                    and p.get("threadId") == candidate["threadId"]
+                ),
+                None,
+            )
+            if (
+                deferred is None
+                or reserved is None
+                or sent is None
+                or delivery is None
+                or authority is None
+                or authority[1].get("contextDigest") != completion["contextDigest"]
+                or deferred[1].get("expiredPublication") is not None
+                or deferred[1].get("resultDigest") != candidate["resultDigest"]
+                or set(deferred[1].get("missing") or [])
+                != {"regression_test_verified", "relevant_tests_green", "independent_review_passed"}
+                or self._normalized_validation_missing(deferred[1].get("missing"))
+                != self._normalized_validation_missing(candidate["missing"])
+                or reserved[1] != completion["reservation"]
+                or reserved[1].get("generatedBuildContract") is not None
+                or reserved[1].get("expiryPromptRevision") is not None
+                or reserved[1].get("resultDigest") != candidate["resultDigest"]
+                or sent[1].get("resultDigest") != candidate["resultDigest"]
+                or sent[0]["id"] != completion["sentEventId"]
+                or not (deferred[0]["id"] < reserved[0]["id"] < sent[0]["id"])
+                or (
+                    sent[1].get("reservationDigest") is not None
+                    and sent[1]["reservationDigest"] != completion["reservationDigest"]
+                )
+                or delivery[1] != completion["delivery"]
+                or not (reserved[0]["id"] < delivery[0]["id"] < sent[0]["id"])
+                or connection.execute(
+                    """SELECT 1 FROM publication_requests WHERE opportunity_key=?
+                       AND thread_id=? AND worktree_path=? LIMIT 1""",
+                    (candidate["key"], candidate["threadId"], candidate["worktreePath"]),
+                ).fetchone()
+                is not None
+            ):
+                return False
+            prior = connection.execute(
+                """SELECT 1 FROM events WHERE opportunity_key=?
+                   AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS' AND dedupe_key=?""",
+                (candidate["key"], candidate["resultDigest"]),
+            ).fetchone()
+            if prior is not None:
+                return False
+            self._event(
+                connection,
+                candidate["key"],
+                "VALIDATION_FOLLOWUP_NO_PROGRESS",
+                candidate["resultDigest"],
+                {
+                    **binding_fields,
+                    "resultDigest": candidate["resultDigest"],
+                    "previousResultDigest": candidate["resultDigest"],
+                    "missing": list(self._normalized_validation_missing(candidate["missing"])),
+                    "progressMarker": deferred[1].get("progressMarker"),
+                    "reason": "COMPLETED_UNCHANGED_GENERATED_BUILD_INPUT",
+                    "generatedBuildCompletion": completion,
+                },
+                iso_z(datetime.now(UTC)),
+            )
+        return True
+
     def reconcile_validation_no_progress(self) -> int:
         """Backfill no-progress markers for current validation results."""
 
@@ -8584,6 +8742,31 @@ class RadarLedger:
                 }
             )
             refresh = self.publication_target_base_refresh(candidates[-1])
+            if not candidates[-1].get("expiredPublication"):
+                with self.connect() as connection:
+                    build_rearm = connection.execute(
+                        """SELECT payload_json FROM events WHERE opportunity_key=?
+                           AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                           AND json_extract(payload_json,'$.intentId')=?
+                           AND json_extract(payload_json,'$.threadId')=?
+                           AND json_extract(payload_json,'$.worktreePath')=?
+                           AND json_extract(payload_json,'$.resultDigest')=?
+                           ORDER BY id DESC LIMIT 1""",
+                        (
+                            row["key"],
+                            row["intent_id"],
+                            row["thread_id"],
+                            row["worktree_path"],
+                            candidates[-1]["resultDigest"],
+                        ),
+                    ).fetchone()
+                if build_rearm is not None:
+                    build_payload = json.loads(build_rearm["payload_json"])
+                    if (
+                        build_payload.get("reviewMarker") == GENERATED_BUILD_CONTRACT
+                        and build_payload.get("reason") == GENERATED_BUILD_REARM_REASON
+                    ):
+                        candidates[-1]["generatedBuildContract"] = GENERATED_BUILD_CONTRACT
             if candidates[-1].get("expiredPublication"):
                 correction = self._expired_validation_correction(candidates[-1])
                 if correction is not None:
@@ -8835,6 +9018,12 @@ class RadarLedger:
                     "attempt": attempt,
                     "reservationDigest": reservation_digest,
                     **(
+                        {"generatedBuildContract": GENERATED_BUILD_CONTRACT}
+                        if candidate.get("generatedBuildContract") == GENERATED_BUILD_CONTRACT
+                        and not candidate.get("expiredPublication")
+                        else {}
+                    ),
+                    **(
                         {"expiredPublication": candidate["expiredPublication"]}
                         if isinstance(candidate.get("expiredPublication"), dict)
                         else {}
@@ -8879,7 +9068,16 @@ class RadarLedger:
                        SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                          AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {_intent_event_binding_clause("i", "s")}
-                         AND s.dedupe_key=CASE WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                         AND s.dedupe_key=CASE
+                           WHEN json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                           THEN json_extract(r.payload_json,'$.reservationDigest')
+                           WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                         AND (json_extract(r.payload_json,'$.generatedBuildContract') IS NULL OR (
+                           s.id>r.id AND json_extract(s.payload_json,'$.reservationDigest')=
+                               json_extract(r.payload_json,'$.reservationDigest')
+                           AND json_extract(s.payload_json,'$.resultDigest')=
+                               json_extract(r.payload_json,'$.resultDigest')
+                         ))
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
@@ -8929,7 +9127,16 @@ class RadarLedger:
                        JOIN events s ON s.opportunity_key=r.opportunity_key
                         AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                         AND {_intent_event_binding_clause("i", "s")}
-                        AND s.dedupe_key=CASE WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                        AND s.dedupe_key=CASE
+                           WHEN json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                           THEN json_extract(r.payload_json,'$.reservationDigest')
+                           WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                         AND (json_extract(r.payload_json,'$.generatedBuildContract') IS NULL OR (
+                           s.id>r.id AND json_extract(s.payload_json,'$.reservationDigest')=
+                               json_extract(r.payload_json,'$.reservationDigest')
+                           AND json_extract(s.payload_json,'$.resultDigest')=
+                               json_extract(r.payload_json,'$.resultDigest')
+                         ))
                        WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                          AND json_extract(r.payload_json,'$.threadId')=i.thread_id
                          AND json_extract(r.payload_json,'$.resultDigest')=?
@@ -8969,7 +9176,8 @@ class RadarLedger:
                 row["key"],
                 "VALIDATION_FOLLOWUP_SENT",
                 reservation_payload["reservationDigest"]
-                if reservation_payload.get("expiryPromptRevision")
+                if reservation_payload.get("generatedBuildContract") == GENERATED_BUILD_CONTRACT
+                or reservation_payload.get("expiryPromptRevision")
                 else result_digest,
                 {
                     "intentId": reservation_payload.get("intentId"),
@@ -8977,8 +9185,16 @@ class RadarLedger:
                     "worktreePath": reservation_payload.get("worktreePath"),
                     "resultDigest": result_digest,
                     **(
+                        {"generatedBuildContract": GENERATED_BUILD_CONTRACT}
+                        if reservation_payload.get("generatedBuildContract")
+                        == GENERATED_BUILD_CONTRACT
+                        else {}
+                    ),
+                    **(
                         {"reservationDigest": reservation_payload["reservationDigest"]}
-                        if reservation_payload.get("expiryPromptRevision")
+                        if reservation_payload.get("generatedBuildContract")
+                        == GENERATED_BUILD_CONTRACT
+                        or reservation_payload.get("expiryPromptRevision")
                         else {}
                     ),
                 },
@@ -9000,7 +9216,16 @@ class RadarLedger:
                      SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                        AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                        AND {_intent_event_binding_clause("i", "s")}
-                       AND s.dedupe_key=CASE WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                       AND s.dedupe_key=CASE
+                           WHEN json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                           THEN json_extract(r.payload_json,'$.reservationDigest')
+                           WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
+                         AND (json_extract(r.payload_json,'$.generatedBuildContract') IS NULL OR (
+                           s.id>r.id AND json_extract(s.payload_json,'$.reservationDigest')=
+                               json_extract(r.payload_json,'$.reservationDigest')
+                           AND json_extract(s.payload_json,'$.resultDigest')=
+                               json_extract(r.payload_json,'$.resultDigest')
+                         ))
                    )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
@@ -9034,6 +9259,12 @@ class RadarLedger:
                 or row["dedupe_key"],
                 "missing": list(json.loads(row["payload_json"]).get("missing") or []),
                 "reservedAt": row["created_at"],
+                **(
+                    {"generatedBuildContract": GENERATED_BUILD_CONTRACT}
+                    if json.loads(row["payload_json"]).get("generatedBuildContract")
+                    == GENERATED_BUILD_CONTRACT
+                    else {}
+                ),
                 **(
                     {"expiredPublication": json.loads(row["payload_json"])["expiredPublication"]}
                     if isinstance(json.loads(row["payload_json"]).get("expiredPublication"), dict)
@@ -9083,7 +9314,14 @@ class RadarLedger:
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {_intent_event_binding_clause("i", "sent")}
-                         AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
+                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL
+                              AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest'))
+                           OR (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                              AND sent.dedupe_key=json_extract(r.payload_json,'$.reservationDigest')
+                              AND sent.id>r.id
+                              AND json_extract(sent.payload_json,'$.reservationDigest')=r.dedupe_key
+                              AND json_extract(sent.payload_json,'$.resultDigest')=
+                                  json_extract(r.payload_json,'$.resultDigest')))
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
@@ -9170,7 +9408,14 @@ class RadarLedger:
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {_intent_event_binding_clause("i", "sent")}
-                         AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
+                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL
+                              AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest'))
+                           OR (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                              AND sent.dedupe_key=json_extract(r.payload_json,'$.reservationDigest')
+                              AND sent.id>r.id
+                              AND json_extract(sent.payload_json,'$.reservationDigest')=r.dedupe_key
+                              AND json_extract(sent.payload_json,'$.resultDigest')=
+                                  json_extract(r.payload_json,'$.resultDigest')))
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
@@ -9254,7 +9499,31 @@ class RadarLedger:
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND {_intent_event_binding_clause("i", "s")}
-                     AND s.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                     AND ((s.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events build_reserved
+                         WHERE build_reserved.opportunity_key=s.opportunity_key
+                           AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                           AND json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                           AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
+                           AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
+                           AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
+                           AND json_extract(build_reserved.payload_json,'$.resultDigest')=json_extract(d.payload_json,'$.resultDigest')
+                           AND build_reserved.id>s.id))
+                     OR (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                       AND json_extract(s.payload_json,'$.resultDigest')=json_extract(d.payload_json,'$.resultDigest')
+                       AND EXISTS (
+                         SELECT 1 FROM events build_reserved
+                         WHERE build_reserved.opportunity_key=s.opportunity_key
+                           AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                           AND build_reserved.dedupe_key=s.dedupe_key
+                           AND json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                           AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
+                           AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
+                           AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
+                           AND json_extract(build_reserved.payload_json,'$.resultDigest')=json_extract(d.payload_json,'$.resultDigest')
+                           AND json_extract(s.payload_json,'$.reservationDigest')=build_reserved.dedupe_key
+                           AND s.id>build_reserved.id)))
                      AND json_extract(s.payload_json,'$.threadId')=
                          json_extract(d.payload_json,'$.threadId')
                    WHERE o.stage IN (
@@ -9288,7 +9557,7 @@ class RadarLedger:
                          AND {_intent_event_binding_clause("i", "recovery")}
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'VALIDATION_FOLLOWUP_RESULT'
-                         AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=CASE WHEN json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END
                      )
                    ORDER BY s.created_at""",
                 (cutoff,),
@@ -17912,8 +18181,16 @@ class RadarLedger:
                        WHERE sent.opportunity_key=marker.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {sent_binding}
-                         AND sent.dedupe_key=
-                             json_extract(marker.payload_json,'$.resultDigest')
+                         AND sent.dedupe_key=CASE
+                           WHEN json_extract(marker.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1'
+                           THEN json_extract(marker.payload_json,'$.reservationDigest')
+                           ELSE json_extract(marker.payload_json,'$.resultDigest') END
+                         AND (json_extract(marker.payload_json,'$.generatedBuildContract') IS NULL OR (
+                           json_extract(sent.payload_json,'$.reservationDigest')=
+                               json_extract(marker.payload_json,'$.reservationDigest')
+                           AND json_extract(sent.payload_json,'$.resultDigest')=
+                               json_extract(marker.payload_json,'$.resultDigest')
+                         ))
                          AND json_extract(sent.payload_json,'$.threadId')=
                              json_extract(marker.payload_json,'$.threadId')
                          AND sent.id>=CASE
@@ -20845,10 +21122,32 @@ class RadarLedger:
                             dedupe_key=(
                                 str(candidate_row["dedupe_key"])
                                 if json.loads(candidate_row["payload_json"]).get(
+                                    "generatedBuildContract"
+                                )
+                                == GENERATED_BUILD_CONTRACT
+                                or json.loads(candidate_row["payload_json"]).get(
                                     "expiryPromptRevision"
                                 )
                                 else delivery_token
                             ),
+                            after_id=int(candidate_row["id"])
+                            if json.loads(candidate_row["payload_json"]).get(
+                                "generatedBuildContract"
+                            )
+                            == GENERATED_BUILD_CONTRACT
+                            else None,
+                            payload_field="reservationDigest"
+                            if json.loads(candidate_row["payload_json"]).get(
+                                "generatedBuildContract"
+                            )
+                            == GENERATED_BUILD_CONTRACT
+                            else None,
+                            payload_value=reservation_digest
+                            if json.loads(candidate_row["payload_json"]).get(
+                                "generatedBuildContract"
+                            )
+                            == GENERATED_BUILD_CONTRACT
+                            else None,
                         )
                         and not bound_event_exists(
                             connection,

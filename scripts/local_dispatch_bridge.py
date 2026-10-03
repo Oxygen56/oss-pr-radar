@@ -64,6 +64,8 @@ from oss_pr_radar.independent_review import (  # noqa: E402
     verify_controller_merge_tree_scope,
 )
 from oss_pr_radar.ledger import (  # noqa: E402
+    GENERATED_BUILD_CONTRACT,
+    GENERATED_BUILD_REARM_REASON,
     RECOVERABLE_CONTEXT_INTENT_STATUSES,
     LedgerError,
     RadarLedger,
@@ -19710,18 +19712,387 @@ def _execute_validation_prefetch(
     return completed
 
 
+def _completed_generated_build_validation(
+    store: RadarLedger, candidate: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Prove the observed normal, unchanged completion before the build instructions existed."""
+    if candidate.get("stage") != "VALIDATION_PENDING":
+        return None
+    with _task_worktree_private_descriptor(candidate) as opened:
+        context_raw = _read_task_context_bytes_from_private(opened)
+        context = json.loads(context_raw)
+        raw = _read_task_result_bytes_from_private(opened)
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            return None
+        failed_outputs = [
+            str(t.get("result") or t.get("stderr") or "")
+            for t in value.get("tests") or []
+            if isinstance(t, dict) and type(t.get("exitCode")) is int and t["exitCode"] != 0
+        ]
+        if not any(
+            "has not been built (missing packages/core/dist/index.js)" in output
+            or (
+                "ERR_MODULE_NOT_FOUND" in output
+                and "Cannot find module" in output
+                and "/@qwen-code/channel-base/dist/index.js'" in output
+            )
+            for output in failed_outputs
+        ):
+            return None
+        with store.connect() as connection:
+            deferred_row = connection.execute(
+                """SELECT payload_json FROM events WHERE opportunity_key=?
+                   AND event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   AND json_extract(payload_json,'$.intentId')=?
+                   AND json_extract(payload_json,'$.threadId')=?
+                   AND json_extract(payload_json,'$.worktreePath')=? ORDER BY id DESC LIMIT 1""",
+                (
+                    candidate["key"],
+                    candidate["intentId"],
+                    candidate["threadId"],
+                    candidate["worktreePath"],
+                ),
+            ).fetchone()
+        if deferred_row is None:
+            return None
+        candidate = candidate | {
+            "resultDigest": json.loads(deferred_row["payload_json"]).get("resultDigest")
+        }
+        authenticated, authenticated_raw = _read_authenticated_validation_result(candidate)
+        if authenticated != value or authenticated_raw != raw:
+            return None
+        if (
+            value.get("schemaVersion") != TASK_RESULT_SCHEMA
+            or context.get("schemaVersion") != TASK_CONTEXT_SCHEMA
+            or context.get("stage") != "VALIDATION_PENDING"
+            or context.get("taskStage") != "IMPLEMENTATION_READY"
+            or context.get("publicationReceipt") is not None
+            or context.get("prFollowup") is not None
+            or context.get("codePathTombstoneReceipt") is not None
+            or (context.get("liveAudit") or {}).get("evidence", {}).get("policy", {}).get("status")
+            != "NORMAL"
+            or _controller_policy_verification(context) is None
+            or _publication_block_reason(context, value)
+            or _task_live_audit_refresh_due(context)
+            or value.get("stage") != "FIX_READY"
+            or value.get("handoffMode") != "controller_commit_complete"
+            or value.get("followupDigest")
+            or not isinstance(value.get("quality"), dict)
+            or value["quality"].get("regression_test_verified") is not False
+            or value["quality"].get("relevant_tests_green") is not False
+            or value["quality"].get("independent_review_passed") is not False
+            or _active_task_turn_for_result(candidate) is not None
+            or _local_changed_files(opened.worktree)
+            or value.get("commitSha") != command(["git", "rev-parse", "HEAD"], cwd=opened.worktree)
+        ):
+            return None
+        digest = _task_result_digest(value, raw)
+        candidate = candidate | {"resultDigest": digest}
+        completion: dict[str, Any] = {}
+        if value.get("contextDigest") == context.get("contextDigest"):
+            task_id = _completed_validation_input_task_id(
+                store,
+                ManagedLedger(store.path, ensure_schema=False),
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=opened,
+                context_raw=context_raw,
+                completion_proof=completion,
+            )
+            if task_id != candidate["intentId"]:
+                return None
+            reservation_digest = completion["reservation"]["reservationDigest"]
+        else:
+            proof = _validation_result_context_refresh_proof(
+                store,
+                candidate=candidate,
+                context=context,
+                value=value,
+                worktree=opened.worktree,
+                raw=raw,
+            )
+            if proof is None or proof.get("recovery") is not None:
+                return None
+            reservation_digest = proof["reservationDigest"]
+        with store.connect() as connection:
+            rows = connection.execute(
+                """SELECT id,event_type,payload_json,created_at FROM events
+                   WHERE opportunity_key=? AND event_type IN (
+                     'TASK_RESULT_VALIDATION_DEFERRED','VALIDATION_FOLLOWUP_RESERVED',
+                     'VALIDATION_FOLLOWUP_SENT','TASK_TURN_DELIVERY_STARTED') ORDER BY id""",
+                (candidate["key"],),
+            ).fetchall()
+        identity = {k: candidate[k] for k in ("intentId", "threadId", "worktreePath")}
+        events = [(dict(r), json.loads(r["payload_json"])) for r in rows]
+        events = [(r, p) for r, p in events if all(p.get(k) == v for k, v in identity.items())]
+        latest = {
+            kind: next(((r, p) for r, p in reversed(events) if r["event_type"] == kind), None)
+            for kind in (
+                "TASK_RESULT_VALIDATION_DEFERRED",
+                "VALIDATION_FOLLOWUP_RESERVED",
+                "VALIDATION_FOLLOWUP_SENT",
+            )
+        }
+        deferred, reserved, sent = latest.values()
+        delivery = next(
+            (
+                (r, p)
+                for r, p in reversed(events)
+                if r["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+                and p.get("deliveryKind") == "validation-followup"
+                and p.get("reservationDigest") == reservation_digest
+            ),
+            None,
+        )
+        if (
+            deferred is None
+            or reserved is None
+            or sent is None
+            or delivery is None
+            or deferred[1].get("expiredPublication") is not None
+            or deferred[1].get("resultDigest") != digest
+            or set(deferred[1].get("missing") or [])
+            != {"regression_test_verified", "relevant_tests_green", "independent_review_passed"}
+            or reserved[1].get("reservationDigest") != reservation_digest
+            or reserved[1].get("generatedBuildContract") is not None
+            or reserved[1].get("expiryPromptRevision") is not None
+            or sent[1].get("resultDigest") != digest
+        ):
+            return None
+        candidate = candidate | {"missing": list(deferred[1].get("missing") or [])}
+        binding = store.validation_followup_delivery_binding(
+            thread_id=candidate["threadId"],
+            result_digest=digest,
+            reservation_digest=reservation_digest,
+            **_ledger_binding_kwargs(candidate),
+        )
+        if binding is None:
+            return None
+        snapshot = _validation_snapshot_bytes(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_id=binding["snapshotId"],
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest=binding["snapshotDigest"],
+        )
+        projected = _validation_worktree_input_bytes(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            worktree_input_path=binding["worktreeInputPath"],
+            worktree_input_digest=binding["worktreeInputDigest"],
+        )
+        source = json.loads(snapshot)
+        if snapshot != projected or _task_result_digest(source, snapshot) != digest:
+            return None
+        for historical_value in (value, source):
+            if not verify_probe_receipt(
+                historical_value.get("reproductionReceipt")
+                or historical_value.get("probeReceipt")
+                or {},
+                repo=candidate["key"].rsplit("#", 1)[0],
+                base_sha=historical_value.get("selectedBaseSha"),
+                code_paths=list(historical_value.get("codePaths") or []),
+                required_level=REPRODUCED_VALIDATED,
+                issue_url=candidate["issueUrl"],
+                task_id=candidate["intentId"],
+                thread_id=candidate["threadId"],
+                head_sha=historical_value.get("headSha"),
+                commit_sha=historical_value.get("commitSha"),
+                result_digest=digest,
+                enforce_freshness=False,
+            ):
+                return None
+        receipt_key = _task_turn_delivery_file_key(
+            delivery_kind="validation-followup",
+            thread_id=candidate["threadId"],
+            delivery_token=digest,
+            validation_reservation_digest=reservation_digest,
+        )
+        receipt_raw = _read_owned_regular_file(
+            STATE / "task_turn_receipts" / f"{receipt_key}.json",
+            label="completed generated-build validation receipt",
+            reject_dangerous_writes=True,
+        )
+        receipt = json.loads(receipt_raw)
+        if (
+            receipt.get("ok") is not True
+            or receipt.get("turnStatus") != "completed"
+            or receipt.get("turnError")
+            or receipt.get("error")
+            or receipt.get("threadId") != candidate["threadId"]
+            or receipt.get("deliveryKind") != "validation-followup"
+            or receipt.get("deliveryToken") != digest
+            or receipt.get("reservationDigest") != reservation_digest
+        ):
+            return None
+        _cwd, rollout_path = _validated_task_turn_thread(candidate)
+        latest_turn = latest_thread_turn_state(rollout_path)
+        if (
+            not latest_turn
+            or latest_turn.get("status") != "completed"
+            or latest_turn.get("turnId") != receipt.get("turnId")
+        ):
+            return None
+        journal = _read_owned_regular_file(
+            Path(str(rollout_path)),
+            label="completed validation build journal",
+            reject_dangerous_writes=True,
+        )
+        started_at = completed_at = None
+        prompts = []
+        commands = []
+        session_matches = False
+        for line in journal.splitlines():
+            record = json.loads(line)
+            payload = record.get("payload") or {}
+            if record.get("type") == "session_meta":
+                session_matches = payload.get("id") == candidate["threadId"]
+            if record.get("type") != "event_msg" or payload.get("turn_id") != receipt["turnId"]:
+                continue
+            if payload.get("type") == "task_started":
+                started_at = parse_time(record["timestamp"])
+            elif payload.get("type") == "task_complete":
+                if payload.get("error"):
+                    return None
+                completed_at = parse_time(record["timestamp"])
+            elif (
+                payload.get("type") == "item_completed"
+                and payload.get("thread_id") == candidate["threadId"]
+            ):
+                item = payload.get("item") or {}
+                if item.get("type") == "UserMessage":
+                    content = item.get("content")
+                    if (
+                        not isinstance(content, list)
+                        or len(content) != 1
+                        or content[0].get("type") != "text"
+                        or not isinstance(content[0].get("text"), str)
+                    ):
+                        return None
+                    prompts.append((record["timestamp"], content[0]["text"]))
+                elif item.get("type") == "CommandExecution":
+                    commands.append(item)
+        if (
+            not session_matches
+            or started_at is None
+            or completed_at is None
+            or len(prompts) != 1
+            or not (
+                parse_time(delivery[0]["created_at"])
+                <= started_at
+                <= parse_time(prompts[0][0])
+                <= completed_at
+            )
+            or not (
+                parse_time(delivery[0]["created_at"])
+                <= parse_time(sent[0]["created_at"])
+                <= completed_at
+            )
+            or "系统续跑：继续验证同一个修复" not in prompts[0][1]
+            or binding["worktreeInputPath"] not in prompts[0][1]
+            or "普通离线构建属于 run_tests 的前置步骤" in prompts[0][1]
+        ):
+            return None
+        failures = []
+        for test in value.get("tests") or []:
+            if (
+                not isinstance(test, dict)
+                or type(test.get("exitCode")) is not int
+                or test["exitCode"] == 0
+            ):
+                continue
+            for item in commands:
+                argv = item.get("command")
+                if (
+                    item.get("status") != "failed"
+                    or type(item.get("exit_code")) is not int
+                    or item["exit_code"] != test["exitCode"]
+                    or not isinstance(argv, list)
+                    or len(argv) != 3
+                    or argv[1] not in {"-lc", "-c"}
+                    or argv[2] != test.get("command")
+                    or item.get("cwd") != opened.worktree.as_uri()
+                    or test.get("cwd") != str(opened.worktree)
+                ):
+                    continue
+                output = str(item.get("aggregated_output") or "")
+                if "has not been built (missing packages/core/dist/index.js)" in output:
+                    failures.append("core_dist_missing")
+                elif (
+                    "ERR_MODULE_NOT_FOUND" in output
+                    and "Cannot find module" in output
+                    and "/@qwen-code/channel-base/dist/index.js'" in output
+                ):
+                    failures.append("channel_base_dist_missing")
+        if (
+            not failures
+            or _read_task_result_bytes_from_private(opened) != raw
+            or _read_task_context_bytes_from_private(opened) != context_raw
+        ):
+            return None
+        return candidate, {
+            "contextDigest": context["contextDigest"],
+            "reservationDigest": reservation_digest,
+            "reservation": reserved[1],
+            "sentEventId": sent[0]["id"],
+            "delivery": delivery[1],
+            "turnId": receipt["turnId"],
+            "startedAt": iso_z(started_at),
+            "completedAt": iso_z(completed_at),
+            "rawSha256": hashlib.sha256(raw).hexdigest(),
+            "inputSha256": hashlib.sha256(snapshot).hexdigest(),
+            "receiptSha256": hashlib.sha256(receipt_raw).hexdigest(),
+            "journalSha256": hashlib.sha256(journal).hexdigest(),
+            "promptSha256": sha256_text(prompts[0][1]),
+            "generatedFailures": sorted(set(failures)),
+        }
+
+
 def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     quarantined_reader = getattr(store, "quarantined_validation_followups", lambda: [])
     quarantined = list(quarantined_reader())
     reconciled_no_progress = store.reconcile_validation_no_progress()
+    completed_generated_build = []
+    completion_errors = []
+    for current in getattr(store, "task_result_candidates_for_ingestion", lambda: [])():
+        if current.get("stage") != "VALIDATION_PENDING":
+            continue
+        try:
+            with opportunity_action_guard(
+                ledger_action_guard_root(store.path), str(current["key"])
+            ):
+                completed = _completed_generated_build_validation(store, current)
+                if completed is None:
+                    continue
+                candidate, completion = completed
+                if store.record_completed_generated_build_no_progress(
+                    candidate, completion=completion
+                ):
+                    rearmed = store.rearm_validation_no_progress_for_review(
+                        key=candidate["key"],
+                        result_digest=candidate["resultDigest"],
+                        review_marker=GENERATED_BUILD_CONTRACT,
+                        reason=GENERATED_BUILD_REARM_REASON,
+                        intent_id=candidate["intentId"],
+                        worktree_path=candidate["worktreePath"],
+                    )
+                    completed_generated_build.append({"key": candidate["key"], "rearmed": rearmed})
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            completion_errors.append({"key": current["key"], "error": str(exc)[:300]})
     blocked_reader = getattr(store, "validation_prefetch_blocked", lambda: [])
     prefetch_blocked = {
         (str(item["key"]), str(item["resultDigest"])): item for item in blocked_reader()
     }
-    rearmed_review_feedback: list[dict[str, str]] = []
+    rearmed_review_feedback: list[dict[str, str]] = [
+        {"key": item["key"], "reason": GENERATED_BUILD_REARM_REASON}
+        for item in completed_generated_build
+        if item["rearmed"]
+    ]
     blocked_environment: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = list(completion_errors)
     concurrent_deferred: list[dict[str, Any]] = []
     for blocked in store.validation_no_progress():
         try:
