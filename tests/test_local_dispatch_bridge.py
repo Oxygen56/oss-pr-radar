@@ -36364,6 +36364,23 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
     store, worktree, result_path, input_path, old_input, review, _review_path, old_binding = (
         _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
     )
+    monkeypatch.setenv("RADAR_MAX_ACTIVE_TASKS", "5")
+    assert store.active_task_count() == 1
+    for number in range(2, 6):
+        intent = _enqueue_signed_intent(
+            store,
+            scanner_version=SCANNER_DECISION_REVISION,
+            intent_id=f"wip-intent-{number}",
+            key=f"wip/slots#{number}",
+        )
+        assert store.claim(intent["intentId"], "other-controller", max_active=5) is not None
+        reserved_creation = store.reserve_creation(intent["intentId"], owner="other-controller")
+        assert reserved_creation["intentId"] == intent["intentId"]
+    assert store.active_task_count() == 5
+    assert store.active_task_count(exclude_intent_id="intent-1") == 4
+    assert MODULE._global_task_wip(store) == (True, 5, 5)
+    assert MODULE._global_task_wip(store, exclude_intent_id="intent-1") == (False, 4, 5)
+    assert [item["key"] for item in store.task_result_candidates_for_ingestion()] == ["a/b#1"]
     source_root = tmp_path / "immutable-release"
     source_root.mkdir()
     monkeypatch.setattr(MODULE, "ROOT", source_root)
@@ -36524,6 +36541,7 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
         ]
     )
     assert listed["ok"] and listed["errors"] == [], listed
+    assert listed["queuedDeferred"] == []
     assert listed["rearmedReviewFeedback"] == [
         {"key": "a/b#1", "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"}
     ], json.dumps({"listed": listed, "diagnostics": diagnostics}, sort_keys=True)
@@ -36540,6 +36558,8 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
         )
     )
     assert reserve["ok"] and not reserve.get("blocked"), reserve
+    assert store.active_task_count() == 5
+    assert store.active_task_count(exclude_intent_id="intent-1") == 4
     assert reserve["reservationDigest"] != old_binding["reservationDigest"]
     assert len(store.unresolved_validation_followups()) == 1
     process = _FakeTaskTurnProcess()

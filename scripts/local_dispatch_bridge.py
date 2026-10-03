@@ -20927,19 +20927,24 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             )
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
-    wip_limited, active_task_count, task_limit = _global_task_wip(store)
     queued_deferred: list[dict[str, Any]] = []
-    if wip_limited and candidates:
-        queued_deferred = [
-            item
-            | {
-                "reason": "global_task_wip_limit",
-                "activeTaskCount": active_task_count,
-                "taskLimit": task_limit,
-            }
-            for item in candidates
-        ]
-        candidates = []
+    admitted_candidates: list[dict[str, Any]] = []
+    for candidate in candidates:
+        wip_limited, active_task_count, task_limit = _global_task_wip(
+            store, exclude_intent_id=str(candidate.get("intentId") or "") or None
+        )
+        if wip_limited:
+            queued_deferred.append(
+                candidate
+                | {
+                    "reason": "global_task_wip_limit",
+                    "activeTaskCount": active_task_count,
+                    "taskLimit": task_limit,
+                }
+            )
+        else:
+            admitted_candidates.append(candidate)
+    candidates = admitted_candidates
     unresolved = store.unresolved_validation_followups()
     activity: dict[str, int] = {}
     rollout_paths: dict[str, str | None] = {}
