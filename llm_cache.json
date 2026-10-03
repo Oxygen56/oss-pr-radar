@@ -9153,6 +9153,39 @@
     ],
     "why": "The issue describes a plausible production failure (Flux websocket stays open but stops sending events, leaving an open user turn), and code anchors are supplied. However, the reporter explicitly states it is not reproducible on demand and provides no public reproduction; the failure depends on Deepgram going quiet, which cannot be triggered deterministically. Without a reproduction or a concrete validation path that can establish the failure, the code work is not actionable as a reference-vs-implementation test."
   },
+  "13ac5f0173a431b9adfcbe79341ec56895275887ffdb553db183b69b04bba906": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims PLE is unquantized for this checkpoint, but open PR #58977 title suggests BF16 INC PLE embedding support, which may or may not address the same dispatch path"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/models/qwen4_exp/nvidia/ngram_embedding.py: from_quant_config dispatch for INCConfig",
+      "vllm/models/qwen4_exp/common/ngram_embedding.py: PLE method selection from checkpoint/layer metadata"
+    ],
+    "risks": [
+      "PR #58977 may already implement the same fix, making a new contribution redundant",
+      "Assuming every INC checkpoint has an unquantized PLE could mis-handle genuinely quantized PLE checkpoints",
+      "Repository AI disclosure policy conflict (ai_disclosure_conflict) may block automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with Intel/Qwen3.8-Flash-Next-W4A16-AutoRound on 2x A100, TP=2, EP enabled, and confirm the NotImplementedError at from_quant_config",
+      "After fix, verify model loads and PLE uses unquantized embedding method while body uses MARLIN WNA16 MoE backend",
+      "Add regression test asserting INCConfig with unquantized PLE metadata selects the unquantized PLE method"
+    ],
+    "unknowns": [
+      "Whether PR #58977 already fixes the INCConfig dispatch in from_quant_config",
+      "Whether per-layer/checkpoint quantization metadata is available to distinguish quantized vs unquantized PLE"
+    ],
+    "why": "Issue describes a concrete quantization-dispatch failure (INCConfig rejected by Qwen4ExpPLEEmbeddingMethod.from_quant_config) with traceback and a tested workaround, but the supplied evidence contains a materially blocking unknown: open PR #58977 ('Support BF16 INC PLE embeddings in Qwen4Exp') overlaps the exact code paths (qwen4_exp/common/ngram_embedding.py, qwen4_exp/nvidia/ngram_embedding.py) and may already cover the root cause. Duplicate status is 'semantic_overlap_requires_review' and root_cause_coverage is false, so actionability cannot be confirmed without comparing the PR's implementation boundary."
+  },
   "13b5c6cd88e33f6324c3e010d266c0dc458805cc7230781d035f9a67b12aebc8": {
     "confidence": 0.85,
     "contradictions": [
@@ -56454,6 +56487,42 @@
     ],
     "why": "Issue provides a concrete, reproducible 1.4.2 failure: frontend folds the speech stream and selects response.data.first(), so only the initial 0.08s silent WAV chunk reaches the HTTP caller while the worker emits three chunks. Root cause is anchored to lib/llm/src/http/service/openai.rs and the audio aggregator, with byte-level evidence (3884 bytes, RMS 0, matching SHA-256) and a direct-to-worker comparison proving later non-silent audio exists. The issue itself scopes this as a 1.4.2 qualification/backport/support-boundary report and explicitly notes PR #12100 is not an ancestor of tag v1.4.2, so the actionable work is a backport/versioned fix plus regression coverage, not a novel main-branch fix."
   },
+  "6fc90dd0c99a85c5d9ae5d437320df076eee0f561f4d7853c355a1906e5c1eb8": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment says semantic_overlap_requires_review while also reporting root_cause_coverage false for PR #6031, leaving coverage unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: stop forcing reconnect_on_error=False and default it to True",
+      "src/pipecat/services/sarvam/stt.py: complete in-flight utterance on drop and classify permanent closes (4000, 1003 non-rate-limit)",
+      "src/pipecat/services/sarvam/stt.py: give a failed first connect bounded retry or mark permanent"
+    ],
+    "risks": [
+      "PR #6031 may already implement the same fix, making a new contribution duplicative",
+      "Changing reconnect_on_error default could alter behavior for existing Sarvam users",
+      "Permanent-close classification (1003 vs rate limit) may be wrong for some Sarvam error reasons"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py drop scenario and assert 2 handshakes, transcripts from both connections, and is_usable True",
+      "Run the issue's repro.py connect scenario and assert retry of the handshake and transcription, or is_usable False if unrecoverable",
+      "Add a regression test for 1006 TCP drop and 1003 rate-limit close behavior"
+    ],
+    "unknowns": [
+      "Whether PR #6031 already fixes the root cause described in issue #6001",
+      "Whether maintainers have a preferred design for Sarvam reconnect behavior",
+      "Whether PR #6031 is intended to close issue #6001"
+    ],
+    "why": "Issue #6001 provides a strong, reproducible root cause: SarvamRealtimeSTTService forces reconnect_on_error=False, never calls _try_reconnect, and marks the service unusable on any close, so a dropped or failed connection ends transcription. However, open PR #6031 ('fix(sarvam): reconnect SarvamRealtimeSTTService when its websocket drops') already targets the same file and semantics, and the supplied duplicate assessment explicitly says semantic_overlap_requires_review with no direct issue link. Whether that PR already covers the root cause is a materially blocking unknown for deciding if new code work is actionable."
+  },
   "6fe445ac5e33336ce37fb96ee5ecdd378c1d447533cba7039d3f4a06fa551fb3": {
     "confidence": 0.55,
     "contradictions": [
@@ -70871,6 +70940,35 @@
       "Whether existing PRs will be merged or superseded"
     ],
     "why": "Issue clearly describes mid-stream provider errors bypassing retries and being unclassifiable, with concrete repro and production evidence. However, the deterministic gate is HUMAN_REVIEW, and the issue has been split into two sub-issues (#18668, #18669) requiring design confirmation. Two open PRs (#18671, #18672) exist with overlapping intent but are not directly linked, so maintainer guidance is needed to avoid duplicate or conflicting work."
+  },
+  "8d433ccb433d9413b83d103e3a0bcfef9abfc41af8c8a8c9d24d758714049267": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "livekit-agents/livekit/agents/telemetry/loop_monitor.py: _consume_watchdog_gap should count starvation whenever now - _watchdog_last_wake exceeds one tick, regardless of whether the last wake fell before or after window_start",
+      "Preserve existing _watchdog_late handling and report classification behavior for genuinely descheduled cases"
+    ],
+    "risks": [
+      "Changing the gap formula could alter classification thresholds for existing non-GIL stalls; verify no regression in descheduled/CPU-bound stall reporting",
+      "Maintainer may prefer a different formulation of the starvation condition"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test mirroring part 1: set _last_tick_at 220ms in the past, _watchdog_last_wake 10ms after it, _watchdog_late=None, run _on_tick, assert watchdog_gap > 0.1 and no 'block ended before the watchdog looked' stack",
+      "Add a live-thread test holding the GIL via sorted() on a large list and assert stalls are not classified as 'the block ended before the watchdog looked' with watchdog_gap=0",
+      "Run the telemetry package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for the watchdog gap semantics"
+    ],
+    "why": "Issue provides a deterministic reproduction, a live-thread reproduction, exact code anchor in loop_monitor.py, and a concrete proposed fix for _consume_watchdog_gap. Root cause is clearly identified: the watchdog gap is only counted when the last wake preceded window_start, so a watchdog starved after waking inside the window yields watchdog_gap=0 and a misleading 'block ended before the watchdog looked' report. No duplicate PR/issue coverage found."
   },
   "8d4348c9f38a4988e65b8ca2df2140fbbfa1a35ac6e58df3676e08d9d8bad003": {
     "confidence": 0.85,
@@ -86538,6 +86636,47 @@
     ],
     "why": "The issue clearly identifies a stale tenant_embd_id causing empty api_key and a missing validation in get_model_config_by_id. However, the deterministic gate requires HUMAN_REVIEW and the candidate is a bug report without an implementation. Existing merged PRs partially address related resolution but not the execution-time stale cache scenario, so a new PR could be valuable, but design confirmation is needed."
   },
+  "adf02e660dce6e830ebd4e564b3334b1b3f843fa980879e9f1745923f23f243b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body states repro results are identical on main and on PR #9672 head, while open_pr_assessment reports semantic overlap requiring review without direct code overlap",
+      "Issue proposes capability-fields-override, but PR #9672 documents instance-wins, so the two directions conflict"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/capabilities/native_or_local.py (native resolution/combine semantics)",
+      "pydantic_ai_slim/pydantic_ai/capabilities/_merge.py (merge_field_values native=True handling)",
+      "pydantic_ai_slim/pydantic_ai/capabilities/web_fetch.py, web_search.py, x_search.py, mcp.py, image_generation.py (_requires_native and field propagation)",
+      "docs/capabilities/*.md and capabilities/AGENTS.md documenting the chosen rule"
+    ],
+    "risks": [
+      "Behavior change may silently alter what native tools are sent for existing users",
+      "MCP fields carry credentials; warning/error messages must name fields only, never values",
+      "Overlap with open PR #9672 could duplicate or conflict with in-flight work",
+      "Choosing instance-wins vs capability-wins changes both implementation and documentation scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing tests mirroring the issue's repro table (e.g. WebFetch(native=WebFetchTool(), allowed_domains=['a.com']) must not send allowed_domains=None) using FunctionModel with a profile supporting all native tools",
+      "Regression test for combine order-dependence: [WebFetch(blocked_domains=['evil.com']), WebFetch(native=WebFetchTool(enable_citations=True))] and the reversed order",
+      "Assert warning/raise behavior for restriction fields (domain filters, max_uses, allowed_x_handles, MCP allowed_tools/headers/authorization_token) once the rule is chosen",
+      "Verify subagent path (_resolve_native_with_overrides) and direct fallback (ImageGeneration aspect_ratio) agree with the chosen rule"
+    ],
+    "unknowns": [
+      "Maintainer's chosen rule (capability fields override vs instance wins vs warn/raise) is unanswered in the issue",
+      "Whether PR #9672 already covers the root cause or will be extended to cover it",
+      "Whether repository assignment is required before work can proceed (policy status needs_assignment, no assignee)",
+      "Whether a public minimal reproduction exists beyond the issue's internal repro table"
+    ],
+    "why": "The issue documents a real, well-evidenced behavioral inconsistency (capability fields silently dropped beside an explicit native= tool) with a detailed repro table and code anchors, but it is explicitly a design question addressed to a maintainer ('which one rule should NativeOrLocalTool capabilities follow? ... OK to go with that?'), and the supplied evidence shows unresolved coverage: open PR #9672 overlaps the same code paths and semantics without referencing the issue, and the issue body itself states results are identical on #9672's head. The pre-task policy is needs_assignment with assignmentRequired=true and no assignee, and reproduction_or_validation_missing is flagged. Whether code work is actionable depends on the maintainer's rule choice (capability-wins vs instance-wins vs warn/raise), which materially changes the implementation and tests."
+  },
   "ae008963fbbaace4d5d6b34fae07a312ef4a43691bddc3ef085d2bc9d43d9224": {
     "confidence": 0.7,
     "contradictions": [
@@ -93293,6 +93432,38 @@
       "Whether #22530 already changed the intended unattended approval semantics"
     ],
     "why": "Issue provides an offline, deterministic reproduction with a failing desired-behavior assertion and a concrete root-cause chain: stock factory-plan skill directs factory_transition_work_item(stage: execute) instead of submit_plan, the controller mount does not override the Code SDK default yolo: true, and session.resolveToolApproval returns allow without emitting a human tool_approval_required event, so the plan checkpoint is bypassed. This is a concrete agent/controller/tool-approval behavior bug with a clear validation path, not mere plumbing."
+  },
+  "bb398b3da805d14da03fcd88e2a3d12fc8d70ee69cf2202cd97a95f6c366ca7d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #7252 overlapping the same file, while the candidate is scored as actionable"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/google/adk/a2a/executor/a2a_agent_executor.py: replace make_text_part(str(e)) with a generic/selected error message",
+      "src/google/adk/a2a/executor/a2a_agent_executor_impl.py: same change if the duplicate line exists"
+    ],
+    "risks": [
+      "PR #7252 may already cover or conflict with the same code path, making a new contribution duplicative",
+      "Changing the error message could alter caller-visible A2A behavior beyond the intended fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py against the patched code and assert the TASK_STATE_FAILED status message no longer contains traceback/file paths",
+      "Add a regression unit test asserting the failed status carries a generic message while the exception is still logged with exc_info=True"
+    ],
+    "unknowns": [
+      "Whether PR #7252 already fixes the raw-exception leak or only the long-running-call behavior",
+      "Whether the repository requires assignment before a contribution can be accepted (policy status needs_assignment, no assignees)"
+    ],
+    "why": "Issue #7385 has a clear root cause (make_text_part(str(e)) leaks raw exception text to A2A callers) and a self-contained reproduction, but the supplied evidence shows an unresolved duplicate/overlap: open PR #7252 touches the same file (src/google/adk/a2a/executor/a2a_agent_executor.py) with semantic overlap on A2aAgentExecutor, and the duplicate status is 'semantic_overlap_requires_review'. Additionally, policy status is 'needs_assignment' with assignmentRequired=true and no assignees, which is a materially blocking repository requirement."
   },
   "bb448b0dc837a1a8ba76ad98bcd4afaddd2e092d84a526de847fd59ef82c5cd7": {
     "confidence": 0.8,
@@ -120923,6 +121094,33 @@
       "Maintainer design preferences for shutdown ordering and timeout configuration"
     ],
     "why": "Issue describes a clear shutdown-ordering bug with a verified causal chain and a concrete expected behavior. However, the deterministic gate is HUMAN_REVIEW, and an existing PR (#21255) has semantic overlap that requires maintainer comparison before starting new work."
+  },
+  "ef945d67ccb4e0008499f2144405d3c212a58bd1052bf1b4ce3056b2f47bf369": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue title attributes the crash to long context, while comment evidence shows the trigger is a replay step with <=512 scheduled tokens and that a cold 312,768-token request passes."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "The separate KVTransfer empty-query producer (#51486) is addressed by open PR #51489, so any new work there would duplicate that PR.",
+      "Title framing as a long-context regression is misleading; the trigger is a replay step with <=512 scheduled tokens."
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new test needed; verify against released v0.28.0 or cherry-pick de6ec294 onto v0.26.0 and confirm the <=512-token replay-step case no longer produces a zero-length FlashMLA query chunk."
+    ],
+    "unknowns": [
+      "Whether the maintainers want a distinct follow-up for the #51486 KVTransfer path beyond PR #51489."
+    ],
+    "why": "Supplied evidence already establishes the root cause and a merged fix: comment evidence states this is the #48822 PIECEWISE-replay metadata-padding regression, fixed by #49302 (de6ec294), with single-variable validation (cherry-pick makes failing cases pass, num_prefill_reqs 512->1) and confirmation that released v0.28.0 passes all cases. The issue is therefore covered by an existing merged fix, making new code work low-value."
   },
   "ef9b5d22806d45dfc6fea0aa4c54208ffc5b847af3ae2eb5b0b5d734a2ce11e0": {
     "confidence": 0.7,
