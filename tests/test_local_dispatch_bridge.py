@@ -31003,12 +31003,15 @@ def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_pa
     assert repeated == finalized
 
 
-def _completed_validation_result_with_omitted_task_id(tmp_path, monkeypatch):
+def _completed_validation_result_with_omitted_task_id(
+    tmp_path, monkeypatch, *, target_base_bound=False
+):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
         missing_quality=("independent_review_passed",),
         controller_policy_complete=True,
+        target_base_bound=target_base_bound,
     )
     initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
     assert initial["validationDeferred"]
@@ -36125,3 +36128,357 @@ def test_publication_metadata_recovery_is_only_the_tracking_merge_shape(shape):
         )
         is None
     )
+
+
+def _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch):
+    from oss_pr_radar.independent_review import _context_review_binding_digest
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path, monkeypatch, target_base_bound=True
+    )
+    source_raw = input_path.read_bytes()
+    source = json.loads(source_raw)
+    context_path = result_path.parent / "task-context.json"
+    old_context = json.loads(context_path.read_text())
+    review = _write_explicit_controller_review(tmp_path, source)
+    review.update(
+        verdict="FAIL",
+        summary="Full retrieval path is not fixed.",
+        findings=[
+            {
+                "severity": "P2",
+                "file": "runtime.py",
+                "line": 1,
+                "message": "Refill stops on duplicate eligible rows and suppresses FAQ expansion.",
+            }
+        ],
+    )
+    review_path = _receipt_path(
+        tmp_path,
+        key=source["key"],
+        commit_sha=source["commitSha"],
+        source_digest=_source_digest(source),
+    )
+    envelope = json.loads(review_path.read_text())
+    envelope.update(
+        review=review,
+        contextReviewBindingDigest=_context_review_binding_digest(old_context, source),
+    )
+    review_path.write_text(json.dumps(envelope))
+    with store.connect() as connection:
+        sent = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        reserved = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+    digest = json.loads(sent[0])["resultDigest"]
+    binding = store.validation_followup_delivery_binding(
+        thread_id="thread-1",
+        result_digest=digest,
+        reservation_digest=reserved["reservationDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    rollout = tmp_path / "completed-review-feedback.jsonl"
+    thread_db = tmp_path / "completed-review-feedback-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT,git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(worktree),
+                0,
+                MODULE.issue_prompt(source["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    turn_id = "completed-validation-turn"
+    old_prompt = MODULE._validation_followup_prompt(
+        {
+            "missing": ["independent_review_passed"],
+            "worktreeInputPath": binding["worktreeInputPath"],
+        }
+    )
+    records = [
+        {"type": "session_meta", "payload": {"id": "thread-1"}},
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {"type": "task_started", "turn_id": turn_id},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": turn_id,
+                "item": {
+                    "type": "UserMessage",
+                    "content": [{"type": "text", "text": old_prompt, "text_elements": []}],
+                },
+            },
+        },
+    ]
+    failed_raw = result_path.read_bytes()
+    result_path.write_bytes(failed_raw)
+    records.append(
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {"type": "task_complete", "turn_id": turn_id},
+        }
+    )
+    rollout.write_text("".join(json.dumps(item) + "\n" for item in records))
+    live_audit = json.loads(json.dumps(old_context["liveAudit"]))
+    live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+    live_audit["evidence"].update(
+        digest="b" * 64,
+        complete=True,
+        completeness={"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": live_audit,
+            "targetBase": old_context["targetBase"],
+            "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+        },
+        dedupe_key="completed-review-feedback:current-audit",
+    )
+    MODULE.write_task_context(
+        store, issue_url=source["issueUrl"], thread_id="thread-1", cwd=worktree
+    )
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
+    current = json.loads(context_path.read_text())
+    assert current["contextDigest"] != source["contextDigest"]
+    assert result_path.read_bytes() == failed_raw
+    return store, worktree, result_path, input_path, source_raw, review, review_path, binding
+
+
+def test_completed_validation_delivers_missing_exact_private_review_with_current_context(
+    tmp_path, monkeypatch
+):
+    store, worktree, result_path, input_path, old_input, review, _review_path, old_binding = (
+        _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
+    )
+    source_root = tmp_path / "immutable-release"
+    source_root.mkdir()
+    monkeypatch.setattr(MODULE, "ROOT", source_root)
+    assert MODULE.ROOT != MODULE.STATE.parent == tmp_path
+    assert _review_path.is_relative_to(MODULE.STATE)
+    assert not (MODULE.ROOT / "state" / "independent_reviews").exists()
+    assert (
+        MODULE._controller_review_result(SimpleNamespace(ledger=store.path), json.loads(old_input))
+        is None
+    )
+    original_raw = result_path.read_bytes()
+    original_quality = json.loads(original_raw)["quality"]
+    with store.connect() as connection:
+        original_events = [
+            tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+        ]
+    candidate = store.task_result_candidates_for_ingestion()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text())
+    assert (
+        MODULE._validation_result_context_refresh_proof(
+            store,
+            candidate=candidate,
+            context=context,
+            value=json.loads(original_raw),
+            worktree=worktree,
+            raw=original_raw,
+        )
+        is None
+    )
+    assert store.validation_followup_candidates() == []
+    args = SimpleNamespace(ledger=store.path, key="a/b#1", runtime_root=tmp_path)
+    listed = MODULE.validation_followup_list(args)
+    assert listed["ok"] and listed["errors"] == [], listed
+    assert listed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"}
+    ]
+    candidate = listed["candidates"][0]
+    assert candidate["resultDigest"] == old_binding["resultDigest"]
+    reserve = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            runtime_root=tmp_path,
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserve["ok"] and not reserve.get("blocked"), reserve
+    assert reserve["reservationDigest"] != old_binding["reservationDigest"]
+    assert len(store.unresolved_validation_followups()) == 1
+    process = _FakeTaskTurnProcess()
+    original_popen = subprocess.Popen
+    observed = {}
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def response(_process, _selector, buffer, *, response_id, **_kwargs):
+        return buffer, {
+            "result": {"thread": {"id": "thread-1"}}
+            if response_id == 1
+            else {"turn": {"id": "new-exact-review-turn"}}
+        }
+
+    def completed(*_args, **_kwargs):
+        return {"turnId": "new-exact-review-turn", "status": "completed"}
+
+    def launch(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        worker_args = SimpleNamespace(
+            ledger=store.path,
+            runtime_root=Path(argv[argv.index("--runtime-root") + 1]),
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=candidate["resultDigest"],
+            delivery_attempt_digest=None,
+            intent_id=None,
+            worktree_path=None,
+            **{
+                option.replace("-", "_"): argv[argv.index("--" + option) + 1]
+                if "--" + option in argv
+                else None
+                for option in (
+                    "reservation-digest",
+                    "snapshot-id",
+                    "snapshot-path",
+                    "snapshot-digest",
+                    "worktree-input-path",
+                    "worktree-input-digest",
+                    "receipt",
+                )
+            },
+        )
+        assert worker_args.runtime_root == MODULE.STATE.parent == tmp_path
+        assert MODULE.ROOT != worker_args.runtime_root
+        observed["worker"] = MODULE.task_turn_worker_entry(worker_args)
+        observed["input"] = worktree / worker_args.worktree_input_path
+        assert observed["worker"]["ok"], observed["worker"]
+        return SimpleNamespace(pid=os.getpid())
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", response)
+    monkeypatch.setattr(MODULE, "_wait_for_app_server_terminal_turn", completed)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+    monkeypatch.setattr(MODULE.subprocess, "Popen", launch)
+    delivered = MODULE.validation_followup_deliver(
+        SimpleNamespace(
+            ledger=store.path,
+            runtime_root=tmp_path,
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
+    projected = observed["input"].read_bytes()
+    source = json.loads(projected)
+    assert source["independentReview"] == review
+    assert (
+        source["contextDigest"]
+        == json.loads((result_path.parent / "task-context.json").read_text())["contextDigest"]
+    )
+    assert MODULE._task_result_digest(source, projected) == candidate["resultDigest"]
+    assert projected != old_input and input_path.read_bytes() == old_input
+    prompts = [
+        item["params"]["input"][0]["text"]
+        for item in _task_turn_messages(process)
+        if item.get("method") == "turn/start"
+    ]
+    assert len(prompts) == 1 and review["findings"][0]["message"] in prompts[0]
+    assert (
+        "本轮身份的唯一来源" in prompts[0]
+        and "independent_review_passed 必须保留 false" in prompts[0]
+    )
+    assert store.unresolved_validation_followups() == []
+    repeated = MODULE.validation_followup_list(args)
+    assert repeated["rearmedReviewFeedback"] == [] and repeated["candidates"] == [], repeated
+    assert (
+        result_path.read_bytes() == original_raw
+        and json.loads(result_path.read_bytes())["quality"] == original_quality
+    )
+    with store.connect() as connection:
+        events = [tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")]
+        assert events[: len(original_events)] == original_events
+        sent = connection.execute(
+            "SELECT id,dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        reserved = connection.execute(
+            "SELECT id FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' AND dedupe_key=?",
+            (reserve["reservationDigest"],),
+        ).fetchone()
+        assert sent[0] > reserved[0] and sent[1] == reserve["reservationDigest"]
+        assert json.loads(sent[2])["resultDigest"] == candidate["resultDigest"]
+        assert json.loads(sent[2])["reservationDigest"] == reserve["reservationDigest"]
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "rejection", ["active", "uncompleted", "foreign_feedback", "wrong_receipt", "source_change"]
+)
+def test_completed_validation_missing_feedback_keeps_exact_proof_rejections(
+    tmp_path, monkeypatch, rejection
+):
+    store, worktree, _result_path, _input_path, _source, _review, review_path, binding = (
+        _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
+    )
+    if rejection == "active":
+        monkeypatch.setattr(
+            MODULE, "_active_task_turn_for_result", lambda _candidate: {"turnId": "still-active"}
+        )
+    elif rejection in {"uncompleted", "wrong_receipt"}:
+        key = MODULE._task_turn_delivery_file_key(
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=binding["resultDigest"],
+            validation_reservation_digest=binding["reservationDigest"],
+        )
+        path = MODULE.STATE / "task_turn_receipts" / f"{key}.json"
+        receipt = json.loads(path.read_text())
+        receipt["turnStatus"] = "in_progress" if rejection == "uncompleted" else "completed"
+        if rejection == "wrong_receipt":
+            receipt["reservationDigest"] = "f" * 64
+        MODULE._atomic_private_json(path, receipt)
+    elif rejection == "foreign_feedback":
+        receipt = json.loads(review_path.read_text())
+        receipt["commitSha"] = "f" * 40
+        review_path.write_text(json.dumps(receipt))
+    else:
+        (worktree / "runtime.py").write_text("value = 3\n")
+    candidate = store.task_result_candidates_for_ingestion()[0]
+    assert (
+        MODULE._completed_review_feedback_validation(
+            store, candidate, SimpleNamespace(ledger=store.path)
+        )
+        is None
+    )
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
