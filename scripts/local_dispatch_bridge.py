@@ -19455,9 +19455,14 @@ def _validation_prefetch_plan(
                         for field in ("command", "summary", "outcome", "result")
                     )
                     if not (
-                        "ERR_MODULE_NOT_FOUND" in text
-                        and "Cannot find module" in text
-                        and "/@qwen-code/channel-base/dist/index.js'" in text
+                        (
+                            (
+                                "ERR_MODULE_NOT_FOUND" in text
+                                and "Cannot find module" in text
+                                and "/@qwen-code/channel-base/dist/index.js'" in text
+                            )
+                            or "@qwen-code/channel-base/dist/index.js is missing" in text
+                        )
                         and not any(
                             marker != "node_modules" and marker in text.casefold()
                             for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS
