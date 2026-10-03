@@ -16999,6 +16999,7 @@ def _controller_commit_result(
     omit_reported_code_paths: bool = False,
     target_base_bound: bool = False,
     validation_generated_build_failure: str | None = None,
+    complete_normal_validation_audit: bool = False,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -17139,28 +17140,47 @@ def _controller_commit_result(
         dedupe_key="intent-1:repository-probe",
     )
     if controller_policy_complete:
-        store.record_audit_snapshot(
-            "a/b#1",
-            evidence={
-                "authorization": {"status": "ALLOW"},
-                "evidenceDigest": "c" * 64,
-                "liveAudit": {
-                    "capturedAt": iso_z(datetime.now(UTC)),
-                    "evidence": {
-                        "digest": "c" * 64,
-                        "repo": "a/b",
-                        "issue": {"number": 1, "state": "open"},
-                        "completeness": {"repositoryPolicy": "COMPLETE"},
-                        "policy": {
-                            "status": "NORMAL",
-                            "digest": "d" * 64,
-                            "ai_disclosure": False,
-                            "ai_prohibited": False,
-                        },
+        policy_audit = {
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "c" * 64,
+            "liveAudit": {
+                "capturedAt": iso_z(datetime.now(UTC)),
+                "evidence": {
+                    "digest": "c" * 64,
+                    "repo": "a/b",
+                    "issue": {"number": 1, "state": "open"},
+                    "completeness": {"repositoryPolicy": "COMPLETE"},
+                    "policy": {
+                        "status": "NORMAL",
+                        "digest": "d" * 64,
+                        "ai_disclosure": False,
+                        "ai_prohibited": False,
                     },
                 },
             },
-            dedupe_key="controller-policy-complete",
+        }
+        if complete_normal_validation_audit:
+            assert target_base_bound
+            policy_audit["targetBase"] = {
+                "branch": "main",
+                "sha": base_sha,
+                "source": "repository_default",
+                "defaultBranch": "main",
+            }
+            policy_audit["authorization"]["evidence_digest"] = "c" * 64
+            policy_audit["liveAudit"]["evidence"].update(
+                repoProbeReceipt=probe,
+                complete=True,
+                completeness={"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
+            )
+        store.record_audit_snapshot(
+            "a/b#1",
+            evidence=policy_audit,
+            dedupe_key=(
+                "intent-1:controller-policy-complete"
+                if complete_normal_validation_audit
+                else "controller-policy-complete"
+            ),
         )
     if target_base_bound:
         run_git(worktree, "switch", "--detach", base_sha)
@@ -31004,7 +31024,7 @@ def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_pa
 
 
 def _completed_validation_result_with_omitted_task_id(
-    tmp_path, monkeypatch, *, target_base_bound=False
+    tmp_path, monkeypatch, *, target_base_bound=False, complete_normal_validation_audit=False
 ):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -31012,6 +31032,7 @@ def _completed_validation_result_with_omitted_task_id(
         missing_quality=("independent_review_passed",),
         controller_policy_complete=True,
         target_base_bound=target_base_bound,
+        complete_normal_validation_audit=complete_normal_validation_audit,
     )
     initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
     assert initial["validationDeferred"]
@@ -36135,12 +36156,22 @@ def _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
 
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
     store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
-        tmp_path, monkeypatch, target_base_bound=True
+        tmp_path, monkeypatch, target_base_bound=True, complete_normal_validation_audit=True
     )
     source_raw = input_path.read_bytes()
     source = json.loads(source_raw)
     context_path = result_path.parent / "task-context.json"
     old_context = json.loads(context_path.read_text())
+    assert source["contextDigest"] == old_context["contextDigest"]
+    assert source["targetBase"] == old_context["targetBase"]
+    assert old_context["liveAudit"]["evidence"]["digest"] == "c" * 64
+    assert old_context["liveAudit"]["evidence"]["complete"] is True
+    assert old_context["liveAudit"]["evidence"]["completeness"] == {
+        "repositoryPolicy": "COMPLETE",
+        "issue": "COMPLETE",
+    }
+    assert old_context["liveAudit"]["evidence"]["policy"]["status"] == "NORMAL"
+    assert MODULE._controller_policy_verification(old_context) is not None
     review = _write_explicit_controller_review(tmp_path, source)
     review.update(
         verdict="FAIL",
@@ -36262,6 +36293,15 @@ def _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
     assert recovered["ok"], recovered
     current = json.loads(context_path.read_text())
     assert current["contextDigest"] != source["contextDigest"]
+    assert current["targetBase"] == old_context["targetBase"]
+    assert current["liveAudit"]["evidence"]["digest"] == "b" * 64
+    assert (
+        current["liveAudit"]["evidence"]["policy"] == old_context["liveAudit"]["evidence"]["policy"]
+    )
+    assert MODULE._controller_policy_verification(current) is not None
+    assert _context_review_binding_digest(current, source) == _context_review_binding_digest(
+        old_context, source
+    )
     assert result_path.read_bytes() == failed_raw
     return store, worktree, result_path, input_path, source_raw, review, review_path, binding
 
