@@ -82,6 +82,7 @@ from oss_pr_radar.managed_lifecycle import (  # noqa: E402
     reconcile_managed_pr_states,
 )
 from oss_pr_radar.metrics import (  # noqa: E402
+    VALIDATION_DEPENDENCY_FAILURE_MARKERS,
     assess_submit_ready,
     is_validation_dependency_failure,
     rolling_quality,
@@ -19390,6 +19391,32 @@ def _validation_prefetch_plan(
             elif isinstance(item, str):
                 failed.append({"command": "", "summary": item, "exitCode": 127})
     dependency_failures = [item for item in failed if _is_validation_dependency_failure(item)]
+    if candidate.get("generatedBuildContract") == GENERATED_BUILD_CONTRACT:
+        channel_package = (worktree / "node_modules/@qwen-code/channel-base").resolve()
+        if (
+            worktree in channel_package.parents
+            and (channel_package / "package.json").is_file()
+            and not (channel_package / "dist/index.js").exists()
+        ):
+            manifest = json.loads((channel_package / "package.json").read_text(encoding="utf-8"))
+            if isinstance(manifest, dict) and manifest.get("name") == "@qwen-code/channel-base":
+                remaining = []
+                for failure in dependency_failures:
+                    text = "\n".join(
+                        str(failure.get(field) or "")
+                        for field in ("command", "summary", "outcome", "result")
+                    )
+                    if not (
+                        "ERR_MODULE_NOT_FOUND" in text
+                        and "Cannot find module" in text
+                        and "/@qwen-code/channel-base/dist/index.js'" in text
+                        and not any(
+                            marker != "node_modules" and marker in text.casefold()
+                            for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS
+                        )
+                    ):
+                        remaining.append(failure)
+                dependency_failures = remaining
     if not dependency_failures:
         return [], []
 
@@ -19718,6 +19745,68 @@ def _completed_generated_build_validation(
     """Prove the observed normal, unchanged completion before the build instructions existed."""
     if candidate.get("stage") != "VALIDATION_PENDING":
         return None
+    with store.connect() as connection:
+        prior_rows = connection.execute(
+            """SELECT id,event_type,dedupe_key,payload_json FROM events
+               WHERE opportunity_key=? AND event_type IN (
+                 'TASK_RESULT_VALIDATION_DEFERRED','VALIDATION_FOLLOWUP_RESERVED',
+                 'VALIDATION_FOLLOWUP_SENT','TASK_TURN_DELIVERY_STARTED')
+               AND json_extract(payload_json,'$.intentId')=?
+               AND json_extract(payload_json,'$.threadId')=?
+               AND json_extract(payload_json,'$.worktreePath')=? ORDER BY id""",
+            (
+                candidate["key"],
+                candidate["intentId"],
+                candidate["threadId"],
+                candidate["worktreePath"],
+            ),
+        ).fetchall()
+    prior_events = [(dict(row), json.loads(row["payload_json"])) for row in prior_rows]
+    prior_latest = {
+        kind: next(
+            (
+                (row, payload)
+                for row, payload in reversed(prior_events)
+                if row["event_type"] == kind
+            ),
+            None,
+        )
+        for kind in (
+            "TASK_RESULT_VALIDATION_DEFERRED",
+            "VALIDATION_FOLLOWUP_RESERVED",
+            "VALIDATION_FOLLOWUP_SENT",
+        )
+    }
+    prior_deferred, prior_reserved, prior_sent = prior_latest.values()
+    if prior_deferred is None or prior_reserved is None or prior_sent is None:
+        return None
+    expected_digest = prior_deferred[1].get("resultDigest")
+    prior_reservation_digest = prior_reserved[1].get("reservationDigest")
+    prior_delivery = next(
+        (
+            (row, payload)
+            for row, payload in reversed(prior_events)
+            if row["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+            and payload.get("deliveryKind") == "validation-followup"
+            and payload.get("reservationDigest") == prior_reservation_digest
+            and payload.get("resultDigest") == expected_digest
+        ),
+        None,
+    )
+    if (
+        prior_delivery is None
+        or prior_deferred[1].get("expiredPublication") is not None
+        or set(prior_deferred[1].get("missing") or [])
+        != {"regression_test_verified", "relevant_tests_green", "independent_review_passed"}
+        or prior_reserved[1].get("resultDigest") != expected_digest
+        or prior_reserved[1].get("generatedBuildContract") is not None
+        or prior_reserved[1].get("expiryPromptRevision") is not None
+        or prior_sent[1].get("resultDigest") != expected_digest
+        or prior_sent[0]["dedupe_key"] != expected_digest
+        or not (prior_reserved[0]["id"] < prior_delivery[0]["id"] < prior_sent[0]["id"])
+    ):
+        return None
+    candidate = candidate | {"resultDigest": expected_digest}
     with _task_worktree_private_descriptor(candidate) as opened:
         context_raw = _read_task_context_bytes_from_private(opened)
         context = json.loads(context_raw)
@@ -19740,25 +19829,6 @@ def _completed_generated_build_validation(
             for output in failed_outputs
         ):
             return None
-        with store.connect() as connection:
-            deferred_row = connection.execute(
-                """SELECT payload_json FROM events WHERE opportunity_key=?
-                   AND event_type='TASK_RESULT_VALIDATION_DEFERRED'
-                   AND json_extract(payload_json,'$.intentId')=?
-                   AND json_extract(payload_json,'$.threadId')=?
-                   AND json_extract(payload_json,'$.worktreePath')=? ORDER BY id DESC LIMIT 1""",
-                (
-                    candidate["key"],
-                    candidate["intentId"],
-                    candidate["threadId"],
-                    candidate["worktreePath"],
-                ),
-            ).fetchone()
-        if deferred_row is None:
-            return None
-        candidate = candidate | {
-            "resultDigest": json.loads(deferred_row["payload_json"]).get("resultDigest")
-        }
         authenticated, authenticated_raw = _read_authenticated_validation_result(candidate)
         if authenticated != value or authenticated_raw != raw:
             return None

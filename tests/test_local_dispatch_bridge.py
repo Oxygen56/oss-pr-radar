@@ -13673,6 +13673,14 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(
         assert reopened["errors"] == [] and len(reopened["candidates"]) == 1, reopened
         fresh = reopened["candidates"][0]
         assert fresh["generatedBuildContract"] == MODULE.GENERATED_BUILD_CONTRACT
+        if generated_build_case == "channel":
+            installed_package = worktree / "node_modules/@qwen-code/channel-base"
+            assert json.loads((installed_package / "package.json").read_text())["name"] == (
+                "@qwen-code/channel-base"
+            )
+            assert (installed_package / "src/index.js").is_file()
+            assert not (installed_package / "dist/index.js").exists()
+            assert reopened["environmentBlocked"] == [] and fresh["prefetchRequired"] is False
         new_reserved = MODULE.validation_followup_reserve(
             SimpleNamespace(
                 ledger=store.path, thread_id="thread-1", result_digest=reserved["resultDigest"]
@@ -17007,6 +17015,29 @@ def _controller_commit_result(
         extra.write_text("value = 1\n", encoding="utf-8")
     changed_files = sorted(["runtime.py", *additional_changed_files])
     baseline_files = sorted([*changed_files, *additional_baseline_files])
+    if validation_generated_build_failure == "channel":
+        workspace_package = worktree / "packages/channels/base"
+        (workspace_package / "src").mkdir(parents=True)
+        (workspace_package / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "@qwen-code/channel-base",
+                    "type": "module",
+                    "main": "dist/index.js",
+                }
+            )
+        )
+        (workspace_package / "src/index.js").write_text("export const channelBase = true;\n")
+        baseline_files.extend(
+            ["packages/channels/base/package.json", "packages/channels/base/src/index.js"]
+        )
+        installed_namespace = worktree / "node_modules/@qwen-code"
+        installed_namespace.mkdir(parents=True)
+        (installed_namespace / "channel-base").symlink_to(
+            workspace_package, target_is_directory=True
+        )
+        exclude_path = worktree / ".git/info/exclude"
+        exclude_path.write_text(exclude_path.read_text() + "node_modules/\n")
     run_git(worktree, "add", *baseline_files)
     run_git(worktree, "commit", "-m", "chore: baseline")
     run_git(worktree, "branch", "-M", "main")
@@ -17208,6 +17239,13 @@ def _controller_commit_result(
         if validation_generated_build_failure == "core":
             command_text = "test -f packages/core/dist/index.js || { printf '%s\\n' 'workspace package has not been built (missing packages/core/dist/index.js)'; exit 1; }"
         elif validation_generated_build_failure == "channel":
+            installed_package = worktree / "node_modules/@qwen-code/channel-base"
+            assert installed_package.is_symlink()
+            assert installed_package.resolve() == worktree / "packages/channels/base"
+            assert json.loads((installed_package / "package.json").read_text())["name"] == (
+                "@qwen-code/channel-base"
+            )
+            assert not (installed_package / "dist/index.js").exists()
             command_text = "node --input-type=module -e \"import(process.cwd() + '/node_modules/@qwen-code/channel-base/dist/index.js')\""
         else:
             command_text = "cat tests/fixtures/input.json"
