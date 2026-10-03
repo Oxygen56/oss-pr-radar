@@ -5538,6 +5538,38 @@
     ],
     "why": "Issue provides detailed root cause: test never runs due to mismatched min_gb=32 on 18GB MIG slice, and assertion ill-defined due to flat-index pairing and top-k tie-breaking. Concrete fixes proposed and validated with measurements. Existing PR #53647 overlaps but does not close the issue; no blocker."
   },
+  "0be196ae5f550396f24789b0d8da642fcd985e805cbe1f730d42950df22e5d79": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims qualified evaluation_method mechanism, but issue is proxy health-check plumbing with no algorithmic content"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/health_endpoints/_health_endpoints.py aggregation keyed by model_id"
+    ],
+    "risks": [
+      "Duplicate/covered by open PR #44320",
+      "Out of scope for llm_algorithm track",
+      "Author already implementing fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test asserting per-deployment attribution of healthy/unhealthy counts and error_message using two deployments sharing litellm_params.model"
+    ],
+    "unknowns": [
+      "Whether PR #44320 will be merged, making this issue covered",
+      "Whether maintainers consider this in-scope for the algorithm track"
+    ],
+    "why": "Issue is a proxy health-check aggregation bug (misattribution by litellm_params.model), not an LLM algorithm contribution; track=llm_algorithm requires a training objective, model mechanism, kernel, quantization, or evaluation methodology, which this lacks. Additionally, open PR #44320 directly overlaps the same code path and root cause, and the issue author states they are already working on a fix, so independent implementation space is unresolved."
+  },
   "0bf9ce8c08da3bccee182b02e96cfff5ed3c58805be59e87efbcec67ed00dd7d": {
     "confidence": 0.7,
     "contradictions": [
@@ -13795,6 +13827,39 @@
       "Maintainer preference on whether to modify undocumented event fields"
     ],
     "why": "The issue clearly identifies a high-impact bug: workflow watch events duplicate step state, causing OOM on Cloudflare Workers. The root cause is well-documented with code references and measured impact. Existing PR #20661 is open but has failing CI and lacks comprehensive tests, leaving room for a materially better PR with robust regression coverage."
+  },
+  "1d7ceea0c46ec416eb37dd61d34cf9705ab4e11e078e98ea13e958b2e009510a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "libs/langgraph/langgraph/types.py: make Send.__hash__ handle unhashable arg payloads (recursive hashable conversion or identity fallback)",
+      "Add regression test asserting hash(Send('node', {'k': 'v'})) works and set dedup behaves consistently"
+    ],
+    "risks": [
+      "Identity fallback in __hash__ can break hash/eq consistency if Send defines __eq__ by value; must verify equality semantics",
+      "Recursive conversion of arbitrary user payloads may be expensive or change dedup semantics for equal-but-distinct dicts",
+      "Repository policy requires assignment before external contribution"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue snippet: Send('generate_report', {'user_id': 42, 'format': 'pdf'}) then hash() and set([send])",
+      "Add unit test in libs/langgraph tests covering dict, list, nested dict, and unhashable custom object args",
+      "Run targeted langgraph package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether Send defines __eq__ and how hash/eq consistency should be preserved",
+      "Whether maintainers require assignment before accepting an external fix"
+    ],
+    "why": "Issue provides a self-contained reproduction, exact traceback pointing to langgraph/types.py __hash__ hashing self.arg, and a concrete root cause: Send.arg is documented to hold dict payloads, so hash((self.node, self.arg, self.timeout)) raises TypeError. No open PR or duplicate issue covers it, and the fix is a small, testable change to Send.__hash__."
   },
   "1d85dd82f7d5ed59b3d8f3e1585996320a73a264a2107d83d9baaedffc1c4c49": {
     "confidence": 0.7,
@@ -25337,6 +25402,41 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports a reproducible silent output corruption in Kimi-K3 with MooncakeStoreConnector+MultiConnector, with a clear A/B control and suspected invariant violation. However, the root cause is not identified, no code path is anchored, and the issue is a bug report without a proposed fix. The algorithmic mechanism is plausible but unverified, and the repository requires public AI-use disclosure which is blocked, so work cannot start without maintainer confirmation."
+  },
+  "361d33ad22293422bb04cc9b4fba60024482a30b34cd5e9e1715434ab43b372a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asserts a vLLM streaming reasoning-path bug; contributor simulation shows stock v0.21.0 and main both produce byte-exact clean output",
+      "Issue's own control experiments (clean content, clean non-streaming) are inconsistent with a parser-layer detokenization defect"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No confirmed vLLM module change; if anything, tokenizer loading/validation for misdeclared tokenizer_class, not the reasoning parser"
+    ],
+    "risks": [
+      "Fixing the reasoning parser would be a no-op or wrong-layer fix if the cause is the tokenizer shim",
+      "PR #59748 already touches deepseek_r1_reasoning_parser.py with semantic overlap and no regression test, risking duplicate/conflicting work",
+      "Repository AI-disclosure policy conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied in-process repro script against the reporter's exact /models/deepseek directory and transformers 5.8.1",
+      "Check AutoTokenizer.from_pretrained('/models/deepseek').encode('你好') returns [108386] not [] to confirm/deny the LlamaTokenizer shim",
+      "If shim confirmed, reproduce glyphs with the shim active and verify they disappear with a correct byte-level BPE tokenizer"
+    ],
+    "unknowns": [
+      "Whether the reporter's local /models/deepseek tokenizer files trigger the LlamaTokenizerFast shim",
+      "Whether PR #59748 addresses the same root cause or a different one",
+      "Actual tokenizer_class/tokenizer.json contents in the reporter's deployment"
+    ],
+    "why": "The issue claims streaming reasoning deltas leak raw byte-level BPE glyphs, but the supplied contributor analysis shows stock v0.21.0 cannot produce this signature: the parser only slices already-detokenized delta_text, and in-process simulation of the exact serving chain reconstructs byte-exact clean output. The reporter's control experiments (clean content, clean non-streaming) are consistent with a deployment-local tokenizer shim (LlamaTokenizerFast misdeclared for a byte-level BPE tokenizer.json, transformers#49252) rather than a vLLM code defect. Root cause is therefore unresolved and the proposed code change is not established as actionable."
   },
   "36286eadb37df4052246c1ee3125bff942c8c95e2ca233326955b817908760c1": {
     "confidence": 0.7,
@@ -46442,6 +46542,39 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a user-visible bug in message indexing but provides no root cause, logs, or maintainer confirmation. No open PR or related issue exists, and the track is agent_ai_infra, not llm_algorithm. The candidate lacks a concrete implementation path and validation plan beyond reproduction."
+  },
+  "5fb7abb9ca8d9f5c050026e0b5616a45211a8d76faa4b708455bd72140a415d4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR #7822 is described as both the source of the regression test and a conservative rejection guard, while the issue states execution support remains open; the boundary between the two must be compared before implementing."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MFSDP v2 backward hook timing / frozen-weight resharding logic",
+      "tests/unit_tests/distributed/mfsdp_v2/test_fully_shard.py regression coverage"
+    ],
+    "risks": [
+      "Distinguishing a genuine hook-timing bug from floating-point/random variation requires fixed seed and tolerance.",
+      "PR #7822 currently only adds a conservative rejection guard, so the execution-support fix may overlap or conflict with that open PR.",
+      "Multi-GPU hardware is required to reproduce; single-GPU/CPU paths may not exercise the condition."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied 2-rank repro command at commit 1b2ef3b18eed64a4cdba349e1dcbbfea1cc8aea1 and confirm the 'Frozen weight was resharded before backward consumed it' failure.",
+      "After the fix, verify the nested trainable linear receives a correct weight gradient and no zero-byte storage is read, then run the full MFSDP v2 suite on two GPUs."
+    ],
+    "unknowns": [
+      "Whether PR #7822 will be extended to full execution support or left as a rejection guard, which determines whether a new implementation is duplicative."
+    ],
+    "why": "Issue provides a concrete distributed-training correctness bug in MFSDP v2: post_backward() reshards a frozen weight before internal backward consumes it when the FSDP unit owns no trainable params and forward inputs require no gradients. Reproduction steps, commit, hardware, and expected behavior are supplied, and the failure is a numerical/memory-correctness invariant with a reference-vs-implementation test path."
   },
   "5fbdb703ea647e903f0f2a7e88444b96a7bd2feac0f4ff48f8422a569859a816": {
     "confidence": 0.85,
@@ -73938,6 +74071,42 @@
       "Whether a raw-path Session-release signal must be added to the executor"
     ],
     "why": "Root cause is well-evidenced: ManagedToolExecutor.entries is append-only (set at :314/:416, no delete/clear), JournalEntry retains input/inputJson/result, and closeSessionAdmission only adds to closedSessions. However, the triage bot's own analysis states the proposed eviction point (closeSessionAdmission) is provider-route-only and the raw path never signals a Session release to the executor, so the fix location requires a design decision before code. This is a materially blocking unknown for actionability."
+  },
+  "966c634f7ef25be87cdcaa3c79dfbf81b9bdf939c29c0dc77b9ef9b5c48830e3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and score=9, but actionability_evidence.root_cause_signal=false and preTaskEvidence.codePathsPlan is empty"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Identify the non-deterministic kernel in the multi-sequence path (Triton fused MoE / GDN chunked prefill / FA2 varlen) and fix its reduction or scheduling order",
+      "Add a numerical regression test asserting identical logprobs for repeated identical batches"
+    ],
+    "risks": [
+      "Root cause may be a known/expected non-determinism rather than a defect, making the fix low value",
+      "Fixing may require hardware (sm_120) not available to the contributor",
+      "AI disclosure conflict in repository policy may block public submission"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied repro_upstream.py on sm_120 with Qwen3.6-35B-A3B-FP8 and confirm batch2_repeat > 0",
+      "Bisect by disabling each candidate kernel (e.g., force a deterministic MoE config, switch GDN prefill backend, disable FA2 varlen) to isolate the source",
+      "After fix, assert max |Δ logprob| == 0 for repeated identical batches under fixed seed"
+    ],
+    "unknowns": [
+      "Which kernel actually causes the run-to-run non-determinism",
+      "Whether PR #59543 or the referenced batch-invariant GDN PRs already cover this root cause",
+      "Whether the repository's AI disclosure policy permits an automated contribution"
+    ],
+    "why": "Issue reports run-to-run logprob non-determinism for Qwen3.6-35B-A3B (hybrid GDN + MoE) on sm_120, with a concrete repro script and measurements. However, the root cause is explicitly unresolved: the reporter lists three candidate kernels (Triton fused MoE, GDN chunked prefill over varlen batches, FA2 varlen) and cannot separate them. No code anchor or failing path is identified, and the pre-task evidence records root_cause_signal=false and no code surface. The open-PR assessment also flags semantic overlap requiring review (PR #59543) and the submission policy is ai_disclosure_conflict, which is a materially blocking unknown for public action."
   },
   "9677b68315c92ab510c2b4fb02c91a500d89172d110b051e9ca2878b373ca539": {
     "confidence": 0.8,
