@@ -8128,6 +8128,39 @@
     ],
     "why": "The issue describes a concrete bug in the AI Gateway's provider translation layer: valid Anthropic computer use tool fields are not mapped correctly for Bedrock/Vertex fallbacks, causing HTTP 400 errors. A public reproduction via curl is provided, and no competing PR or issue exists. The fix is a targeted schema mapping correction in the translation adapter."
   },
+  "11a8b0d7e8725ea72d333707d6329a448c644f77f71b781014191edf19974dfa": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue says the bug is present on main and tracks the concrete correctness bug, while PR #7822 is described as converting the repro into a passing rejection test that prevents premature resharding for this pattern"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "MFSDP v2 backward hook timing / frozen-weight resharding logic",
+      "tests/unit_tests/distributed/mfsdp_v2/test_fully_shard.py regression coverage"
+    ],
+    "risks": [
+      "PR #7822's rejection guard may already cover the reported failure mode, making a new fix duplicative",
+      "Distinguishing a genuine correctness fix from the existing conservative rejection path requires maintainer/PR comparison",
+      "CUDA illegal-memory-access behavior may be hardware/driver dependent"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the documented 2-rank repro at commit 1b2ef3b18eed64a4cdba349e1dcbbfea1cc8aea1 and confirm the 'Frozen weight was resharded before backward consumed it' failure",
+      "After a fix, verify the nested trainable linear's weight gradient is produced without accessing released storage, and run the full MFSDP v2 suite (182 passed, 46 skipped per rank) as regression"
+    ],
+    "unknowns": [
+      "Whether PR #7822's rejection guard fully resolves the issue or only rejects the configuration, leaving the execution fix open",
+      "Whether a distinct, non-duplicative code change is still actionable beyond the existing PR"
+    ],
+    "why": "Issue describes a concrete MFSDP v2 correctness bug (frozen weights resharded before backward consumes them) with a reproduction command and a failing test, but the supplied evidence shows PR #7822 already adds a conservative rejection guard and converts the repro into a passing rejection test, while the issue explicitly states support for executing the configuration remains open. The duplicate/coverage status is 'semantic_overlap_requires_review' with best_score 34 and no direct code overlap, so it is unresolved whether the remaining work is a distinct actionable fix or already covered by the guard."
+  },
   "11bae804966223b6653dddd12badc2b767a57df761d579d8aaa288ccaca6387c": {
     "confidence": 0.8,
     "contradictions": [],
@@ -18640,6 +18673,34 @@
     ],
     "why": "Issue describes a concrete numerical mechanism: QLoRA fp16/bf16 downcast applied to DoRA lora_magnitude_vector, causing optimizer updates below bf16 representable precision and silent no-op; restoring FP32 restores updates. This is a real quantization/numerical PEFT mechanism with a supplied Colab reproduction and a clear reference-vs-implementation validation path (DoRA FP32 vs QDoRA bf16 vs QDoRA+FP32 magnitude)."
   },
+  "27c23acf3d31b87caa164f9650227b0c9351e124f0a6f92e3ea8c5b7596891f8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "libs/langgraph/langgraph/types.py: Command.__repr__ should inspect dataclass fields directly instead of calling asdict(self), avoiding deepcopy of unpicklable or large state"
+    ],
+    "risks": [
+      "Changing repr filtering semantics (e.g. dropping empty tuple/None handling) could alter existing repr output",
+      "Maintainer may prefer a different repr implementation or field-filtering behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test constructing Command(update={'lock': threading.Lock()}) and asserting repr(cmd) does not raise TypeError",
+      "Add a test asserting repr output for normal picklable update/resume values remains unchanged",
+      "Run targeted langgraph unit tests for types/Command"
+    ],
+    "unknowns": [
+      "Repository policy requires assignment before contribution (needs_assignment), which affects submission workflow but not the technical actionability of the fix"
+    ],
+    "why": "Issue provides a self-contained reproduction, a full traceback pinpointing Command.__repr__ -> dataclasses.asdict -> copy.deepcopy, and a concrete minimal fix using dataclasses.fields instead of asdict. Root cause and validation path are established; no duplicate or merged-fix coverage found."
+  },
   "27ec4110829a9597c29194bc3d72dd421e5c7a6b0a31ae534fd6ce321b54df63": {
     "confidence": 0.7,
     "contradictions": [],
@@ -24831,6 +24892,44 @@
       "Whether related issue #50720 will be resolved soon, affecting the priority of this fix"
     ],
     "why": "Issue reports a real crash on SM12x with FLASHMLA_SPARSE_DSV4, but a contributor has already proposed a fail-fast fix and is investigating. The proposed fix is a behavior change (rejecting unsupported backend) that needs maintainer confirmation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "355e20e29e37656a4defc15dc1d73b2c7b222bde272f817d9d565b1656874b01": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue proposes PR #58890 as the fix while open_pr_assessment flags PR #59842 as overlapping the same code paths and semantics",
+      "related_issue_assessment marks #59738 as potential duplicate but its title concerns detokenization, not M-RoPE positions"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/qwen3_omni_moe_thinker.py get_mrope_input_positions offset/st handling",
+      "tests/model_executor/test_qwen3_omni_mrope.py regression coverage"
+    ],
+    "risks": [
+      "Duplicate/overlapping open PR #59842 may already fix the same root cause",
+      "AI disclosure policy conflict blocks automated public action",
+      "Distinguishing genuine position-semantics error from template-dependent behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Synthetic unit test with seq_len=6, PlaceholderRange(offset=1, length=4) asserting positions.shape == (3, seq_len)",
+      "Media-at-prompt-end case asserting no RuntimeError position-length mismatch",
+      "Media-then-text case asserting positions are not shifted by one from the first pad token"
+    ],
+    "unknowns": [
+      "Whether PR #59842 or #58890 already resolves the described off-by-one",
+      "Whether the issue is assigned or maintainers consider it covered",
+      "Whether the AI disclosure conflict permits any contribution path"
+    ],
+    "why": "Issue describes a concrete M-RoPE off-by-one in Qwen3-Omni position bookkeeping with a synthetic reproduction path, but supplied evidence shows an open maintainer-owned PR #59842 ('Fix Qwen3-Omni interleaved M-RoPE boundary positions') touching the same two files and the same m_rope/qwen3_omni semantics, plus a proposed fix PR #58890. Whether the root cause is already covered by an existing open PR is unresolved and directly determines whether new code work is actionable."
   },
   "356a153664eaed69327e0ac9233a8ac4342ce66ea35c38cd3a5eff58373c6e2d": {
     "confidence": 0.8,
@@ -64293,6 +64392,44 @@
     ],
     "why": "Issue provides a concrete, code-anchored root cause: AllGatherHandle/NoGatherHandle wait() is not idempotent, unlike the coalesced handle classes, so a second wait can set AVAILABLE over freed storage. Reproduction is described at handle level on 2 GPUs with two configurations and controls, and the expected behavior (idempotent wait, re-gather from ds_tensor) is a concrete distributed-training invariant. This is a valid llm_algorithm mechanism (distributed_training) with a reference-vs-implementation validation path."
   },
+  "8362123620f1026fcc940f58bafbe933fa106e6a6e2ca156d89c91cd50c43c6a": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while the issue body provides a detailed reproduction and candidate root causes",
+      "open_pr_assessment reports semantic_overlap=true with PR #59543 but direct_code_overlap=false and no overlapping_paths"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Identify which kernel (Triton fused MoE / GDN chunked prefill / FA2 varlen) introduces run-to-run non-determinism in the multi-sequence path",
+      "Add a numerical regression test that asserts batch2_repeat == 0.0 for a fixed seed and synthetic batch"
+    ],
+    "risks": [
+      "Root cause may be a known/expected non-determinism rather than a defect, making the fix low-value",
+      "Open PR #59543 has semantic overlap and may already cover part of the path",
+      "Repository requires public AI-use disclosure, which conflicts with automated public action",
+      "Numerical tolerance and hardware (sm_120) specificity may make the regression test fragile"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied repro_upstream.py on sm_120 with Qwen3.6-35B-A3B-FP8 and confirm batch2_repeat > 0",
+      "Bisect by disabling each candidate kernel (e.g., force a deterministic MoE config, switch GDN prefill backend, disable FA2 varlen) to isolate the source",
+      "Once isolated, add a regression test asserting identical logprobs across repeated identical batches"
+    ],
+    "unknowns": [
+      "Which specific kernel is responsible for the run-to-run non-determinism",
+      "Whether PR #59543 already addresses the same code path",
+      "Whether the repository's AI disclosure policy permits an automated contribution"
+    ],
+    "why": "Issue reports a concrete, reproducible numerical non-determinism in vLLM's multi-sequence path for Qwen3.6-35B-A3B (hybrid GDN + MoE), with a minimal repro script and measured deltas. However, the root cause is explicitly unresolved: the reporter lists three candidate kernels (Triton fused MoE, GDN chunked prefill over varlen batches, FA2 varlen) and cannot separate them. The supplied evidence also flags semantic overlap with open PR #59543 (score 34, semantic_overlap=true) that requires human comparison, and the repository policy is ai_disclosure_conflict, which is a materially blocking disclosure requirement. Without a narrowed root cause or a resolved duplicate/overlap determination, the code work is not yet actionable."
+  },
   "83864425fd83c6e9cd9ef02a1dbe7154481c38b16980935f89025323fb6e4841": {
     "confidence": 0.8,
     "contradictions": [],
@@ -86971,6 +87108,42 @@
     ],
     "why": "The issue reports a memory leak on NPU with dynamic chunking and radix cache, but lacks a minimal reproducer and root cause analysis. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "b25befc30165c229d07b12cf040f4eb6af01422bf78ebac0a582e37cbc2c4ec6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports glyph leakage on stock v0.21.0, but contributor simulation on the same tag and transformers version shows byte-exact clean output",
+      "Issue attributes cause to a missing convert_tokens_to_string/decode step, but no such call site exists in the reasoning/parser/serving paths"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No confirmed module change; candidate fix would target vllm/reasoning/deepseek_r1_reasoning_parser.py or the streaming detokenization path only if the glyph leak is reproduced on stock code"
+    ],
+    "risks": [
+      "Fixing a non-reproducible stock-code symptom would add dead code or mask a deployment/tokenizer misconfiguration",
+      "The overlapping open PR #59748 already touches deepseek_r1_reasoning_parser.py without tests, so a duplicate fix is plausible",
+      "The LlamaTokenizerFast shim bug is upstream in transformers, not fixable in vLLM"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the contributor's repro.py inside the reporter's container against /models/deepseek to confirm whether stock v0.21.0 emits glyphs",
+      "Check AutoTokenizer.from_pretrained('/models/deepseek').encode('你好') == [108386] to rule out the LlamaTokenizerFast shim (huggingface/transformers#49252)",
+      "If reproduced, add a streaming regression test asserting byte-exact reconstruction of CJK reasoning deltas across token boundaries"
+    ],
+    "unknowns": [
+      "Whether the reporter's /models/deepseek tokenizer files are the stock Hub files or a substituted LlamaTokenizerFast shim",
+      "Whether the glyph leak reproduces on unmodified vLLM at all",
+      "Whether PR #59748's change addresses the same root cause or a different one"
+    ],
+    "why": "The issue claims streaming reasoning deltas leak raw byte-level BPE glyphs, but a contributor's in-process simulation of the exact v0.21.0 serving chain (fast and slow detokenizer paths, transformers 5.8.1 and 5.14.1) reconstructs reasoning and content byte-exact with zero glyphs, and an audit finds no convert_ids_to_tokens in vllm/entrypoints, vllm/parser, or vllm/reasoning. The reporter's own control experiments (clean content, clean non-streaming) are consistent with a deployment-local tokenizer substitution rather than a stock vLLM defect. Root cause is therefore unresolved and possibly not in this repository."
+  },
   "b265bff42219a76d4946f373f6c16db2c077b27ff84f1838eed16c655094c2ec": {
     "confidence": 0.7,
     "contradictions": [],
@@ -105310,6 +105483,38 @@
       "No explicit maintainer confirmation of desired fix approach (skip vs reject), though comments indicate approval of PR #8280 with a request."
     ],
     "why": "The issue provides a minimal reproducer, exact traceback, root-cause analysis (zero-sized parameter absent from param_to_partition_ids), and a clear expected behavior. It is a concrete distributed-training invariant bug in ZeRO-1/2, with a reference behavior (ZeRO-0/DDP) and a validation path (single-GPU FP32 reproducer)."
+  },
+  "d6df2de5c1bba0dc534e8c3018cef4a59d1fed4f0afe8ec0056702b31b2fc157": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate track is llm_algorithm but the issue is proxy health-check aggregation",
+      "Open PR #44320 is marked as direct code overlap and references the issue, while duplicate status is human_review_required"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/health_endpoints/_health_endpoints.py aggregation keyed by model_id"
+    ],
+    "risks": [
+      "Track mismatch: this is proxy plumbing, not an algorithm mechanism",
+      "Open PR #44320 may already cover the fix",
+      "No maintainer confirmation of independent implementation space"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting per-deployment healthy/unhealthy counts and error attribution when multiple deployments share litellm_params.model"
+    ],
+    "unknowns": [
+      "Whether PR #44320 fully resolves the issue or leaves independent implementation space",
+      "Whether maintainers want a separate fix given the existing open PR"
+    ],
+    "why": "The issue is a proxy health-check aggregation bug, not an LLM algorithm contribution; the supplied evidence shows an open PR #44320 that directly references the issue and overlaps the same code path, so duplicate/coverage status is unresolved and materially blocks independent implementation."
   },
   "d6eefac14e739988e5efda63309becded2afb5f82696864a99248979dc9b89d8": {
     "confidence": 0.95,
