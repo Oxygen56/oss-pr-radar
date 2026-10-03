@@ -13832,6 +13832,39 @@
     ],
     "why": "Issue provides a concrete, code-anchored root cause for the b64_json drop (missing response_format=req.response_format in _engine_inputs_from_video in omni_handler.py) plus a model-free, reproducible codec corruption test isolating an MMXEXT/swscale build defect. Reproduction steps, expected/actual pairs, and a validation path are supplied; no duplicate or merged-fix coverage is present."
   },
+  "1d2cd0ccc150758016496242aa896b4e4dd6396262c8dc77bbca96a538900ba9": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/anthropic-provider.ts: stop requesting TodoWrite or set CLAUDE_CODE_ENABLE_TASKS=false / request TaskCreate+TaskUpdate and translate to plan updates",
+      "packages/core/src/core/codex-app-server-provider.ts: set tools.update_plan.enabled=true in buildThreadConfigurationOverrides",
+      "packages/core/agents/main.yaml: align requested planning tool with provider defaults",
+      "add assertion/test that requested builtin tools appear in provider tool list"
+    ],
+    "risks": [
+      "CLAUDE_CODE_ENABLE_TASKS=false may be removed in a future Claude Code release, making the env-var fix brittle",
+      "Translating TaskCreate/TaskUpdate into plan updates may not map 1:1 to existing plan-update event semantics",
+      "Codex 0.160.0 behavior untested by reporter (only 0.156.1 verified)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce Claude: run claude -p with --tools Bash,TodoWrite,TaskCreate,TaskUpdate and confirm tool list; then verify Rome emits plan update events after fix",
+      "Reproduce Codex: codex exec --json with and without -c tools.update_plan.enabled=true and confirm todo_list item appears",
+      "Add regression test asserting requested builtin tools are present in provider tool list so future upgrades cannot silently drop them"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the env-var workaround or native TaskCreate/TaskUpdate translation for Claude",
+      "Whether Codex 0.160.0 (current pin) still honors tools.update_plan.enabled"
+    ],
+    "why": "Issue provides version-paired reproductions for both providers and names concrete code anchors (anthropic-provider.ts builtinTools/main.yaml TodoWrite, codex-app-server-provider.ts buildThreadConfigurationOverrides). Root cause is a silent tool-name/opt-in drift after dependency upgrades, with a clear minimal fix path and regression test."
+  },
   "1d34a1ef0e40af2414e78ce7cb1affce191e7267bf8d616917480e094111d1ad": {
     "confidence": 0.6,
     "contradictions": [
@@ -43720,6 +43753,40 @@
     ],
     "why": "Issue provides a clear root cause (missing passthrough config for bedrock_mantle), a minimal reproduction config, and a traceback pointing to specific code lines. The fix is actionable: register the provider config or adjust the passthrough route to handle bedrock_mantle. No competing PR covers this path."
   },
+  "58e2e9eb3ad1a754107b4bf1aa1069decc4218626fd0769b94d3eea55966f870": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/litellm_pre_call_utils.py: team-level opted_out_global_guardrails assignment should not clobber key-level value (skip empty list or merge with key precedence)",
+      "litellm/proxy/litellm_pre_call_utils.py: add_key_level_controls should propagate key-level opted_out_global_guardrails symmetrically with disable_global_guardrails",
+      "litellm/integrations/custom_guardrail.py: _get_admin_metadata / get_opted_out_global_guardrails_from_metadata / should_run_guardrail precedence between team and key metadata"
+    ],
+    "risks": [
+      "Intended precedence between key-level and team-level opt-out is not confirmed by maintainers; fix could conflict with a deliberate team-overrides-key design",
+      "Changing merge semantics may affect disable_global_guardrails and other team/key metadata fields sharing the same path",
+      "Issue author explicitly states root cause is static-review hypothesis, not runtime-confirmed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test creating a key with metadata.opted_out_global_guardrails and a team whose metadata has opted_out_global_guardrails: [], asserting should_run_guardrail returns False for a default_on guardrail",
+      "Add a unit test for add_key_level_controls asserting key-level opted_out_global_guardrails reaches request metadata",
+      "Add a unit test for _get_admin_metadata merge precedence when team metadata has empty list and key metadata has non-empty list",
+      "Reproduce end-to-end with the issue's 4-key matrix (no-team vs team, same model/content) to confirm the team key now skips the guardrail"
+    ],
+    "unknowns": [
+      "Runtime confirmation of the exact merge order in v1.93.0 (author flags this as unverified)",
+      "Maintainer-stated intended precedence between key-level and team-level opted_out_global_guardrails"
+    ],
+    "why": "Issue provides a controlled 4-key experiment isolating team membership as the variable, a concrete expected/actual pair, ordered reproduction steps with curl commands, and a specific static-code hypothesis (team-level empty-list overwrite in litellm_pre_call_utils.py vs. asymmetric key-level path in add_key_level_controls, consumed via custom_guardrail.py merge). This is a concrete, testable precedence bug in guardrail opt-out resolution, not installation/CLI/docs plumbing."
+  },
   "58f06579198d694613dd0d06266abbc36d1b224928cd62b2b60af17ca8e188fc": {
     "confidence": 0.7,
     "contradictions": [
@@ -70215,6 +70282,43 @@
       "Whether the banner originates from a server-side or webview component not in the extension bundle"
     ],
     "why": "Issue describes a plausible substring-based auth classifier (Smt/QXu) and a resume-time refresh failure, but the reporter explicitly states they could not prove the refresh failure raised the banner, and the banner text is not found in the extension. Root cause is therefore not established, and an open PR #14122 already targets the same token-refresh-on-network-failure path, creating unresolved coverage overlap."
+  },
+  "8d8ef2239f93bf19760a08ee8238b1a5f391f67564e4f1ac46591c1c8a6f08a7": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #43043 but no direct code overlap or issue reference, leaving duplicate coverage unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/constants.py: add check_provider_endpoint to LITELLM_SETTINGS_SAFE_DB_OVERRIDES",
+      "litellm/llms/vertex_ai/common_utils.py: implement VertexAIModelInfo.get_models() or document unsupported",
+      "litellm/proxy config overlay merge logic to preserve config.yaml litellm_settings when DB row lacks the key"
+    ],
+    "risks": [
+      "PR #43043 and related PRs may already cover part of the root cause; creating a duplicate fix could conflict",
+      "Changing LITELLM_SETTINGS_SAFE_DB_OVERRIDES may have unintended effects on other settings",
+      "Vertex AI model discovery may require credentials/hardware not available in CI"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test that sets check_provider_endpoint: true in config.yaml with STORE_MODEL_IN_DB=True and asserts litellm.check_provider_endpoint is True after DB overlay",
+      "Add unit test for VertexAIModelInfo.get_models() returning discovered models or raising a documented error",
+      "Reproduce with the issue's curl /v1/models flow and assert real vertex_ai models are returned"
+    ],
+    "unknowns": [
+      "Whether PR #43043 or the other listed PRs actually fix the check_provider_endpoint propagation or VertexAIModelInfo stub",
+      "Which of the two reported bugs is the intended scope for a single contribution",
+      "Whether maintainers consider the DB-overlay behavior a bug or intended precedence"
+    ],
+    "why": "Issue describes two distinct bugs: (1) check_provider_endpoint not in LITELLM_SETTINGS_SAFE_DB_OVERRIDES so DB-stored litellm_settings overrides config.yaml, and (2) VertexAIModelInfo.get_models() is a NotImplementedError stub. The supplied open-PR assessment flags semantic overlap with PR #43043 (score 40) and two other PRs, but none directly reference the issue and none cover the root cause, so duplicate/merged-fix coverage is unresolved. The issue itself is a proxy/config plumbing bug, not an algorithm contribution, and the candidate track is agent_ai_infra, so no algorithm evidence is required. However, the unresolved duplicate overlap and the ambiguity of which of the two bugs is the intended fix make the actionable scope uncertain."
   },
   "8da700b5b6f0448f8012e2e27fcedfd1142a04e956d81884c55f7913d6bf5e16": {
     "confidence": 0.85,
@@ -106509,6 +106613,40 @@
       "No maintainer confirmation on preferred fix approach, but the issue is clearly actionable and no competing PR exists."
     ],
     "why": "Issue reports a user-visible bug where transient MCP transport failure leaves the active conversation permanently pending. A contributor reproduced the root cause on current main: the configured read timeout is never passed to the MCP SDK ClientSession, so in-flight requests can hang indefinitely. The fix is a small, well-scoped change with a clear regression test path."
+  },
+  "d77b96fd7f284cd5d2d4f6fe5932985473d35dde63a72dc471b464bcbf5ba9da": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm-rust/crates/storage-clickhouse/src/read.rs: replace the fixed max_result_rows=1000/throw behavior with bounded pagination or an explicit supported-limit contract for trace detail",
+      "Trace-detail API path: return a useful partial/load-more or explicit limit response instead of a generic HTTP 500 when span count exceeds the reader cap",
+      "Regression coverage for 999/1,000/1,001-span traces with small payloads"
+    ],
+    "risks": [
+      "Changing the reader cap could weaken memory/byte/authorization safeguards if the limit is removed globally rather than bounded per query",
+      "Pagination or partial-response semantics may require an API contract decision that affects the UI and existing clients",
+      "The fix must not regress the oversized status-message case addressed by PR #43937"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's rows_repro.py against the pinned proxy and confirm 999/1,000 return 200 with all spans while 1,001 currently returns 500",
+      "Add a regression test that ingests 1,001 small spans and asserts trace detail returns a bounded/paginated success response rather than HTTP 500",
+      "Run the direct ClickHouse controlled query with max_result_rows 1,000 vs 2,000 to confirm the row-count guard is the isolated cause",
+      "Run targeted Rust storage-clickhouse tests and the proxy trace-detail test suite"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer bounded pagination versus an explicit supported-limit response for trace detail",
+      "Whether the reader cap is intended as a hard product limit that should be surfaced rather than raised"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: the Rust ClickHouse reader in litellm-rust/crates/storage-clickhouse/src/read.rs hardcodes max_result_rows=1000 with result_overflow_mode=throw, so a stored 1,001-span trace fails trace detail with Code 396 (TOO_MANY_ROWS_OR_BYTES) and HTTP 500. The 999/1,000/1,001 boundary controls, direct ClickHouse cap comparison (1,000 vs 2,000), and explicit source anchors make the failure actionable. Related PR #43937 addresses a different oversized-status-message cause and PR #43942 is merged but does not fix the ordinary trace-detail path, so no duplicate coverage blocks this work."
   },
   "d77faddeeba8dec4b295cc4d1b589145f3b543bc81b6f66c5d6ea7718c122e7a": {
     "confidence": 0.9,
