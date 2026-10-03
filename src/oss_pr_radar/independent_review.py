@@ -1347,6 +1347,12 @@ def _candidate_result(
     }.items():
         if value.get(key) != expected:
             raise RuntimeError(f"independent review task result mismatch: {key}")
+    if str(candidate.get("stage") or "") == "VALIDATION_PENDING":
+        quality = value.get("quality")
+        if value.get("stage") == "FIX_READY" and isinstance(quality, dict):
+            assessment = assess_submit_ready(quality, task_result=value)
+            if any(field in assessment.missing for field in REVIEW_PREREQUISITE_FIELDS):
+                return None
     context_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
     context: dict[str, Any] | None = None
     if context_path.is_file() and not context_path.is_symlink():
