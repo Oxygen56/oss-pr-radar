@@ -51525,6 +51525,40 @@
     ],
     "why": "The issue clearly identifies a mixed pinned/unpinned TP rank bug with a concrete invariant and policy question, but the fix requires a maintainer decision on fallback policy (all-unpinned vs require_pinned) and coordination with existing issues #51080 and #50070. No public repro or maintainer approval is present, and the track is agent_ai_infra, not llm_algorithm, so the algorithm evidence gate is not applicable."
   },
+  "64dcae5488f7a40b9b78c1d0d9e7bb5d83212d03149c30c84d05352a0d4a5e9c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence reports public_repro_signals=1 and reproduction_evidence=['ordered_steps'], but the supplied issue body contains only generic boilerplate steps, not a concrete reproduction of an observed failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until failing job and error are identified; likely dependency constraint bump in pyproject.toml or type/lint fixes in affected modules"
+    ],
+    "risks": [
+      "Auto-generated issue may be transient or already resolved by a dependency bump",
+      "Fixing without the actual error risks unnecessary or incorrect changes",
+      "base_sha_changed indicates the reported commit may no longer be current"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Fetch workflow run #908 logs to identify the failing job",
+      "Reproduce locally with `uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto`",
+      "Add a regression test only after the specific failure is isolated"
+    ],
+    "unknowns": [
+      "Which workflow job failed (static analysis vs tests)",
+      "The actual error message or failing assertion",
+      "Whether the failure still reproduces at the current base SHA",
+      "Whether a dependency version bump alone resolves it"
+    ],
+    "why": "The issue is an auto-generated upgrade-check failure report with no identified failing job, no error output, and no root cause. The body only lists generic possible causes (ty, ruff, MCP SDK) and generic remediation steps. No reproduction evidence beyond boilerplate steps, no code anchors tied to an actual failure, and no concrete validation path. This is materially blocking: without knowing which job failed and what the error is, no actionable code change can be scoped."
+  },
   "64e98591ac66df5d217bde2f6194dfab76df6611e41ba5a02eca8f708f266a96": {
     "confidence": 0.7,
     "contradictions": [],
@@ -52127,6 +52161,46 @@
       "Whether the Gateway backend is open-source and modifiable"
     ],
     "why": "The issue provides strong evidence of a real bug: providerOptions.deepseek.thinking is dropped by the Gateway, causing reasoning to remain enabled. However, the root cause is not yet identified, and the deterministic gate requires HUMAN_REVIEW. The issue is actionable but needs maintainer confirmation on the preferred fix direction."
+  },
+  "667fd8a0166a0c07f67db4092eb26ec8fd7bc49ef8fb7c1e540d01a012e09d49": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter frames batch2_repeat as a nondeterministic kernel defect, while the comment attributes it to engine-core batch composition and calls the remainder ordinary batch variance",
+      "Reporter sees divergence with the bf16 checkpoint, while the comment's traced first divergence is FP8-specific"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/engine/core.py step scheduling / batch composition",
+      "GDN chunked prefill over varlen batches",
+      "Triton fused MoE kernel path",
+      "FP8 GEMM (MarlinFP8ScaledMMLinearKernel) numerics"
+    ],
+    "risks": [
+      "Confusing mathematical/semantic error with floating-point or scheduling variance",
+      "Hardware-specific FP8 kernel selection makes the root cause differ across sm_89/sm_120",
+      "Open PR #58863 has semantic overlap (Qwen3, sm_120) and may already cover part of the path"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied repro_upstream.py with VLLM_ENABLE_V1_MULTIPROCESSING=0 to confirm batch2_repeat drops to 0.0 and isolate scheduling from kernel nondeterminism",
+      "Add forward hooks comparing the two identical rows layer-by-layer to identify the first diverging op on the target hardware",
+      "Fix seed, tolerance, and hardware; compare lone vs shared-step logprobs as a numerical regression"
+    ],
+    "unknowns": [
+      "Which kernel actually causes the shared-step divergence",
+      "Whether PR #58863 already fixes the same root cause",
+      "Whether the ai_disclosure_conflict policy permits an automated public contribution"
+    ],
+    "why": "The issue reports a concrete, reproducible numerical instability (identical batches give different logprobs; batch2_repeat up to 0.168) with a minimal script and code anchors, but the supplied evidence does not establish a root cause. The reporter explicitly lists three unseparated candidates (Triton fused MoE, GDN chunked prefill over varlen batches, FA2 varlen), and the only comment attributes the run-to-run part to batch composition in vllm/v1/engine/core.py while leaving the shared-step divergence unexplained and card-dependent (FP8 in_proj_qkvz on sm_89 vs a different GEMM on sm_120). No reference-vs-implementation test or numerical regression target is defined yet."
   },
   "669679e2ceb0f06ee4cb9d4ef3930850a2e976c1e6be44da20462400fbb15954": {
     "confidence": 0.72,
@@ -55555,6 +55629,31 @@
       "Maintainer preference for pin bump vs kernel patch"
     ],
     "why": "Issue provides a clear root cause (TYPE_UNSTABLE_JOIN from split-KV path) and a minimal repro, but the deterministic gate is HUMAN_REVIEW and open PR lookup failed, so we cannot rule out existing work. Maintainer input is needed to confirm the preferred fix (pin bump vs kernel patch) and avoid duplicate effort."
+  },
+  "6c3b1b444f40d1d15b5e424b68e99f7839de1b9faa31d52f3891c7b62cb2409f": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue body presents an unfixed bug, while recent_comments states it was already fixed on main by f2d45f26bd6a."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "The fix commit is only asserted in an untrusted comment and was not independently verified against the repository."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Verify on recent main/release that a transformers-resaved gemma4 checkpoint loads without the ValueError; no new regression test is needed since the fix already exists."
+    ],
+    "unknowns": [
+      "Whether the referenced fix commit is actually present on the current default branch."
+    ],
+    "why": "The supplied comment evidence states the exact root cause was already fixed on main by commit f2d45f26bd6a, which conditionally creates KV projections/norms on KV-shared layers so track_weights_loading no longer requires the dropped tensors. The issue was filed against 0.26.0, predating the fix, so no new code contribution is actionable."
   },
   "6c3b6a2149d28221fdf1db3440efef6586aa2c27566bc814deda1b1cf334ca15": {
     "confidence": 0.55,
@@ -67534,6 +67633,40 @@
       "Exact maintainer design preference for the fix approach."
     ],
     "why": "The issue provides a clear root cause: observer control prompts are sent as user-role messages and system-reminder filtering is missing, leading to memory pollution. A contributor has prepared a narrow fix with regression tests and validation, indicating actionable code work."
+  },
+  "83bb45cf2c8054afaadbe3d1c217f7caaf84b317fc41e958f8bea871e3bad615": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue states the fix exists inside PR #17876, while open_pr_assessment lists #17876 as semantic overlap without direct code overlap or root-cause coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "tests/e2e/mock-llm/scripts/mock-llm-server.py: _is_preflight_ping() to accept both [system, user] and single user shapes while matching request identity",
+      "tests/e2e/mock-llm/scripts/: regression test feeding both pre-flight shapes and asserting ordinary one-token completion is not misclassified"
+    ],
+    "risks": [
+      "Fix may already be contained in open PR #17876, making a new contribution duplicative",
+      "Repository policy reports ai_disclosure_conflict, which may block automated public submission",
+      "Broadening the matcher could misclassify ordinary one-token completions if identity checks are weakened"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add unit test feeding [system('Reply with one token.'), user('ping')] with max_tokens=1 and assert pre-flight classification",
+      "Add unit test feeding single user('ping') with max_tokens=1 and assert pre-flight classification",
+      "Add negative test with different system instruction or non-ping user message and assert scripted-trajectory path",
+      "Run npm run test:e2e:mock-llm and confirm Mock-LLM E2E Tests no longer fails from a consumed pre-flight turn"
+    ],
+    "unknowns": [
+      "Whether PR #17876 or #17555 already implements the exact _is_preflight_ping() fix and regression test",
+      "Whether the ai_disclosure_conflict policy permits any automated contribution to this repository"
+    ],
+    "why": "Issue establishes a clear root cause in _is_preflight_ping() and a concrete validation path, but the supplied evidence shows three open PRs (#17555, #17876, #17636) with semantic overlap on the same mock-LLM server file, and the issue itself states the fix already exists inside PR #17876. Whether that fix is already covered by an open PR is a materially blocking unknown for deciding if new code work is actionable."
   },
   "840f049b1af16ab1fa4991aef344f33ec427b5b1aea0d59a178b2fa50e231455": {
     "confidence": 0.7,
@@ -98233,6 +98366,39 @@
     ],
     "why": "The issue is a bug report about runtime metrics undercounting RSS and dropped entity tags in gunicorn pre-fork scenarios. It includes a public repro and detailed analysis, but the track is llm_algorithm, which requires a concrete algorithm mechanism. The issue is about process management and metrics collection, not an LLM algorithm. The candidate's algorithm evidence is fabricated (matched terms like 'bootstrap', 'contamination', 'zero' are not present in the issue). The issue is actionable for a library bug fix, but it does not meet the llm_algorithm track requirements. The deterministic gate says ALLOW_TO_WORK, but the track mismatch and lack of algorithm evidence make it a maintainer decision."
   },
+  "c0c6c39a12aa8b8a308271463f32119ae7e3ed31e9ce7798cf45f29302337334": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims no duplicate, but open PR #42072 overlaps the same session/streaming_session.py path and semantics"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/session/streaming_session.py",
+      "python/sglang/srt/mem_cache/unified_radix_cache.py",
+      "python/sglang/srt/managers/scheduler_components/invariant_checker.py"
+    ],
+    "risks": [
+      "Fixing the symptom in the invariant walk without identifying the free/ownership bug could mask real corruption",
+      "PR #42072 may already implement the same fix, creating duplicate work"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a failing regression that exercises the idle _check_full_pool -> session_held_tokens walk under session/mamba slot release, then verify no double-free/abort"
+    ],
+    "unknowns": [
+      "Whether PR #42072 actually fixes this crash or only a related session-slot issue",
+      "The concrete free/ownership bug location, since root_cause_signal is false",
+      "Whether the crash is reproducible on demand or only after ~22h of serving"
+    ],
+    "why": "Issue reports a heap-corruption abort in the idle invariant walk, but the supplied evidence contains no confirmed root cause (root_cause_signal=false) and no reproduction beyond a traceback and ordered steps; the crash is a symptom whose underlying free/ownership bug is unidentified. Open PR #42072 overlaps the exact session/streaming_session.py path and may already cover the root cause, so duplicate coverage is unresolved."
+  },
   "c0c72b48fbe0e95aeecf2ed281f3e7449e3c000a8e933a22756f0ca1f1cadf39": {
     "confidence": 0.55,
     "contradictions": [
@@ -110711,6 +110877,39 @@
     ],
     "why": "The issue provides a precise root cause (arg_structural_chars filtering) and a minimal parser-only reproduction with expected behavior, making it actionable for a targeted fix."
   },
+  "d8247ffe40d603b1c3b52c3dbd0afea10ff1dbeef7111256d36b23edce1c441f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "preTaskEvidence.policy.status is ai_disclosure_and_assignment with assignmentRequired=true and aiDisclosureConflict=true, while issue body states implementation will not begin until maintainer approval"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "extensions/ai-intent/main.go: fall back to raw question on zhToUnicode decode failure",
+      "unit tests for invalid escape and valid escape control"
+    ],
+    "risks": [
+      "Repository requires assignment before implementation",
+      "AI disclosure/assignment policy conflict unresolved",
+      "No maintainer approval or design confirmation for the proposed behavior change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing unit test with input containing literal \\u not followed by 4 hex digits (e.g. 'what is \\u12G4 ?') asserting raw question is preserved",
+      "Add control test with valid \\uXXXX escape in Chinese text asserting decoding still occurs"
+    ],
+    "unknowns": [
+      "Whether maintainer will approve the proposal and assign the issue",
+      "Whether the AI disclosure requirement is satisfied for this contribution",
+      "Concrete reproduction evidence referenced in source bug #4978 is not included in supplied data"
+    ],
+    "why": "The proposal identifies a plausible root cause (swallowed error from zhToUnicode yielding empty question) and a concrete fix direction, but the supplied evidence lacks reproduction evidence, has no maintainer approval, and the repository policy requires assignment and AI disclosure confirmation before implementation. These are materially blocking unknowns for actionability."
+  },
   "d82da0255ccf7ee87fa0a36396436b4710c4c8293b35ba3bdadd0dd5934e812e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -121455,6 +121654,38 @@
       "Exact implementation details of the fix and whether maintainers prefer a specific approach."
     ],
     "why": "Issue clearly identifies a user-visible bug with a concrete root cause: GenericStreamingChunk path in CustomStreamWrapper fails to pin response_id, causing each chunk to generate a new uuid4. The fix is actionable and testable via a streaming regression test. Existing PR #38106 is incomplete (missing root cause coverage), leaving room for a better contribution."
+  },
+  "eb59ac88fbc07ec14b2f5db4ab08673adb04f2f3a3c8c36335acb3523ec7beb7": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Codex coding-agent run waiter resolution on completion events",
+      "streamOutput() EOF/terminal event handling and timeout behavior",
+      "sessionMap.isWorking clearing / markExternalRunCompleted()"
+    ],
+    "risks": [
+      "Root cause is suspected, not confirmed; fix may require runtime instrumentation first",
+      "Bundled dist/server/index.js is a build artifact, so the fix must land in source and be rebuilt",
+      "Changing timeout/waiter semantics could affect other agent runtimes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with minimal prompt '只回复 OK' through Ekko Studio and native Codex CLI, measuring completion latency",
+      "Add a regression test asserting the run waiter resolves on the Codex completion event rather than the 120000 ms deadline",
+      "Verify sessionMap.isWorking is cleared immediately after codex exec exits"
+    ],
+    "unknowns": [
+      "Exact source module corresponding to the bundled runAndWait()/streamOutput() code",
+      "Whether the 120s wait is a timeout fallback or the primary completion path"
+    ],
+    "why": "Issue provides a concrete user-visible performance bug with ordered reproduction steps, expected/actual behavior, isolation tests ruling out config and MCP servers, and static code anchors pointing to 120000 ms waits in runAndWait()/streamOutput() and completion-event handling. Root cause is suspected rather than confirmed, but the evidence supports a reference-vs-implementation timing test and a targeted fix in the run/session lifecycle."
   },
   "eb62fd032d10c5b01d5a3258a45fdbcb7bcf19d12227c3b5133f123d0d4f5310": {
     "confidence": 0.85,
