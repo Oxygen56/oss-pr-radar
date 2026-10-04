@@ -15652,6 +15652,98 @@ def _validation_result_omitted_task_id(
     )
 
 
+def _validation_result_omitted_envelope(
+    store: RadarLedger,
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+    result_access: _ValidationWorktreeDirectory,
+    context_raw: bytes,
+) -> dict[str, Any]:
+    """Resolve absent envelope fields from the exact completed validation binding."""
+
+    missing = [field for field in ("threadId", "worktreePath") if field not in value]
+    if not missing or (
+        value.get("stage") != "FIX_READY"
+        or value.get("handoffMode") != "controller_commit_complete"
+        or any(field in value for field in ("reproductionReceipt", "probeReceipt", "resultDigest"))
+        or value.get("taskId") != candidate.get("intentId")
+        or any(
+            value.get(field) != context.get(field) for field in ("key", "issueUrl", "contextDigest")
+        )
+        or value.get("schemaVersion") != TASK_RESULT_SCHEMA
+        or any(
+            field in value and value[field] != context.get(field)
+            for field in ("threadId", "worktreePath")
+        )
+        or _active_task_turn_for_result(candidate) is not None
+    ):
+        return value
+    completed_value = dict(value)
+    for field in missing:
+        completed_value[field] = context.get(field)
+    completion: dict[str, Any] = {}
+    if _completed_validation_input_task_id(
+        store,
+        managed_ledger,
+        candidate=candidate,
+        context=context,
+        value=completed_value,
+        result_access=result_access,
+        context_raw=context_raw,
+        completion_proof=completion,
+        allow_retired_latest_target=True,
+    ) != candidate.get("intentId"):
+        return value
+    receipt = completion["receipt"]
+    if receipt.get("turnError") or receipt.get("error"):
+        return value
+    _cwd, rollout = _validated_task_turn_thread(candidate)
+    latest = latest_thread_turn_state(rollout)
+    if (
+        not latest
+        or latest.get("status") != "completed"
+        or latest.get("turnId") != receipt["turnId"]
+    ):
+        return value
+    journal = _read_owned_regular_file(
+        Path(str(rollout)),
+        label="completed validation identity journal",
+        reject_dangerous_writes=True,
+    )
+    session_matches = False
+    started = finished = None
+    for line in journal.splitlines():
+        record = json.loads(line)
+        payload = record.get("payload") or {}
+        if record.get("type") == "session_meta":
+            session_matches = payload.get("id") == candidate["threadId"]
+        if record.get("type") != "event_msg" or payload.get("turn_id") != receipt["turnId"]:
+            continue
+        if payload.get("type") == "task_started":
+            started = parse_time(record["timestamp"])
+        elif payload.get("type") == "task_complete":
+            if payload.get("error"):
+                return value
+            finished = parse_time(record["timestamp"])
+    metadata = os.stat("result.json", dir_fd=result_access.private_fd, follow_symlinks=False)
+    written = datetime.fromtimestamp(metadata.st_mtime, UTC)
+    if (
+        not session_matches
+        or started is None
+        or finished is None
+        or not started <= written <= finished
+        or _read_task_result_bytes_from_private(result_access) != raw
+        or _read_task_context_bytes_from_private(result_access) != context_raw
+        or _active_task_turn_for_result(candidate) is not None
+    ):
+        return value
+    return completed_value
+
+
 def _expired_publication_context_is_unpublished(
     context: dict[str, Any], source: dict[str, Any] | None
 ) -> bool:
@@ -15840,6 +15932,7 @@ def _completed_validation_input_task_id(
     allow_expired_context_mismatch: bool = False,
     completion_proof: dict[str, Any] | None = None,
     validation_context_digest: str | None = None,
+    allow_retired_latest_target: bool = False,
 ) -> str | None:
     """Prove a completed validation against its controller-owned immutable input.
 
@@ -15854,13 +15947,33 @@ def _completed_validation_input_task_id(
     ):
         return None
     expected_context_digest = validation_context_digest or context.get("contextDigest")
+    # A new-base implementation keeps the immutable old BLOCKED receipt in
+    # its validation context. Prove its original retirement without changing
+    # that context or applying the unrelated expiry continuation protocol.
+    retired_latest_target = (
+        store.retired_latest_target_receipt(context, allow_completed_validation=True)
+        if allow_retired_latest_target
+        and isinstance(context.get("publicationReceipt"), dict)
+        and expired_publication is None
+        and validation_context_digest is None
+        and value.get("handoffMode") == "controller_commit_complete"
+        and context.get("prFollowup") is None
+        else None
+    )
+    retired_publication_is_unpublished = (
+        retired_latest_target is not None
+        and store.publication_target_base_refresh(candidate) == retired_latest_target
+    )
 
     if (
         candidate.get("stage") != "VALIDATION_PENDING"
         or context.get("stage") != "VALIDATION_PENDING"
         or context.get("taskStage") != "IMPLEMENTATION_READY"
         or context.get("prFollowup") is not None
-        or not _expired_publication_context_is_unpublished(context, expired_publication)
+        or not (
+            _expired_publication_context_is_unpublished(context, expired_publication)
+            or retired_publication_is_unpublished
+        )
         or value.get("stage") != "FIX_READY"
         or value.get("handoffMode")
         not in {"controller_commit_complete", "controller_commit_required"}
@@ -21872,6 +21985,9 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         + review_note
         + "读取当前任务文件，并只在已绑定的工作区继续。\n\n"
         + input_note
+        + "新结果必须完整填写当前任务上下文中的 threadId 和 worktreePath，"
+        "并把当前 intentId 填入 taskId；不要使用本轮子执行的会话 ID，也不要省略工作区路径。"
+        "这三项只从当前已验证的 task-context 读取，不从模型记忆或历史输入猜测。\n\n"
         + f"本轮需要解决：{missing_summary}。{dependency_note}\n\n"
         + "先检查绑定工作区已准备的 `.venv/bin/python`；存在时必须进入该工作区后明确使用这个解释器。"
         "登录 shell 可能重置 PATH，不要依赖裸 `python3` 或沿用旧的依赖不可用判断。"
@@ -24137,6 +24253,16 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     }
                 )
                 continue
+            value = _validation_result_omitted_envelope(
+                store,
+                managed_ledger,
+                candidate=candidate,
+                context=context,
+                value=value,
+                raw=raw,
+                result_access=result_access,
+                context_raw=context_raw,
+            )
             expected = {
                 "schemaVersion": TASK_RESULT_SCHEMA,
                 "key": candidate["key"],
@@ -26419,6 +26545,24 @@ def enqueue_local_receipts(path: Path = LEDGER_PATH) -> dict[str, Any]:
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
+            if any(field not in value for field in ("threadId", "worktreePath")):
+                with _task_worktree_private_descriptor(candidate) as result_access:
+                    if _read_task_result_bytes_from_private(result_access) != raw:
+                        raise RuntimeError("task result changed before receipt registration")
+                    context_raw = _read_task_context_bytes_from_private(result_access)
+                    context = json.loads(context_raw)
+                    if not isinstance(context, dict):
+                        raise RuntimeError("task result context must be an object")
+                    value = _validation_result_omitted_envelope(
+                        store,
+                        ManagedLedger(path, ensure_schema=False),
+                        candidate=candidate,
+                        context=context,
+                        value=value,
+                        raw=raw,
+                        result_access=result_access,
+                        context_raw=context_raw,
+                    )
             for field in ("schemaVersion", "key", "issueUrl", "threadId", "worktreePath"):
                 if field not in value:
                     raise RuntimeError(f"task result missing {field}")

@@ -14440,14 +14440,20 @@ class RadarLedger:
             return None
         return {key: item for key, item in value.items() if key != "history"}
 
-    def retired_latest_target_receipt(self, context: dict[str, Any]) -> dict[str, Any] | None:
+    def retired_latest_target_receipt(
+        self, context: dict[str, Any], *, allow_completed_validation: bool = False
+    ) -> dict[str, Any] | None:
         """Prove the retired source after the native new-base reproduction transition."""
 
         receipt = context.get("reproductionReceipt")
         publication = context.get("publicationReceipt")
         if (
-            context.get("stage") != "DISPATCHED"
-            or context.get("intentStatus") != "DISPATCHED"
+            (context.get("stage"), context.get("intentStatus"))
+            not in (
+                {("DISPATCHED", "DISPATCHED"), ("VALIDATION_PENDING", "COMPLETED")}
+                if allow_completed_validation
+                else {("DISPATCHED", "DISPATCHED")}
+            )
             or context.get("taskStage") != "IMPLEMENTATION_READY"
             or context.get("childMayEditFiles") is not True
             or not isinstance(receipt, dict)

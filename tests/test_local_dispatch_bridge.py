@@ -10,6 +10,7 @@ import json
 import multiprocessing
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import stat
@@ -17729,7 +17730,13 @@ def _controller_commit_result(
 
 @pytest.mark.parametrize("upstream_fixed", [True, False, None])
 def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
-    monkeypatch, tmp_path, upstream_fixed, *, expired_history=False, foreign_branch=False
+    monkeypatch,
+    tmp_path,
+    upstream_fixed,
+    *,
+    expired_history=False,
+    foreign_branch=False,
+    return_completed_fixture=False,
 ):
     from oss_pr_radar import publication
     from oss_pr_radar.evidence import EvidenceBundle
@@ -18340,6 +18347,8 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         for row in events
     )
     assert any(row["event_type"] == "IMPLEMENTATION_FOLLOWUP_SENT" for row in events)
+    if return_completed_fixture:
+        return store, worktree, result_path, request_id
 
 
 def test_latest_target_expired_history_continues_commit_without_renewing_source(
@@ -31360,16 +31369,26 @@ def _completed_validation_result_with_omitted_task_id(
     complete_normal_validation_audit=False,
     omit_commit_message=False,
     bind_initial_implementation_receipt=False,
+    completed_fixture=None,
 ):
-    store, worktree, result_path = _controller_commit_result(
-        tmp_path,
-        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
-        missing_quality=("independent_review_passed",),
-        controller_policy_complete=True,
-        target_base_bound=target_base_bound,
-        complete_normal_validation_audit=complete_normal_validation_audit,
-        omit_commit_message=omit_commit_message,
-    )
+    if completed_fixture is None:
+        store, worktree, result_path = _controller_commit_result(
+            tmp_path,
+            worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+            missing_quality=("independent_review_passed",),
+            controller_policy_complete=True,
+            target_base_bound=target_base_bound,
+            complete_normal_validation_audit=complete_normal_validation_audit,
+            omit_commit_message=omit_commit_message,
+        )
+    else:
+        store, worktree, result_path = completed_fixture
+        assert (
+            store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+                "stage"
+            ]
+            == "VALIDATION_PENDING"
+        )
     if bind_initial_implementation_receipt:
         from oss_pr_radar.repo_probe import rebind_probe_receipt
 
@@ -31395,8 +31414,9 @@ def _completed_validation_result_with_omitted_task_id(
         assert old_recovered["ok"], old_recovered
         assert initial_context_path.read_bytes() == initial_context_raw
         assert result_path.read_bytes() == initial_result_raw
-    initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
-    assert initial["validationDeferred"]
+    if completed_fixture is None:
+        initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+        assert initial["validationDeferred"]
     bind_validation_runtime(monkeypatch, tmp_path)
     candidate = store.validation_followup_candidates()[0]
     reserved = MODULE.validation_followup_reserve(
@@ -31491,6 +31511,301 @@ def _completed_validation_result_with_omitted_task_id(
     ]
     result_path.write_text(json.dumps(value), encoding="utf-8")
     return store, worktree, result_path, source_path
+
+
+def _completed_validation_result_with_omitted_envelope(
+    tmp_path, monkeypatch, *, completed_fixture=None
+):
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path,
+        monkeypatch,
+        target_base_bound=True,
+        complete_normal_validation_audit=completed_fixture is None,
+        completed_fixture=completed_fixture,
+    )
+    source = json.loads(input_path.read_bytes())
+    value = json.loads(result_path.read_bytes())
+    value["taskId"] = source["taskId"]
+    value.pop("threadId")
+    value.pop("worktreePath")
+    value["quality"]["relevant_tests_green"] = False
+    value["quality"]["independent_review_passed"] = False
+    value["tests"] = [
+        {
+            "command": "npm -w packages/core run test:ci",
+            "exitCode": 1,
+            "result": "26 failed; Workflow journal path is symlinked.",
+        }
+    ]
+    writer_script = (
+        "import os, sys; from pathlib import Path; "
+        "destination = Path(sys.argv[1]); "
+        "temporary = destination.with_name('result.json.native-tmp'); "
+        "temporary.write_text(sys.argv[2], encoding='utf-8'); "
+        "os.replace(temporary, destination); print('result-written')"
+    )
+    writer_command = shlex.join(
+        [sys.executable, "-c", writer_script, str(result_path), json.dumps(value)]
+    )
+    started_at = datetime.now(UTC)
+    writer = subprocess.run(
+        ["/bin/sh", "-c", writer_command], cwd=worktree, capture_output=True, text=True
+    )
+    assert writer.returncode == 0 and writer.stdout.strip() == "result-written", writer.stderr
+    writer_completed_at = datetime.now(UTC)
+    completed_at = datetime.now(UTC)
+    turn_id = "completed-validation-turn"
+    prompt = MODULE._validation_followup_prompt(
+        {
+            "missing": ["relevant_tests_green", "independent_review_passed"],
+            "worktreeInputPath": input_path.relative_to(worktree).as_posix(),
+        }
+    )
+    records = [
+        {"type": "session_meta", "payload": {"id": "thread-1"}},
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(started_at),
+            "payload": {"type": "task_started", "turn_id": turn_id},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(started_at),
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": turn_id,
+                "item": {
+                    "type": "UserMessage",
+                    "content": [{"type": "text", "text": prompt, "text_elements": []}],
+                },
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(writer_completed_at),
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": turn_id,
+                "item": {
+                    "type": "CommandExecution",
+                    "status": "completed",
+                    "command": ["/bin/sh", "-c", writer_command],
+                    "cwd": worktree.as_uri(),
+                    "exit_code": writer.returncode,
+                    "stdout": writer.stdout,
+                    "stderr": writer.stderr,
+                    "aggregated_output": writer.stdout + writer.stderr,
+                },
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(completed_at),
+            "payload": {"type": "task_complete", "turn_id": turn_id},
+        },
+    ]
+    journal_path = tmp_path / "completed-validation-envelope.jsonl"
+    journal_path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    thread_db = tmp_path / "completed-validation-envelope-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,"
+            "rollout_path TEXT,git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(MODULE.GITHUB_ROOT),
+                0,
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(journal_path),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=source["resultDigest"],
+        validation_reservation_digest=input_path.stem,
+    )
+    receipt_path = MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json"
+    assert json.loads(receipt_path.read_bytes())["turnId"] == turn_id
+    assert started_at.timestamp() <= result_path.stat().st_mtime <= completed_at.timestamp()
+    return store, worktree, result_path, input_path, receipt_path, started_at
+
+
+def _assert_completed_validation_envelope_original_queue_and_ingest(
+    store, worktree, result_path, input_path
+):
+    original = result_path.read_bytes()
+    value = json.loads(original)
+    original_input = input_path.read_bytes()
+    context_path = result_path.parent / "task-context.json"
+    original_context = context_path.read_bytes()
+    original_head = run_git(worktree, "rev-parse", "HEAD")
+    assert "threadId" not in value and "worktreePath" not in value
+    assert value["taskId"] == "intent-1"
+
+    queued = MODULE.enqueue_local_receipts(store.path)
+
+    assert queued["ok"] and queued["rejected"] == [], queued
+    assert len(queued["queued"]) == 1
+    assert queued["queued"][0]["digest"] == hashlib.sha256(original).hexdigest()
+    assert result_path.read_bytes() == original
+    assert input_path.read_bytes() == original_input
+    assert context_path.read_bytes() == original_context
+    resumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert resumed["ok"] and resumed["errors"] == [], resumed
+    assert resumed.get("workBlocked", []) == []
+    assert resumed["validationDeferred"] and resumed["publicationRequests"] == [], resumed
+    normalized = json.loads(result_path.read_bytes())
+    assert normalized["threadId"] == "thread-1"
+    assert normalized["worktreePath"] == str(worktree)
+    assert normalized["taskId"] == value["taskId"]
+    assert normalized["contextDigest"] == value["contextDigest"]
+    assert normalized["commitSha"] == value["commitSha"] == original_head
+    assert normalized["tests"] == value["tests"]
+    assert normalized["quality"]["relevant_tests_green"] is False
+    assert normalized["quality"]["independent_review_passed"] is False
+    assert normalized["reproductionReceipt"]["taskId"] == "intent-1"
+    assert normalized["resultDigest"]
+    assert input_path.read_bytes() == original_input
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+    assert run_git(worktree, "status", "--porcelain") == ""
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    return normalized
+
+
+def test_native_completed_validation_normalizes_missing_envelope_in_original_queue_and_ingest(
+    tmp_path, monkeypatch
+):
+    store, worktree, result_path, input_path, _receipt_path, _started_at = (
+        _completed_validation_result_with_omitted_envelope(tmp_path, monkeypatch)
+    )
+    _assert_completed_validation_envelope_original_queue_and_ingest(
+        store, worktree, result_path, input_path
+    )
+
+
+def test_native_completed_validation_normalizes_missing_envelope_with_retired_unpublished_source(
+    tmp_path, monkeypatch
+):
+    completed = test_latest_target_refresh_runs_native_validation_and_implementation_chain(
+        monkeypatch, tmp_path, False, return_completed_fixture=True
+    )
+    store, worktree, result_path, request_id = completed
+    old_request = store.publication_request(request_id)
+    old_request_before = dict(old_request)
+    store, worktree, result_path, input_path, _receipt_path, _started_at = (
+        _completed_validation_result_with_omitted_envelope(
+            tmp_path, monkeypatch, completed_fixture=completed[:3]
+        )
+    )
+    context_path = result_path.parent / "task-context.json"
+    context = json.loads(context_path.read_bytes())
+    publication_receipt = dict(context["publicationReceipt"])
+    current_head = run_git(worktree, "rev-parse", "HEAD")
+    assert context["stage"] == "VALIDATION_PENDING"
+    assert context["intentStatus"] == "COMPLETED"
+    assert publication_receipt["status"] == "BLOCKED" and publication_receipt["prUrl"] is None
+    assert publication_receipt["commitSha"] == old_request["commit_sha"] != current_head
+    assert publication_receipt["requestedAt"] == old_request["created_at"]
+    candidate = next(
+        item
+        for item in store.task_result_candidates_for_ingestion()
+        if item["intentId"] == "intent-1"
+    )
+    refresh = store.publication_target_base_refresh(candidate)
+    assert refresh["requestId"] == request_id
+    assert store.retired_latest_target_receipt(context) is None
+    assert store.retired_latest_target_receipt(context, allow_completed_validation=True) == refresh
+    normalized = _assert_completed_validation_envelope_original_queue_and_ingest(
+        store, worktree, result_path, input_path
+    )
+    assert normalized["commitSha"] == current_head
+    assert json.loads(context_path.read_bytes())["publicationReceipt"] == publication_receipt
+    assert store.publication_request(request_id) == old_request_before
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "null_thread",
+        "foreign_thread",
+        "null_worktree",
+        "foreign_worktree",
+        "receipt_failed",
+        "receipt_turn",
+        "mtime_before_turn",
+        "raw_changed_after_proof",
+    ],
+)
+def test_native_completed_validation_keeps_missing_envelope_proof_rejections(
+    tmp_path, monkeypatch, mismatch
+):
+    store, worktree, result_path, input_path, receipt_path, started_at = (
+        _completed_validation_result_with_omitted_envelope(tmp_path, monkeypatch)
+    )
+    written_mtime = result_path.stat().st_mtime
+    if mismatch in {"null_thread", "foreign_thread", "null_worktree", "foreign_worktree"}:
+        value = json.loads(result_path.read_bytes())
+        field = "threadId" if mismatch.endswith("thread") else "worktreePath"
+        value[field] = None if mismatch.startswith("null") else "foreign-identity"
+        result_path.write_text(json.dumps(value))
+        os.utime(result_path, (written_mtime, written_mtime))
+    elif mismatch in {"receipt_failed", "receipt_turn"}:
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["turnStatus" if mismatch == "receipt_failed" else "turnId"] = (
+            "failed" if mismatch == "receipt_failed" else "foreign-turn"
+        )
+        receipt_path.write_text(json.dumps(receipt))
+    elif mismatch == "mtime_before_turn":
+        outside_time = started_at.timestamp() - 10
+        os.utime(result_path, (outside_time, outside_time))
+    original = result_path.read_bytes()
+    expected = original
+    original_input = input_path.read_bytes()
+    original_context = (result_path.parent / "task-context.json").read_bytes()
+    if mismatch == "raw_changed_after_proof":
+        native_proof = MODULE._completed_validation_input_task_id
+        original_mtime = result_path.stat().st_mtime
+        changed_after_proof = []
+
+        def proof_then_change_bytes(*args, **kwargs):
+            nonlocal expected
+            proven = native_proof(*args, **kwargs)
+            if proven is not None:
+                expected = result_path.read_bytes() + b"\n"
+                result_path.write_bytes(expected)
+                os.utime(result_path, (original_mtime, original_mtime))
+                changed_after_proof.append(expected)
+            return proven
+
+        monkeypatch.setattr(MODULE, "_completed_validation_input_task_id", proof_then_change_bytes)
+
+    rejected = MODULE.enqueue_local_receipts(store.path)
+
+    assert rejected["ok"] is False and rejected["queued"] == [], rejected
+    assert rejected["rejected"] and rejected["rejected"][0]["key"] == "a/b#1", rejected
+    if mismatch == "raw_changed_after_proof":
+        assert len(changed_after_proof) == 1 and expected == original + b"\n"
+    assert result_path.read_bytes() == expected
+    rejected_ingest = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert rejected_ingest["ingested"] == [] and rejected_ingest["publicationRequests"] == []
+    assert rejected_ingest["errors"] or rejected_ingest.get("workBlocked"), rejected_ingest
+    if mismatch == "raw_changed_after_proof":
+        assert len(changed_after_proof) == 2 and expected == original + b"\n\n"
+    assert result_path.read_bytes() == expected
+    assert input_path.read_bytes() == original_input
+    assert (result_path.parent / "task-context.json").read_bytes() == original_context
+    assert run_git(worktree, "status", "--porcelain") == ""
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize(
