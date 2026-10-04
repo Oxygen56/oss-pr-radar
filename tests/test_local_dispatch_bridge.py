@@ -31359,6 +31359,7 @@ def _completed_validation_result_with_omitted_task_id(
     target_base_bound=False,
     complete_normal_validation_audit=False,
     omit_commit_message=False,
+    bind_initial_implementation_receipt=False,
 ):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -31369,6 +31370,23 @@ def _completed_validation_result_with_omitted_task_id(
         complete_normal_validation_audit=complete_normal_validation_audit,
         omit_commit_message=omit_commit_message,
     )
+    if bind_initial_implementation_receipt:
+        from oss_pr_radar.repo_probe import rebind_probe_receipt
+
+        initial_source = json.loads(result_path.read_bytes())
+        initial_source["reproductionReceipt"] = rebind_probe_receipt(
+            initial_source["reproductionReceipt"],
+            repo="a/b",
+            base_sha=initial_source["selectedBaseSha"],
+            code_paths=initial_source["codePaths"],
+            issue_url=initial_source["issueUrl"],
+            task_id=initial_source["taskId"],
+            thread_id=initial_source["threadId"],
+            head_sha=initial_source["headSha"],
+            commit_sha=initial_source["commitSha"],
+            result_digest=initial_source["resultDigest"],
+        )
+        result_path.write_text(json.dumps(initial_source), encoding="utf-8")
     if complete_normal_validation_audit:
         initial_context_path = result_path.parent / "task-context.json"
         initial_context_raw = initial_context_path.read_bytes()
@@ -37109,10 +37127,12 @@ def _completed_dirty_controller_handoff_fixture(tmp_path, monkeypatch, *, renew_
         target_base_bound=True,
         complete_normal_validation_audit=True,
         omit_commit_message=True,
+        bind_initial_implementation_receipt=True,
     )
     source_raw = input_path.read_bytes()
     source = json.loads(source_raw)
     assert source["handoffMode"] == "controller_commit_complete"
+    assert source["reproductionReceipt"]["bindingPurpose"] == "implementation-result-v1"
     assert "commitMessage" not in source
     assert source["quality"]["independent_review_passed"] is False
     assert set(MODULE.assess_submit_ready(source["quality"]).missing) == {
@@ -37148,6 +37168,10 @@ def _completed_dirty_controller_handoff_fixture(tmp_path, monkeypatch, *, renew_
             result_digest=reserved["resultDigest"],
         )
         assert current["reproductionReceipt"] != source["reproductionReceipt"]
+    assert (
+        current["reproductionReceipt"]["bindingPurpose"]
+        == source["reproductionReceipt"]["bindingPurpose"]
+    )
     result_path.write_text(json.dumps(current))
     (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n")
     assert MODULE._local_changed_files(worktree) == source["changedFiles"] == ["runtime.py"]
@@ -37443,6 +37467,86 @@ def test_completed_dirty_handoff_uses_real_list_rearm_and_reserve_once(
     assert result_path.read_bytes() == originals[result_path]
     assert input_path.read_bytes() == originals[input_path]
     assert json.loads(result_path.read_bytes())["quality"] == source["quality"]
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+
+    assert queued["dirtyHandoffContract"] == MODULE.DIRTY_HANDOFF_CONTRACT
+    new_reservation = reserve["reservationDigest"]
+    snapshot = MODULE._ensure_validation_snapshot(queued, reservation_digest=new_reservation)
+    new_binding = {
+        "reservationDigest": new_reservation,
+        **snapshot,
+        **MODULE._validation_worktree_input_binding(
+            candidate=queued,
+            reservation_digest=new_reservation,
+            snapshot_digest=snapshot["snapshotDigest"],
+        ),
+    }
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id=queued["threadId"],
+        delivery_token=queued["resultDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        reservation_digest=new_reservation,
+        snapshot_id=new_binding["snapshotId"],
+        snapshot_path=new_binding["snapshotPath"],
+        snapshot_digest=new_binding["snapshotDigest"],
+        worktree_input_path=new_binding["worktreeInputPath"],
+        worktree_input_digest=new_binding["worktreeInputDigest"],
+    )
+    MODULE._ensure_validation_worktree_input(
+        candidate=queued,
+        reservation_digest=new_reservation,
+        snapshot_id=new_binding["snapshotId"],
+        snapshot_path=new_binding["snapshotPath"],
+        snapshot_digest=new_binding["snapshotDigest"],
+        worktree_input_path=new_binding["worktreeInputPath"],
+        worktree_input_digest=new_binding["worktreeInputDigest"],
+    )
+    new_input_path = worktree / new_binding["worktreeInputPath"]
+    new_input_raw = new_input_path.read_bytes()
+    new_input = json.loads(new_input_raw)
+    assert new_input_path != input_path
+    assert new_input["resultDigest"] == source["resultDigest"]
+    assert new_input["contextDigest"] == json.loads(originals[context_path])["contextDigest"]
+    assert new_input["contextDigest"] != source["contextDigest"]
+    assert hashlib.sha256(new_input_raw).hexdigest() == new_binding["snapshotDigest"]
+    commit_args = SimpleNamespace(
+        ledger=store.path,
+        thread_id=queued["threadId"],
+        result_digest=queued["resultDigest"],
+        reservation_digest=new_reservation,
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    committed = MODULE.validation_followup_commit(commit_args)
+    assert committed["ok"], committed
+    assert store.unresolved_validation_followups() == []
+    with store.connect() as connection:
+        sent_rows = connection.execute(
+            "SELECT dedupe_key,payload_json FROM events "
+            "WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id"
+        ).fetchall()
+    assert len(sent_rows) == 2
+    old_sent, new_sent = (json.loads(row[1]) for row in sent_rows)
+    assert sent_rows[0][0] == source["resultDigest"]
+    assert old_sent["resultDigest"] == source["resultDigest"]
+    assert "dirtyHandoffContract" not in old_sent and "reservationDigest" not in old_sent
+    assert sent_rows[1][0] == new_reservation
+    assert new_sent["dirtyHandoffContract"] == MODULE.DIRTY_HANDOFF_CONTRACT
+    assert new_sent["reservationDigest"] == new_reservation
+    assert new_sent["resultDigest"] == source["resultDigest"]
+    duplicate_commit = MODULE.validation_followup_commit(commit_args)
+    assert duplicate_commit["ok"], duplicate_commit
+    assert store.unresolved_validation_followups() == []
+    with store.connect() as connection:
+        repeated_sent_rows = connection.execute(
+            "SELECT dedupe_key,payload_json FROM events "
+            "WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id"
+        ).fetchall()
+    assert repeated_sent_rows == sent_rows
+    assert new_input_path.read_bytes() == new_input_raw
+    assert all(p.read_bytes() == raw for p, raw in originals.items())
     assert run_git(worktree, "rev-parse", "HEAD") == original_head
 
 

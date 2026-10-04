@@ -65,6 +65,7 @@ from oss_pr_radar.independent_review import (  # noqa: E402
     verify_controller_merge_tree_scope,
 )
 from oss_pr_radar.ledger import (  # noqa: E402
+    DIRTY_HANDOFF_CONTRACT,
     GENERATED_BUILD_CONTRACT,
     GENERATED_BUILD_REARM_REASON,
     RECOVERABLE_CONTEXT_INTENT_STATUSES,
@@ -14248,13 +14249,15 @@ def _ensure_validation_snapshot(
             snapshot_digest = existing_digest
         else:
             _value, raw = _read_authenticated_validation_result(candidate)
-            if candidate.get("reviewFeedbackContract") == REVIEW_FEEDBACK_CONTRACT:
+            if (
+                candidate.get("reviewFeedbackContract") == REVIEW_FEEDBACK_CONTRACT
+                or candidate.get("dirtyHandoffContract") == DIRTY_HANDOFF_CONTRACT
+            ):
                 with _task_worktree_private_descriptor(candidate) as opened:
                     context = json.loads(_read_task_context_bytes_from_private(opened))
-                review = candidate["reviewFeedbackCorrection"]["review"]
-                updated = dict(
-                    _value, independentReview=review, contextDigest=context["contextDigest"]
-                )
+                updated = dict(_value, contextDigest=context["contextDigest"])
+                if candidate.get("reviewFeedbackContract") == REVIEW_FEEDBACK_CONTRACT:
+                    updated["independentReview"] = candidate["reviewFeedbackCorrection"]["review"]
                 updated_raw = (canonical_json(updated) + "\n").encode("utf-8")
                 if _task_result_digest(updated, updated_raw) != _task_result_digest(_value, raw):
                     raise RuntimeError("controller-review snapshot changed its signed source")
