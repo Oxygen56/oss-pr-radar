@@ -33090,6 +33090,61 @@ def test_latest_target_pnpm_validation_prepares_declared_toolchain_and_patches(
     assert json.loads(result_path.read_bytes())["quality"]["relevant_tests_green"] is False
 
 
+def test_core_suite_symlink_failure_delivers_canonical_tmpdir_in_original_followup(
+    monkeypatch, tmp_path
+):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+    )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    value = json.loads(result_path.read_bytes())
+    value["tests"] = [
+        {"command": "npm run build", "exitCode": 0, "result": "Successfully copied files."},
+        {
+            "command": "npm_config_update_notifier=false npm -w packages/core run test:ci",
+            "exitCode": 1,
+            "result": "26 failed; workflow-journal: expected missing, received unreadable. "
+            "Workflow journal path is symlinked. Other latency and Git checks also failed.",
+        },
+    ]
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path, store=store)
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["relevant_tests_green", "independent_review_passed"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["errors"] == [] and listed["environmentBlocked"] == []
+    assert listed["candidates"][0]["prefetchRequired"] is False
+    original = result_path.read_bytes()
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=digest,
+            prefetch_complete=False,
+        )
+    )
+    assert reserved["ok"] and reserved["prefetch"] == []
+    assert "本轮不可变输入的真实核心检查" in reserved["prompt"]
+    assert "Workflow journal path is symlinked." in reserved["prompt"]
+    assert "os.tmpdir()" in reserved["prompt"]
+    assert ".oss-pr-radar/validation-tmp" in reserved["prompt"]
+    assert "每条检查命令显式设置 TMPDIR" in reserved["prompt"]
+    assert "保留原项目测试入口和全部测试参数" in reserved["prompt"]
+    assert "其他失败仍须诚实保留" in reserved["prompt"]
+    queued = store.unresolved_validation_followups()[0]
+    assert MODULE._task_turn_prompt("validation-followup", queued) == reserved["prompt"]
+    assert result_path.read_bytes() == original
+    assert json.loads(original)["quality"]["relevant_tests_green"] is False
+    assert not (worktree / ".oss-pr-radar/validation-tmp").exists()
+
+
 def test_corepack_pnpm_preparation_exposes_real_local_binary_for_build(monkeypatch, tmp_path):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
