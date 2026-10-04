@@ -5800,6 +5800,38 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue claims missing priority pricing keys on dated-snapshot entries, but a recent comment with code excerpts shows those keys are present on current main and in recent commits, contradicting the root cause. The comment suggests the reporter's proxy may be outdated and requests version info. Without resolving this contradiction, the fix is not actionable."
   },
+  "0c0c7e8183ebd80c1521598b9551152990d6b70c6185c11ef387680c5abe88f9": {
+    "confidence": 0.8,
+    "contradictions": [
+      "preTaskEvidence reports aiDisclosureConflict=true and assignmentRequired=true while the issue body states implementation will not begin until maintainer approval"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "extensions/ai-intent/main.go: fall back to raw question on zhToUnicode decode failure",
+      "unit tests for invalid \\u escape and valid \\uXXXX control"
+    ],
+    "risks": [
+      "Repository requires issue assignment before contribution",
+      "AI disclosure/assignment policy conflict must be resolved",
+      "Maintainer design preference for fallback behavior is unconfirmed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test feeding a question containing a literal \\u not followed by 4 hex digits and assert the raw question is preserved",
+      "Add a control test asserting valid \\uXXXX escapes in Chinese text are still decoded"
+    ],
+    "unknowns": [
+      "Whether a maintainer will approve the Proposal and assign the issue",
+      "Concrete reproduction evidence referenced in the source bug is not included in supplied data"
+    ],
+    "why": "The proposal describes a plausible swallowed-error bug in ai-intent's zhToUnicode call site, but the supplied evidence lacks reproduction artifacts (public_repro_signals=0, reproduction_evidence empty, probe_ready=false) and the repository policy requires assignment plus AI disclosure confirmation before implementation. The issue itself is a Proposal awaiting maintainer approval, so code work is not yet actionable."
+  },
   "0c10eaad6ff9bfa990a2a79c22c10268968ceb3390b1a3a2700d9f24ffda1c4c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -38299,6 +38331,44 @@
     ],
     "why": "The issue is a planning-only Proposal that explicitly forbids implementation until maintainer approval and a subsequent Design Issue. Supplied evidence shows no reproduction, no root-cause confirmation, no maintainer approval, and an unresolved assignment/disclosure policy conflict, so code work is not yet actionable."
   },
+  "4c4eeaa44c2cd0e4e647f872834e538b344587033dd2d539cfe3efe83f225a19": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false vs issue_body's explicit root cause and one-hunk patch",
+      "open_pr_assessment status semantic_overlap_requires_review with best PR #42529 overlapping eagle_worker_v2.py, yet references_issue=false and direct_code_overlap=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py (early release call before pool sizing)",
+      "python/sglang/srt/speculative/eagle_worker_v2.py (init_lm_head/init_token_map ordering)",
+      "python/sglang/srt/models/qwen3_5_mtp.py (loader-side alternative)"
+    ],
+    "risks": [
+      "Early init_lm_head/init_token_map may run before token map or PP state is ready, causing silent fallback or incorrect sharing",
+      "Idempotency claim is asserted but not verified against the later call inside draft.alloc_memory_pool",
+      "PR #42529 may already implement the same fix, making a new contribution redundant"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the exact NVFP4 Qwen3.8-27B EAGLE same-checkpoint command and confirm the pre-patch OOM at draft pool torch.zeros",
+      "After fix, verify target KV pool reaches requested --max-total-tokens 139000 and free memory after pool alloc is ~1.93 GB",
+      "Regression: standalone EAGLE / different-checkpoint draft and non-last PP ranks must not break when the early release is skipped"
+    ],
+    "unknowns": [
+      "Whether PR #42529 already fixes the same root cause or only a related loader path",
+      "Whether the early-release call is safe on all PP ranks and non-shared draft configurations",
+      "Whether maintainers consider the scheduler-side ordering fix the intended approach vs the loader-side alternative"
+    ],
+    "why": "Issue describes a plausible ordering bug (draft embed/lm_head copies freed only inside draft.alloc_memory_pool, after target pool sizing), but the supplied evidence is internally contradictory: the candidate's own actionability_evidence reports root_cause_signal=false while the issue body asserts a specific root cause and one-hunk fix. More importantly, open PR #42529 ('Skip loading shared draft embedding and head weights') overlaps the same code path (eagle_worker_v2.py) and the same 'checkpoint' semantics, and the duplicate assessment explicitly says semantic_overlap_requires_review with no direct issue link. Whether that PR already covers the root cause determines whether independent code work is actionable, so this is a materially blocking unknown rather than normal implementation uncertainty."
+  },
   "4c706d112421a7cc5b839d5c2bcefd392cb1ad779aa865121e597587d30aba61": {
     "confidence": 0.82,
     "contradictions": [],
@@ -52062,6 +52132,43 @@
       "Whether the fp32/bf16 difference materially changes metrics of a real resumed run for DPO/GRPO/Reward"
     ],
     "why": "Issue provides a concrete, measured root cause: TRL trainers cast trainable adapter params to bf16 at construction, and Trainer._load_from_checkpoint reloads via load_adapter with autocast_adapter_dtype=True, upcasting to fp32; the #1504 helper restores bf16 in all four trainers. Maintainer confirmed code paths and scoping, and explicitly requested a separate PR after #1504 merges."
+  },
+  "64b738e8a0a10f743dc1d26ccf59a10da61a71da5aa90cb69349769e8e80edcb": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims reproduction evidence is available in source bug #4973, but candidate.actionability_evidence shows public_repro_signals=0 and reproduction_evidence=[]",
+      "Issue body states implementation will not begin until maintainer approval, yet candidate category is WAIT_MAINTAINER with no maintainer approval evidence"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "extensions/ai-token-ratelimit/util/utils.go: ParseIP must validate bracketed IPv6 format before slicing",
+      "extensions/ai-token-ratelimit/main.go: header-sourced callers should reject malformed values with 'invalid ip' error"
+    ],
+    "risks": [
+      "No concrete reproduction artifact supplied; the claimed unit-level reproduction is not verifiable from provided evidence",
+      "Repository requires assignment and AI disclosure; issue is unassigned and aiDisclosureConflict=true",
+      "Potential overlap with sibling fixes #4944/#4948/#4950 if they touch shared utility code"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add unit test for ParseIP with inputs ']', ']:8080', ']junk' expecting 'invalid ip' error, not panic",
+      "Add regression test for valid bracketed IPv6 '[::1]' and '[2001:db8::1]:443'",
+      "Add regression test for plain IPv4 '1.2.3.4'",
+      "Run targeted unit tests for the ai-token-ratelimit util package"
+    ],
+    "unknowns": [
+      "Actual reproduction steps or failing test from source bug #4973",
+      "Whether maintainer has approved the proposal or design issue",
+      "Whether assignment has been granted per repository policy",
+      "Whether sibling fixes #4944/#4948/#4950 already cover this exact ParseIP path"
+    ],
+    "why": "The proposal identifies a concrete panic in ParseIP (util/utils.go:32) for ']'-leading header IP values, with a clear root cause and expected behavior. However, the candidate's own actionability evidence shows no public reproduction signals, no reproduction evidence, probe_ready=false, and the preTaskEvidence indicates reproductionPathPlan=false and probeRequired=true. The issue body claims unit-level reproduction but provides no actual reproduction artifact or validation path in the supplied evidence. Additionally, the repository policy requires assignment and AI disclosure, and the issue is unassigned with aiDisclosureConflict=true, which are materially blocking unknowns for actionable code work."
   },
   "64cc70c942f8fe6a88061b32a08632c4ca6375755cc173c16c930fc203e7e0e9": {
     "confidence": 0.7,
@@ -78126,6 +78233,41 @@
     ],
     "why": "Issue reports regression in tool syntax handling for local Ollama models after Cline 4.1.x, but root cause is not clearly identified. Existing PR #11486 overlaps semantically but does not reference the issue, and maintainer has not confirmed design direction. The request for documentation is not actionable code work."
   },
+  "964f1006d34d526a28868fe98b94c9ba64157993a3b242b34715a023c017c515": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims build is after merged session/mamba free-path fixes (#40250/#40252), yet crash persists, suggesting either incomplete fix or a distinct root cause"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/session/streaming_session.py",
+      "python/sglang/srt/mem_cache/unified_radix_cache.py",
+      "python/sglang/srt/managers/scheduler_components/invariant_checker.py"
+    ],
+    "risks": [
+      "Root cause may be in a different free/ownership path than the reported stack",
+      "PR #42072 may already cover the same fix, making a new contribution duplicative",
+      "Heap corruption may be non-deterministic and hard to reproduce without the exact 22h serving profile"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the idle-loop invariant walk under the reported hybrid Mamba/GDN + EAGLE config and capture the abort",
+      "Add a regression test that exercises session slot release/ownership across the unified radix cache and asserts no double free"
+    ],
+    "unknowns": [
+      "Whether PR #42072 actually fixes this root cause",
+      "Exact free/ownership bug location; crash stack is only the detection point",
+      "Whether the abort is reproducible on demand or only after long uptime"
+    ],
+    "why": "Issue reports a heap-corruption abort in the idle invariant walk, but the supplied evidence contains no confirmed root cause (root_cause_signal=false) and no maintainer confirmation. The crash stack is only a detection site, not proof of the free/ownership bug. Open PR #42072 semantically overlaps the same session/streaming_session.py path and is unmerged, so duplicate coverage is unresolved."
+  },
   "9652fe5ea65072384086637a84aadea2042b30e977bd18d052132b73ac10ee8b": {
     "confidence": 0.6,
     "contradictions": [
@@ -99591,6 +99733,38 @@
       "Whether the issue is already fully resolved by merged PR #34458 or open PR #36154"
     ],
     "why": "The issue provides a clear reproduction with expected vs actual streaming output, identifying a concrete bug in streaming content truncation when both content and tool_calls are present. The root cause is localized to streaming buffer/flush logic in the DeepSeek parser, with code anchors and a suggested fix. Although the track is llm_algorithm, the issue involves model architecture and parser behavior, and the validation path is concrete: reproduce with the provided curl command and verify complete content delivery. Existing PRs are incomplete or closed, leaving room for a competitive contribution."
+  },
+  "c187765a255401ad37e6d7f86db9eba139dbe40e7a7d4ed41d91f6a7fe230740": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "AgentFrameworkResponseHandler snapshot boundary logic for non-workflow agents",
+      "recovery path that drops or re-executes trailing unmatched function calls",
+      "regression tests around crash between tool call and tool result"
+    ],
+    "risks": [
+      "Changing snapshot boundaries may affect recovery latency or durability guarantees",
+      "Dropping trailing function calls could lose legitimate pending tool work if not reconciled",
+      "Design preference between boundary-only snapshot vs recovery-time sanitization is unresolved"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with ResilientBackground=true and a FailFast middleware mid-tool-execution, then verify recovered turn completes",
+      "Unit test that a session snapshot is not taken with a trailing unmatched function_call",
+      "Regression test that recovery sanitizes or re-executes trailing function calls before invoking the agent"
+    ],
+    "unknowns": [
+      "Maintainer preference between snapshot-boundary fix and recovery-time reconciliation",
+      "Whether the same defect affects workflow agents or only non-workflow agents"
+    ],
+    "why": "Issue gives a concrete root cause: resilient snapshotting saves session after each ResponseOutputItemDoneEvent, so a function_call item is persisted before its tool result; recovery then replays history ending in an unmatched function call, which the Responses API rejects with 'No tool output found for function call'. Repro steps, versions, code anchors, and a validation path are supplied, and no duplicate/merged fix is indicated."
   },
   "c18a58db761b1b769911ee1529d7f5cb77ba98660d02205ac8e01ad5a7b07466": {
     "confidence": 0.7,
