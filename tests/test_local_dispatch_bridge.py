@@ -17277,6 +17277,7 @@ def _controller_commit_result(
     validation_generated_build_failure: str | None = None,
     summarized_validation_check: bool = False,
     complete_normal_validation_audit: bool = False,
+    omit_commit_message: bool = False,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -17568,6 +17569,8 @@ def _controller_commit_result(
                 else "The real CLI development entry did not reach extension uninstall because "
                 "@qwen-code/channel-base/dist/index.js is missing."
             )
+    if omit_commit_message:
+        result.pop("commitMessage")
     signed_result = dict(result)
     signed_result["handoffMode"] = "controller_commit_complete"
     signed_result["publication"] = dict(result["publication"]) | {"baseBranch": "main"}
@@ -31350,7 +31353,12 @@ def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_pa
 
 
 def _completed_validation_result_with_omitted_task_id(
-    tmp_path, monkeypatch, *, target_base_bound=False, complete_normal_validation_audit=False
+    tmp_path,
+    monkeypatch,
+    *,
+    target_base_bound=False,
+    complete_normal_validation_audit=False,
+    omit_commit_message=False,
 ):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -31359,6 +31367,7 @@ def _completed_validation_result_with_omitted_task_id(
         controller_policy_complete=True,
         target_base_bound=target_base_bound,
         complete_normal_validation_audit=complete_normal_validation_audit,
+        omit_commit_message=omit_commit_message,
     )
     if complete_normal_validation_audit:
         initial_context_path = result_path.parent / "task-context.json"
@@ -37083,4 +37092,267 @@ def test_completed_validation_missing_feedback_keeps_exact_proof_rejections(
             ).fetchone()[0]
             == 0
         )
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+def _completed_dirty_controller_handoff_fixture(tmp_path, monkeypatch, *, renew_receipt=False):
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path,
+        monkeypatch,
+        target_base_bound=True,
+        complete_normal_validation_audit=True,
+        omit_commit_message=True,
+    )
+    source_raw = input_path.read_bytes()
+    source = json.loads(source_raw)
+    assert source["handoffMode"] == "controller_commit_complete"
+    assert "commitMessage" not in source
+    assert source["quality"]["independent_review_passed"] is False
+    assert set(MODULE.assess_submit_ready(source["quality"]).missing) == {
+        "independent_review_passed"
+    }
+    with store.connect() as connection:
+        reserved = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+    binding = store.validation_followup_delivery_binding(
+        thread_id="thread-1",
+        result_digest=reserved["resultDigest"],
+        reservation_digest=reserved["reservationDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    current = json.loads(source_raw)
+    if renew_receipt:
+        from oss_pr_radar.repo_probe import rebind_probe_receipt
+
+        current["reproductionReceipt"] = rebind_probe_receipt(
+            source["reproductionReceipt"],
+            repo="a/b",
+            base_sha=source["selectedBaseSha"],
+            code_paths=source["codePaths"],
+            issue_url=source["issueUrl"],
+            task_id="intent-1",
+            thread_id="thread-1",
+            head_sha=source["headSha"],
+            commit_sha=source["commitSha"],
+            result_digest=reserved["resultDigest"],
+        )
+        assert current["reproductionReceipt"] != source["reproductionReceipt"]
+    result_path.write_text(json.dumps(current))
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n")
+    assert MODULE._local_changed_files(worktree) == source["changedFiles"] == ["runtime.py"]
+    assert run_git(worktree, "rev-parse", "HEAD") == source["commitSha"]
+    rollout = tmp_path / "completed-dirty-handoff.jsonl"
+    thread_db = tmp_path / "completed-dirty-handoff-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT,git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(worktree),
+                0,
+                MODULE.issue_prompt(source["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    # Preserve the historical normal instruction shape, before the explicit
+    # dirty commit handoff instruction existed. No review pass is invented.
+    prompt = (
+        "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。\n"
+        f"读取不可变输入 {binding['worktreeInputPath']}，只补仍缺少的独立复核。"
+    )
+    records = [
+        {"type": "session_meta", "payload": {"id": "thread-1"}},
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {"type": "task_started", "turn_id": "completed-validation-turn"},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": "completed-validation-turn",
+                "item": {"type": "UserMessage", "content": [{"type": "text", "text": prompt}]},
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {"type": "task_complete", "turn_id": "completed-validation-turn"},
+        },
+    ]
+    rollout.write_text("".join(json.dumps(record) + "\n" for record in records))
+    context_path = result_path.parent / "task-context.json"
+    old_context = json.loads(context_path.read_bytes())
+    assert source["contextDigest"] == old_context["contextDigest"]
+    live_audit = json.loads(json.dumps(old_context["liveAudit"]))
+    live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+    live_audit["evidence"].update(
+        digest="b" * 64,
+        complete=True,
+        completeness={"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
+    )
+    current_raw = result_path.read_bytes()
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": live_audit,
+            "targetBase": old_context["targetBase"],
+            "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+        },
+        dedupe_key="intent-1:completed-dirty-handoff:current-audit",
+    )
+    MODULE.write_task_context(
+        store, issue_url=source["issueUrl"], thread_id="thread-1", cwd=worktree
+    )
+    context = json.loads(context_path.read_bytes())
+    assert context["contextDigest"] != source["contextDigest"]
+    assert context["targetBase"] == old_context["targetBase"]
+    assert (
+        context["liveAudit"]["evidence"]["policy"] == old_context["liveAudit"]["evidence"]["policy"]
+    )
+    assert result_path.read_bytes() == current_raw
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=reserved["resultDigest"],
+        validation_reservation_digest=reserved["reservationDigest"],
+    )
+    receipt_path = MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json"
+    return store, worktree, result_path, input_path, source, binding, receipt_path
+
+
+@pytest.mark.parametrize("renew_receipt", [False, True])
+def test_completed_dirty_handoff_uses_real_list_rearm_and_reserve_once(
+    tmp_path, monkeypatch, renew_receipt
+):
+    store, worktree, result_path, input_path, source, binding, _receipt = (
+        _completed_dirty_controller_handoff_fixture(
+            tmp_path, monkeypatch, renew_receipt=renew_receipt
+        )
+    )
+    context_path = result_path.parent / "task-context.json"
+    originals = {p: p.read_bytes() for p in (result_path, input_path, context_path)}
+    original_head = run_git(worktree, "rev-parse", "HEAD")
+    args = SimpleNamespace(ledger=store.path, min_age_minutes=90)
+    listed = MODULE.validation_followup_list(args)
+    assert listed["ok"] and listed["errors"] == [], listed
+    assert listed["controllerReviewPending"] == []
+    assert listed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "WORKTREE_PROGRESS_PENDING_RESULT"}
+    ]
+    candidate = listed["candidates"][0]
+    assert candidate["resultDigest"] == source["resultDigest"]
+    assert candidate["intentId"] == "intent-1" and candidate["threadId"] == "thread-1"
+    assert MODULE._local_changed_files(worktree) == ["runtime.py"]
+    repeated = MODULE.validation_followup_list(args)
+    assert repeated["errors"] == [] and repeated["rearmedReviewFeedback"] == []
+    assert repeated["candidates"] == listed["candidates"]
+    with store.connect() as connection:
+        completion = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'"
+            ).fetchone()[0]
+        )
+        assert completion["reason"] == "COMPLETED_WITH_DIRTY_CONTROLLER_COMMIT_HANDOFF"
+        assert "reviewFeedbackCorrection" not in completion
+        proof = completion["dirtyHandoffCompletion"]
+        assert proof["kind"] == "DIRTY_CONTROLLER_COMMIT_HANDOFF"
+        assert proof["sourceContextDigest"] == source["contextDigest"]
+        assert proof["contextDigest"] == json.loads(originals[context_path])["contextDigest"]
+        assert proof["sourceContextDigest"] != proof["contextDigest"]
+        assert proof["headSha"] == original_head and proof["dirtyFiles"] == ["runtime.py"]
+        assert proof["rawSha256"] == hashlib.sha256(originals[result_path]).hexdigest()
+        assert proof["inputSha256"] == hashlib.sha256(originals[input_path]).hexdigest()
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    assert all(p.read_bytes() == raw for p, raw in originals.items())
+    reserve = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            runtime_root=tmp_path,
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserve["ok"] and not reserve.get("blocked"), reserve
+    assert reserve["reservationDigest"] != binding["reservationDigest"]
+    queued = store.unresolved_validation_followups()[0]
+    assert queued["attempt"] == 2
+    assert queued["resultDigest"] == candidate["resultDigest"]
+    prompt = MODULE._validation_followup_prompt(queued)
+    assert "未提交源码改动必须交回 controller_commit_required" in prompt
+    assert "previousControllerCommitSha" in prompt and "单行、至多120字符" in prompt
+    assert "codePaths 保留原授权复现范围" in prompt
+    assert "independent_review_passed 仍为 false" in prompt
+    assert "没有未提交源码改动，则保留 controller_commit_complete" in prompt
+    assert result_path.read_bytes() == originals[result_path]
+    assert input_path.read_bytes() == originals[input_path]
+    assert json.loads(result_path.read_bytes())["quality"] == source["quality"]
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+
+
+@pytest.mark.parametrize("rejection", ["active", "foreign_receipt", "wrong_parent"])
+def test_completed_dirty_handoff_keeps_real_completion_and_parent_rejections(
+    tmp_path, monkeypatch, rejection
+):
+    store, worktree, result_path, input_path, _source, _binding, receipt_path = (
+        _completed_dirty_controller_handoff_fixture(tmp_path, monkeypatch)
+    )
+    if rejection == "active":
+        monkeypatch.setattr(
+            MODULE, "_active_task_turn_for_result", lambda _candidate: {"turnId": "still-active"}
+        )
+    elif rejection == "foreign_receipt":
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["threadId"] = "foreign-thread"
+        MODULE._atomic_private_json(receipt_path, receipt)
+    else:
+        run_git(worktree, "commit", "--allow-empty", "-m", "chore: foreign parent")
+    assert MODULE._local_changed_files(worktree) == ["runtime.py"]
+    originals = {p: p.read_bytes() for p in (result_path, input_path)}
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path, min_age_minutes=90))
+    assert listed["errors"] == [] and listed["candidates"] == [], listed
+    assert listed["rearmedReviewFeedback"] == []
+    assert all(p.read_bytes() == raw for p, raw in originals.items())
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0

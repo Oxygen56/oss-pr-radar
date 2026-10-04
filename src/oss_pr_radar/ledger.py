@@ -8403,6 +8403,146 @@ class RadarLedger:
             )
         return True
 
+    def record_completed_dirty_handoff_no_progress(
+        self, candidate: dict[str, Any], *, completion: dict[str, Any]
+    ) -> bool:
+        """Retain one proven normal completion still awaiting a dirty commit handoff."""
+        binding_fields = {
+            "intentId": candidate["intentId"],
+            "threadId": candidate["threadId"],
+            "worktreePath": candidate["worktreePath"],
+        }
+        with self.transaction() as connection:
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=candidate["key"],
+                intent_id=candidate["intentId"],
+                thread_id=candidate["threadId"],
+                worktree_path=candidate["worktreePath"],
+            )
+            opportunity = connection.execute(
+                "SELECT stage FROM opportunities WHERE key=?", (candidate["key"],)
+            ).fetchone()
+            if (
+                binding is None
+                or opportunity is None
+                or opportunity["stage"] != "VALIDATION_PENDING"
+            ):
+                return False
+            require_quarantine_clear(
+                connection,
+                opportunity_key=candidate["key"],
+                operation="completed validation intake",
+            )
+            rows = connection.execute(
+                """SELECT id,event_type,payload_json,created_at FROM events
+                   WHERE opportunity_key=? AND event_type IN (
+                     'TASK_RESULT_VALIDATION_DEFERRED','VALIDATION_FOLLOWUP_RESERVED',
+                     'VALIDATION_FOLLOWUP_SENT','TASK_TURN_DELIVERY_STARTED',
+                     'TASK_CONTEXT_AUTHORITY_BOUND') ORDER BY id""",
+                (candidate["key"],),
+            ).fetchall()
+            events = [(row, json.loads(row["payload_json"])) for row in rows]
+            bound = [
+                (r, p) for r, p in events if all(p.get(k) == v for k, v in binding_fields.items())
+            ]
+            latest = {
+                kind: next(((r, p) for r, p in reversed(bound) if r["event_type"] == kind), None)
+                for kind in (
+                    "TASK_RESULT_VALIDATION_DEFERRED",
+                    "VALIDATION_FOLLOWUP_RESERVED",
+                    "VALIDATION_FOLLOWUP_SENT",
+                )
+            }
+            deferred, reserved, sent = latest.values()
+            delivery = next(
+                (
+                    (r, p)
+                    for r, p in reversed(bound)
+                    if r["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+                    and p.get("deliveryKind") == "validation-followup"
+                    and p.get("reservationDigest") == completion["reservationDigest"]
+                ),
+                None,
+            )
+            authority = next(
+                (
+                    (r, p)
+                    for r, p in reversed(events)
+                    if r["event_type"] == "TASK_CONTEXT_AUTHORITY_BOUND"
+                    and p.get("taskId") == candidate["intentId"]
+                    and p.get("threadId") == candidate["threadId"]
+                ),
+                None,
+            )
+            if (
+                completion.get("kind") != "DIRTY_CONTROLLER_COMMIT_HANDOFF"
+                or not completion.get("dirtyFiles")
+                or deferred is None
+                or reserved is None
+                or sent is None
+                or delivery is None
+                or authority is None
+                or authority[1].get("contextDigest") != completion["contextDigest"]
+                or deferred[1].get("expiredPublication") is not None
+                or deferred[1].get("resultDigest") != candidate["resultDigest"]
+                or set(deferred[1].get("missing") or []) != {"independent_review_passed"}
+                or self._normalized_validation_missing(deferred[1].get("missing"))
+                != self._normalized_validation_missing(candidate["missing"])
+                or reserved[1] != completion["reservation"]
+                or reserved[1].get("generatedBuildContract") is not None
+                or reserved[1].get("reviewFeedbackContract") is not None
+                or reserved[1].get("expiryPromptRevision") is not None
+                or reserved[1].get("resultDigest") != candidate["resultDigest"]
+                or sent[1].get("resultDigest") != candidate["resultDigest"]
+                or sent[0]["id"] != completion["sentEventId"]
+                or not (deferred[0]["id"] < reserved[0]["id"] < sent[0]["id"])
+                or (
+                    sent[1].get("reservationDigest") is not None
+                    and sent[1]["reservationDigest"] != completion["reservationDigest"]
+                )
+                or delivery[1] != completion["delivery"]
+                or not (reserved[0]["id"] < delivery[0]["id"] < sent[0]["id"])
+                or connection.execute(
+                    """SELECT 1 FROM events WHERE opportunity_key=? AND id>?
+                       AND event_type IN ('TASK_RESULT_INGESTED','PUBLISHED_TASK_RESULT_BACKFILLED')
+                       AND json_extract(payload_json,'$.threadId')=? LIMIT 1""",
+                    (candidate["key"], sent[0]["id"], candidate["threadId"]),
+                ).fetchone()
+                is not None
+                or connection.execute(
+                    """SELECT 1 FROM publication_requests WHERE opportunity_key=?
+                       AND thread_id=? AND worktree_path=? LIMIT 1""",
+                    (candidate["key"], candidate["threadId"], candidate["worktreePath"]),
+                ).fetchone()
+                is not None
+            ):
+                return False
+            prior = connection.execute(
+                """SELECT 1 FROM events WHERE opportunity_key=?
+                   AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS' AND dedupe_key=?""",
+                (candidate["key"], candidate["resultDigest"]),
+            ).fetchone()
+            if prior is not None:
+                return False
+            self._event(
+                connection,
+                candidate["key"],
+                "VALIDATION_FOLLOWUP_NO_PROGRESS",
+                candidate["resultDigest"],
+                {
+                    **binding_fields,
+                    "resultDigest": candidate["resultDigest"],
+                    "previousResultDigest": candidate["resultDigest"],
+                    "missing": list(self._normalized_validation_missing(candidate["missing"])),
+                    "progressMarker": deferred[1].get("progressMarker"),
+                    "reason": "COMPLETED_WITH_DIRTY_CONTROLLER_COMMIT_HANDOFF",
+                    "dirtyHandoffCompletion": completion,
+                },
+                iso_z(datetime.now(UTC)),
+            )
+        return True
+
     def reconcile_validation_no_progress(self) -> int:
         """Backfill no-progress markers for current validation results."""
 
