@@ -99,6 +99,9 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "was not present",
     "no worktree-local prefetched executable",
     "required_gate_unavailable",
+    "could not find corepack",
+    "corepack: command not found",
+    "local ink types do not expose",
 )
 
 

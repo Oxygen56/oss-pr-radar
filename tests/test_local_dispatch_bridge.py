@@ -33006,6 +33006,118 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(
     assert MODULE.write_task_context.last_collision is None
 
 
+@pytest.mark.parametrize("missing_corepack", [False, True])
+def test_latest_target_pnpm_validation_prepares_declared_toolchain_and_patches(
+    monkeypatch, tmp_path, missing_corepack
+):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+    )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    (worktree / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    (worktree / "package.json").write_text(
+        json.dumps(
+            {
+                "packageManager": "pnpm@11.24.0+sha512." + "a" * 128,
+                "scripts": {"postinstall": "patch-package"},
+            }
+        )
+    )
+    value = json.loads(result_path.read_bytes())
+    value["changedFiles"] = ["runtime.py", "packages/cli/src/config/extension-manager.ts"]
+    value["tests"] = [
+        {
+            "command": 'pnpm -r --filter "!@qwen-code/mobile-mcp" run build',
+            "exitCode": 1,
+            "result": "The installed-pnpm workspace build built multiple packages, then "
+            "failed in the CLI package on unrelated UI selection code because the local "
+            "ink types do not expose selectable, selectionFlow, ReadonlyFrame, "
+            "ScreenSelection, and related APIs.",
+        }
+    ]
+    if missing_corepack:
+        value["tests"].insert(
+            0,
+            {
+                "command": "npm run build",
+                "exitCode": 1,
+                "result": "Repository build wrapper failed before workspace build because "
+                "/bin/sh could not find corepack. No dependency installation was performed.",
+            },
+        )
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path, store=store)
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["relevant_tests_green", "independent_review_passed"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert listed["environmentBlocked"] == []
+    assert listed["candidates"][0]["prefetchRequired"] is True
+    executed = []
+
+    def fake_execute(_candidate, commands):
+        executed.extend(commands)
+        return [{"kind": item["kind"], "cwd": item["cwd"], "durationMs": 1} for item in commands]
+
+    monkeypatch.setattr(MODULE, "_execute_validation_prefetch", fake_execute)
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=digest,
+            prefetch_complete=False,
+        )
+    )
+    expected = (
+        ["corepack_local_install", "pnpm_corepack_locked_install", "npm_patch_package_apply"]
+        if missing_corepack
+        else ["pnpm_locked_install", "npm_patch_package_apply"]
+    )
+    assert [item["kind"] for item in executed] == expected
+    assert [item["kind"] for item in reserved["prefetch"]] == expected
+    assert executed[-1]["argv"] == [
+        "node",
+        "node_modules/patch-package/index.js",
+        "--error-on-fail",
+    ]
+    assert "系统已按项目锁文件补齐缺失依赖" in reserved["prompt"]
+    assert json.loads(result_path.read_bytes())["quality"]["relevant_tests_green"] is False
+
+
+def test_corepack_pnpm_preparation_exposes_real_local_binary_for_build(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    (worktree / "package.json").write_text(json.dumps({"packageManager": "pnpm@11.24.0"}))
+    entry = worktree / MODULE.VALIDATION_COREPACK_ENTRY
+    entry.parent.mkdir(parents=True)
+    entry.write_text("#!/usr/bin/env node\n")
+    calls = []
+    monkeypatch.setattr(MODULE, "command", lambda argv, **kwargs: calls.append((argv, kwargs)))
+    argv = [
+        "node",
+        MODULE.VALIDATION_COREPACK_ENTRY,
+        "pnpm",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--prefer-offline",
+    ]
+    completed = MODULE._execute_validation_prefetch(
+        {"worktreePath": str(worktree)},
+        [{"kind": "pnpm_corepack_locked_install", "cwd": str(worktree), "argv": argv}],
+    )
+    assert (worktree / "node_modules/.bin/corepack").resolve() == entry.resolve()
+    assert calls == [(argv, {"cwd": worktree.resolve(), "timeout": 600})]
+    assert completed[0]["kind"] == "pnpm_corepack_locked_install"
+
+
 def test_validation_followup_prefetch_failure_is_blocked_without_delivery(monkeypatch, tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,

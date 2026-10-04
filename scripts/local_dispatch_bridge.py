@@ -212,7 +212,12 @@ VALIDATION_PREFETCH_TIMEOUTS = {
     "npm_locked_install": 600,
     "npm_patch_package_apply": 600,
     "pnpm_locked_install": 600,
+    "corepack_local_install": 600,
+    "pnpm_corepack_locked_install": 600,
 }
+VALIDATION_COREPACK_PACKAGE = "corepack@0.36.0"
+VALIDATION_COREPACK_PREFIX = ".oss-pr-radar/validation-toolchain"
+VALIDATION_COREPACK_ENTRY = f"{VALIDATION_COREPACK_PREFIX}/node_modules/corepack/dist/corepack.js"
 VALIDATION_POLICY_REVISION = "ci_delegation_v1"
 EXPIRED_PUBLICATION_PROMPT_REVISION = "expired_publication_real_commands_v2"
 TRANSIENT_PUBLICATION_AUDIT_REASONS = {
@@ -19407,9 +19412,12 @@ def _unresolved_validation_dependency_failures(
         elif re.search(r"(?:^|\s)go\s+(?:test|vet|build|run)\b", command_text):
             covered = "go_locked_download" in kinds
         elif "pnpm" in command_text:
-            covered = "pnpm_locked_install" in kinds
+            covered = bool(kinds & {"pnpm_locked_install", "pnpm_corepack_locked_install"})
         elif "npm " in command_text:
-            covered = "npm_locked_install" in kinds
+            covered = bool(
+                kinds
+                & {"npm_locked_install", "pnpm_locked_install", "pnpm_corepack_locked_install"}
+            )
         elif any(marker in text for marker in ("pnpm", "node_modules", "dependency tree")):
             covered = "pnpm_locked_install" in kinds
         elif any(
@@ -19648,6 +19656,7 @@ def _validation_prefetch_plan(
                 )
     if (
         "pnpm" in failure_text.casefold()
+        or "corepack" in failure_text.casefold()
         or "node_modules" in failure_text.casefold()
         or "dependency tree" in failure_text.casefold()
     ):
@@ -19671,12 +19680,41 @@ def _validation_prefetch_plan(
         ):
             roots.add(worktree)
         for root in sorted(roots, key=str):
+            manifest = json.loads((root / "package.json").read_text(encoding="utf-8"))
+            manager = manifest.get("packageManager") if isinstance(manifest, dict) else None
+            corepack_required = "corepack" in failure_text.casefold() and isinstance(manager, str)
+            if corepack_required and re.fullmatch(
+                r"pnpm@\d+\.\d+\.\d+(?:\+sha\d+\.[a-fA-F0-9]+)?", manager
+            ):
+                commands.append(
+                    {
+                        "kind": "corepack_local_install",
+                        "cwd": str(root),
+                        "argv": [
+                            "npm",
+                            "install",
+                            "--prefix",
+                            VALIDATION_COREPACK_PREFIX,
+                            "--no-save",
+                            "--package-lock=false",
+                            "--ignore-scripts",
+                            "--no-audit",
+                            "--no-fund",
+                            VALIDATION_COREPACK_PACKAGE,
+                        ],
+                    }
+                )
+                install_kind = "pnpm_corepack_locked_install"
+                install_prefix = ["node", VALIDATION_COREPACK_ENTRY, "pnpm"]
+            else:
+                install_kind = "pnpm_locked_install"
+                install_prefix = ["pnpm"]
             commands.append(
                 {
-                    "kind": "pnpm_locked_install",
+                    "kind": install_kind,
                     "cwd": str(root),
-                    "argv": [
-                        "pnpm",
+                    "argv": install_prefix
+                    + [
                         "install",
                         "--frozen-lockfile",
                         "--ignore-scripts",
@@ -19684,6 +19722,19 @@ def _validation_prefetch_plan(
                     ],
                 }
             )
+            scripts = manifest.get("scripts") if isinstance(manifest, dict) else None
+            if isinstance(scripts, dict) and scripts.get("postinstall") == "patch-package":
+                commands.append(
+                    {
+                        "kind": "npm_patch_package_apply",
+                        "cwd": str(root),
+                        "argv": [
+                            "node",
+                            "node_modules/patch-package/index.js",
+                            "--error-on-fail",
+                        ],
+                    }
+                )
     return commands, dependency_failures
 
 
@@ -19797,6 +19848,27 @@ def _execute_validation_prefetch(
             "--ignore-scripts",
             "--prefer-offline",
         ],
+        "corepack_local_install": [
+            "npm",
+            "install",
+            "--prefix",
+            VALIDATION_COREPACK_PREFIX,
+            "--no-save",
+            "--package-lock=false",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            VALIDATION_COREPACK_PACKAGE,
+        ],
+        "pnpm_corepack_locked_install": [
+            "node",
+            VALIDATION_COREPACK_ENTRY,
+            "pnpm",
+            "install",
+            "--frozen-lockfile",
+            "--ignore-scripts",
+            "--prefer-offline",
+        ],
     }
     completed: list[dict[str, Any]] = []
     for item in commands:
@@ -19836,6 +19908,18 @@ def _execute_validation_prefetch(
             raise RuntimeError("validation prefetch cwd escapes the prepared worktree")
         if not cwd.is_dir():
             raise RuntimeError("validation prefetch cwd does not exist")
+        if kind in {"corepack_local_install", "pnpm_corepack_locked_install"}:
+            manifest = json.loads((cwd / "package.json").read_text(encoding="utf-8"))
+            manager = manifest.get("packageManager") if isinstance(manifest, dict) else None
+            if not isinstance(manager, str) or not re.fullmatch(
+                r"pnpm@\d+\.\d+\.\d+(?:\+sha\d+\.[a-fA-F0-9]+)?", manager
+            ):
+                raise RuntimeError("validation prefetch pnpm version is not pinned")
+            if not (cwd / "pnpm-lock.yaml").is_file():
+                raise RuntimeError("validation prefetch pnpm lockfile is absent")
+            toolchain = (cwd / VALIDATION_COREPACK_PREFIX).resolve()
+            if worktree not in toolchain.parents:
+                raise RuntimeError("validation prefetch toolchain escapes the prepared worktree")
         if kind == "npm_patch_package_apply":
             manifest = json.loads((cwd / "package.json").read_text(encoding="utf-8"))
             scripts = manifest.get("scripts") if isinstance(manifest, dict) else None
@@ -19845,6 +19929,20 @@ def _execute_validation_prefetch(
         timeout = VALIDATION_PREFETCH_TIMEOUTS[kind]
         try:
             command(argv, cwd=cwd, timeout=timeout)
+            if kind == "pnpm_corepack_locked_install":
+                entry = (cwd / VALIDATION_COREPACK_ENTRY).resolve()
+                bin_dir = (cwd / "node_modules/.bin").resolve()
+                if worktree not in entry.parents or worktree not in bin_dir.parents:
+                    raise RuntimeError(
+                        "validation prefetch executable escapes the prepared worktree"
+                    )
+                if not entry.is_file():
+                    raise RuntimeError("validation prefetch corepack executable is absent")
+                bin_dir.mkdir(parents=True, exist_ok=True)
+                corepack_link = bin_dir / "corepack"
+                if corepack_link.is_symlink() or corepack_link.is_file():
+                    corepack_link.unlink()
+                corepack_link.symlink_to(os.path.relpath(entry, bin_dir))
         except subprocess.TimeoutExpired as exc:
             raise ValidationPrefetchError(
                 {
@@ -19855,7 +19953,7 @@ def _execute_validation_prefetch(
                     "timeoutSeconds": timeout,
                 }
             ) from exc
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             raise ValidationPrefetchError(
                 {
                     "kind": kind,
