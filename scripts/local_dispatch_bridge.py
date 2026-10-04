@@ -20744,7 +20744,10 @@ def _completed_dirty_controller_handoff_validation(
         or reserved[1].get("resultDigest") != digest
         or sent[1].get("resultDigest") != digest
         or sent[0]["dedupe_key"] != digest
-        or sent[1].get("reservationDigest") != reservation
+        or (
+            sent[1].get("reservationDigest") is not None
+            and sent[1]["reservationDigest"] != reservation
+        )
         or delivery_event[1].get("resultDigest") != digest
         or any(
             reserved[1].get(k) is not None
