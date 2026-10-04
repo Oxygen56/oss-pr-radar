@@ -21798,7 +21798,7 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "该交接的 commitSha 使用 null，headSha 和 previousControllerCommitSha 都填写当前 HEAD；"
         "changedFiles 与 controllerCommitChangedFiles 完整声明实际改动，codePaths 保留原授权复现范围"
         "及全部实际改动文件的并集。使用当前获准的安全分支名，并提供非空、单行、至多120字符的"
-        "安全 commitMessage；保留本轮真实 tests 和缺口，independent_review_passed 仍为 false。"
+        "安全 commitMessage；保留本轮真实 tests 和缺口，复核结论仍由系统填写，保持未通过。"
         "不要自己提交或修改 Git 元数据，由系统根据这份新结果完成提交。"
         "若当前没有未提交源码改动，则保留 controller_commit_complete 和实际现有提交，不制造新提交。"
         "新输出不得沿用输入中的 reproductionReceipt、probeReceipt 或 resultDigest；"

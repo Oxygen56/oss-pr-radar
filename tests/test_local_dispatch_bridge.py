@@ -17569,8 +17569,6 @@ def _controller_commit_result(
                 else "The real CLI development entry did not reach extension uninstall because "
                 "@qwen-code/channel-base/dist/index.js is missing."
             )
-    if omit_commit_message:
-        result.pop("commitMessage")
     signed_result = dict(result)
     signed_result["handoffMode"] = "controller_commit_complete"
     signed_result["publication"] = dict(result["publication"]) | {"baseBranch": "main"}
@@ -17709,6 +17707,8 @@ def _controller_commit_result(
             result_quality["policy_verified"] = True
             result["quality"] = result_quality
             result_path.write_text(json.dumps(result), encoding="utf-8")
+        if omit_commit_message:
+            result.pop("commitMessage")
         _sign_reproduction_certificate(
             result,
             result_path=result_path,
@@ -37310,7 +37310,7 @@ def test_completed_dirty_handoff_uses_real_list_rearm_and_reserve_once(
     assert "未提交源码改动必须交回 controller_commit_required" in prompt
     assert "previousControllerCommitSha" in prompt and "单行、至多120字符" in prompt
     assert "codePaths 保留原授权复现范围" in prompt
-    assert "independent_review_passed 仍为 false" in prompt
+    assert "复核结论仍由系统填写，保持未通过" in prompt
     assert "没有未提交源码改动，则保留 controller_commit_complete" in prompt
     assert result_path.read_bytes() == originals[result_path]
     assert input_path.read_bytes() == originals[input_path]
