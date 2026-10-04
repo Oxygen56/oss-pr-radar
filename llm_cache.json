@@ -32445,6 +32445,37 @@
     ],
     "why": "Issue provides a concrete, reproducible divergence: /pause sets execution_status=PAUSED synchronously while ACPAgent's in-flight prompt() keeps running tool calls; root cause is identified in LocalConversation.pause() cooperative step-boundary semantics vs ACP step granularity, with code anchors (execution_status, paused, ACPAgent, PauseEvent). No open PR or duplicate issue covers it, and a validation path exists (pause/interrupt/resume driver measuring workspace growth)."
   },
+  "427fcbaa5a011766003f3a6b790f122e0e365308688d149929c6bdecbe122065": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue requests a fix while the supplied comment says main already handles it via _list_tools_before_first_call"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/operations.py: warm tool-name mapping after reload_servers_from_database or single-flight list on cold mapping"
+    ],
+    "risks": [
+      "Fix may already exist on main, making a new PR redundant",
+      "Per-replica cold mapping may need cache/Redis coordination beyond a local warm-up"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: DB-managed MCP server, list tools, call tool, restart proxy, call same tool without re-list; assert no 404",
+      "Regression: verify _list_tools_before_first_call path on main covers the cold-mapping case before writing new code"
+    ],
+    "unknowns": [
+      "Whether _list_tools_before_first_call on main fully resolves the cold-mapping 404 or only partially covers it",
+      "Whether any open PR already implements the warm-mapping fix"
+    ],
+    "why": "Issue gives a clear root cause (cold per-worker tool_name_to_mcp_server_name_mapping after restart for DB-managed MCP servers) and a concrete repro, but the only supplied comment states main already handles this via _list_tools_before_first_call in the same file, leaving the fix already covered on main and only pending release. That unresolved duplicate/merged-fix coverage is a materially blocking unknown for whether new code work is actionable."
+  },
   "42a68b4c3296aa07bbaf3d769fc0eaf7443145d73303ed3d39a508fadae3ee3e": {
     "confidence": 0.6,
     "contradictions": [
@@ -34153,6 +34184,42 @@
       "Whether the maintainers prefer a different design than the suggested targetRouteKey option."
     ],
     "why": "The issue precisely identifies three code sites where the active route is used instead of the request route, causing token counts for model-override sends to be zeroed and preventing cache-sharing. The fix direction is concrete and conservative, with clear regression test requirements. Although blocked on PR #9506, the issue is actionable and technically valuable."
+  },
+  "45f1e48b2c02d4ef3e706909603d69176a21480eca6f068a6e0c6a5bf4999915": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims check_provider_endpoint is lost during DB overlay, but candidate.open_pr_assessment lists PR #38818 with overlapping config_yaml/store_model_in_db semantics without confirming whether it addresses this key"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/constants.py LITELLM_SETTINGS_SAFE_DB_OVERRIDES allowlist",
+      "litellm/llms/vertex_ai/common_utils.py VertexAIModelInfo.get_models()",
+      "config overlay merge path in proxy _update_config_fields()"
+    ],
+    "risks": [
+      "PR #38818 may already cover the config-overlay root cause, making a new PR duplicative",
+      "Fixing the allowlist alone leaves Vertex AI discovery still broken via the stub",
+      "Broadening LITELLM_SETTINGS_SAFE_DB_OVERRIDES could change DB-override semantics for other keys"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with STORE_MODEL_IN_DB=True and config.yaml check_provider_endpoint: true; assert litellm.check_provider_endpoint is True after startup",
+      "Unit test that DB-stored litellm_settings row lacking check_provider_endpoint does not clobber the config.yaml value",
+      "Unit test VertexAIModelInfo.get_models() returns discovered models or a documented error rather than NotImplementedError"
+    ],
+    "unknowns": [
+      "Whether PR #38818 actually fixes the check_provider_endpoint DB-overlay propagation",
+      "Whether maintainers consider the VertexAIModelInfo stub in scope for this issue or a separate one",
+      "Whether the issue is intended to be split into two separate fixes"
+    ],
+    "why": "Issue describes two distinct bugs: (1) check_provider_endpoint not in LITELLM_SETTINGS_SAFE_DB_OVERRIDES so DB-stored litellm_settings overrides config.yaml, and (2) VertexAIModelInfo.get_models() is a NotImplementedError stub. The supplied duplicate assessment flags PR #38818 as semantic_overlap_requires_review (score 52, overlapping paths litellm/llms/anthropic/common_utils.py, distinctive overlap config_yaml/store_model_in_db) but does not establish whether it actually fixes either root cause. This unresolved duplicate/coverage question materially determines whether new code work is actionable."
   },
   "45f40eed7bc399c120ae528c3e40a211aafcf29d7cd96b6e45557f73645f0652": {
     "confidence": 0.7,
@@ -58850,6 +58917,43 @@
     ],
     "why": "Issue identifies two concrete, code-anchored defects in ReLoRACallback._prune_and_reset: (A) adapters are pruned without merging B@A into the frozen base, so the learned effective linear map is discarded rather than restarted (maintainer reproduced max|delta|=0 on base weight with MSE 142.12 vs 8.77e-13 for a merge-then-reset control); (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both lora_A and lora_B and leaving a permanently dead zero-gradient branch (maintainer reproduced 0 nonzero where 4 were requested, grad-norm 0.0). Both are algorithm-level LoRA/PEFT correctness issues with deterministic reference-vs-implementation validation paths, matching the llm_algorithm track."
   },
+  "7352ac1a0f2d1aa3b4696ac9ecf1499e1c19046f0a1b6cde0a65a42df64aeca1": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER and gate HUMAN_REVIEW conflict with the pre-review failure reasons duplicate_changed and no_code_surface",
+      "Issue body states the source bug is reproducible, but actionability_evidence reports public_repro_signals=0 and root_cause_signal=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "ai-quota completion path: handle synchronous Redis GET dispatch failure without leaving the request paused",
+      "regression test injecting a Redis GET that errors synchronously and never invokes its callback"
+    ],
+    "risks": [
+      "Exact completion-path error-response mapping is undefined until the Design Issue is approved",
+      "Repository requires assignment and AI-disclosure resolution before implementation",
+      "Pre-review flagged duplicate_changed and no_code_surface"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Native test with a Redis GET implementation returning an error synchronously and never calling back; assert the request is not left permanently paused",
+      "Regression test for the existing successful callback/resume path and existing completion-path Redis-error behavior"
+    ],
+    "unknowns": [
+      "Whether a maintainer has approved the Proposal and Design",
+      "The exact error-response mapping and test seam to implement",
+      "Whether the duplicate/coverage status is resolved",
+      "Whether assignment and AI-disclosure requirements are satisfied"
+    ],
+    "why": "The issue is a planning-only Proposal that explicitly forbids implementation until maintainer approval of the Proposal and a subsequent Design Issue; the exact error-response mapping and test seam are deferred to that Design. The supplied evidence also shows assignmentRequired=true and an aiDisclosureConflict, and the candidate's own pre-review failed with duplicate_changed, policy_or_disclosure_uncertain, assignment_required, and no_code_surface. These are materially blocking unknowns for actionable code work, not ordinary implementation uncertainty."
+  },
   "7372012f7ca3664a8e96c6d3d7519b76bf5018245fd9abb1a59da525b25eb634": {
     "confidence": 0.85,
     "contradictions": [],
@@ -72181,6 +72285,45 @@
       "Whether a deterministic reproduction exists without CUDA_LAUNCH_BLOCKING or overlap-schedule toggles"
     ],
     "why": "The issue's own reporter retracted the QSA kernel bounds root cause and reclassified the crash as an overlap-scheduler race; the merged PR #38346 (clamp compress gather) is claimed by a second reporter to cover the low-concurrency variant, while the same reporter later reports the crash recurring with --disable-overlap-schedule. Root cause and duplicate/merged-fix coverage are unresolved, so no concrete code change is actionable."
+  },
+  "8dc790a4a2e4264d0e753b38effa033f1bcf179f73042c52be50f181e84e3773": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Original report frames the hang as specific to `oz environment list` inside Warp, but later comments show it affects other `oz` commands and occurs in external PowerShell when the Warp desktop app is running",
+      "Triage bot states no explicit timeout around auth refresh, while environment.rs is described as using a WARP_DRIVE_SYNC_TIMEOUT, leaving which stage actually blocks unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "app/src/ai/agent_sdk/environment.rs",
+      "app/src/ai/agent_sdk/mod.rs",
+      "app/src/auth/auth_manager.rs",
+      "crates/warpui/src/platform/headless/event_loop.rs",
+      "crates/command/src/async.rs"
+    ],
+    "risks": [
+      "Root cause may be in Windows process/job/console-signal handling rather than the Oz CLI code paths, making a code fix in the listed modules ineffective",
+      "Intermittent reproduction may make a targeted fix unverifiable",
+      "Overlapping reports (#10494, #11662, #12629) may indicate a broader shared cause not covered by a narrow fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce `oz environment list` on Windows with Warp running and capture whether the process reaches auth refresh, Warp Drive sync, or output rendering before hanging",
+      "Compare behavior in a standalone PowerShell window with Warp fully closed vs running to isolate Warp-specific process/signal handling",
+      "Add a regression test asserting the CLI process exits within a bounded timeout after printing output"
+    ],
+    "unknowns": [
+      "Whether the hang occurs during auth refresh, Warp Drive initial sync, output rendering, or Windows process/signal handling",
+      "Whether the hang reproduces with Warp fully closed, which would distinguish Oz CLI vs Warp terminal/process handling",
+      "Redacted Warp logs from a failed run and Ctrl+C attempt"
+    ],
+    "why": "Issue reports a Windows-specific hang of `oz environment list` with no output and unkillable via Ctrl+C. Triage bot lists multiple plausible root-cause areas (auth refresh, Warp Drive sync, output rendering, Windows process/signal handling) but explicitly states root-cause confidence is low and requests logs plus an outside-Warp comparison. Later comments show the hang is not limited to `oz environment list` (also `oz run list`, `oz --version`, `oz whoami`), is intermittent, and can occur outside Warp when the desktop app is running, which contradicts the original narrow framing and leaves the actual failing path undetermined."
   },
   "8de24e9cd4380f38ab3035a84d8d3a14faa714b0c6be8d60048aec77da22cfdf": {
     "confidence": 0.85,
@@ -117068,6 +117211,49 @@
     ],
     "unknowns": [],
     "why": "Issue provides a concrete root cause: the clear guard compares original editor text against transformed displayText, misclassifying preprocessing changes as newer user input, plus an unordered debounced draft write race. Reproduction steps, code anchors, and a concrete validation path (rendered E2E with Command+Enter/Send, session switch/remount, persisted draft) are supplied. No duplicate or merged-fix coverage is indicated."
+  },
+  "e65e2b5cbd406d11f90c412006b1b99e1a0cf25cbdc651490379731964f39628": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Maintainer approved the proposal but explicitly blocked implementation until Design #4403 is revised and approved, while the candidate is marked maintainer_approved=true and maintainer_approved in actionability_evidence",
+      "SPEC-4402001 status is 'draft' and workflow is blocked on 'SPEC-4402001 must be confirmed or done', yet the candidate is categorized WAIT_MAINTAINER with maintainer_approved=true"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/upgrade.go: return wrapped getAllProfiles errors from upgrade path",
+      "hgctl/pkg/uninstall.go: return wrapped getAllProfiles errors from uninstall path",
+      "getAllProfiles: propagate errors from GetProfileInstalledPath, NewFileDirProfileStore, file List(), kubernetes.NewCLIClient, NewConfigmapProfileStore, ConfigMap List()",
+      "Add narrow test seam to inject discovery failures without a live cluster"
+    ],
+    "risks": [
+      "Behavior change for scripts that currently treat discovery failures as successful no-ops",
+      "Carve-out predicate (clientcmd.IsEmptyConfig plus explicit path/context checks) must not let broken or unreachable clusters slip through",
+      "Overlap with merged PR #4754 touching hgctl/pkg/upgrade.go and installer.go could cause conflicts"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: invalid kubeconfig causes upgrade/uninstall to return non-zero with wrapped cause",
+      "Unit test: ConfigMap List failure propagates as error",
+      "Unit test: local profile path and file-store failures are not suppressed",
+      "Unit test: successful empty discovery still reports 'not installed' with exit 0",
+      "Unit test: no-kubeconfig local-docker path preserves stdout/stderr/exit status byte-for-byte",
+      "Run go test for hgctl and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers accept the amended SPEC-4402001 carve-out (IsEmptyConfig plus explicit path/context/in-cluster checks) or require strict fail-closed semantics",
+      "Whether Design #4403 has been revised and approved",
+      "Whether TASK authorization has been granted",
+      "Whether the merged PR #4754 already covers any of the same error-propagation behavior"
+    ],
+    "why": "The proposal is well-scoped and maintainer-verified: hgctl/pkg/upgrade.go:67 and uninstall.go:66 discard getAllProfiles errors, and getAllProfiles suppresses six discovery failure sites. However, the supplied evidence shows the SPEC is still 'draft' and the maintainer explicitly stated 'Implementation may begin only after Design #4403 is revised and approved', with the workflow blocked on 'SPEC-4402001 must be confirmed or done'. The contributor's latest comment asks maintainers to confirm the amended SPEC and notes implementation is still pending Design/SPEC approval and TASK authorization. This is a materially blocking unknown: whether the carve-out semantics are accepted determines the exact code behavior to implement."
   },
   "e6651c0605472c2f2dfda08111e5e00e0fcb562259be8183715b0a60b9e242d1": {
     "confidence": 0.85,
