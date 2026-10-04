@@ -31639,7 +31639,7 @@ def _completed_validation_result_with_omitted_envelope(
 
 
 def _assert_completed_validation_envelope_original_queue_and_ingest(
-    store, worktree, result_path, input_path
+    store, worktree, result_path, input_path, *, current_context_digest=None, monkeypatch=None
 ):
     original = result_path.read_bytes()
     value = json.loads(original)
@@ -31650,7 +31650,16 @@ def _assert_completed_validation_envelope_original_queue_and_ingest(
     assert "threadId" not in value and "worktreePath" not in value
     assert value["taskId"] == "intent-1"
 
-    queued = MODULE.enqueue_local_receipts(store.path)
+    if monkeypatch is None:
+        queued = MODULE.enqueue_local_receipts(store.path)
+    else:
+        with monkeypatch.context() as intake:
+            intake.setattr(
+                MODULE,
+                "command",
+                lambda *_args, **_kwargs: pytest.fail("fast receipt intake ran a command"),
+            )
+            queued = MODULE.enqueue_local_receipts(store.path)
 
     assert queued["ok"] and queued["rejected"] == [], queued
     assert len(queued["queued"]) == 1
@@ -31662,11 +31671,18 @@ def _assert_completed_validation_envelope_original_queue_and_ingest(
     assert resumed["ok"] and resumed["errors"] == [], resumed
     assert resumed.get("workBlocked", []) == []
     assert resumed["validationDeferred"] and resumed["publicationRequests"] == [], resumed
+    if current_context_digest is not None:
+        assert len(resumed["validationContextRebindings"]) == 1
+        assert (
+            resumed["validationContextRebindings"][0]["previousContextDigest"]
+            == value["contextDigest"]
+        )
+        assert resumed["validationContextRebindings"][0]["contextDigest"] == current_context_digest
     normalized = json.loads(result_path.read_bytes())
     assert normalized["threadId"] == "thread-1"
     assert normalized["worktreePath"] == str(worktree)
     assert normalized["taskId"] == value["taskId"]
-    assert normalized["contextDigest"] == value["contextDigest"]
+    assert normalized["contextDigest"] == (current_context_digest or value["contextDigest"])
     assert normalized["commitSha"] == value["commitSha"] == original_head
     assert normalized["tests"] == value["tests"]
     assert normalized["quality"]["relevant_tests_green"] is False
@@ -31692,8 +31708,9 @@ def test_native_completed_validation_normalizes_missing_envelope_in_original_que
     )
 
 
+@pytest.mark.parametrize("audit_refresh", [False, True])
 def test_native_completed_validation_normalizes_missing_envelope_with_retired_unpublished_source(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, audit_refresh
 ):
     completed = test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         monkeypatch, tmp_path, False, return_completed_fixture=True
@@ -31701,7 +31718,7 @@ def test_native_completed_validation_normalizes_missing_envelope_with_retired_un
     store, worktree, result_path, request_id = completed
     old_request = store.publication_request(request_id)
     old_request_before = dict(old_request)
-    store, worktree, result_path, input_path, _receipt_path, _started_at = (
+    store, worktree, result_path, input_path, receipt_path, _started_at = (
         _completed_validation_result_with_omitted_envelope(
             tmp_path, monkeypatch, completed_fixture=completed[:3]
         )
@@ -31724,12 +31741,84 @@ def test_native_completed_validation_normalizes_missing_envelope_with_retired_un
     assert refresh["requestId"] == request_id
     assert store.retired_latest_target_receipt(context) is None
     assert store.retired_latest_target_receipt(context, allow_completed_validation=True) == refresh
+    original = result_path.read_bytes()
+    original_input = input_path.read_bytes()
+    original_receipt = receipt_path.read_bytes()
+    old_context_digest = context["contextDigest"]
+    current_context_digest = None
+    if audit_refresh:
+        with store.connect() as connection:
+            prior_events = [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT id,event_type,payload_json,created_at FROM events ORDER BY id"
+                ).fetchall()
+            ]
+        live_audit = json.loads(json.dumps(context["liveAudit"]))
+        assert live_audit["evidence"]["complete"] is True
+        assert all(value == "COMPLETE" for value in live_audit["evidence"]["completeness"].values())
+        live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+        live_audit["evidence"]["digest"] = "b" * 64
+        store.record_audit_snapshot(
+            "a/b#1",
+            evidence={
+                "liveAudit": live_audit,
+                "targetBase": context["targetBase"],
+                "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+            },
+            dedupe_key="intent-1:retired-completed-validation:active-context-refresh",
+        )
+        MODULE.write_task_context(
+            store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+        )
+        recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+        assert recovered["ok"], recovered
+        current_context = json.loads(context_path.read_bytes())
+        current_context_digest = current_context["contextDigest"]
+        assert current_context_digest != old_context_digest
+        assert {
+            key
+            for key in context.keys() | current_context.keys()
+            if context.get(key) != current_context.get(key)
+        } == {"contextDigest", "liveAudit", "liveAuditRecordedAt"}
+        assert current_context["publicationReceipt"] == publication_receipt
+        assert result_path.read_bytes() == original
+        assert input_path.read_bytes() == original_input
+        assert receipt_path.read_bytes() == original_receipt
+        assert json.loads(original)["contextDigest"] == old_context_digest
+        assert json.loads(original_input)["contextDigest"] == old_context_digest
     normalized = _assert_completed_validation_envelope_original_queue_and_ingest(
-        store, worktree, result_path, input_path
+        store,
+        worktree,
+        result_path,
+        input_path,
+        current_context_digest=current_context_digest,
+        monkeypatch=monkeypatch if audit_refresh else None,
     )
     assert normalized["commitSha"] == current_head
     assert json.loads(context_path.read_bytes())["publicationReceipt"] == publication_receipt
     assert store.publication_request(request_id) == old_request_before
+    assert receipt_path.read_bytes() == original_receipt
+    if audit_refresh:
+        with store.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='TASK_RESULT_CONTEXT_REFRESH_REBOUND' "
+                "AND id>?",
+                (prior_events[-1][0],),
+            ).fetchall()
+            assert len(rows) == 1
+            rebound = json.loads(rows[0][0])
+            assert rebound["previousContextDigest"] == old_context_digest
+            assert rebound["contextDigest"] == current_context_digest
+            assert base64.b64decode(rebound["sourceResultBytesBase64"]) == original
+            assert rebound["turnId"] == "completed-validation-turn"
+            assert [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT id,event_type,payload_json,created_at FROM events WHERE id<=? ORDER BY id",
+                    (prior_events[-1][0],),
+                ).fetchall()
+            ] == prior_events
 
 
 @pytest.mark.parametrize(

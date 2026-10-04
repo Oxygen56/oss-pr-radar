@@ -2451,12 +2451,24 @@ def _validation_result_context_refresh_proof(
     may have occurred. Commit/parent/scope and signed evidence validation stay
     in the ordinary ingestion path after this read-only proof.
     """
+    ready = isinstance(value.get("quality"), dict) and assess_submit_ready(value["quality"]).ready
+    retired_latest_target = (
+        store.retired_latest_target_receipt(context, allow_completed_validation=True)
+        if not ready and isinstance(context.get("publicationReceipt"), dict)
+        else None
+    )
+    retired_publication_is_unpublished = (
+        retired_latest_target is not None
+        and store.publication_target_base_refresh(candidate) == retired_latest_target
+    )
     if (
         candidate.get("stage") != "VALIDATION_PENDING"
         or context.get("stage") != "VALIDATION_PENDING"
         or context.get("taskStage") != "IMPLEMENTATION_READY"
         or context.get("prFollowup") is not None
-        or context.get("publicationReceipt") is not None
+        or (
+            context.get("publicationReceipt") is not None and not retired_publication_is_unpublished
+        )
         or context.get("codePathTombstoneReceipt") is not None
         or value.get("stage") != "FIX_READY"
         or value.get("handoffMode") != "controller_commit_complete"
@@ -2467,7 +2479,6 @@ def _validation_result_context_refresh_proof(
         or _task_live_audit_refresh_due(context)
     ):
         return None
-    ready = assess_submit_ready(value["quality"]).ready
     if not ready and (raw is None or _active_task_turn_for_result(candidate) is not None):
         return None
     binding = {
@@ -2657,6 +2668,7 @@ def _validation_result_context_refresh_proof(
                     context_raw=context_raw,
                     validation_context_digest=old_digest,
                     completion_proof=completion,
+                    allow_retired_latest_target=retired_publication_is_unpublished,
                 )
             if task_id != binding["intentId"]:
                 return None
@@ -15671,9 +15683,8 @@ def _validation_result_omitted_envelope(
         or value.get("handoffMode") != "controller_commit_complete"
         or any(field in value for field in ("reproductionReceipt", "probeReceipt", "resultDigest"))
         or value.get("taskId") != candidate.get("intentId")
-        or any(
-            value.get(field) != context.get(field) for field in ("key", "issueUrl", "contextDigest")
-        )
+        or any(value.get(field) != context.get(field) for field in ("key", "issueUrl"))
+        or re.fullmatch(r"[0-9a-f]{64}", str(value.get("contextDigest") or "")) is None
         or value.get("schemaVersion") != TASK_RESULT_SCHEMA
         or any(
             field in value and value[field] != context.get(field)
@@ -15696,6 +15707,11 @@ def _validation_result_omitted_envelope(
         context_raw=context_raw,
         completion_proof=completion,
         allow_retired_latest_target=True,
+        validation_context_digest=(
+            str(value["contextDigest"])
+            if value["contextDigest"] != context.get("contextDigest")
+            else None
+        ),
     ) != candidate.get("intentId"):
         return value
     receipt = completion["receipt"]
@@ -15955,7 +15971,6 @@ def _completed_validation_input_task_id(
         if allow_retired_latest_target
         and isinstance(context.get("publicationReceipt"), dict)
         and expired_publication is None
-        and validation_context_digest is None
         and value.get("handoffMode") == "controller_commit_complete"
         and context.get("prFollowup") is None
         else None
