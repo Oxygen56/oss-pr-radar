@@ -12751,6 +12751,170 @@ def test_restore_reconcile_trusts_verified_postcondition_over_transport_error(
     assert restored == 1
 
 
+def test_exact_environment_blocked_reproduction_keeps_other_ready_work(tmp_path):
+    store, _ready_worktree, _ready_result = _controller_commit_result(tmp_path)
+    worktree = MODULE.managed_worktree_path("intent-2", "a/b")
+    worktree.mkdir(parents=True)
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    run_git(worktree, "branch", "-M", "main")
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-2",
+            "key": "a/b#2",
+            "repo": "a/b",
+            "issueNumber": 2,
+            "issueUrl": "https://github.com/a/b/issues/2",
+            "title": "Reproduction environment unavailable",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "defaultBranch": "main",
+            "selectedBaseSha": base_sha,
+            "codePaths": ["runtime.py"],
+            "probeRequired": True,
+            "probeLevel": "UNVERIFIED",
+            "taskStage": "REPRODUCTION_REQUIRED",
+        }
+    )
+    store.claim("intent-2", "controller")
+    store.commit_dispatch(
+        "intent-2",
+        owner="controller",
+        thread_id="thread-2",
+        project_id="github",
+        worktree_path=str(worktree),
+    )
+    store.record_audit_snapshot(
+        "a/b#2",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "reproduction-environment-evidence",
+            "liveAudit": {
+                "capturedAt": iso_z(now),
+                "evidence": {
+                    "digest": "reproduction-environment-evidence",
+                    "issue": {"state": "open"},
+                },
+            },
+        },
+        dedupe_key="reproduction-environment-evidence",
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/2",
+        thread_id="thread-2",
+        cwd=worktree,
+    )
+    context_raw = context_path.read_bytes()
+    context = json.loads(context_raw)
+    assert context["stage"] == "DISPATCHED"
+    assert context["taskStage"] == "REPRODUCTION_REQUIRED"
+    result_path = Path(context["resultPath"])
+    value = {
+        "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+        "contextDigest": context["contextDigest"],
+        "key": "a/b#2",
+        "issueUrl": "https://github.com/a/b/issues/2",
+        "threadId": "thread-2",
+        "worktreePath": str(worktree),
+        # The actual child result omitted taskId; preserve that shape.
+        "stage": "REPRODUCTION_REQUIRED",
+        "reason": "REPRODUCTION_ENVIRONMENT_BLOCKED",
+        "reproductionVerified": False,
+        "evidence": {"environmentBlocker": "Bun and repository dependencies are absent."},
+        "tests": [{"command": "bun --version", "exitCode": 127}],
+    }
+    raw = json.dumps(value, indent=2).encode() + b"\n"
+    result_path.write_bytes(raw)
+    assert run_git(worktree, "status", "--porcelain") == ""
+    with store.connect() as connection:
+        intent_before = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-2'"
+            ).fetchone()[0]
+        )
+
+    # Targeted reads of the same public ingestion entry point prove that this
+    # task alone produces no accepted result or publication request.
+    args = SimpleNamespace(ledger=store.path, key="a/b#2")
+    first = MODULE.ingest_task_results(args)
+    assert first["ok"] is True, first
+    assert first["errors"] == []
+    assert first["ingested"] == []
+    assert first["publicationRequests"] == []
+    assert first["validationDeferred"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#2",
+            "reason": "REPRODUCTION_ENVIRONMENT_BLOCKED",
+            "alreadyRecorded": False,
+        }
+    ]
+    repeated = MODULE.ingest_task_results(args)
+    assert repeated["ok"] is True, repeated
+    assert repeated["errors"] == []
+    assert repeated["ingested"] == []
+    assert repeated["publicationRequests"] == []
+    assert repeated["workBlocked"] == [dict(first["workBlocked"][0], alreadyRecorded=True)]
+
+    # The unfiltered real entry point must advance the independent valid
+    # contribution in the same batch while retaining this task's waiting state.
+    combined = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert combined["ok"] is True, combined
+    assert combined["errors"] == []
+    assert combined["workBlocked"] == repeated["workBlocked"]
+    assert combined["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(combined["publicationRequests"]) == 1
+    assert combined["publicationRequests"][0]["key"] == "a/b#1"
+    assert result_path.read_bytes() == raw
+    assert context_path.read_bytes() == context_raw
+    assert json.loads(result_path.read_bytes())["reproductionVerified"] is False
+    assert "quality" not in json.loads(result_path.read_bytes())
+    assert "reproductionReceipt" not in json.loads(result_path.read_bytes())
+    current = store.task_context(issue_url="https://github.com/a/b/issues/2", thread_id="thread-2")
+    assert current["stage"] == "DISPATCHED"
+    assert current["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert store.active_task_quarantine("a/b#2") is None
+    assert not any(item["key"] == "a/b#2" for item in store.implementation_followup_candidates())
+    # The evidence block neither parks recovery nor bypasses the existing
+    # default 90-minute age gate. These are isolated fixture ledger reads.
+    assert any(item["key"] == "a/b#2" for item in store.recovery_candidates(min_age_minutes=0))
+    assert not any(item["key"] == "a/b#2" for item in store.recovery_candidates())
+    with store.connect() as connection:
+        intent_after = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-2'"
+            ).fetchone()[0]
+        )
+        for field in ("taskStage", "probeLevel", "probeReceiptDigest", "quality"):
+            assert intent_after.get(field) == intent_before.get(field)
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE opportunity_key='a/b#2' "
+                "AND event_type IN ('TASK_RESULT_INGESTED','IMPLEMENTATION_FOLLOWUP_SENT')"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events WHERE opportunity_key='a/b#2' "
+                "AND event_type='TASK_RESULT_EVIDENCE_BLOCKED'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
 def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path):
     store, worktree = registered_store(tmp_path)
     context_path = MODULE.write_task_context(

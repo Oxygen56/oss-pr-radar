@@ -24239,6 +24239,12 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         payload={"violations": violations},
                     )
                     raise RuntimeError("REPRODUCTION_REQUIRED task violated its read-only contract")
+                if (
+                    stage_claim == "REPRODUCTION_REQUIRED"
+                    and value.get("reason") == "REPRODUCTION_ENVIRONMENT_BLOCKED"
+                    and value.get("reproductionVerified") is False
+                ):
+                    raise TaskResultEvidenceBlocked("REPRODUCTION_ENVIRONMENT_BLOCKED")
                 if stage_claim == "REPRODUCED_VALIDATED":
                     receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
                     normalized = dict(value)
