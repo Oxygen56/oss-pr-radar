@@ -12190,6 +12190,42 @@
     ],
     "why": "Issue provides a clear root cause (pkg_version can return None) and a concrete reproduction traceback. The suggested fix is minimal and aligns with existing error-handling contract. No contradictory evidence."
   },
+  "199678988d43f17cd8c34f7f4547ff4358d0761cf09e675076b47783f71dd411": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false contradicts the detailed root cause in issue_data.issue_body",
+      "open_pr_assessment reports semantic_overlap_requires_review for PR #52487 but direct_code_overlap=false and overlapping_paths=[]"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/gemma4.py: conditionally create k_proj/v_proj/k_norm for KV-shared layers or mark them as expected-missing",
+      "vllm/model_executor/model_loader/default_loader.py: exempt KV-shared dead tensors from track_weights_loading"
+    ],
+    "risks": [
+      "Fixing by skipping parameter creation may break attention paths that still reference k_proj/v_proj/k_norm when kv_sharing_target_layer_name is unset",
+      "Exempting weights in track_weights_loading could mask genuinely missing weights in other models",
+      "AI disclosure policy conflict may block automated contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Resave google/gemma-4-E2B-it with transformers 5.5.4 save_pretrained and load via vllm.LLM to confirm the ValueError reproduces",
+      "Add a regression test asserting a transformers-saved gemma4 checkpoint loads without missing-weight errors while the original hub checkpoint still loads"
+    ],
+    "unknowns": [
+      "Whether PR #52487 actually covers the same gemma4 KV-shared loader root cause",
+      "How the repository's ai_disclosure_conflict policy is to be satisfied for this contribution",
+      "Whether maintainers prefer skipping parameter creation versus exempting weights in the loader"
+    ],
+    "why": "The issue describes a concrete loader/architecture mismatch for KV-shared gemma4 layers, but the supplied evidence contains a material contradiction: the candidate's own actionability evidence sets root_cause_signal=false while the issue body provides a detailed root cause and reproduction. Additionally, the duplicate assessment flags PR #52487 as semantic_overlap_requires_review with no direct code overlap, and the submission policy is ai_disclosure_conflict, which is a repository-level disclosure requirement that must be resolved before code work is actionable."
+  },
   "199eeece6509dafa6d3643c1a1ed0572c7dfb71f49fc2fde3ffd8d436aea1762": {
     "confidence": 0.7,
     "contradictions": [
@@ -40883,6 +40919,40 @@
     ],
     "why": "The issue itself is a well-evidenced, concrete bug (borrowed Gemma4 methods read `_enable_mm_lora`, which DiffusionGemma never sets), but the supplied evidence shows an open PR #54309 that already implements the exact fix ('Set _enable_mm_lora on DiffusionGemma to fix image-input engine crash') with overlapping path `vllm/model_executor/models/diffusion_gemma.py` and distinctive overlap on `enable_mm_lora`/`gemma4`. A maintainer-adjacent contributor comment confirms the root cause and points to #54309 as the existing fix. This unresolved duplicate/merged-fix coverage is a materially blocking unknown: it is unclear whether any new code work is actionable or would merely duplicate #54309. Additionally, the repository policy status is `ai_disclosure_conflict`, which is a disclosure requirement that must be resolved before public action."
   },
+  "51ba8d5abe3afadfca3b882ea3a00fa7800f6f4d624045fe6f2b62aa5796d2f3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims agent/inference/RAG critical path and score 8, but evidence shows no code surface, no root cause, and no reproduction path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until failing job and dependency are identified; likely pyproject.toml constraint bump or type/lint fixes in affected modules"
+    ],
+    "risks": [
+      "Fixing the wrong dependency or masking a real MCP SDK breaking change",
+      "Bumping version floors may hide genuine incompatibilities",
+      "Auto-generated issue may be transient and self-resolve on next dependency release"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Inspect workflow run #908 logs to identify failing job",
+      "Reproduce with uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto",
+      "Add a regression test only after the specific failure is isolated"
+    ],
+    "unknowns": [
+      "Which workflow job failed (static analysis vs tests)",
+      "Which dependency upgrade caused the failure",
+      "Specific code locations requiring changes",
+      "Whether the failure is reproducible locally"
+    ],
+    "why": "The issue is an auto-generated upgrade-check failure report with no identified failing job, no root cause, and no concrete code surface. The body only lists generic possible causes (ty, ruff, MCP SDK) and generic remediation steps. Pre-task evidence confirms no code paths plan, no reproduction path, and probe_ready=false, so the actual failing dependency and code location are unknown."
+  },
   "51bb3503794af88215e5f291ff2684d8213da6229ee3269c2979696c5308e7d3": {
     "confidence": 0.55,
     "contradictions": [
@@ -46383,6 +46453,44 @@
     ],
     "why": "The issue pins a concrete root cause in src/kiro_crew/apps/backend.py (_watch_backend_health_sweeps treats an exited Popen as terminal, _demote with no respawn path) and gives an ordered reproduction (kill -TERM backend pid, observe gateway.log demotion, port stays closed). However, the repository policy is needs_assignment/assignmentRequired=true with no assignees, and the maintainer-side triage explicitly routes to needs-investigation because the fix requires four unresolved policy decisions (intentional vs unexpected exit predicate, backoff/give-up semantics, launcher-unavailable handling after user-systemd-manager exit, re-promotion path). Those are materially blocking unknowns for an actionable code contribution, not ordinary implementation uncertainty."
   },
+  "5b3ecfab1741a089c6d1f7462535c452d58eae83ac9e3aaae88ff30295ad5c39": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment says PR #3642 references the issue with COVERAGE relation but also reports semantic_overlap=false, direct_code_overlap=false, and root_cause_coverage=false",
+      "PR #3642 is marked technical_complete=true yet state=CLOSED and is_draft=true"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mcp-types ServerCapabilities/ClientCapabilities model config to preserve unknown keys (extra='allow')",
+      "ServerRunner._serialize / serialize_server_result wire sieve behavior for unknown capability keys"
+    ],
+    "risks": [
+      "Changing extra='allow' on capability models may weaken schema validation or leak unintended keys across protocol eras",
+      "Wire sieve intentionally removes cross-era keys (tasks on 2026-07-28, extensions on older versions); a fix must not break that behavior",
+      "Closed draft PR #3642 may already cover or conflict with the intended change",
+      "AI disclosure policy conflict may block public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with t.ServerCapabilities(tools={}, events={}).model_dump(by_alias=True, exclude_none=True) and assert 'events' is retained",
+      "Add regression test asserting actual Streamable HTTP server/discover bytes include capabilities.events",
+      "Verify known fields still validate and nested known capability objects remain closed",
+      "Run targeted pytest suite plus strict coverage gate and Ruff/Pyright checks"
+    ],
+    "unknowns": [
+      "Whether closed draft PR #3642 already implements or supersedes the needed fix",
+      "Whether the repository's ai_disclosure_conflict policy permits an upstream contribution for this issue",
+      "Whether the intended fix should be limited to capability models or also change the wire sieve in ServerRunner._serialize"
+    ],
+    "why": "Issue describes a concrete behavior (ServerCapabilities drops unknown keys, and ServerRunner._serialize sieves results), with a minimal repro and a fork patch reported to pass tests. However, the supplied evidence leaves materially blocking unknowns: the only candidate PR (#3642) is CLOSED and draft with root_cause_coverage=false and no confirmed direct coverage, so duplicate/merged-fix coverage is unresolved; the repository policy status is ai_disclosure_conflict, which is a disclosure requirement that affects whether code work can be submitted; and the fork patch is explicitly not an upstream PR and does not implement events/* registration, so the actionable code surface is uncertain."
+  },
   "5b4e5b29d657958610e1c3af2aaaaf5bd6634f70a8351d43dc060d61c305b6c7": {
     "confidence": 0.55,
     "contradictions": [
@@ -48131,6 +48239,44 @@
       "Exact scope of remaining work after PR #18695."
     ],
     "why": "Issue provides a clear root cause (wiki eligibility requires compilation template resolution, absent for Built-in datasets) and a concrete reproduction path. The candidate is actionable: improve error messaging or pre-validation. Existing PR #18695 already merged with a guard for missing compilation config, but the issue's broader UX problem (misleading message, no pre-validation) remains partially unaddressed. The evidence includes source-verified root cause and a test plan."
+  },
+  "5ee51f704d972e39979dfed7a8a6315b3119672470ca367755c0aa190f478df7": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment status is semantic_overlap_requires_review while candidate gate_decision is HUMAN_REVIEW and category PR_COMPETITION_OPPORTUNITY",
+      "PR #42472 title matches the issue's proposed fix closely but is not linked to the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: release draft embed/lm_head before target/draft KV pool profiling",
+      "python/sglang/srt/speculative/eagle_worker_v2.py: ensure init_lm_head/init_token_map idempotency and ordering",
+      "python/sglang/srt/models/qwen3_5_mtp.py: optionally avoid materializing redundant draft embed/lm_head at load time"
+    ],
+    "risks": [
+      "Open PRs #42472/#42363/#42388 may already implement or supersede the proposed fix, making a new contribution redundant",
+      "Early init_lm_head on non-last PP ranks or standalone EAGLE drafts could break if the hasattr guard is insufficient",
+      "The try/except fallback could mask a real failure and silently retain the late-release path"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the provided Qwen3.8-27B-NVFP4 EAGLE/MTP command on 2x GPU and confirm the pre-patch OOM at draft pool torch.zeros",
+      "Apply the early-release patch and verify target KV pool reaches the requested --max-total-tokens with non-trivial free memory after pool allocation",
+      "Add a regression test asserting draft embed/lm_head tensors are shared with the target before pool sizing and that init_lm_head is idempotent when called twice"
+    ],
+    "unknowns": [
+      "Whether PR #42472 or #42363 already fixes the same root cause and would make a new PR duplicate",
+      "Whether the maintainers consider the scheduler-side early release the preferred fix versus the loader-side alternative",
+      "Whether the issue has been triaged/assigned or is expected to be resolved by an existing PR"
+    ],
+    "why": "Issue describes a concrete startup OOM caused by redundant draft embed_tokens/lm_head copies being freed only after KV pool sizing, with a proposed scheduler-side early-release patch and measured before/after numbers. However, three open PRs (#42472, #42363, #42388) semantically overlap the same code paths and appear to address the same root cause; the supplied duplicate assessment explicitly says semantic_overlap_requires_review and forbids auto-creating a duplicate task. Whether the fix is already covered by an open PR is a materially blocking unknown for actionability."
   },
   "5eebfa239069fd9d83f8d1f8270affc1f3cb7249a7f4cc104dc9ff4a94ebf9f8": {
     "confidence": 0.82,
@@ -54464,6 +54610,35 @@
       "Exact code changes needed beyond lazy-import; the issue does not specify a preferred fix."
     ],
     "why": "Issue provides a clear root cause: model_hosting_container_standards.logging_config.configure_root_logger() changes shared root handler levels to ERROR, suppressing vLLM startup logs when a custom logging config shares a handler. The reproduction is described with environment details and instrumentation confirming the branch executes. An open PR (#51366) proposes a lazy-import fix but lacks regression tests and does not reference the issue, so the contribution remains actionable."
+  },
+  "6ab9b99f8612feed0de36bd25186333e8ee32e4b887a23f6635e39fedf6c1dfb": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/hub/daemon/entry.ts (wire logger into CronService)",
+      "cron store claimDueRuns parameter binding (positional or correct named-param key style)"
+    ],
+    "risks": [
+      "Bun named-parameter binding behavior may differ across versions; fix must be validated on the shipped runtime",
+      "Wiring a logger into CronService could change log volume or expose sensitive data"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: create a schedule due in a few minutes, observe cron_runs row stays status='queued', attempt_count=0, session_id NULL",
+      "Unit test: call CronStore.claimDueRuns with a seeded queued row and assert it returns the row and transitions status to running",
+      "Regression: verify all other cron queries using positional ? still pass"
+    ],
+    "unknowns": [
+      "Exact Bun version shipped in the two distributions, which determines whether named-param binding is the true root cause"
+    ],
+    "why": "Issue provides a concrete, reproducible failure (cron_runs stuck queued, attempt_count 0, no writes after materialization) and narrows the root cause to named-parameter binding in CronStore.claimDueRuns, the only named-param call site in @cline/core. A reference-vs-implementation test is feasible: run the claim SELECT with positional vs named binding against the live DB and assert the queued row is returned."
   },
   "6ac2865ae12bfe60534e5c91fad292d48acf9c9eabd55fff23038353e0f25831": {
     "confidence": 0.7,
@@ -64129,6 +64304,41 @@
       "Whether maintainers prefer a config-callable extension point versus built-in shape detection"
     ],
     "why": "Issue provides a concrete, self-contained reproduction (scripted BaseLlm, mocked _log_event) showing error-bearing tool results recorded as TOOL_COMPLETED/status OK, and names the exact code paths: after_tool_callback not inspecting results, McpTool returning CallToolResult with isError instead of raising, and PluginManager._run_callbacks short-circuiting on ReflectAndRetryToolPlugin responses. Root cause and expected behavior are well specified."
+  },
+  "7c767677c013fd10c8d35ab048593861357f3c8fe00682274d44e59b04b2154d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims no duplicate, but open PR #42072 overlaps the same session/streaming_session path"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/session/streaming_session.py",
+      "python/sglang/srt/mem_cache/unified_radix_cache.py",
+      "python/sglang/srt/managers/scheduler_components/invariant_checker.py"
+    ],
+    "risks": [
+      "Fixing the detection site rather than the underlying free/ownership bug",
+      "Duplicating or conflicting with open PR #42072",
+      "Heap corruption may be non-deterministic and hard to reproduce without the reported 22h serving profile"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the idle-loop invariant walk under the reported hybrid Mamba/GDN + EAGLE configuration and confirm whether the abort is a read-path or free-path defect",
+      "Compare PR #42072's session-slot handling against the reported crash path before writing a fix"
+    ],
+    "unknowns": [
+      "Whether PR #42072 already fixes the reported root cause",
+      "The actual free/ownership defect location, since the stack only shows the detection walk",
+      "Whether the crash is reproducible outside the long-running production profile"
+    ],
+    "why": "Issue reports a heap-corruption abort in the idle invariant walk, but the crash stack only shows where corruption was detected, not where the free/ownership bug originates. No root-cause signal is present in the supplied evidence, and the open PR #42072 overlaps the same session/streaming_session path without being linked to this issue, leaving unresolved duplicate coverage."
   },
   "7c83ef7fc7fcde72420742b65eff27a51e8c38c413ae801b33a3f1b1c6a6c6ac": {
     "confidence": 0.6,
@@ -79863,6 +80073,47 @@
       "Exact internal architecture for LLM config resolution and persistence"
     ],
     "why": "The issue clearly identifies a user-visible bug: conversation LLM config is frozen at creation, causing permanent authentication failures after key rotation. The proposed fix is actionable and well-scoped, with a clear reproduction and multiple solution levels. No competing PR or issue found."
+  },
+  "9b7304752031c20a7457f0b3d50c9e568d271dca4a88a761faefac5bdfb5c7bb": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter frames run-to-run batch difference as a defect, while commenter attributes it to engine-core batch composition and reports exact repeatability in-process",
+      "Reporter sees divergence with bf16 checkpoint, commenter localizes divergence to FP8 in_proj_qkvz on sm_89"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/engine/core.py step/batch composition path",
+      "GDN chunked-prefill varlen kernel path",
+      "Triton fused MoE kernel selection on sm_120",
+      "FP8 GEMM kernel (MarlinFP8ScaledMMLinearKernel) numerics"
+    ],
+    "risks": [
+      "Root cause may be batch composition rather than a kernel defect, making a code fix unnecessary",
+      "Open PR #58863 may already cover the GDN/SSM path",
+      "FP8/bf16 divergence may be hardware/kernel-selection specific (sm_120 vs sm_89)",
+      "Repository AI disclosure policy conflicts with automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied repro_upstream.py with fixed seed and compare alone_repeat, alone_vs_batch2, batch2_repeat",
+      "Repeat with VLLM_ENABLE_V1_MULTIPROCESSING=0 to separate batch composition from kernel non-determinism",
+      "Force max_num_seqs=1 and enforce_eager to isolate the multi-sequence path",
+      "Add a numerical regression asserting bit-identical logprobs for identical rows sharing a step once root cause is fixed"
+    ],
+    "unknowns": [
+      "Which kernel actually produces the shared-step divergence",
+      "Whether PR #58863 already fixes or overlaps this root cause",
+      "Whether the repository's AI disclosure requirement permits the intended contribution workflow"
+    ],
+    "why": "The issue reports a concrete, reproducible numerical non-determinism in a hybrid GDN+MoE model (identical batches differ run-to-run; batch-vs-alone logprob deltas up to ~0.2), with a minimal upstream repro script and code anchors. However, the supplied evidence does not establish a root cause: the reporter explicitly lists three unseparated candidates (Triton fused MoE, GDN chunked prefill over varlen batches, FA2 varlen), and the only comment attributes the run-to-run part to batch composition in _process_input_queue while leaving the shared-step divergence unexplained and card-dependent. The open-PR assessment flags semantic overlap with PR #58863 (Qwen GDN/SSM, sm_120) that is unresolved and not directly linked, so duplicate/coverage status is materially uncertain. The submission policy is ai_disclosure_conflict, which is a repository disclosure requirement that blocks automated public action. These are materially blocking unknowns rather than normal implementation uncertainty."
   },
   "9b7e782a5f19922258991bd78154e2935bf12429fe07f17b85132a97b67e85f5": {
     "confidence": 0.7,
@@ -101911,6 +102162,39 @@
     ],
     "why": "Issue identifies two concrete, independently verified defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the base weight, so the learned effective linear map is discarded (MSE 142.12 vs control 8.77e-13, base weight delta exactly 0), contradicting the module docstring's ReLoRA/Axolotl conformance claim; (B) strict `abs(t) > threshold` masking zeroes all entries on magnitude ties, and with both A and B zeroed the branch receives zero gradients (measured 0.0/0.0), permanently dead. Both are algorithm-level (PEFT restart semantics, pruning mask correctness) with deterministic reproductions and a clear reference-vs-implementation validation path."
   },
+  "c808ab997d7157940f5a7d7d8692afe0c597117eec447007c0cfe0cd4f2fc5db": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body says implementation will not begin until maintainer approval, while candidate gate_decision is HUMAN_REVIEW with WAIT_MAINTAINER category"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "extensions/ai-token-ratelimit/util/utils.go ParseIP: guard against malformed header IP values before slicing",
+      "header-sourced callers in main.go:399/409 to reject malformed values with 'invalid ip' error"
+    ],
+    "risks": [
+      "Repository requires assignment before contribution; no assignee present",
+      "AI disclosure conflict unresolved per preTaskEvidence",
+      "Maintainer approval of Proposal and Design issue is explicitly required before implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression tests for ']', ']:8080', ']junk', '[::1]', '[2001:db8::1]:443', and '1.2.3.4' inputs to ParseIP",
+      "Run targeted unit tests for the ai-token-ratelimit util package and static checks"
+    ],
+    "unknowns": [
+      "Whether a maintainer has approved the Proposal or assigned the issue",
+      "Whether the AI disclosure conflict has been resolved",
+      "Whether the follow-up Design issue with Verification Plan exists"
+    ],
+    "why": "The issue clearly identifies a panic in ParseIP when a header value starts with ']' (slice bounds out of range), with code anchors in util/utils.go and a concrete expected behavior. However, the candidate's own preTaskEvidence shows assignmentRequired=true, aiDisclosureConflict=true, and policy status 'ai_disclosure_and_assignment', meaning repository assignment and AI disclosure requirements are unresolved. The issue itself states implementation will not begin until a maintainer approves the Proposal and follow-up Design issue. These are materially blocking unknowns for actionable code work, not normal implementation uncertainty."
+  },
   "c82fa2d14484be7dbb9706a972a537a21189940b80810b2ae2b69bf7724fb12a": {
     "confidence": 0.8,
     "contradictions": [
@@ -103152,6 +103436,39 @@
       "Whether SM120 hardware is available for validating the remaining caller"
     ],
     "why": "The issue itself is a strong, concrete kernel-algorithm bug: C3x callers rebuild packed strides via make_cute_packed_stride and discard real leading strides, with a reproducible 8% mismatch matrix and a proposed stride fix. However, the supplied evidence shows three open PRs (#55537, #56248, #56480) already covering the same callers and test file, and the issue's own coverage checklist marks several callers as already fixed by those PRs. Whether any remaining code work is actionable depends on unresolved duplicate/coverage facts, which is a materially blocking unknown rather than normal review uncertainty."
+  },
+  "ca09710809213ba25b6cd771846ca6d80da52e08e3084a696f2bc57c9de67f1c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR #12857 is flagged as semantic overlap on agent_error and apps/cli/src/utils/hooks.ts, but the issue body and commenter argue it addresses a different malformed-serialization path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/commands/hook.ts: add agent_error case to the accepted hookName switch while retaining rejection of unknown names",
+      "regression test covering the exact schema-valid agent_error stdin payload and unknown-name rejection"
+    ],
+    "risks": [
+      "PR #12857 touches apps/cli/src/utils/hooks.ts and mentions agent_error; must confirm it does not already cover this stdin handler gap before duplicating work",
+      "Broad CLI unit suite has an unrelated pre-existing failure in config-data.test.ts, so full-suite green is not established"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Feed the issue's exact agent_error JSON payload to `cline hook` and assert exit 0 with a JSON response written to stdout",
+      "Assert an unknown hookName still fails validation before audit/session handling",
+      "Run targeted CLI hook command and runtime hook tests plus CLI typecheck"
+    ],
+    "unknowns": [
+      "Whether PR #12857's changes already make the stdin hook handler accept agent_error, which would make this fix redundant"
+    ],
+    "why": "Issue provides a deterministic stdin reproduction with exact payload, expected/actual exit codes, and code anchors showing the CLI hook switch omits agent_error while the shared schema and runtime emitter include it. A commenter reports a verified fork fix with a regression test using the real shared parser, and explicitly distinguishes this from PR #12857 (malformed serialized errors on hub-backed dispatch)."
   },
   "ca0acfc63e0d27b3c8a683de07e03d68db48ba544aba4a7b9a7ae26918c98c33": {
     "confidence": 0.8,
