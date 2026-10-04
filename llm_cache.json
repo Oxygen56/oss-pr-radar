@@ -5046,6 +5046,40 @@
     ],
     "why": "The issue provides a precise root cause: DSV4's compressed KV cache geometry (num_states=2) violates the paged MQA kernel's compile-time block_kv template constraints (32/64), causing an assert or silent memory corruption. It includes code anchors, reproduction details, and a concrete validation path via reference comparison and regression tests. The track is llm_algorithm with kernel_algorithm and numerics_quantization mechanisms, satisfying the algorithm requirement."
   },
+  "0a3e8baad96d62a830fbc8fde026097174abbab7e30b5a97fcf13cc7e01022e8": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims unit-level reproduction, but actionability_evidence reports public_repro_signals=0 and reproduction_evidence=[]"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "extensions/ai-intent/main.go: replace ignored error from zhToUnicode with fallback to raw question",
+      "extensions/ai-intent/main.go: add unit tests for invalid \\u escape and valid \\uXXXX control"
+    ],
+    "risks": [
+      "Repository requires issue assignment and AI disclosure confirmation before implementation; both are unresolved",
+      "Maintainer design preference for fallback behavior is unconfirmed",
+      "Behavior change could affect prompt construction for existing valid-escape inputs"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test feeding a question containing a literal \\u not followed by 4 hex digits and assert the prompt retains the raw question",
+      "Add a control test with valid \\uXXXX Chinese escapes asserting they are still decoded",
+      "Run the ai-intent package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether a maintainer has approved the Proposal and follow-up Design issue",
+      "Whether the issue has been assigned per repository policy",
+      "Concrete reproduction artifact or failing test output"
+    ],
+    "why": "The proposal describes a plausible swallowed-error bug at the zhToUnicode call site in extensions/ai-intent/main.go, but the supplied evidence contains no reproduction artifact, no code anchor confirmation beyond a path, and the pre-task evidence explicitly flags reproduction_or_validation_missing and probe_ready=false. The issue itself is a Proposal awaiting maintainer approval, and the repository policy requires assignment plus AI disclosure confirmation, which is unresolved (aiDisclosureConflict=true, assignmentRequired=true)."
+  },
   "0a3f91ad0f38e7cb3dbbd41d98b2b09a2b2fadfeaf4aa8bfdc4c495f81c68256": {
     "confidence": 0.85,
     "contradictions": [
@@ -21286,6 +21320,42 @@
     ],
     "why": "Issue provides a clear, reproducible bug with root-cause analysis and a concrete fix direction. The triage bot confirms the root cause and extends it to the OpenAI-compatible pipeline where the clamp is not invoked. The issue is actionable and valuable for agent_ai_infra track."
   },
+  "2a23f08fd2ec4ca6e278f11fda9597b7ae2c31578ff3e8f6a3ecbe4639b9a095": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while issue_body provides a detailed root cause and measured before/after",
+      "open_pr_assessment lists PR #42529 with overlapping eagle_worker_v2.py path and 'checkpoint' overlap but references_issue=false and root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: release draft embed/lm_head before target/draft pool sizing",
+      "python/sglang/srt/speculative/eagle_worker_v2.py: ensure early release is idempotent with alloc_memory_pool path"
+    ],
+    "risks": [
+      "Early init_lm_head/init_token_map may interact with account_preloaded_weights accounting or PP rank handling",
+      "Fix may be redundant with open PR #42529, producing duplicate work",
+      "Model-specific NVFP4 unquantized draft path may not generalize to all families"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reported Qwen3.8-27B-NVFP4 EAGLE same-checkpoint config and confirm pre-patch OOM at draft pool torch.zeros",
+      "After fix, assert target KV pool reaches requested --max-total-tokens and log shows early release on all ranks",
+      "Regression: standalone EAGLE / different-checkpoint draft and non-last PP ranks must not break when no share path exists"
+    ],
+    "unknowns": [
+      "Whether PR #42529 already fixes the same root cause or only a related weight-loading path",
+      "Whether the scheduler-side early release is compatible with account_preloaded_weights and PP rank behavior"
+    ],
+    "why": "Issue gives a concrete mechanism (draft embed_tokens/lm_head copies resident during pool sizing) and a measured before/after table, but the supplied evidence marks root_cause_signal=false and the duplicate assessment flags PR #42529 ('Skip loading shared draft embedding and head weights') as semantic overlap on the same eagle_worker_v2.py path with no direct issue link. Whether that open PR already covers the root cause is unresolved and determines whether new code work is actionable."
+  },
   "2a3508e8ff1e52750a221933bacac2ebcaf32942ce07202a7b36d924d7bfd8c8": {
     "confidence": 0.6,
     "contradictions": [
@@ -31798,6 +31868,43 @@
       "Exact root cause not yet identified; maintainer preference for fix approach unknown."
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, indicating a generation-level bug in v0.5.17 for Qwen3.5-arch models. Root cause is not yet identified, but the evidence is sufficient to start a bisect and targeted fix. No duplicate or competing PR covers this issue."
+  },
+  "40438de7a7113a51e9380be7edf0b058e057f65b9b2932fe917d7deaf511e6d9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal=false while the issue body asserts a plausible free/ownership bug",
+      "open_pr_assessment reports semantic overlap with PR #42254 but direct_code_overlap=false and no issue linkage"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sglang/srt/session/streaming_session.py session_held_tokens walk",
+      "sglang/srt/mem_cache/unified_radix_cache.py session_held_tokens",
+      "sglang/srt/managers/scheduler_components/invariant_checker.py _check_full_pool",
+      "sglang/srt/managers/scheduler.py on_idle abort handling"
+    ],
+    "risks": [
+      "Root cause may be in a free/ownership path not exercised by the idle walk, so a fix could mask rather than resolve corruption",
+      "Existing PRs #42254/#42210 may already cover the same scheduler/session code path, risking duplicate work",
+      "Disabling SGLANG_ENABLE_STRICT_MEM_CHECK_DURING_IDLE is explicitly rejected by the reporter, so a mitigation-only change is not acceptable"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic repro of the session/mamba free path that corrupts the heap, then run the idle invariant check under ASAN/valgrind to confirm the double free",
+      "Add a regression test that exercises session slot release plus unified radix cache ownership and asserts no double free during _check_all_pools"
+    ],
+    "unknowns": [
+      "Whether PR #42254 or #42210 already fixes the same session/mamba free path",
+      "A minimal deterministic reproduction of the heap corruption",
+      "Whether the abort is in the session slot walk itself or in a prior free path detected later"
+    ],
+    "why": "Issue reports a heap-corruption abort in the idle invariant walk, but the supplied evidence contains no root-cause signal (root_cause_signal=false) and no maintainer confirmation; the crash is only observed after ~22h of production serving with no minimal reproduction. The open-PR assessment also flags semantic overlap with PR #42254 (and #42210) on scheduler paths that is unresolved, so duplicate/coverage status is materially uncertain."
   },
   "408be8a9b4a4c4b01480d0d2bb074b446c49227920023439b352a9e35423d74b": {
     "confidence": 0.85,
@@ -61689,6 +61796,39 @@
       "Whether maintainers require a specific grouping/implementation approach"
     ],
     "why": "Issue provides a concrete, reproducible root cause in megatron/core/optimizer/clip_grads.py: get_grad_norm_fp32 and clip_grad_by_total_norm_fp32 build a single mixed bf16/fp32 gradient list and pass it to one TE multi_tensor launch, which dispatches on the first tensor's dtype and causes illegal memory access. The proposed dtype-grouping fix is concrete, semantics-preserving, and validated on a real DeepSeek-V4 SFT run; this is a genuine numerical/kernel-algorithm defect, not plumbing."
+  },
+  "75660c1bea86508453aa89840d7c58aebd8326b950ea0f75b2e6707a7870db4f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims reproduction evidence exists in source bug #4973, but candidate.actionability_evidence shows public_repro_signals=0 and empty reproduction_evidence"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "extensions/ai-token-ratelimit/util/utils.go ParseIP: guard against ']'-leading values before slicing",
+      "header-sourced callers in main.go (lines ~399/409) to reject malformed IPs with 'invalid ip' error"
+    ],
+    "risks": [
+      "Repository requires assignment before contribution and AI disclosure confirmation; unresolved per preTaskEvidence",
+      "base_sha_changed may invalidate the referenced code anchors",
+      "No reproduction evidence supplied in this candidate; probe not ready"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression unit tests for ']', ']:8080', ']junk', '[::1]', '[2001:db8::1]:443', and '1.2.3.4' inputs to ParseIP",
+      "Run targeted unit tests for the ai-token-ratelimit util package and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainer approval and the follow-up Design issue with Verification Plan have been completed",
+      "Whether the referenced base SHA change affects the cited code anchors",
+      "Whether assignment/disclosure requirements have been satisfied"
+    ],
+    "why": "The issue clearly identifies a concrete panic root cause in ParseIP (util/utils.go:32) with a specific malformed input (']'-leading header values) and a defined fix scope, but the supplied evidence shows no reproduction evidence in this candidate (public_repro_signals=0, reproduction_evidence=[], probe_ready=false) and the pre-task evidence flags blocking policy/assignment unknowns (assignment_required, ai_disclosure_conflict, base_sha_changed, no_code_surface). The issue itself states implementation will not begin until maintainer approval and a follow-up Design issue carrying the Verification Plan, so the validation path is not yet established."
   },
   "757f74065dd04d0c1b894743a4393d3f5786549b755b07fe7111e0658cd613a7": {
     "confidence": 0.8,
@@ -97498,6 +97638,41 @@
     ],
     "why": "Issue describes a concrete frontend/backend contradiction with code anchors and a reproduction path, but the comment thread shows unresolved product-intent disagreement about what invite_only should mean, and an open PR #3065 already directly covers the same code path. Whether code work is actionable depends on maintainer resolution of the intended semantics, which is a materially blocking unknown."
   },
+  "bcf891905e198e711ccff8e9311d759394285ff1288f5ce6259e70bdd2b3698c": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body attributes the cause to type_facts.py/ast_analyzer.py, while a later maintainer comment corrects the failing path to variable_analyzer.py",
+      "open_pr_assessment reports semantic overlap with PR #2955 but direct_code_overlap false and root_cause_coverage false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "codebase_rag/parsers/py/variable_analyzer.py: strip surrounding quotes in _process_typed_parameter and _process_typed_default_parameter before storing into local_var_types",
+      "handle qualified and subscripted forward refs consistently with existing annotation helpers"
+    ],
+    "risks": [
+      "Open maintainer-owned PR #2955 may already cover the same root cause, making a new contribution redundant",
+      "Quote-stripping could mis-handle nested/subscripted forward refs like Optional[\"Node\"] or list[\"Node\"] if applied naively",
+      "Greptile Review check failing on #2955 is unattributed and not evidence of value either way"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test: class Node with weight(); class Quoted with def use(self, n: \"Node\"): return n.weight(); assert one exact CALLS edge Quoted.use -> Node.weight",
+      "Run cgr dead-code on fastapi and assert _contains_router is not reported dead",
+      "Verify bare annotation and from __future__ import annotations still resolve identically"
+    ],
+    "unknowns": [
+      "Whether PR #2955 actually fixes the quoted-forward-reference receiver-typing bug or only the Annotated[T,...] case",
+      "Whether the maintainer intends #2955 to close this issue, which would make independent work redundant"
+    ],
+    "why": "Issue describes a concrete, reproducible bug (quoted forward-reference parameter annotations not stripped, dropping CALLS edges) with a minimal repro and a specific fix site in variable_analyzer.py. However, an open maintainer-owned PR #2955 overlaps on the same code paths and the distinctive symbol 'contains_router', and its root-cause coverage is explicitly marked false/technical_complete false. Whether that PR already fixes this exact root cause is unresolved, which materially determines whether independent code work is actionable."
+  },
   "bd09a3b5f27947b1432cc3777c4a993b6abd6d342fd2291fd898e6b030992012": {
     "confidence": 0.8,
     "contradictions": [
@@ -105178,6 +105353,39 @@
     ],
     "why": "Issue describes a concrete user-visible bug with a reproducible path, but the supplied evidence does not establish the root cause: the issue itself notes get_supported_openai_params omitting reasoning_effort is arguably correct, and the desired behavior (forward vs raise UnsupportedParamsError under drop_params) is an unresolved design choice. The open-PR assessment also flags semantic overlap requiring human review, and the candidate's own actionability evidence has root_cause_signal=false."
   },
+  "cac6ec28c73f637cab25e5d714e0322740432e03adcf942ee75f4acad23eda77": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims override path is broken, but supplied evidence marks root_cause_signal=false and provides no code-level defect location"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "complexity_router heuristic_v2 override/promotion logic",
+      "reasoning_override_min_score handling in the classifier path"
+    ],
+    "risks": [
+      "Open PR #41797 may already cover the same complexity_router/heuristic_v2 path, making a new fix duplicative",
+      "Changing override semantics could alter documented tier-routing behavior beyond the reported bug"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test asserting REASONING promotion for a message with 2+ DEFAULT_REASONING_KEYWORDS when reasoning_override_min_score=0",
+      "Reproduce via direct POST /v1/chat/completions with model=auto and the Case 1 literal text, then assert tier=REASONING"
+    ],
+    "unknowns": [
+      "Whether PR #41797 already fixes or supersedes the override-promotion defect",
+      "The actual code location and mechanism of the override failure in heuristic_v2",
+      "Whether the reported behavior is a genuine bug versus a config/version mismatch"
+    ],
+    "why": "Issue reports a concrete, reproducible behavioral bug in litellm's heuristic_v2 complexity router (reasoning_override_min_score=0 fails to promote despite 2+ exact DEFAULT_REASONING_KEYWORDS matches), with expected/actual pairs and three delivery paths. However, the supplied evidence does not establish a root cause: actionability_evidence.root_cause_signal is false, and the code anchors are only keyword strings, not a located defect. Additionally, open PR #41797 ('add a bundled Nadir classifier plugin') has semantic overlap on complexity_router/heuristic_v2 and is unresolved (semantic_overlap_requires_review), so duplicate/coverage status is materially unknown. These missing facts determine whether a code fix is actionable."
+  },
   "cacb001b6a8a9e17fab1375fed9b50521c3e94e676a02be6dff0ea680531de42": {
     "confidence": 0.85,
     "contradictions": [],
@@ -107190,6 +107398,44 @@
       "Whether #52644 or #54092 already cover the same failure"
     ],
     "why": "The issue describes a plausible mechanism (draft-group blocks registered by cache_full_blocks without drafter coverage) but explicitly states the triggering step is not pinned down, and the proposed fix shape is left to maintainer input. The candidate's own actionability evidence shows a policy_or_disclosure_conflict (ai_disclosure_conflict=true) and the pre-review gate failed on policy_or_disclosure_uncertain, which is a materially blocking unknown for whether code work can be submitted. Additionally, the related-issue assessment flags potential overlap with #52644 sharing stack/failure signatures, and the open-PR assessment shows a semantically overlapping closed draft PR #54092 touching the same speculator path, so duplicate/coverage status is unresolved."
+  },
+  "cfc91134fb77d54413610d6bd55e8456adcaccbee3bbf4bcfd7df4955c75de68": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Case A reported on 0.2.5/Codex 0.146.1 but did not reproduce on 0.10.1/Codex 0.157.1 per r0mm4k",
+      "Issue body states cases do not establish one root cause, yet the candidate is scored as a single actionable bug",
+      "Claude recovers after the 400 rejection in some reports (F) but strands turns in others (E)"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/server/src/server/bootstrap.ts (MCP URL construction / protocol version handling)",
+      "Codex MCP config mapping (toCodexMcpConfig / buildCodexInnerConfig)",
+      "MCP startup status diagnostics surfaced to daemon log/UI"
+    ],
+    "risks": [
+      "Fixing the protocol-version rejection may not address the original missing-tools symptom (case A/C)",
+      "Open PR #4375 may already cover the protocol rejection, creating duplicate work",
+      "Multiple independent root causes could require separate fixes, and a single PR may be out of scope"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce case A on current main with stock Codex and confirm whether injected tools appear on the model tool surface",
+      "Capture initialize negotiation and subsequent request headers with real Codex to verify the 2026-07-28 rejection path",
+      "Add a regression test asserting injected MCP tools are discoverable and callable for a fresh Codex session"
+    ],
+    "unknowns": [
+      "Which specific case (A-F) the candidate intends to fix",
+      "Whether the original case A still reproduces on current main",
+      "Whether open PR #4375 already resolves the protocol-version rejection and would cover the intended fix"
+    ],
+    "why": "The issue aggregates at least six distinct failure cases (A-F) with conflicting evidence: case A (missing tools on 0.2.5/Codex 0.146.1) did not reproduce on 0.10.1 per r0mm4k, while other reports show protocol-version rejections that Claude recovers from, and a Windows proxy case with a verified NO_PROXY workaround. The issue body itself states these cases 'do not establish one root cause.' No single concrete root cause or code path is established, so a fix cannot be scoped without first determining which case is actionable."
   },
   "cfe362a44594b59b9b5baeffac8435baac56328f9c3fc859dc285e6b8ad39240": {
     "confidence": 0.8,
@@ -116549,6 +116795,39 @@
       "Current base SHA after base_sha_changed"
     ],
     "why": "Issue describes a concrete user-visible defect with reproduction steps and code anchors, but the supplied evidence contains a materially blocking unknown: an open PR (#40732) with semantic overlap on reasoning_effort/gpt-4o and no direct issue reference, so it is unresolved whether that PR already covers the root cause. The candidate's own duplicate status is 'semantic_overlap_requires_review', and the pre-review gate failed with base_sha_changed, so actionability cannot be confirmed from the supplied evidence alone."
+  },
+  "e0a4997fae3de3f0c6f0ba8b68c9184d28f8a8d44cda18ac0f46a51dfd64b69a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/management_endpoints/mcp_management_endpoints.py: make invalidate_user_oauth_token_cache unconditional on DELETE",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/per_user_oauth_store.py: ensure per-user OAuth token cache is coherent across replicas",
+      "litellm/proxy/common_utils/auth_cache_invalidation_pubsub.py: publish/consume invalidation for the (user_id, server_id) token key on connect/refresh/disconnect"
+    ],
+    "risks": [
+      "Changing DELETE semantics could affect other MCP OAuth flows if invalidation is made unconditional",
+      "Pub/sub invalidation adds a dependency on coordination Redis being configured; behavior without Redis must be defined",
+      "Broadening cache invalidation may have performance implications on hot paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates two cache instances sharing Redis, warms both, deletes via one, and asserts the other no longer returns the token",
+      "Add a test that a repeated DELETE with no credential row still triggers cache invalidation and returns has_credential=false",
+      "Run targeted unit tests for mcp_management_endpoints and outbound_credentials modules plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Redis-only backend vs pub/sub invalidation for this path",
+      "Whether the fix should be scoped to the unconditional-invalidation defect or the full cross-replica coherence fix"
+    ],
+    "why": "Issue provides a concrete multi-replica cache-coherence bug with ordered reproduction steps, expected/actual behavior, and specific code anchors (per_user_oauth_store.py, mcp_management_endpoints.py, dual_cache_token_backend.py, auth_cache_invalidation_pubsub.py). A confirming comment reproduces it on v1.103.1 and identifies an additional concrete defect: the DELETE handler only invalidates when the credential row still exists, so repeated DELETEs skip invalidation. Two reasonable fix paths are offered, which is normal implementation uncertainty, not a blocker."
   },
   "e0e0e72ced9aeb364201d647430a0a58f4a0c178f9a5493b8bc3ede6e4f1f0a8": {
     "confidence": 0.82,
