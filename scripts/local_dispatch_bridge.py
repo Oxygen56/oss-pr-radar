@@ -4141,6 +4141,57 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                 }
             )
         except (OSError, RuntimeError, ValueError, TypeError, sqlite3.Error) as exc:
+            if (
+                isinstance(exc, RuntimeError)
+                and str(exc) == "published task result mismatch: contextDigest"
+                and shared_cleanup_path is not None
+            ):
+                # An observation-only split must retain the shared task's
+                # quarantine, rather than turn its rejected result into a
+                # controller-wide private-context failure.
+                try:
+                    shared_raw, shared_stat, shared_path = _read_shared_context_file(
+                        shared_cleanup_path
+                    )
+                    shared_context, _ = _verified_shared_task_context_from_raw(
+                        shared_path,
+                        shared_raw,
+                        shared_stat,
+                        require_matching_private_mirror=False,
+                    )
+                    mirrors = [
+                        json.loads(canonical_json(item)) for item in (context, shared_context)
+                    ]
+                    for mirror in mirrors:
+                        followup = mirror.get("prFollowup")
+                        if not isinstance(followup, dict) or not isinstance(
+                            followup.get("evidence"), dict
+                        ):
+                            raise RuntimeError("published result quarantine follow-up is invalid")
+                        followup.pop("checkedAt", None)
+                        followup["evidence"].pop("pullResponseDigest", None)
+                    if mirrors[0] != mirrors[1]:
+                        raise RuntimeError("published result quarantine mirrors disagree")
+                    quarantined_item = _quarantine_shared_context(
+                        store, shared_path, exc, raw=shared_raw, source_stat=shared_stat
+                    )
+                    if quarantined_item is None:
+                        raise RuntimeError("published result quarantine identity is unavailable")
+                except (
+                    OSError,
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    sqlite3.Error,
+                ) as quarantine_exc:
+                    exc = RuntimeError(
+                        f"published result quarantine persistence failed: {str(quarantine_exc)[:240]}"
+                    )
+                else:
+                    quarantined.append(quarantined_item)
+                    suppressed_private_keys.add(key)
+                    private_restore_outcomes[key] = "quarantined"
+                    return "quarantined"
             outcome = "error"
             failure = {
                 "path": str(private_item["worktreePath"]),

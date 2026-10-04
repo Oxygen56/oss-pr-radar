@@ -14413,6 +14413,97 @@ def _published_followup_store(
     return store, worktree, head_sha, pr_url
 
 
+@pytest.mark.parametrize(
+    ("result_error_field", "different_shared_wake", "task_scoped"),
+    [
+        ("contextDigest", False, True),
+        ("worktreePath", False, False),
+        ("contextDigest", True, False),
+    ],
+)
+def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
+    monkeypatch, tmp_path, result_error_field, different_shared_wake, task_scoped
+):
+    """Use the recovery entry point with the retained PR_OPEN envelope shape."""
+
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, published_head, pr_url = _published_followup_store(
+        tmp_path / "original", worktree=worktree
+    )
+    local_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    private_raw = local_path.read_bytes()
+    context = json.loads(private_raw)
+    shared = json.loads(private_raw)
+    shared["prFollowup"]["checkedAt"] = iso_z(datetime.now(UTC) - timedelta(minutes=1))
+    shared["prFollowup"]["evidence"]["pullResponseDigest"] = "e" * 64
+    if different_shared_wake:
+        shared["prFollowup"]["wakeDigest"] = "d" * 64
+    shared_path = MODULE.shared_context_path(context["issueUrl"])
+    MODULE._atomic_json(shared_path, shared)
+    shared_raw = shared_path.read_bytes()
+    result_path = Path(context["resultPath"])
+    value = {
+        "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+        "key": context["key"],
+        "issueUrl": context["issueUrl"],
+        "taskId": context["intentId"],
+        "threadId": context["threadId"],
+        "worktreePath": str(worktree),
+        "contextDigest": context["contextDigest"],
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+        "stage": "PR_OPEN",
+        "commitSha": published_head,
+    }
+    value[result_error_field] = "f" * 64 if result_error_field == "contextDigest" else "/other"
+    result_raw = json.dumps(value).encode("utf-8")
+    result_path.write_bytes(result_raw)
+    result_digest = hashlib.sha256(result_raw).hexdigest()
+    original_gate = MODULE._quarantine_shared_context(
+        store,
+        shared_path,
+        RuntimeError("published task result mismatch: contextDigest"),
+        raw=shared_raw,
+        source_stat=shared_path.stat(),
+    )
+    artifact_path = Path(original_gate["artifactPath"])
+    artifact_raw = artifact_path.read_bytes()
+
+    first = MODULE.recover_shared_task_contexts(store)
+    second = MODULE.recover_shared_task_contexts(store)
+
+    if task_scoped:
+        assert first["errors"] == second["errors"] == []
+        assert first["privateErrors"] == second["privateErrors"] == []
+        assert first["quarantined"] == second["quarantined"] == [original_gate | {"new": False}]
+    else:
+        assert first["errors"][0]["source"] == second["errors"][0]["source"] == "private"
+        assert first["quarantined"] == second["quarantined"] == []
+    assert first["resultReceiptsRestored"] == second["resultReceiptsRestored"] == 0
+    assert first["restored"] == second["restored"] == []
+    assert not store.task_result_digest_seen(
+        context["key"],
+        result_digest,
+        intent_id=context["intentId"],
+        thread_id=context["threadId"],
+        worktree_path=str(worktree),
+    )
+    assert result_path.read_bytes() == result_raw
+    assert local_path.read_bytes() == private_raw
+    assert shared_path.read_bytes() == shared_raw
+    assert artifact_path.read_bytes() == artifact_raw
+    assert run_git(worktree, "rev-parse", "HEAD") == published_head
+    current = store.task_context(issue_url=context["issueUrl"], thread_id=context["threadId"])
+    assert current["publicationReceipt"]["prUrl"] == pr_url
+    assert current["publicationReceipt"]["commitSha"] == published_head
+    assert store.active_task_quarantine(context["key"])["reason"] == "SHARED_CONTEXT_INVALID"
+    assert store.publication_work_items() == []
+
+
 def test_late_pr_followup_result_unblocks_pending_new_issue_claim(monkeypatch, tmp_path):
     store, _worktree, head_sha, _pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
