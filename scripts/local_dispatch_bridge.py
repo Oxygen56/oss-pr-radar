@@ -2827,6 +2827,7 @@ def _verified_shared_task_context_from_raw(
     source_stat: os.stat_result,
     *,
     require_matching_private_mirror: bool = True,
+    verify_worktree_git: bool = True,
 ) -> tuple[dict[str, Any], str]:
     try:
         context = json.loads(raw)
@@ -2913,24 +2914,34 @@ def _verified_shared_task_context_from_raw(
         raise RuntimeError("worktree task context mirror is group or world writable")
     if require_matching_private_mirror and local_path.read_bytes() != raw:
         raise RuntimeError("shared and worktree task context mirrors disagree")
-    if Path(command(["git", "rev-parse", "--show-toplevel"], cwd=worktree)).resolve() != worktree:
-        raise RuntimeError("shared task context worktree root is invalid")
-    remotes = command(["git", "remote"], cwd=worktree).splitlines()
-    if not any(
-        normalize_origin(command(["git", "remote", "get-url", remote], cwd=worktree))
-        == repo.casefold()
-        for remote in remotes
-    ):
-        raise RuntimeError("shared task context worktree does not belong to issue repository")
-    if isinstance(receipt, dict) and receipt.get("prUrl"):
-        command(["git", "cat-file", "-e", f"{receipt['commitSha']}^{{commit}}"], cwd=worktree)
-    if context.get("targetBase") is not None:
-        target_base = validate_target_base(context["targetBase"])
-        command(["git", "cat-file", "-e", f"{target_base['sha']}^{{commit}}"], cwd=worktree)
-        command(
-            ["git", "merge-base", "--is-ancestor", target_base["sha"], "HEAD"],
-            cwd=worktree,
-        )
+    target_base = (
+        validate_target_base(context["targetBase"])
+        if context.get("targetBase") is not None
+        else None
+    )
+    # Receipt registration authenticates the envelope without running Git.
+    # The original slow ingestion still verifies this repository and base.
+    if verify_worktree_git:
+        if (
+            Path(command(["git", "rev-parse", "--show-toplevel"], cwd=worktree)).resolve()
+            != worktree
+        ):
+            raise RuntimeError("shared task context worktree root is invalid")
+        remotes = command(["git", "remote"], cwd=worktree).splitlines()
+        if not any(
+            normalize_origin(command(["git", "remote", "get-url", remote], cwd=worktree))
+            == repo.casefold()
+            for remote in remotes
+        ):
+            raise RuntimeError("shared task context worktree does not belong to issue repository")
+        if isinstance(receipt, dict) and receipt.get("prUrl"):
+            command(["git", "cat-file", "-e", f"{receipt['commitSha']}^{{commit}}"], cwd=worktree)
+        if target_base is not None:
+            command(["git", "cat-file", "-e", f"{target_base['sha']}^{{commit}}"], cwd=worktree)
+            command(
+                ["git", "merge-base", "--is-ancestor", target_base["sha"], "HEAD"],
+                cwd=worktree,
+            )
     source_updated_at = iso_z(
         datetime.fromtimestamp(max(source_stat.st_mtime, local_path.stat().st_mtime), tz=UTC)
     )
@@ -2941,6 +2952,8 @@ def _shared_context_envelope_is_valid_for_split(
     path: Path,
     raw: bytes,
     source_stat: os.stat_result,
+    *,
+    verify_worktree_git: bool = True,
 ) -> bool:
     """Validate split shared bytes without making their mirror authoritative.
 
@@ -2956,6 +2969,7 @@ def _shared_context_envelope_is_valid_for_split(
             raw,
             source_stat,
             require_matching_private_mirror=False,
+            verify_worktree_git=verify_worktree_git,
         )
     except TaskContextWorktreeUnavailable:
         return True
@@ -3037,6 +3051,8 @@ def _verified_private_task_context(
     worktree_path: Path,
     raw: bytes,
     source_stat: os.stat_result,
+    *,
+    verify_worktree_git: bool = True,
 ) -> tuple[dict[str, Any], str]:
     """Verify a context read from a managed worktree's private mirror.
 
@@ -3065,7 +3081,9 @@ def _verified_private_task_context(
     # repository, and target-base checks.  It only reads the local mirror to
     # compare bytes; passing the private bytes therefore verifies this source
     # without trusting the singleton bootstrap file.
-    return _verified_shared_task_context_from_raw(bootstrap, raw, source_stat)
+    return _verified_shared_task_context_from_raw(
+        bootstrap, raw, source_stat, verify_worktree_git=verify_worktree_git
+    )
 
 
 def _task_context_authorization_projection(
@@ -3188,6 +3206,8 @@ def _verified_private_context_with_singleton_guard(
     worktree: Path,
     raw: bytes,
     source_stat: os.stat_result,
+    *,
+    verify_worktree_git: bool = True,
 ) -> tuple[dict[str, Any], str]:
     """Authenticate private bytes while rejecting an ambiguous same-task split.
 
@@ -3202,6 +3222,7 @@ def _verified_private_context_with_singleton_guard(
         worktree,
         raw,
         source_stat,
+        verify_worktree_git=verify_worktree_git,
     )
     issue_url = str(context.get("issueUrl") or "")
     shared = _read_shared_context_for_issue(issue_url)
@@ -3224,6 +3245,7 @@ def _verified_private_context_with_singleton_guard(
         shared_path,
         shared_raw,
         shared_stat,
+        verify_worktree_git=verify_worktree_git,
     ) or not _private_context_matches_current_ledger(store, context):
         raise RuntimeError("shared and worktree task context mirrors disagree")
     return context, source_updated_at
@@ -15674,6 +15696,7 @@ def _validation_result_omitted_envelope(
     raw: bytes,
     result_access: _ValidationWorktreeDirectory,
     context_raw: bytes,
+    receipt_registration_only: bool = False,
 ) -> dict[str, Any]:
     """Resolve absent envelope fields from the exact completed validation binding."""
 
@@ -15707,6 +15730,7 @@ def _validation_result_omitted_envelope(
         context_raw=context_raw,
         completion_proof=completion,
         allow_retired_latest_target=True,
+        receipt_registration_only=receipt_registration_only,
         validation_context_digest=(
             str(value["contextDigest"])
             if value["contextDigest"] != context.get("contextDigest")
@@ -15949,6 +15973,7 @@ def _completed_validation_input_task_id(
     completion_proof: dict[str, Any] | None = None,
     validation_context_digest: str | None = None,
     allow_retired_latest_target: bool = False,
+    receipt_registration_only: bool = False,
 ) -> str | None:
     """Prove a completed validation against its controller-owned immutable input.
 
@@ -15957,6 +15982,8 @@ def _completed_validation_input_task_id(
     In that path the reservation's source is resolved by its immutable key.
     """
 
+    if receipt_registration_only and value.get("handoffMode") != "controller_commit_complete":
+        return None
     if validation_context_digest is not None and (
         re.fullmatch(r"[0-9a-f]{64}", validation_context_digest) is None
         or expired_publication is not None
@@ -16234,6 +16261,7 @@ def _completed_validation_input_task_id(
         result_access.worktree,
         context_raw,
         context_stat,
+        verify_worktree_git=not receipt_registration_only,
     )
     if verified != context or not _private_context_matches_current_ledger(store, context):
         return None
@@ -26577,6 +26605,7 @@ def enqueue_local_receipts(path: Path = LEDGER_PATH) -> dict[str, Any]:
                         raw=raw,
                         result_access=result_access,
                         context_raw=context_raw,
+                        receipt_registration_only=True,
                     )
             for field in ("schemaVersion", "key", "issueUrl", "threadId", "worktreePath"):
                 if field not in value:
