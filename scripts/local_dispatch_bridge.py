@@ -21803,6 +21803,8 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "交回前必须读取并验证当前 task-context，使用本轮的身份、授权和 contextDigest。"
         "检查当前 HEAD 和实际源码差异：未提交源码改动必须交回 controller_commit_required，"
         "不能把旧 controller_commit_complete 或旧 commitSha 复制成这些改动已经提交的证明。"
+        "这类结果的 stage 填写 FIX_READY，handoffMode 填写 controller_commit_required；"
+        "质量证据和实际缺口仍须如实填写。"
         "该交接的 commitSha 使用 null，headSha 和 previousControllerCommitSha 都填写当前 HEAD；"
         "changedFiles 与 controllerCommitChangedFiles 完整声明实际改动，codePaths 保留原授权复现范围"
         "及全部实际改动文件的并集。使用当前获准的安全分支名，并提供非空、单行、至多120字符的"
@@ -24048,6 +24050,19 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             binding_gate = getattr(store, "task_result_binding_gate", None)
             if binding_gate is None or not binding_gate(candidate, value):
                 raise RuntimeError("task result identity binding mismatch")
+            if (
+                value.get("stage") == "controller_commit_required"
+                and value.get("handoffMode") == "controller_commit_required"
+                and value.get("commitSha") is None
+                and not any(
+                    field in value
+                    for field in ("reproductionReceipt", "probeReceipt", "resultDigest")
+                )
+            ):
+                # A completed task can report the commit handoff as its stage.
+                # Keep its original bytes until the existing authorized finalizer
+                # commits the changes and binds the canonical result receipt.
+                value = dict(value, stage="FIX_READY")
             try:
                 value, expiry_waiting, expiry_revalidated = _defer_expired_publication_result(
                     store,

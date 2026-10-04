@@ -37549,6 +37549,98 @@ def test_completed_dirty_handoff_uses_real_list_rearm_and_reserve_once(
     assert all(p.read_bytes() == raw for p, raw in originals.items())
     assert run_git(worktree, "rev-parse", "HEAD") == original_head
 
+    assert MODULE._local_changed_files(worktree) == ["runtime.py"]
+    check = subprocess.run(
+        [sys.executable, "runtime.py"], cwd=worktree, capture_output=True, text=True
+    )
+    assert check.returncode == 0, check.stderr
+    unsigned = dict(new_input)
+    unsigned.update(
+        stage="controller_commit_required",
+        reason="controller_commit_required",
+        handoffMode="controller_commit_required",
+        commitSha=None,
+        headSha=original_head,
+        previousControllerCommitSha=original_head,
+        commitMessage="fix: preserve completed validation change",
+        tests=[
+            *new_input["tests"],
+            {
+                "command": f"{sys.executable} runtime.py",
+                "exitCode": check.returncode,
+                "result": check.stdout + check.stderr,
+            },
+        ],
+    )
+    for field in ("reproductionReceipt", "probeReceipt", "resultDigest", "independentReview"):
+        unsigned.pop(field, None)
+    assert unsigned["quality"] == source["quality"]
+    assert unsigned["quality"]["independent_review_passed"] is False
+    assert unsigned["contextDigest"] == json.loads(originals[context_path])["contextDigest"]
+    result_path.write_text(json.dumps(unsigned), encoding="utf-8")
+    unsigned_raw = result_path.read_bytes()
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+    assert MODULE._local_changed_files(worktree) == ["runtime.py"]
+
+    ingestion_args = SimpleNamespace(ledger=store.path, key="a/b#1")
+    ingested = MODULE.ingest_task_results(ingestion_args)
+    assert ingested["ok"] and ingested["errors"] == [], ingested
+    assert ingested.get("workBlocked", []) == []
+    assert ingested["publicationRequests"] == []
+    assert ingested["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["independent_review_passed"],
+        }
+    ], ingested
+    committed_head = run_git(worktree, "rev-parse", "HEAD")
+    assert committed_head != original_head
+    assert run_git(worktree, "rev-parse", "HEAD^") == original_head
+    assert run_git(worktree, "status", "--porcelain") == ""
+    normalized_raw = result_path.read_bytes()
+    normalized = json.loads(normalized_raw)
+    assert normalized_raw != unsigned_raw
+    assert normalized["stage"] == "FIX_READY"
+    assert normalized["handoffMode"] == "controller_commit_complete"
+    assert normalized["commitSha"] == normalized["headSha"] == committed_head
+    assert normalized["previousControllerCommitSha"] == original_head
+    assert normalized["taskId"] == source["taskId"] == "intent-1"
+    assert normalized["quality"] == unsigned["quality"]
+    assert normalized["quality"]["independent_review_passed"] is False
+    assert normalized["resultDigest"] != source["resultDigest"]
+    assert normalized["reproductionReceipt"]["bindingPurpose"] == "implementation-result-v1"
+    assert normalized["reproductionReceipt"]["resultDigest"] == normalized["resultDigest"]
+    assert normalized["reproductionReceipt"]["headSha"] == committed_head
+    assert normalized["reproductionReceipt"]["commitSha"] == committed_head
+    ordinary = store.validation_followup_candidates()
+    assert len(ordinary) == 1
+    assert ordinary[0]["resultDigest"] == normalized["resultDigest"]
+    assert ordinary[0]["missing"] == ["independent_review_passed"]
+    assert "dirtyHandoffContract" not in ordinary[0]
+    assert input_path.read_bytes() == originals[input_path]
+    assert new_input_path.read_bytes() == new_input_raw
+    assert context_path.read_bytes() == originals[context_path]
+
+    repeated_ingestion = MODULE.ingest_task_results(ingestion_args)
+    assert repeated_ingestion["ok"] and repeated_ingestion["errors"] == [], repeated_ingestion
+    assert repeated_ingestion["ingested"] == []
+    assert repeated_ingestion["publicationRequests"] == []
+    assert run_git(worktree, "rev-parse", "HEAD") == committed_head
+    assert run_git(worktree, "status", "--porcelain") == ""
+    assert result_path.read_bytes() == normalized_raw
+    assert input_path.read_bytes() == originals[input_path]
+    assert new_input_path.read_bytes() == new_input_raw
+    assert context_path.read_bytes() == originals[context_path]
+    with store.connect() as connection:
+        ingestion_sent_rows = connection.execute(
+            "SELECT dedupe_key,payload_json FROM events "
+            "WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id"
+        ).fetchall()
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    assert ingestion_sent_rows == sent_rows
+
 
 @pytest.mark.parametrize("rejection", ["active", "foreign_receipt", "wrong_parent"])
 def test_completed_dirty_handoff_keeps_real_completion_and_parent_rejections(
