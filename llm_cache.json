@@ -39072,6 +39072,43 @@
     ],
     "why": "The issue describes a plausible rank-0-only autotune_config.json cache causing a multi-rank deadlock, but the supplied evidence contains a material coverage contradiction: a contributor comment suggests #55671 may cover it, while another commenter argues #55671 is a draft blocked on FlashInfer >=0.7/autotune_v2 and is a no-op on the reported flashinfer-python==0.6.18. The duplicate/coverage status is unresolved, and the fix location (vLLM kernel_warmup vs FlashInfer autotuner internals) is not established."
   },
+  "4ef85b1c7a54e7f297c2ef83ba280ec97e923c94ec769af58341cd2a3b398f05": {
+    "confidence": 0.82,
+    "contradictions": [
+      "preTaskEvidence duplicate status is semantic_overlap_requires_review with best PR #7798, but that PR is a draft MoE train/generation parity change with no direct code overlap and does not reference this issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "megatron/core/ssm/ops/mamba2/mamba_ssm.py: align multi-token snapshot/accumulator rounding with serial BF16 decode semantics",
+      "megatron/core/ssm/ops/gdp/fused_recurrent.py: same rounding/accumulator parity for GDP Householder updates",
+      "megatron/core/inference/text_generation_controllers/mtp_utils_triton.py: ensure rollback copy restores a snapshot consistent with serial decode",
+      "MambaInferenceStateConfig: if parity is unattainable in BF16, require FP32 recurrent state under speculative decode"
+    ],
+    "risks": [
+      "Distinguishing a genuine BF16 rounding-semantics bug from acceptable floating-point variation; tolerance and seed must be fixed",
+      "Fix may require a design decision (round accumulator per input vs. mandate FP32 state), which is normal review scope but affects the change surface",
+      "PR #7562 (bitwise train/generation parity, BF16/mamba, open, CI failing) and draft PRs #7798/#7231 show semantic overlap; must confirm none already fixes this specific serial-vs-speculative BF16 state arithmetic before duplicating work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied repro_n1_bf16_ssm_state.py on the pinned commit with the given env vars; confirm MISMATCH and record per-step state/output errors",
+      "Add a regression unit test comparing multi-token snapshots and rollback-restored state against serial decode for both Mamba and GDP in BF16 and FP32, asserting exact state equality and output error <= 1e-6",
+      "Verify FP32 controls remain exactly zero after the fix and that accepted-draft snapshot indexing [0,3,1] in slots [4,0,3] restores the serial-equivalent state"
+    ],
+    "unknowns": [
+      "Whether any open PR (#7562, #7798, #7231) already resolves this exact BF16 serial-vs-speculative recurrent-state discrepancy",
+      "Whether maintainers prefer rounding the accumulator per input or requiring FP32 state under speculative decode"
+    ],
+    "why": "Issue provides a self-contained, executable reproduction on a pinned clean main commit with concrete numerical deltas (BF16 state 0.03125, rollback 0.015625, next-output 0.04296875) and a plausible mechanism: multi-token kernels keep an FP32 accumulator across inputs while serial BF16 decode rounds/reloads state each step. FP32 controls match exactly, isolating the defect to BF16 recurrent-state arithmetic in Mamba/GDP decode and rollback. This is a concrete numerical-parity/algorithmic defect with a reference-vs-implementation validation path, not plumbing."
+  },
   "4efd32d050ed200c740c93e45d7ec7a453fbf7daf48a9d6ea641e862c767c4e2": {
     "confidence": 0.82,
     "contradictions": [],
@@ -45474,6 +45511,48 @@
     ],
     "why": "The issue reports two intermittent CUDA runtime failures (cudaErrorInvalidValue in cuDNN SM90 DSA backward, cudaErrorUnknown in packed-THD build_attention_indices) with no deterministic reproducer; the reporter explicitly states 'We do not yet have a small deterministic reproducer' and that CUDA_LAUNCH_BLOCKING was off, so the failing call may only be the first sync point. Root cause is not established, and the issue itself asks maintainers which PRs address it and which revision to retest."
   },
+  "5a9deec1fc20439e89cc05bcb247341dce76fe957c810e4652efebd1639d65db": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter frames batch2_repeat as a defect, while commenter attributes it to engine-core step composition and says in-process engine makes identical batches repeat exactly",
+      "Reporter says the effect persists with the bf16 checkpoint, while commenter's sm_89 localization points to FP8 Marlin GEMM"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/engine/core.py step batching / _process_input_queue behavior",
+      "GDN chunked prefill over varlen batches",
+      "Triton fused MoE default config on sm_120",
+      "FP8 GEMM kernel selection (MarlinFP8ScaledMMLinearKernel) for identical rows"
+    ],
+    "risks": [
+      "Conflating ordinary batch-variance (expected outside VLLM_BATCH_INVARIANT=1) with a genuine nondeterminism defect",
+      "FP8/bf16 kernel differences across sm_120 and sm_89 may make a single fix insufficient",
+      "Open PR #55947 semantic overlap could mean the root cause is already partially covered",
+      "Repository AI disclosure policy conflict may block automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run repro_upstream.py with VLLM_ENABLE_V1_MULTIPROCESSING=0 to confirm batch2_repeat drops to 0.0 and isolate engine-core batching from kernel nondeterminism",
+      "With both rows forced into one step, add forward hooks comparing the two identical rows layer-by-layer to localize the first diverging op",
+      "Repeat on bf16 checkpoint and with --gdn-prefill-backend triton / enforce_eager to separate GDN, MoE, and GEMM contributions",
+      "Fix seed, tolerance, and hardware (sm_120 vs sm_89) and record max |Δ logprob| as a numerical regression baseline"
+    ],
+    "unknowns": [
+      "Which kernel (Triton fused MoE, GDN chunked prefill, FA2 varlen, or FP8 GEMM) is the actual source of the residual run-to-run divergence",
+      "Whether open PR #55947 already covers the same root cause",
+      "Whether the repository's AI disclosure policy permits the intended contribution workflow"
+    ],
+    "why": "Issue reports run-to-run logprob divergence for identical batches on Qwen3.6-35B-A3B (hybrid GDN+MoE) with a concrete repro script and code anchors, but the supplied evidence leaves the root cause unresolved: the reporter lists three unseparated kernel candidates (Triton fused MoE, GDN chunked prefill over varlen, FA2 varlen), and the only comment attributes the run-to-run part to engine-core batching (_process_input_queue) while still leaving the residual batch-variance divergence unexplained. The duplicate assessment flags semantic overlap with open PR #55947 (score 22, no direct code overlap, no issue reference) requiring human comparison, and the policy status is ai_disclosure_conflict, which is a materially blocking unknown for whether code work is actionable."
+  },
   "5aa164462d40cd1553befb110f3c50084a5dc926f8a0056b857ecf8799a31ca5": {
     "confidence": 0.85,
     "contradictions": [
@@ -50448,6 +50527,35 @@
       "Whether maintainers have a preferred design (per-client cancellation vs endpoint-scoped sharing)"
     ],
     "why": "The issue identifies a concrete resource leak in the Rust runtime: each Endpoint::client() call spawns a reconciliation task that retains a clone of the Client, preventing garbage collection of per-client routing state. The root cause is clearly traced to monitor_instance_source_with_cancellation using primary_token() and cloning the Client. The expected behavior and reproduction steps are specific, and the fix is actionable without requiring design confirmation."
+  },
+  "6424c6c98e827efd5e64d28d2b3a9b699b09693801673099aa53b69fe9d445e0": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "contrib/spring-ai/src/main/java/com/google/adk/models/springai/MessageConverter.java#isPartialResponse — extend terminal-punctuation detection to CJK marks (。！？…）) or derive partial-ness from stream state rather than last character",
+      "Add streaming regression test covering CJK-ending final responses in the spring-ai bridge"
+    ],
+    "risks": [
+      "Broadening the punctuation heuristic may still misclassify legitimate non-terminal endings (lists, code blocks, tables); the issue itself suggests stream-state-based derivation as the better fix",
+      "Avoid expanding API behavior changes beyond the classification logic"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's minimal unit test: converter.toLlmResponse(chineseEnding, true).partial() should be false, matching the ASCII-ending case",
+      "Add a regression test asserting a final CJK-ending response is persisted to the session event store via Runner",
+      "Run targeted unit tests for the contrib/spring-ai package plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the minimal punctuation-list fix or the stream-state-based redesign (normal implementation choice, not blocking)"
+    ],
+    "why": "Issue pinpoints the root cause in MessageConverter#isPartialResponse, which only checks ASCII sentence-ending punctuation (. ! ? \\n) and omits CJK terminal punctuation (。！？), causing final Chinese responses to be marked partial=true and never persisted. A minimal unit-level reproduction calling the converter directly is provided, and the code anchor is named. This is a concrete, reproducible, testable bug in the agent session-persistence path."
   },
   "64270f5b59c7073359dad29ba7fd9c3da8bbac12ad135c7b7fcb78bf525015e8": {
     "confidence": 0.85,
@@ -71845,6 +71953,41 @@
     ],
     "why": "Issue clearly identifies a process-wide global causing incorrect tensor splitting for multiple models with different KV head counts, with a concrete root cause and a suggested fix mirroring an existing PR. Validation path includes a regression test with two models."
   },
+  "8d3b49f070eda3a23a52ec812c433cd22c6ca59a51d9f9f86aa156f5d304165a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body states no implementation may begin from this Proposal alone, while the candidate is scored as an actionable fix opportunity"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "ai-quota completion path: handle synchronous Redis GET dispatch error instead of returning a pause state with no pending callback",
+      "Regression test injecting a Redis GET implementation that errors synchronously and never invokes its callback"
+    ],
+    "risks": [
+      "Implementation is explicitly gated on maintainer Proposal and Design approval, so code work is not currently authorized",
+      "Exact completion-path error-response mapping is undefined until the Design is approved",
+      "Repository requires assignment and AI disclosure confirmation before contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a deterministic native test where Redis GET returns an error synchronously and no callback is invoked; assert the request is not left permanently paused",
+      "Preserve existing tests for successful callback/resume and existing completion-path Redis-error behavior"
+    ],
+    "unknowns": [
+      "Whether a maintainer will approve the Proposal and Design",
+      "The exact error-response mapping for the synchronous dispatch-failure path",
+      "Whether the repository assignment/disclosure requirements have been satisfied"
+    ],
+    "why": "The issue is a planning-only Proposal that explicitly forbids implementation until a maintainer approves the Proposal and a subsequent Design Issue. It also carries unresolved governance blockers: assignmentRequired=true, aiDisclosureConflict=true, and policy=ai_disclosure_and_assignment. The root cause (synchronous Redis GET dispatch failure leaving the completion request paused with no callback) is plausible and bounded, but the exact error-response mapping is deferred to an unapproved Design, and no reproduction or code anchors are supplied beyond generic tokens."
+  },
   "8d3bc0daa5fdd6a6f487db5c4b0b91f45df029089f34bb68adaa5c9554ff0a44": {
     "confidence": 0.8,
     "contradictions": [],
@@ -75348,6 +75491,41 @@
       "Whether maintainers require triage label removal before PR submission (bot notice requests waiting, but this is a process gate, not a technical blocker)"
     ],
     "why": "Issue provides a concrete, code-anchored root cause: StructuredOutputProcessor only implements processOutputStream, aborts without {retry:true}, and stream-phase tripwires are not converted to retryRequested by the agentic loop (which only reads processOutputStep/processToolResult tripwires). A no-API-key fake-model reproduction demonstrates structuringCalls:1 vs expected 2, and the proposed fix (defer strict failure to processOutputStep with abort(message,{retry:true})) is a minimal, testable change with a stated validation path."
+  },
+  "93c392bddace0f78b46782cae8fec8eeef34377538c72d6dd91bfd6a8405186d": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/shared/src/nodeSqliteClient.ts: use BEGIN IMMEDIATE (or bounded retry) for event-write transactions so busy_timeout applies",
+      "RunExecutionService.startRootRun: on ingest failure, interrupt/close the live provider session via ClaudeAdapterV2.interruptTurn",
+      "Ensure run.interrupt remains reachable after a failed run so Stop can terminate the provider process"
+    ],
+    "risks": [
+      "BEGIN IMMEDIATE may increase write-lock contention or latency under high concurrency",
+      "Interrupting the provider on ingest failure could mask recoverable transient errors if retry is preferred",
+      "Fix direction (immediate transaction vs retry, and orphan handling) is explicitly left to maintainer decision"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test with node:sqlite: deferred BEGIN upgrade under a concurrent writer fails immediately while BEGIN IMMEDIATE waits ~busy_timeout",
+      "Integration test: force an event-write SqlError during a turn and assert the provider session is interrupted/closed and no further provider events are appended",
+      "Assert run state after ingest failure is interruptible and Stop terminates the claude process"
+    ],
+    "unknowns": [
+      "Maintainer preference between BEGIN IMMEDIATE and write retry is not yet stated",
+      "Whether the orphaned-provider fix should be scoped to this issue or shared with #15447"
+    ],
+    "why": "Maintainer triage on main confirms two concrete, code-anchored root causes: deferred BEGIN in packages/shared/src/nodeSqliteClient.ts causing immediate SQLITE_BUSY on read-to-write upgrade (busy_timeout bypassed), and RunExecutionService.startRootRun failing the run without calling ClaudeAdapterV2.interruptTurn, leaving the claude process orphaned. Reproduction steps, traceback, span timing (458 ms vs 5 s timeout), and a controlled node:sqlite experiment are supplied; no duplicate/merged coverage and no open PR."
   },
   "940211bc7a43ee86f94ff053abf2d642f242cfc972259d3e870ac149e2d66a27": {
     "confidence": 0.8,
@@ -95420,6 +95598,39 @@
       "Whether open PR #3065 already resolves the issue and should be preferred over a new implementation"
     ],
     "why": "Issue describes a concrete frontend/backend contradiction with code anchors and a reproduction path, but the comment thread shows unresolved product-intent disagreement about what invite_only should mean, and an open PR #3065 already directly covers the same code path. Whether code work is actionable depends on maintainer resolution of the intended semantics, which is a materially blocking unknown."
+  },
+  "bd09a3b5f27947b1432cc3777c4a993b6abd6d342fd2291fd898e6b030992012": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body asserts the bug is present and proposes a fix, while the recent comment says main already handles it via _list_tools_before_first_call"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/operations.py: warm tool-name mapping / list tools before deciding tool existence",
+      "litellm/proxy/_experimental/mcp_server/server.py: session/tool resolution path"
+    ],
+    "risks": [
+      "Fix may already exist on main, making a new PR redundant",
+      "Open PRs #41163/#44446 touch the same operations.py/server.py paths and may conflict",
+      "Per-replica cold mapping may need a shared-cache design decision"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on v1.103.2: DB-managed MCP server, list tools, call tool, restart proxy, call again without re-list -> expect 404",
+      "Verify on current main whether _list_tools_before_first_call already prevents the 404; if so, confirm the fix is only a release/backport gap"
+    ],
+    "unknowns": [
+      "Whether _list_tools_before_first_call on current main fully resolves the cold-mapping 404 or only partially",
+      "Whether maintainers want a backport/release fix versus new code"
+    ],
+    "why": "Issue provides a clear root cause (cold per-worker tool_name_to_mcp_server_name_mapping after restart) and a concrete repro, but the sole recent comment states main already handles this via _list_tools_before_first_call and the reporter is leaving it open only as a release tracker. This unresolved already-fixed-on-main coverage materially determines whether new code work is actionable."
   },
   "bd16fa6543025bd6e070c62faf33f5c43b5d15c9729c875c43b6b745771465d4": {
     "confidence": 0.7,
