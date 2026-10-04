@@ -36786,6 +36786,8 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
     args = SimpleNamespace(ledger=store.path, key="a/b#1", runtime_root=tmp_path)
     traced_functions = {
         str(SCRIPT): {
+            "_completed_dirty_controller_handoff_validation",
+            "_read_authenticated_validation_result",
             "_completed_review_feedback_validation",
             "_completed_validation_input_task_id",
             "_controller_review_result",
@@ -36896,7 +36898,9 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
         "recovery-list",
         "drain-once",
     ]
-    assert advanced["ok"] and advanced["errors"] == [], advanced
+    assert advanced["ok"] and advanced["errors"] == [], json.dumps(
+        {"errors": advanced["errors"], "diagnostics": diagnostics}, indent=2
+    )
     assert intake["ok"] and intake["errors"] == [], intake
     assert advanced["resultsIngested"] == intake["ingested"] == []
     assert advanced["publicationRequests"] == intake["publicationRequests"] == []
@@ -36912,7 +36916,9 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
             }
         ]
     )
-    assert listed["ok"] and listed["errors"] == [], listed
+    assert listed["ok"] and listed["errors"] == [], json.dumps(
+        {"errors": listed["errors"], "diagnostics": diagnostics}, indent=2
+    )
     assert listed["queuedDeferred"] == []
     assert listed["rearmedReviewFeedback"] == [
         {"key": "a/b#1", "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"}
@@ -37247,12 +37253,132 @@ def test_completed_dirty_handoff_uses_real_list_rearm_and_reserve_once(
     originals = {p: p.read_bytes() for p in (result_path, input_path, context_path)}
     original_head = run_git(worktree, "rev-parse", "HEAD")
     args = SimpleNamespace(ledger=store.path, min_age_minutes=90)
-    listed = MODULE.validation_followup_list(args)
+    traced_functions = {
+        str(SCRIPT): {
+            "_completed_dirty_controller_handoff_validation",
+            "_completed_validation_input_task_id",
+            "_non_pr_validation_parent",
+            "_read_authenticated_validation_result",
+            "_controller_policy_verification",
+            "_publication_block_reason",
+            "_task_live_audit_refresh_due",
+            "_active_task_turn_for_result",
+            "_task_context_digest",
+        },
+        RadarLedger.record_completed_dirty_handoff_no_progress.__code__.co_filename: {
+            "record_completed_dirty_handoff_no_progress",
+        },
+    }
+    diagnostics = {
+        "calls": {name: 0 for names in traced_functions.values() for name in names},
+        "observations": [],
+    }
+
+    def completion_trace(frame, event, returned):
+        name = frame.f_code.co_name
+        if name not in traced_functions.get(frame.f_code.co_filename, set()):
+            return None
+        if event not in {"call", "return", "exception"}:
+            return completion_trace
+        if event == "call":
+            diagnostics["calls"][name] += 1
+        observed = {"event": event, "function": name, "line": frame.f_lineno}
+        if event == "return":
+            observed["returnKind"] = type(returned).__name__
+            observed["returnIsNone"] = returned is None
+            if returned is None or isinstance(returned, (str, bool, int)):
+                observed["returned"] = returned
+        elif event == "exception":
+            error_type, error, _traceback = returned
+            observed["exception"] = {"type": error_type.__name__, "message": str(error)[:300]}
+        values = frame.f_locals
+        context = values.get("context")
+        if isinstance(context, dict):
+            observed["context"] = {
+                key: context[key]
+                for key in ("schemaVersion", "stage", "taskStage", "contextDigest")
+                if key in context
+                and (context[key] is None or isinstance(context[key], (str, bool, int)))
+            }
+            for key in ("publicationReceipt", "prFollowup", "codePathTombstoneReceipt"):
+                observed["context"][key + "IsNone"] = context.get(key) is None
+            live_audit = context.get("liveAudit")
+            evidence = live_audit.get("evidence") if isinstance(live_audit, dict) else None
+            policy = evidence.get("policy") if isinstance(evidence, dict) else None
+            policy_status = policy.get("status") if isinstance(policy, dict) else None
+            if policy_status is None or isinstance(policy_status, (str, bool, int)):
+                observed["context"]["liveAuditEvidencePolicyStatus"] = policy_status
+        candidate = values.get("candidate")
+        if isinstance(candidate, dict):
+            observed["candidate"] = {
+                key: candidate.get(key) for key in ("key", "intentId", "stage")
+            }
+        for envelope_name in ("value", "source"):
+            value = values.get(envelope_name)
+            if isinstance(value, dict):
+                quality = value.get("quality")
+                observed[envelope_name] = {
+                    "stage": value.get("stage"),
+                    "handoffMode": value.get("handoffMode"),
+                    "commitMessageIsNone": value.get("commitMessage") is None,
+                    "taskIdMatchesIntent": (
+                        value.get("taskId") == candidate.get("intentId")
+                        if isinstance(candidate, dict)
+                        else None
+                    ),
+                    "qualityFlags": (
+                        {
+                            field: quality[field]
+                            for field in QUALITY_FIELDS
+                            if isinstance(quality.get(field), bool)
+                        }
+                        if isinstance(quality, dict)
+                        else None
+                    ),
+                }
+        if isinstance(candidate, dict):
+            missing = candidate.get("missing")
+            if isinstance(missing, list) and all(isinstance(field, str) for field in missing):
+                observed["candidateMissing"] = list(missing)
+        for key in ("old_digest", "current_digest", "expected_context_digest", "head", "parent"):
+            value = values.get(key)
+            if key in values and (value is None or isinstance(value, (str, bool, int, float))):
+                observed[key] = value
+        for key in ("prior", "historical", "historical_audit", "current_audit"):
+            if key in values:
+                observed[key + "Present"] = values[key] is not None
+        authorities = values.get("authorities")
+        if isinstance(authorities, list):
+            observed["authorityCount"] = len(authorities)
+        for key in ("dirty", "declared", "committed_paths"):
+            value = values.get(key)
+            if isinstance(value, list) and all(isinstance(path, str) for path in value):
+                observed[key] = list(value)
+        completion = values.get("completion")
+        receipt = (
+            completion.get("receipt") if isinstance(completion, dict) else values.get("receipt")
+        )
+        if isinstance(receipt, dict):
+            observed["completionReceipt"] = {
+                "ok": receipt.get("ok"),
+                "turnStatus": receipt.get("turnStatus"),
+                "turnErrorPresent": bool(receipt.get("turnError")),
+                "errorPresent": bool(receipt.get("error")),
+            }
+        diagnostics["observations"].append(observed)
+        return completion_trace
+
+    previous_trace = sys.gettrace()
+    try:
+        sys.settrace(completion_trace)
+        listed = MODULE.validation_followup_list(args)
+    finally:
+        sys.settrace(previous_trace)
     assert listed["ok"] and listed["errors"] == [], listed
     assert listed["controllerReviewPending"] == []
     assert listed["rearmedReviewFeedback"] == [
         {"key": "a/b#1", "reason": "WORKTREE_PROGRESS_PENDING_RESULT"}
-    ]
+    ], json.dumps({"listed": listed, "diagnostics": diagnostics}, indent=2)
     candidate = listed["candidates"][0]
     assert candidate["resultDigest"] == source["resultDigest"]
     assert candidate["intentId"] == "intent-1" and candidate["threadId"] == "thread-1"
