@@ -15657,6 +15657,40 @@
     ],
     "why": "Issue provides detailed reproduction and root-cause analysis, but maintainer guidance is pending on scope and upstream dependency fix; existing PR #1571 is draft and incomplete, leaving competition opportunity but requiring design confirmation."
   },
+  "20eae7a06c0286d5d1a36706f2a6622a32579f217a14a9ce26f48a772f34a4c2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "AgentFrameworkResponseHandler snapshot boundary logic in Foundry hosting",
+      "recovery path that restores session history before re-invoking the agent",
+      "regression tests for crash between function_call emission and tool result persistence"
+    ],
+    "risks": [
+      "Changing snapshot boundaries may reduce recovery granularity for long tool-heavy turns.",
+      "Dropping trailing function calls on recovery could silently discard intended tool side effects if not re-executed.",
+      "Behavior interacts with stored-output handling from issue 8707 and ADR 0035's best-effort recovery contract."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a HarnessAgent/ChatClientAgent hosted via AddFoundryResponses with ResilientBackground=true and AllowStoredOutputEnabled=true, crash via Environment.FailFast mid-tool-turn, and assert the recovered turn completes instead of failing with 'No tool output found for function call'.",
+      "Unit-test the snapshot boundary: assert no session snapshot is taken while a function_call lacks its tool result.",
+      "Unit-test recovery sanitization: given a restored history ending in an unresolved function_call, assert the call is dropped or re-executed before the next model invocation."
+    ],
+    "unknowns": [
+      "No maintainer confirmation of preferred fix direction (snapshot-boundary change vs. recovery-time sanitization), though both are concrete and actionable.",
+      "Exact code location of the snapshot call in AgentFrameworkResponseHandler is not quoted, but the issue names the handler and event precisely enough to locate it."
+    ],
+    "why": "Issue pinpoints the exact code path: AgentFrameworkResponseHandler snapshots session after each ResponseOutputItemDoneEvent, so a function_call item is persisted before its tool result; recovery then sends an orphaned function call to the Responses API, which returns HTTP 400 'No tool output found for function call'. Concrete repro (FailFast mid-tool-turn with ResilientBackground=true) and two viable fixes (snapshot only at consistent boundaries, or drop/re-execute trailing unresolved calls on recovery) are supplied."
+  },
   "20eb21d423a510b8fe8602624cc5b551d729f6e9e74728542a53d36b8b1d0fe6": {
     "confidence": 0.55,
     "contradictions": [
@@ -16067,6 +16101,37 @@
       "No maintainer confirmation on preferred implementation, but not blocking as the fix is clear and minimal"
     ],
     "why": "Issue provides a clear, reproducible bug with exact curl command and error output, identifies the root cause in protocol.py where strict is declared as non-optional bool, and cites OpenAI spec requiring nullable strict. The fix is straightforward: make strict Optional[bool] and treat null as false. No competing open PR or duplicate issue found."
+  },
+  "2194d6a4e9d4109c5a48afd3a5208f5eab569926623a63e5fcb648b4b4c9e67d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels the issue as agent/inference/RAG critical path, but the issue body describes only generic upgrade-check failures in ty/ruff/MCP SDK"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Unknown until the failing workflow job and error are identified; likely pyproject.toml dependency constraint or a type/lint fix in the affected module"
+    ],
+    "risks": [
+      "Fixing by bumping a dependency floor may mask a real compatibility regression",
+      "Without the failing job identified, any change is speculative and may not address the actual failure"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run `uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto` to reproduce the failure",
+      "Inspect workflow run #908 logs to determine whether static analysis or tests failed"
+    ],
+    "unknowns": [
+      "Which workflow job failed (static analysis vs tests)",
+      "The specific error output from workflow run #908",
+      "Whether the failure is a dependency-version issue or a genuine code defect"
+    ],
+    "why": "The issue is an auto-generated upgrade-check failure report with no identified failing job, no root cause, and no concrete code surface. The supplied evidence explicitly marks root_cause_signal=false, probe_ready=false, and reproduction_or_validation_missing, so it is not yet actionable as a code contribution."
   },
   "21a031fef4f849318371f3a071e2de07143b89abd124b36248a1c3ab7011b7f1": {
     "confidence": 0.7,
@@ -26083,6 +26148,41 @@
     ],
     "why": "The issue reports a user-visible bug in tool_choice='auto' handling on the Rust frontend path, with a clear reproduction and expected behavior. However, the root cause is not identified, and the issue itself asks a design question about whether 'auto' should work without frontend --enable-auto-tool-choice. The deterministic gate is HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The open PRs are not directly competing, but the lack of root cause clarity and design confirmation makes this a WAIT_MAINTAINER."
   },
+  "35b27f9b454239649c8a6992225a9580652991ffae07ba482b76f4fa9bcc23a2": {
+    "confidence": 0.55,
+    "contradictions": [
+      "track=llm_algorithm but issue is a model-loader/checkpoint compatibility bug, not an algorithm mechanism",
+      "preTaskEvidence policy ai_disclosure_conflict with aiDisclosureConflict=true conflicts with proceeding to code work"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/gemma4.py: conditionally create k_proj/v_proj/k_norm only for non-KV-shared layers, or exempt them in loader tracking",
+      "vllm/model_executor/model_loader/default_loader.py: allow missing KV-shared-layer params when kv_sharing_target_layer_name is set"
+    ],
+    "risks": [
+      "Changing parameter creation may break weight-name mapping for the original hub checkpoint",
+      "Exempting params in track_weights_loading could mask genuinely missing weights",
+      "AI disclosure conflict may prohibit automated public contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Resave google/gemma-4-E2B-it with transformers save_pretrained and load via vllm.LLM to confirm the ValueError is gone",
+      "Regression test asserting KV-shared layers do not require k_proj/v_proj/k_norm weights and that non-shared layers still do"
+    ],
+    "unknowns": [
+      "Whether PR #52487 or another open PR already fixes this exact KV-shared gemma4 loader path",
+      "Whether the repository's AI disclosure requirement permits this contribution at all",
+      "Whether maintainers prefer conditional parameter creation vs loader exemption"
+    ],
+    "why": "Issue describes a concrete gemma4 KV-shared-layer loader failure with a reproduction path and code anchors, but the supplied evidence contains a material contradiction: the candidate is labeled track=llm_algorithm while the issue is a model-loader/checkpoint-compatibility bug, and the pre-task policy status is ai_disclosure_conflict with aiDisclosureConflict=true, which is a repository disclosure requirement that blocks actionable code work. Additionally, open PR #52487 shows semantic overlap on 'checkpoint'/'gemma4' and is flagged semantic_overlap_requires_review, so duplicate coverage is unresolved."
+  },
   "35b6723b7040d0242088615ce899a3d558711f27d4de64c564f7f86b2d86c540": {
     "confidence": 0.85,
     "contradictions": [
@@ -28618,6 +28718,47 @@
       "Whether the scope bug has been addressed in any existing PR or commit."
     ],
     "why": "The issue provides a detailed root cause analysis with code anchors and a concrete reproduction path. Although recent comments indicate the hydration path may already exist on the default branch, the issue also identifies separate bugs (env var resolution and over-broad scope) that remain actionable. The evidence is sufficient to proceed with a focused fix and regression tests."
+  },
+  "3a41495556a83c0db52da9bbf05d47999e487da74aa7bd3fbf7c7cd379d06bd9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Contributor attributes run-to-run variance to batch composition in engine core, while the issue frames it as a nondeterministic multi-sequence kernel",
+      "Contributor localizes divergence to FP8 in_proj_qkvz on sm_89, but the reporter sees the effect on sm_120 with different FP8 kernels and with the bf16 checkpoint"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/engine/core.py step scheduling / _process_input_queue batching behavior",
+      "GDN chunked-prefill varlen path and Triton fused MoE config selection on sm_120",
+      "FP8 in_proj_qkvz GEMM kernel selection (MarlinFP8ScaledMMLinearKernel vs sm_120 kernels)"
+    ],
+    "risks": [
+      "Root cause may be scheduling (batch composition) rather than a kernel defect, making a kernel-level fix misdirected",
+      "FP8 GEMM divergence observed on sm_89 may not reproduce on the reporter's sm_120, and the bf16 checkpoint also shows the effect",
+      "PR #58863 semantic overlap is unresolved and could already cover the relevant code path",
+      "Repository AI-disclosure policy conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run repro_upstream.py with VLLM_ENABLE_V1_MULTIPROCESSING=0 to confirm batch2_repeat drops to 0.0, isolating scheduling vs kernel nondeterminism",
+      "Repeat with max_num_seqs=1 and with prefix caching off to confirm the batch-composition hypothesis",
+      "Compare per-layer forward hooks on the two identical rows to localize the first diverging op on sm_120 and on bf16 checkpoint",
+      "Add a numerical regression asserting identical-batch logprob equality under a fixed seed and fixed batch composition"
+    ],
+    "unknowns": [
+      "Whether the sm_120 divergence persists with VLLM_ENABLE_V1_MULTIPROCESSING=0 (batch composition ruled out)",
+      "Which specific kernel diverges on sm_120 and on the bf16 checkpoint",
+      "Whether PR #58863 already fixes or overlaps the affected code path"
+    ],
+    "why": "Issue reports run-to-run logprob divergence for identical batches on Qwen3.6-35B-A3B (hybrid GDN+MoE). A contributor comment attributes the run-to-run part to batch composition in vllm/v1/engine/core.py (_process_input_queue) rather than a nondeterministic kernel, and reports batch2_repeat=0.0 with VLLM_ENABLE_V1_MULTIPROCESSING=0, while residual shared-step divergence is traced to FP8 in_proj_qkvz (MarlinFP8ScaledMMLinearKernel on sm_89). This is a plausible but unconfirmed root cause: the reporter's own sm_120 setup uses different FP8 kernels and also shows the effect with the bf16 checkpoint, so the identified GEMM does not fully explain the reported behavior. The candidate's own actionability evidence records root_cause_signal=false, and the duplicate assessment flags PR #58863 as semantic overlap requiring human comparison before any code work."
   },
   "3a58750c180f05c93715cd5a030073be26a48de7a383c8b6983b18e49646aea1": {
     "confidence": 0.82,
@@ -33316,6 +33457,39 @@
       "Whether maintainers prefer forwarding vs raising UnsupportedParamsError for this class of param"
     ],
     "why": "Issue provides a concrete, executable reproduction (get_optional_params with drop_params=True silently drops reasoning_effort for gpt-4.1/gpt-4o on openai and azure), a verified provider-side 400, and a clear code anchor (get_supported_openai_params / drop_params). Root cause is well established: drop_params converts an explicit provider rejection into a silent behavior change. No open PR directly covers this code path (best overlap is keyword-only, no direct code overlap)."
+  },
+  "43d2fd57c834e7d7d56756ba61ccc5064b9a201765b3b0a9fc0c35118f1837c5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Pre-review flags duplicate_changed and reproduction_or_validation_missing, but the issue body supplies a concrete reproduction and the comment reports a verified failing-on-main test"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/commands/hook.ts: accept agent_error in the hookName switch while still rejecting unknown names",
+      "regression test using the exact schema-valid agent_error stdin payload"
+    ],
+    "risks": [
+      "PR #12857 touches apps/cli/src/utils/hooks.ts and mentions agent_error; maintainer should confirm it does not already fix this stdin path",
+      "Broadening accepted event names could weaken unknown-name rejection if not scoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Feed the issue's exact agent_error payload to cline hook and assert exit 0 plus JSON response",
+      "Assert an unknown hookName still fails validation before audit/session handling",
+      "Run targeted CLI hook command and runtime hook tests"
+    ],
+    "unknowns": [
+      "Whether PR #12857's changes to apps/cli/src/utils/hooks.ts already cover the stdin hook command path"
+    ],
+    "why": "Issue provides a deterministic stdin reproduction, exact error, and code anchors showing the CLI hook switch omits agent_error while the shared schema and runtime emit it; a commenter reports a verified fork fix with a failing-on-main regression test. The overlapping PR #12857 addresses malformed serialized errors on hub-backed dispatch, a distinct path from this schema-valid stdin payload, so it does not clearly cover this root cause."
   },
   "43d374cc9e004e2bcc197195302b7d3b4047cb56f8dbf25071bfc36f38e89f5c": {
     "confidence": 0.55,
@@ -41062,6 +41236,42 @@
       "Whether a maintainer design preference exists for the exact mounts option shape"
     ],
     "why": "Issue precisely identifies a concrete capability gap: DockerSandboxOptions exposes volumes mapped to HostConfig.Binds, which cannot express VolumeOptions.Subpath; subpath exists only in HostConfig.Mounts. The proposed change is a scoped, additive option in @mastra/docker with clear mapping to dockerode's HostConfig.Mounts, explicit backward-compatibility promise, and a concrete validation path (inspect the createContainer payload / docker inspect against requested mounts)."
+  },
+  "523ab1981c3cec0236094c59273a10c8408b4f1c88bf14a8cd53d4dcbac27240": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate score=10 and category WAIT_MAINTAINER imply high actionability, but actionability_evidence shows root_cause_signal=false, code_anchors=[], probe_ready=false, and gate failed on no_code_surface"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sidecar hub daemon lifecycle: orphan reaping on parent exit",
+      "hub port probe: liveness/instance/version validation before reuse",
+      "hub daemon shutdown/cleanup path"
+    ],
+    "risks": [
+      "Fix location unknown; may span sidecar spawn logic, hub daemon, and desktop app lifecycle",
+      "Windows-specific process reaping semantics may differ from other platforms",
+      "Changing port-reuse behavior could break legitimate multi-client hub sharing"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: launch app, note hub PID, kill parent sidecar, confirm orphan holds port 25463, relaunch and observe 1006 flap",
+      "Regression: after fix, relaunch must spawn a fresh hub or reject stale hub and prompts succeed",
+      "Unit test for hub probe rejecting a daemon whose parent is dead or whose instance/version token mismatches"
+    ],
+    "unknowns": [
+      "Which module owns hub daemon spawn/probe/reuse logic",
+      "Whether a maintainer has already scoped or assigned the fix",
+      "Whether the orphan is due to missing parent-death handling or missing staleness validation (or both)"
+    ],
+    "why": "Issue provides a strong reproduction narrative and a plausible hypothesis (orphaned hub daemon reused without liveness/version validation), but the supplied evidence contains no code anchors, no confirmed root cause, and no identified code surface for the fix. The candidate's own actionability evidence marks root_cause_signal=false, code_anchors=[], probe_ready=false, and the pre-review gate failed with no_code_surface and reproduction_or_validation_missing. Without a located code path (sidecar hub spawn/probe logic) the fix is not yet actionable as a concrete code contribution."
   },
   "523dbf0a364e59970c66419b98a23f2d4d3e6bfe88cfbf630c83d7e07dcfe1ae": {
     "confidence": 0.9,
@@ -92601,6 +92811,43 @@
     ],
     "why": "Issue clearly identifies missing convolution coverage in batch-invariant mode with a concrete fix, but the deterministic gate is HUMAN_REVIEW and an open PR (#50505) overlaps the same code path, requiring maintainer comparison before new work."
   },
+  "b60a63cbe12ea8d2991c181501b1091cfe65f07923874d585aad0c9c80152ff3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/toolHookTriggers.ts: add updatedInput carrier to PreToolUseHookResult and read it from hook output",
+      "packages/core/src/hooks/types.ts: add updatedInput accessor to PreToolUseHookOutput",
+      "packages/core/src/core/coreToolScheduler.ts: apply updated input before permission evaluation and prepared invocation",
+      "packages/cli/src/acp-integration/session/Session.ts: propagate updated input on ACP path",
+      "packages/core/src/tools/managed-tool-runtime.ts: apply rewrite before digest-pinned preparation"
+    ],
+    "risks": [
+      "Applying rewrite after permission/preparation could execute under stale authorization state (the #12922 review concern)",
+      "Schema mismatch between flat hookSpecificOutput.updatedInput and nested decision.updatedInput could cause inconsistent handling",
+      "Scope creep into PermissionRequest path or aggregator policy changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test where a PreToolUse hook returns hookSpecificOutput.updatedInput and assert the tool executor receives the replacement args",
+      "Assert PostToolUse.tool_input reflects the effective rewritten input",
+      "Assert deny rules and plan-mode disallowed replacements still block execution",
+      "Assert replacement input is schema-validated and re-evaluated by permission/confirmation flow rather than reusing original authorization"
+    ],
+    "unknowns": [
+      "Exact final implementation shape (where in the permission/preparation sequence the rewrite is applied) is not yet fixed, but this is normal implementation choice rather than a blocking unknown"
+    ],
+    "why": "Issue reports a documented PreToolUse.updatedInput field being silently ignored; a collaborator's source trace pins the root cause to missing carrier/accessor/executor application on the PreToolUse path (toolHookTriggers.ts PreToolUseHookResult, hooks/types.ts PreToolUseHookOutput, coreToolScheduler.ts fire site), distinct from the PermissionRequest path. Deterministic local reproduction with stdio MCP and command hooks is provided, and the author states a focused follow-up fix with regression coverage is in progress. No open PR or issue covers this; #12922 is closed unmerged and the prior late-rewrite approach is explicitly disclaimed."
+  },
   "b63a109f7b6e3912bb01696b9930c7d34fde0c6138884f5613351858bffeba88": {
     "confidence": 0.6,
     "contradictions": [
@@ -93827,6 +94074,38 @@
       "Exact test framework and location for the regression test."
     ],
     "why": "Issue provides a clear root cause (set -e in entrypoint.sh kills background subshell on non-zero exit), detailed reproduction steps, and a diagnostic script. The fix is a minimal, well-scoped change to entrypoint.sh loops, with an existing open PR (#18545) that addresses the issue but lacks tests. The contribution is actionable and valuable."
+  },
+  "b8937c7c2c5428906088c842d153ce68ab3b173d82ae5806491549a26b78fb26": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Proposal explicitly forbids implementation before maintainer approval, while candidate is scored as actionable code contribution"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "gw-error-format response header/body callback lifecycle",
+      "preserve original status/headers when match.responsebody fails"
+    ],
+    "risks": [
+      "Implementation may begin without required maintainer approval/assignment",
+      "Scope may expand into unrelated gw-error-format or proxy-Wasm behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add deterministic fake-host regression invoking response-header callback then nonmatching body callback and asserting original metadata/body preserved",
+      "Add regression confirming matching-body conversion remains unchanged"
+    ],
+    "unknowns": [
+      "Whether a maintainer has approved the Proposal/Design",
+      "Whether the issue is assigned to an authorized contributor",
+      "Whether AI disclosure requirements are satisfied"
+    ],
+    "why": "The issue is a planning-only Proposal for gw-error-format response metadata coherence, but supplied evidence lacks a public reproduction, root-cause code confirmation, and maintainer approval; repository policy also requires assignment and AI disclosure confirmation before implementation."
   },
   "b899ff3da0952a12ceb1acf41d0fab8d1bc5817bdf7bcc4770a054ff58596f8b": {
     "confidence": 0.8,
@@ -102435,6 +102714,40 @@
     ],
     "why": "Issue provides a clear root cause (regression from revert #34160), a concrete reproduction with commands, and a suggested minimal fix. The bug is user-visible and impactful, and the validation path is well-defined."
   },
+  "c9a43fa7a68b0729cb4ee2b46b16ddf9fc4d2842d4a2557f7ddc9989a458fed3": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims build is after merged session/mamba free-path fixes (#40250/#40252) yet still crashes, while open PR #42072 targets the same session path"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/session/streaming_session.py",
+      "python/sglang/srt/mem_cache/unified_radix_cache.py",
+      "python/sglang/srt/managers/scheduler_components/invariant_checker.py"
+    ],
+    "risks": [
+      "Root cause may be in a different free path than the reported stack, leading to a symptom-only fix",
+      "PR #42072 may already fix the same ownership bug, making a new contribution redundant"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic repro of the session-slot free/ownership path (e.g. forced session reap + idle invariant walk) and assert no double-free under ASAN/valgrind",
+      "Run targeted unit tests for streaming_session and unified_radix_cache session_held_tokens paths"
+    ],
+    "unknowns": [
+      "Whether PR #42072 actually fixes this crash's root cause",
+      "A deterministic reproduction or root-cause localization for the double-free",
+      "Whether the crash is in session slot free, mamba cache release, or radix cache ownership"
+    ],
+    "why": "Issue reports a heap-corruption abort in the idle invariant walk, but the supplied evidence contains no root-cause signal (root_cause_signal=false) and no reproduction beyond a 22h production crash; the crash stack is a symptom of an unknown free/ownership bug, not a localized defect. Open PR #42072 overlaps the same session/streaming_session.py path and may already cover the root cause, so duplicate coverage is unresolved."
+  },
   "c9af5972f65bae1463e2a6ead9d79cc1cb8ef92d13d0fda8872d7cad6cce01c1": {
     "confidence": 0.85,
     "contradictions": [],
@@ -109141,6 +109454,43 @@
     ],
     "why": "Issue provides a concrete, reproducible root cause: pinned wolfi-base digest has drifted from current apk python3 packages, causing both the apk trigger failure and the uvloop source-build failure; the suggested fix (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never) is specific and testable via docker build and runtime import check."
   },
+  "d62ef82751285fecc7e05fdd3f8634497a812a2d9b9ac27f99135284726f1a32": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims unknown keys are dropped, but candidate.actionability_evidence.root_cause_signal is false",
+      "Comment reports a working fork patch while open_pr_assessment shows only a closed draft PR with root_cause_coverage false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mcp-types ServerCapabilities/ClientCapabilities model config to preserve unknown keys",
+      "ServerRunner._serialize / serialize_server_result wire sieve behavior for capability keys"
+    ],
+    "risks": [
+      "Changing model extra behavior may widen API surface beyond the intended capability keys",
+      "Wire sieve cross-era filtering (tasks/extensions) could regress if not scoped carefully",
+      "Repository AI-disclosure policy conflict prevents automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with `t.ServerCapabilities(tools={}, events={}).model_dump(by_alias=True, exclude_none=True)` and assert `events` is retained",
+      "Add a Streamable HTTP `server/discover` regression asserting `capabilities.events` appears on the wire",
+      "Verify known fields still validate and nested known capability objects remain closed"
+    ],
+    "unknowns": [
+      "Whether maintainers accept option 1 (extra=allow) versus option 2 (supported extension mechanism)",
+      "Whether the closed draft #3642 already covers the same fix upstream",
+      "Exact upstream code surface for the wire sieve in the current base SHA"
+    ],
+    "why": "Issue describes a plausible capability-key-dropping behavior with a minimal repro, but the supplied evidence leaves the actionable code surface unresolved: the candidate's own pre-task evidence flags no_code_surface and reproduction_or_validation_missing, and the only related PR (#3642) is a closed draft with no confirmed root-cause coverage. The fork patch in comments is not an upstream PR and explicitly does not implement Events. The AI-disclosure policy conflict also blocks automated public action."
+  },
   "d670f8b9eb6f0a067b371f5892a1b2560c051ac6fbc7ba970acf731461c052fe": {
     "confidence": 0.7,
     "contradictions": [
@@ -114641,6 +114991,40 @@
       "Whether the AI disclosure conflict affects the ability to proceed with the contribution"
     ],
     "why": "Issue provides a clear root cause (missing connectorAccountId in Telegram edge, wrong onboarding URL, and lack of signed identity proof) with a concrete reproduction path and acceptance criteria. An open PR (#27713) directly addresses the core delivery contract and is green, but is not yet merged; the issue remains actionable for the remaining onboarding and identity-binding work."
+  },
+  "e1292c80bbe23d5281cb28c74edf28b828e93abdc932fdbd4e5bc6478521d822": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Megatron-Bridge submodule bump in NeMo RL once NVIDIA-NeMo/Megatron-Bridge#6311 lands",
+      "MegatronPolicyWorker refit/export path for Mamba in_proj LoRA deltas at TP>1",
+      "Add refit-vs-TP1-merged-export consistency check or tighter gen_kl_error gate for the megatron-lora nightly"
+    ],
+    "risks": [
+      "Fix depends on upstream Megatron-Bridge PR #6311 landing before the submodule bump is actionable",
+      "Open PR #3859 has semantic overlap on in_proj/mamba but no direct code overlap and no regression test, so it may not cover this root cause",
+      "Distinguishing this TP-ordering bug from ordinary floating-point/seed variation requires fixed baselines, seeds, and tolerances"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with Megatron LoRA targeting Mamba in_proj at TP=2, restore adapter, run one GRPO step at lr 1e-12, and confirm gen_kl_error drops from ~0.0136-0.0158 toward the ~0.0045-0.0059 control",
+      "Fingerprint tensors in VllmInternalWorkerExtension._load_hf_weights and assert every backbone.layers.N.mixer.in_proj.weight delta is bit-exact against examples/converters/convert_lora_to_hf.py merged TP=1 export",
+      "Add a regression check comparing refit weights to a TP=1 merged export across TP sizes, or tighten the nightly grpo-nanov3-30BA3B-2n8g-megatron-lora gen_kl_error gate on a longer LoRA run"
+    ],
+    "unknowns": [
+      "Whether Megatron-Bridge PR #6311 has landed and what exact submodule SHA NeMo RL should bump to",
+      "Whether open PR #3859 or #3208 already addresses the in_proj TP-ordering root cause"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: Megatron-Bridge export_hf_weights merges Mamba in_proj LoRA deltas by plain TP concatenation while base weights are gathered per z|x|B|C|dt component, so vLLM receives a TP-misordered in_proj delta. Reproduction steps, control comparison, and tensor fingerprinting evidence are supplied, and the NeMo RL side fix (submodule bump plus refit-vs-TP1-merge consistency check) is actionable."
   },
   "e142d4072c50533e2f4c660bd4c17c5974b8a8b7c9a95a1d57e92de2c7122872": {
     "confidence": 0.85,
