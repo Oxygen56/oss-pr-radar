@@ -2026,6 +2026,44 @@
     ],
     "why": "Issue provides concrete algorithm-conformance bug with root cause (missing merge/reinit in ReLoRA callback) and deterministic tie-handling bug, both confirmed by maintainer with numerical evidence. Includes clear acceptance criteria and test path."
   },
+  "05120c1caa7e55084b3b24fa06a21bb3258eaaaf66f91ecf6bc496bc6d0f1922": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue presents two independent root causes (config allowlist vs. get_models stub) but candidate evidence treats them as one fix scope",
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #38818 while candidate gate_decision is HUMAN_REVIEW"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/constants.py LITELLM_SETTINGS_SAFE_DB_OVERRIDES allowlist",
+      "litellm/llms/vertex_ai/common_utils.py VertexAIModelInfo.get_models()",
+      "proxy config overlay merge path for litellm_settings"
+    ],
+    "risks": [
+      "Fixing only the allowlist leaves Vertex AI discovery still broken via the get_models() stub",
+      "PR #38818 touches config_yaml/store_model_in_db semantics and may already cover the propagation fix",
+      "Broadening the safe-override allowlist could change DB-overlay precedence for other settings"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with STORE_MODEL_IN_DB=True and config.yaml check_provider_endpoint: true, assert litellm.check_provider_endpoint is True after startup",
+      "Regression test asserting GET /v1/models expands vertex_ai/* when the flag is set",
+      "Unit test for VertexAIModelInfo.get_models() once the stub is implemented"
+    ],
+    "unknowns": [
+      "Which of the two defects the candidate intends to fix",
+      "Whether PR #38818 already resolves the litellm_settings propagation path",
+      "Whether maintainers consider the VertexAIModelInfo stub in scope for this issue"
+    ],
+    "why": "Issue describes two distinct defects: (1) check_provider_endpoint missing from LITELLM_SETTINGS_SAFE_DB_OVERRIDES so DB-stored litellm_settings overrides config.yaml, and (2) VertexAIModelInfo.get_models() is a NotImplementedError stub. The supplied evidence does not establish which defect the candidate intends to fix, and the open-PR assessment flags semantic overlap with PR #38818 (config_yaml, store_model_in_db) that requires manual comparison before any code work is actionable."
+  },
   "0521dcb3aa3a1a9b932ce9e10bcf39a0e07f647dda455f470e57de681dbda692": {
     "confidence": 0.85,
     "contradictions": [],
@@ -8894,6 +8932,39 @@
     ],
     "why": "The issue identifies a concrete, reproducible bug in TTS context handling and failover, with a clear root cause and a minimal repro. It is actionable and not covered by existing PRs."
   },
+  "12fed6bd2bcc727d5e622d372f267fa871a3a198d8892d31762025081e0de47f": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body claims a concrete root cause and repro, but actionability_evidence.root_cause_signal is false and pre-review cites reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "mcp_types.ServerCapabilities model config to allow extra keys",
+      "ServerRunner._serialize schema sieving behavior for server/discover results"
+    ],
+    "risks": [
+      "Changing extra='allow' may alter serialization of other capability models and break schema conformance tests",
+      "Maintainers may prefer an explicit extensions mechanism over permissive extra keys",
+      "Repository AI disclosure policy conflicts with automated public contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test constructing ServerCapabilities(tools={}, events={}) and asserting model_dump(by_alias=True, exclude_none=True) retains 'events'",
+      "Add an integration test that a server/discover handler returning capabilities.events serializes it onto the wire"
+    ],
+    "unknowns": [
+      "Whether the repository's AI disclosure policy permits any automated contribution path",
+      "Whether maintainers have an existing design preference among the three proposed fixes",
+      "Whether the schema sieving in ServerRunner._serialize is intentional spec enforcement rather than a bug"
+    ],
+    "why": "The issue describes a plausible behavior (ServerCapabilities dropping unknown keys) with a minimal repro, but the supplied evidence marks root_cause_signal=false and pre-review flags no_code_surface and reproduction_or_validation_missing. The candidate also carries an ai_disclosure_conflict policy, which is a materially blocking unknown for public contribution. The issue body itself is untrusted and includes promotional links to an external package, which should not be treated as validation."
+  },
   "1301c22f986d425663cd9a88f46f039ed17905462abf1c8f498746833c3d056b": {
     "confidence": 0.6,
     "contradictions": [
@@ -10121,6 +10192,40 @@
       "Exact behavior desired for vision/audio/streaming SFT branches"
     ],
     "why": "Issue identifies a concrete wiring defect: training.nvfp4, training.fp8_attention, and training.kernel_auto_compose are read only in apply_v028_speed_memory (src/soup_cli/utils/v028_features.py), which 11 trainers call but trainer/sft.py does not, so on the default task:sft these flags are accepted and silently no-op. Evidence includes grep output, exact line anchors (sft.py:1312, sft.py:1551-1569), the schema gate gap for nvfp4 (_validate_nvfp4_compat vs _validate_v028_speed_memory_supported_tasks), and a runnable config-load reproduction showing seven tasks accept nvfp4 while none apply it. Acceptance criteria give a concrete reference-vs-implementation test (patch apply_nvfp4/apply_fp8_attention, assert calls on tiny CPU model) and a call-count test for Cut-CE, satisfying the llm_algorithm validation-path requirement."
+  },
+  "15d85ba38eb56f2e3d5c4ccbd09c2c24910d6a27e8c3960e3faa8157cceb5ba3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER and gate HUMAN_REVIEW conflict with the issue's own statement that no implementation may begin from the Proposal alone"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "ai-quota completion path: handle synchronous Redis GET dispatch failure without leaving the request paused",
+      "regression test injecting a Redis GET that errors synchronously and never invokes its callback"
+    ],
+    "risks": [
+      "Exact completion-path error response mapping is unspecified and deferred to Design, risking incompatible behavior",
+      "Repository requires assignment and AI disclosure confirmation before contribution",
+      "Implementation is explicitly gated on maintainer Proposal and Design approval"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a deterministic native test where Redis GET returns an error synchronously and no callback fires; assert the request is not left permanently paused",
+      "Regression test that successful Redis dispatch/callback still resumes the request and preserves existing fail-closed quota-denial semantics"
+    ],
+    "unknowns": [
+      "Whether a maintainer has approved the Proposal",
+      "The exact error-response mapping for the synchronous dispatch-failure path",
+      "Whether the required assignment and AI disclosure confirmation have been obtained"
+    ],
+    "why": "The issue is a planning-only Proposal that explicitly forbids implementation until a maintainer approves the Proposal and a subsequent Design Issue. The exact error-response mapping and test seam are deferred to the Design, and the repository requires assignment plus AI disclosure confirmation. These are materially blocking unknowns for actionable code work, not normal review uncertainty."
   },
   "15dd89dad079ab5e169a9e2adca9808a8b61c51edec2aa7ea798f2328c0b5b55": {
     "confidence": 0.85,
@@ -26806,6 +26911,41 @@
       "Maintainer confirmation on whether to proceed independently"
     ],
     "why": "The issue reports a concrete LLM quantization bug (FP8-to-MXFP4 conversion producing invalid output) and a separate FP8 completion-length regression. It includes a reproducible Quark conversion script and observed metrics, satisfying the llm_algorithm track. However, the supplied gate decision is HUMAN_REVIEW, and the open PR assessment flags semantic overlap with PR #33182 and potential duplicate issue #33800, requiring maintainer comparison before creating a new task."
+  },
+  "37a69c8e34e48148b9feba4ccd6226a89e383e8f546188c169c012d46ca034ac": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body proposes a fix as still needed, while recent comment says main already handles it via `_list_tools_before_first_call`"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/operations.py: warm tool-name mapping or list tools before deciding on cold mapping",
+      "litellm/proxy/_experimental/mcp_server/server.py: session/header handling on restart"
+    ],
+    "risks": [
+      "Fix may already exist on main via `_list_tools_before_first_call`, making a new PR redundant",
+      "Open PRs #41163/#41162 touch the same operations.py path and may conflict",
+      "Per-replica cold mapping may need shared cache rather than per-worker warm-up"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: DB-managed MCP server, list tools, call tool, restart proxy, call same tool without re-list; assert no 404",
+      "Regression test for `_get_mcp_server_from_tool_name` with empty `tool_name_to_mcp_server_name_mapping`",
+      "Verify `reload_servers_from_database()` warms mapping for non-OpenAPI DB servers"
+    ],
+    "unknowns": [
+      "Whether `_list_tools_before_first_call` fully covers the DB-managed cold-mapping path described",
+      "Whether the fix is present in the target base SHA cf22deb96a88e8435caa2123c03d525f6fc17341",
+      "Whether open PRs #41163/#41162 already resolve this root cause"
+    ],
+    "why": "Issue describes a concrete cold-mapping 404 root cause with code anchors, but the supplied recent comment states main already handles this via `_list_tools_before_first_call` in the same file, leaving the issue as a release tracker. That unresolved already-fixed-on-main coverage directly determines whether new code work is actionable."
   },
   "37ac7576461db48837c5cd9245d315880a1aad00f2add658d472d628e4e7064e": {
     "confidence": 0.82,
@@ -51084,6 +51224,35 @@
     ],
     "why": "The issue reports a reproducible hang with tokenizer-worker-num 2 and provides a clear A/B comparison, but the root cause is only hypothesized (routing of AbortReq responses). The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. The track is llm_algorithm but the bug is operational (request routing) rather than an algorithm mechanism; no concrete training objective or numerical method is involved."
   },
+  "671aab1b00c830750da68e6a45877cd73539a8f9a8526e301206590ebe38bc3c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/utils.py weight-loading path for quantized tower modules",
+      "Gemma4 audio_tower quantization exclusion handling for AutoRound GPTQ"
+    ],
+    "risks": [
+      "Fix may need to distinguish AutoRound GPTQ tower exclusions from other GPTQ variants",
+      "Broadening quantization exclusion could affect vision tower or other multimodal paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's docker command on v0.24.0 and confirm the ValueError in _load_module",
+      "Add a regression test loading an AutoRound-GPTQ Gemma4 E4B checkpoint and asserting audio_tower loads via qweight/scales/qzeros/g_idx",
+      "Compare against v0.22.1 behavior to confirm towers remain unquantized"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing preferred mechanism for tower quantization exclusion in 0.24.0"
+    ],
+    "why": "Issue provides a concrete, reproducible regression: v0.24.0 demands unquantized audio_tower .weight while AutoRound-GPTQ checkpoints only ship qweight/scales/qzeros/g_idx, with a working v0.22.1 baseline and a specific traceback anchor in model_executor/models/utils.py _load_module. This is a well-scoped quantization/weight-loading bug with a clear reference-vs-implementation validation path."
+  },
   "671bd8feff80b5972892681eefb5f0dc2e1696d097525594af14c26edb297f60": {
     "confidence": 0.7,
     "contradictions": [
@@ -52898,6 +53067,46 @@
       "Whether PR #33458 will be updated to pass CI and fully resolve the issue."
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#33458) has failed CI checks, so maintainer confirmation is needed before starting new work."
+  },
+  "6a24835dc9b16ef41dbe7f911ac0cebd22557b89c322b0ade9ad3bf460c953ff": {
+    "confidence": 0.82,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false, yet the issue body articulates a specific, testable root-cause mechanism (FP32 accumulator vs per-input BF16 rounding)"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "megatron/core/ssm/ops/mamba2/mamba_ssm.py: align multi-token BF16 recurrent-state accumulation/snapshot semantics with serial decode (round state per input or require FP32 state)",
+      "megatron/core/ssm/ops/gdp/fused_recurrent.py: same invariant for GDP Householder updates",
+      "megatron/core/inference/text_generation_controllers/mtp_utils_triton.py: ensure mamba_state_selective_copy restores a snapshot consistent with serial prefix consumption",
+      "MambaInferenceStateConfig.from_model: enforce or document FP32 recurrent state when speculative decode is enabled if BF16 equivalence is not achievable"
+    ],
+    "risks": [
+      "Distinguishing a true arithmetic-semantics bug from acceptable BF16 rounding noise; the fix must not silently degrade throughput by forcing FP32 everywhere",
+      "Existing open PRs (#7798 draft, #7231 draft, #7562 with a failing inference test) have semantic overlap on bf16/mamba but no direct code overlap or issue linkage; a new contribution must be compared against them to avoid duplicate work",
+      "Requires GB300-class GPU and the full Mamba/GDP dependency stack (Triton, TE, Mamba-SSM, causal-conv1d, FLA), so validation is hardware-bound",
+      "CLA/legal confirmation is required before submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro_n1_bf16_ssm_state.py on a clean checkout at ef8cd10 with the documented env vars and confirm MISMATCH/exit 2",
+      "After the fix, rerun and require rollback_state_error == 0, rollback_conv_error == 0, next_output_error <= 1e-6, and per-step state_error == 0 for both Mamba and GDP",
+      "Add a regression unit test under tests/unit_tests/inference or tests/unit_tests/ssm that compares multi-token snapshots/rollback against serial decode for BF16 and FP32 with fixed seed and tolerance",
+      "Verify FP32 control path remains bitwise identical to serial decode to rule out unrelated regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers consider BF16 recurrent state under speculative decode a supported configuration or intend to require FP32",
+      "Whether any of the overlapping open PRs (#7798, #7231, #7562) already fixes this exact SSM state arithmetic",
+      "Whether the fix belongs in the Triton kernels or in the state-config layer"
+    ],
+    "why": "Issue #7856 provides a self-contained, executable reproduction on unmodified main (ef8cd10) with fixed seeds, TP=PP=1, and a clear numerical comparison table: FP32 recurrent state matches exactly while BF16 diverges (0.03125 snapshot/rollback, 0.04296875 next-output for GDP). The stated mechanism is concrete and testable: serial BF16 decode rounds state between inputs, whereas multi-token kernels keep an FP32 accumulator across inputs, so BF16 snapshots do not reflect the serially-consumed prefix. This is a genuine numerics/kernel-algorithm defect in Mamba/GDP SSM decode and rollback, not installation or plumbing work."
   },
   "6a281565b224029692aa59615a578f833386c25917524e6abce2a3211d00b4b0": {
     "confidence": 0.72,
@@ -63616,6 +63825,45 @@
     ],
     "why": "Issue describes a concrete MFSDP v2 correctness bug (frozen weight resharded before backward consumes it) with a reproduction command and a referenced regression test, but the supplied evidence shows PR #7822 already adds a conservative rejection guard and converts the repro into a passing rejection test, while the issue explicitly says support for executing the configuration remains open. The duplicate/coverage status is 'semantic_overlap_requires_review' with best_score 34 and direct_code_overlap false, so it is unresolved whether the remaining work is a distinct implementation or already covered by #7822."
   },
+  "7e31723898bcf764ec3c68b814c28281463d9f03e1c0e88e40cf4366f03e8602": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter attributes batch2_repeat divergence to a nondeterministic multi-sequence kernel; contributor shows batch2_repeat=0.0 with in-process engine, attributing it to engine-core request arrival timing",
+      "Reporter states the effect persists with the bf16 checkpoint (so FP8 kernels not required); contributor localizes divergence to FP8 in_proj_qkvz on sm_89"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/engine/core.py step scheduling / request batching",
+      "FP8 GEMM kernel selection (MarlinFP8ScaledMMLinearKernel) for sm_120/sm_89",
+      "GDN chunked prefill over varlen batches"
+    ],
+    "risks": [
+      "Conflating ordinary batch-variance (documented as expected outside VLLM_BATCH_INVARIANT=1) with a genuine nondeterminism bug",
+      "FP8 kernel divergence may be hardware/kernel-selection specific (sm_120 vs sm_89) and not reproducible on maintainer hardware",
+      "Overlap with PR #55947 could mean the code path is already being reworked"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run repro_upstream.py with VLLM_ENABLE_V1_MULTIPROCESSING=0 and confirm batch2_repeat drops to 0.0, isolating engine-core scheduling from kernel nondeterminism",
+      "With both rows forced into one step, compare per-layer forward outputs of the two identical rows to localize the first diverging op (FP8 in_proj_qkvz vs GDN vs MoE)",
+      "Repeat on bf16 checkpoint and on a non-FP8 GEMM path to determine whether the residual divergence is FP8-kernel-specific"
+    ],
+    "unknowns": [
+      "Whether the residual same-step divergence is a genuine kernel nondeterminism or expected batch-variant FP8 GEMM behavior",
+      "Whether PR #55947 already covers the affected code path (semantic_overlap_requires_review, no direct code overlap)",
+      "Whether the ai_disclosure_conflict policy permits an automated contribution at all"
+    ],
+    "why": "Issue reports run-to-run logprob divergence for identical batches on Qwen3.6-35B-A3B (hybrid GDN+MoE) with a concrete repro script and code anchors, but the supplied evidence contains a material contradiction: the reporter frames the batch-repeat difference as a nondeterministic multi-sequence kernel defect, while a contributor's reproduction attributes it to engine-core request arrival timing (_process_input_queue) and shows batch2_repeat=0.0 with in-process engine, leaving only ordinary batch variance plus an unresolved FP8 GEMM divergence. Root cause is therefore not established, and the duplicate assessment flags semantic overlap with PR #55947 requiring human comparison."
+  },
   "7e729c92d762a857a1097595a739f38539eeb99455b05f885afd32c26da7823d": {
     "confidence": 0.85,
     "contradictions": [
@@ -68233,6 +68481,48 @@
     ],
     "why": "Issue provides a concrete reproduction and root-cause hypothesis for gpt-6.1-sol forwarding unsupported none/minimal reasoning effort, but an open PR #43935 already directly covers the same fix with tests, and the supplied evidence does not establish whether that PR resolves the issue or what gap remains. The candidate's own assessment marks rootCauseCoverage false and duplicate status weak_pr_competition_possible, leaving unresolved duplicate/merged-fix coverage as a materially blocking unknown."
   },
+  "87991c5d96ec6eec18776a15a808a48cef8ca1b9008eca7395ca272079a7a00f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "actionability_evidence.maintainer_approved=true while the maintainer comment conditions implementation on Design #4403 revision and approval",
+      "actionability_evidence.needs_confirmation=false and design_confirmation=false while SPEC-4402001 remains Status: draft and the contributor explicitly asks for confirmation"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/upgrade.go: return wrapped getAllProfiles errors from upgrade path",
+      "hgctl/pkg/uninstall.go: return wrapped getAllProfiles errors from uninstall path",
+      "getAllProfiles: propagate errors from GetProfileInstalledPath, NewFileDirProfileStore, file List(), kubernetes.NewCLIClient, NewConfigmapProfileStore, ConfigMap List()",
+      "narrow test seam to inject discovery failures without a live cluster"
+    ],
+    "risks": [
+      "Behavior change for scripts that currently treat discovery failures as successful no-ops",
+      "Carve-out predicate (clientcmd.IsEmptyConfig plus absent explicit/in-cluster config) must be precise or broken clusters could slip through",
+      "Merged PR #4754 touches overlapping paths (installer.go, upgrade.go) and may already alter related behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing unit tests for invalid kubeconfig and ConfigMap-list failures asserting non-zero error with wrapped cause",
+      "Add tests for local profile path and file-store failures not being suppressed",
+      "Regression test that successful empty discovery still reports 'not installed' with exit 0",
+      "Regression test that local-docker with no kubeconfig keeps byte-identical stdout/stderr/exit status",
+      "Run go test for hgctl and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainer johnlanni confirms the amended SPEC-4402001 v2 carve-out",
+      "Whether Design #4403 has been revised and approved",
+      "Whether TASK authorization has been granted",
+      "Whether merged PR #4754 already covers or conflicts with the proposed error-preservation change"
+    ],
+    "why": "The proposal is technically well-scoped and maintainer-verified: hgctl/pkg/upgrade.go and uninstall.go discard getAllProfiles errors, and the helper suppresses six discovery-stage failures. However, the supplied evidence shows the SPEC is still draft and the maintainer explicitly stated implementation may begin only after Design #4403 is revised and approved; the contributor's request for confirmation is unanswered. This is a materially blocking unknown for actionability, not ordinary review uncertainty."
+  },
   "879eaa9e36b8b8b19155654a7d533f8e5e004976a40fe4ddcb237a022c56c1bf": {
     "confidence": 0.6,
     "contradictions": [
@@ -70553,6 +70843,39 @@
       "Whether existing PR #13703 will be updated to cover root cause"
     ],
     "why": "The issue provides a detailed root cause analysis with specific code paths and lifecycle gaps, a clear reproduction scenario, and expected behavior. The candidate is actionable and technically valuable, addressing a user-visible bug in a critical path. The existing PR #13703 is incomplete and lacks root-cause coverage, leaving room for a competitive contribution."
+  },
+  "8cb03210afc55308922cf2b2914db9ec2de3f11fafdd5b2521979e9dc172bc22": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Pre-review flagged reproduction_or_validation_missing, but the issue body supplies a concrete expected/actual reproduction and the comment reports a failing-on-main regression test"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/commands/hook.ts: add agent_error to the accepted hookName switch while retaining rejection of unknown names",
+      "regression test using the exact schema-valid agent_error stdin payload with the real shared parser"
+    ],
+    "risks": [
+      "PR #12857 touches apps/cli/src/utils/hooks.ts and mentions agent_error; confirm it does not already cover this stdin handler case before duplicating work",
+      "Broad CLI unit suite has an unrelated pre-existing failure in config-data.test.ts, so full-suite green is not available"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Feed the issue's exact agent_error payload to `cline hook` and assert exit 0 plus JSON response on stdout",
+      "Assert an unknown hookName still fails validation before audit/session handling",
+      "Run the targeted CLI hook command and runtime hook unit tests"
+    ],
+    "unknowns": [
+      "Whether PR #12857's changes to apps/cli/src/utils/hooks.ts already resolve the stdin handler rejection despite the issue's stated distinction"
+    ],
+    "why": "Issue provides a deterministic stdin reproduction with expected/actual pair, code anchors showing the CLI hook switch omits agent_error while the shared schema and runtime emit it, and a commenter reports a verified fix with a regression test that fails on main and passes with the fix. The overlapping PR #12857 addresses a different malformed-serialization path on hub-backed dispatch, and the issue explicitly distinguishes its reproduction and closure signal, so duplicate coverage is not established."
   },
   "8cb3b7bcaaf3c6c8ffef73796514f44617eeb168c098602a4df55d7a997ce1f8": {
     "confidence": 0.7,
@@ -74578,6 +74901,39 @@
     ],
     "why": "Issue provides a full traceback, ordered reproduction steps, and an executable command showing CancelledError from request.is_disconnected() propagating to kill_process_tree; the root cause and code anchors in tokenizer_manager.py/http_server.py are concrete enough for a minimal fix plus regression test."
   },
+  "9483fa757f5b8f8002d8897f4788d3acc7ba62675b0ad8c2502539d9eea03717": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims 'agent/inference/RAG critical path' but the issue is a generic dependency/upgrade-check failure with no such evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until the failing workflow job and error are identified; could be type annotations, lint fixes, or dependency constraint bump in pyproject.toml"
+    ],
+    "risks": [
+      "Fixing the wrong cause (e.g., bumping ty floor vs. fixing code) without logs",
+      "Dependency bump could mask a real code defect",
+      "Auto-generated issue may be transient or already resolved by a newer commit"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Fetch the workflow run logs to identify the failing job",
+      "Reproduce with `uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto`",
+      "Add a targeted regression/type check once the specific failure is known"
+    ],
+    "unknowns": [
+      "Which workflow job failed (static analysis vs tests)",
+      "The actual error messages from the workflow logs",
+      "Whether the failure is reproducible at the current HEAD or already fixed"
+    ],
+    "why": "The issue is an auto-generated upgrade-check failure with no identified failing job, no error output, and no root cause. The body only lists generic possible causes (ty, ruff, MCP SDK) and generic steps. No concrete code surface or reproduction is established, so the actual fix is undetermined."
+  },
   "948a22ec4e5bb7b2cdb92397ae8741ff428ce5bd171d7e25ee177d920066e365": {
     "confidence": 0.85,
     "contradictions": [],
@@ -75104,6 +75460,44 @@
       "Maintainer decision on 409 refusal semantics, project field, and memory-store binding for project agents"
     ],
     "why": "The issue provides an unusually detailed root-cause chain (project-scoped agent resolution missing at create time, slot published before validation, unresolved name fed to resolve_member_execution, broad except mapped to 503 store_unavailable, no rollback), and a contributor comment confirms reproduction on main. However, the supplied evidence contains materially blocking unknowns: the submission policy is needs_assignment with assignmentRequired=true and no assignee, and the open-PR assessment flags semantic overlap requiring review (PR #15592 'run slot creation as one transaction' and PR #13335) with no direct issue linkage, so duplicate/coverage is unresolved. Maintainer comments also state the remaining work is API contract decisions (409 refusal semantics, project field, memory-store binding), which are not derivable edits."
+  },
+  "9547318e0c2531928199e0f00cf0aa8a6d38b6fe594e7709d64a32b48a19c75d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with gate HUMAN_REVIEW, but actionability_evidence shows maintainer_approved=false and no wait_reasons, while preTaskEvidence policy is needs_assignment"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "CallToolsNode output-selection logic in core",
+      "run_stream() handling of trailing native tool calls",
+      "GoogleModel grounding-part marking or provider profile flag",
+      "provider/runtime regression tests"
+    ],
+    "risks": [
+      "Changing core output-selection could alter Gemini grounding behavior that #9594 intentionally fixed",
+      "Provider profile flag approach may expand public API surface",
+      "Assignment requirement may block contribution until a maintainer assigns the issue"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's FunctionModel minimal reproduction on current main and assert the second response ('Here's the answer.') is returned, not the announcement text",
+      "Add a regression test covering ordered native tool call/return parts with no trailing text",
+      "Run targeted pydantic-ai unit tests for CallToolsNode and run_stream plus static checks"
+    ],
+    "unknowns": [
+      "Whether a maintainer will assign the issue or accept an unassigned contribution",
+      "Whether the intended fix is a GoogleModel grounding marker versus a provider profile flag",
+      "Whether #9594's behavior is considered intentional for non-Gemini providers"
+    ],
+    "why": "Issue describes a concrete regression from #9594 in CallToolsNode/run_stream where text before trailing native tool calls is treated as final output on all providers, with a minimal FunctionModel reproduction and a suggested fix (GoogleModel marking grounding parts or a profile flag). However, the supplied pre-task evidence marks policy status 'needs_assignment' with assignmentRequired=true, and the candidate's own risk notes '预审未通过：assignment_required, no_code_surface'. Repository assignment is a materially blocking unknown for whether code work is actionable here."
   },
   "95476a4b1f53da1f9a6b572f774f1ba1e6f2ac0def314b316b137d0e95283fd2": {
     "confidence": 0.8,
@@ -79950,6 +80344,38 @@
       "Whether any existing tests depend on explicit null emission"
     ],
     "why": "Issue provides a concrete, decompilation-verified root cause: BaseEventJsonConverter.Write serializes via caller-supplied JsonSerializerOptions, and ConfigureAGUIJsonOptions never sets DefaultIgnoreCondition, so optional AG-UI event properties emit explicit null and break @ag-ui/core zod schemas. A minimal fix (set DefaultIgnoreCondition in ConfigureAGUIJsonOptions or serialize with AGUIJsonSerializerContext.Default.Options) and a clear reproduction/validation path exist."
+  },
+  "9ea0ca0fca865e9102b4fb43b6a1c8298fa68ce9e9a233f90723e6db51abf92f": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "megatron/core/inference/sampling/torch_sampling.py: promote logits to FP32 before temperature division (or otherwise avoid low-precision division overflow/tie collapse)",
+      "megatron/core/inference/sampling_params.py: consider mapping temperature=0 to greedy (top_k=1) for direct core-engine requests, consistent with HTTP endpoints"
+    ],
+    "risks": [
+      "Fix must preserve existing semantics for positive temperatures and not change distributions beyond numerical precision",
+      "BF16 tie-collapse may require careful handling to avoid altering legitimate near-tie behavior",
+      "Open PR #7747 touches overlapping inference paths; implementation boundary should be compared to avoid duplicate/conflicting changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied repro_d1_temperature_precision.py on a GPU at the pinned commit; expect status=MISMATCH with controls_pass=true before the fix and status=PASS after",
+      "Add a unit test asserting TorchSampling.filter_logits/sample_from_logits probabilities match an FP32-before-division reference within atol/rtol=1e-7 for FP16 and BF16 low-temperature fixtures",
+      "Regression test that a direct DynamicInferenceEngine request with temperature=0, top_k=0, top_p=0.0 yields the same token as explicit greedy (top_k=1) controls"
+    ],
+    "unknowns": [
+      "Whether PR #7747 already fixes the same root cause in torch_sampling.py (it overlaps sampling_params.py and endpoint paths but direct_code_overlap is false and root_cause_coverage is false)"
+    ],
+    "why": "Issue provides a concrete numerical root cause: TorchSampling floors temperature to 1e-6 then divides logits in their original dtype, causing FP16 overflow to inf/NaN and BF16 tie collapse; FP32 promotion at softmax is too late. Reproduction uses a real FP16 GPTModel through the dynamic engine with explicit greedy controls, plus a finite-logit probe that isolates the arithmetic with deterministic probability vectors. This is a concrete numerical/sampling mechanism with a reference-vs-implementation validation path, matching track=llm_algorithm."
   },
   "9ed41ee46f2bb9856794228543909cf13d9abe9798db33cee69fb2f18b0d1e50": {
     "confidence": 0.8,
@@ -86409,6 +86835,36 @@
     ],
     "why": "The issue claims streaming reasoning deltas leak raw byte-level BPE glyphs, but a contributor's in-process simulation of the exact v0.21.0 serving chain (fast and slow detokenizer paths, transformers 5.8.1 and 5.14.1) reconstructs reasoning and content byte-exact with zero glyphs, and an audit of basic_parsers.py and deepseek_r1_reasoning_parser.py finds no convert_ids_to_tokens call. The reporter's own control experiments (clean content, clean non-streaming) are consistent with a deployment-local tokenizer shim (LlamaTokenizerFast mis-declaration, transformers#49252) rather than a vLLM streaming bug. Root cause is therefore unresolved and the proposed fix target is unconfirmed."
   },
+  "ad5d1ebd31b81b2a8a7c8b189360ea99705c2e7cfdc1382ffd9b9faf961f67d4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "codebase_rag/parsers/py/variable_analyzer.py: strip surrounding quotes from param_types before storing in local_var_types in _process_typed_parameter and _process_typed_default_parameter",
+      "Handle subscripted/qualified forward refs (Optional[\"Node\"], list[\"Node\"], \"pkg.mod.Node\") consistently with existing annotation helpers"
+    ],
+    "risks": [
+      "Over-stripping quotes from legitimate string literal annotations that are not forward references",
+      "Subscripted forward refs like Optional[\"Node\"] may need deeper normalization than simple strip",
+      "Maintainer may prefer normalizing at type_facts.py read time rather than in variable_analyzer.py"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: minimal repro with class Quoted: def use(self, n: \"Node\") -> int: return n.weight() yields one exact CALLS edge Quoted.use -> Node.weight",
+      "Verify bare annotation and from __future__ import annotations still resolve correctly",
+      "Run cgr dead-code on fastapi and confirm _contains_router is no longer reported dead",
+      "Run targeted unit tests for variable_analyzer and type_facts modules"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a minimal reproduction, verified root cause in codebase_rag/parsers/py/variable_analyzer.py (_process_typed_parameter/_process_typed_default_parameter storing quoted annotations without stripping), and a concrete fix mirroring existing .strip(\"\\\"'\") logic in ast_analyzer.py. Real-world impact demonstrated on fastapi and pydantic. No duplicate PRs or issues found."
+  },
   "ad69c8139d2d059d27b21a319b6323cdafabd169c25d44ee4035cc309ad0090a": {
     "confidence": 0.7,
     "contradictions": [
@@ -90941,6 +91397,39 @@
     ],
     "why": "The issue clearly identifies a client-side bug where expired DCR client secrets are never invalidated, causing permanent auth failure. The existing PR #3260 is a draft with incomplete evidence and lacks a deterministic reproduction, leaving room for a stronger PR with a failing test and robust fix."
   },
+  "b64cd8d235fd78bc9b45e2b664c0b576a880be9b4eac137072acaee60a68cfd8": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body states no implementation may begin, while candidate is scored as an actionable fix candidate"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "pkg/ingress/kube/annotations/match.go",
+      "plugins/golang-filter/mcp-session/common/match.go"
+    ],
+    "risks": [
+      "Implementing before maintainer approval violates the issue's explicit governance gate",
+      "Unresolved AI disclosure and assignment policy requirements",
+      "Proposed fix mechanism is intentionally unspecified, risking scope expansion"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Deterministic fake-host regression invoking response-header callback then nonmatching body callback, asserting original status/headers/body remain coherent",
+      "Separate regression confirming existing matching-body conversion path is unchanged"
+    ],
+    "unknowns": [
+      "Whether a maintainer will approve the Proposal",
+      "Exact Design-selected lifecycle strategy and implementation mechanism",
+      "Resolution of aiDisclosureConflict and assignment requirement"
+    ],
+    "why": "The issue is a planning-only Proposal that explicitly forbids implementation until maintainer approval and a subsequent Design Issue. Supplied evidence shows no reproduction, no root-cause confirmation, no maintainer approval, and unresolved policy conflicts (aiDisclosureConflict, assignmentRequired). The concrete code path and fix mechanism are deliberately left to Design review, so code work is not yet actionable."
+  },
   "b67113900b65d7e541f3126fe751b0b35834e936c4b263e882ed98d4c4daac16": {
     "confidence": 0.55,
     "contradictions": [
@@ -94008,6 +94497,45 @@
       "Whether #8653 already covers this exact scrub"
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP child processes, breaking external Python interpreters. The reporter supplied a minimal repro, /proc environ evidence, and a working workaround. Triage bot disputed the root cause (claims the AppImage ships no Python and exports no PYTHON*), but the reporter rebutted with binary-level evidence (AppRun.wrapped format string PYTHONHOME=%s/usr/), a mount-prefix match to Qwen-Code-Desktop_0.3.0_amd64, and a second leak channel (LD_LIBRARY_PATH → bundled libsqlite3 3.37.2 breaking sqlite-vec KNN). Code anchors (mcp-client.ts spawn env, sanitize-child-env.ts, shared-env-keys.ts) give a concrete fix location. This is a real, actionable code change: scrub PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH from the MCP child env. Not an llm_algorithm track item, so no training-objective requirement applies."
+  },
+  "bc83794f22b47fc7e9e507b503364dc222a671f872252ad498f49237d03f433f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body states implementation will not begin until maintainer approval, while candidate category is WAIT_MAINTAINER with HUMAN_REVIEW gate",
+      "aiDisclosureConflict=true despite the issue body containing an explicit agent-assisted contribution disclosure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/agent/mcp.go: add len(config.Tools)==0 guard before indexing Tools[0] in publishMCPToHigress",
+      "Add unit test covering zero-tool spec (clear error, no panic) plus positive control case"
+    ],
+    "risks": [
+      "Repository requires issue assignment before implementation; no assignee present",
+      "AI-disclosure policy conflict flagged; disclosure/authorization path unresolved",
+      "base_sha_changed may invalidate the cited line numbers/anchors",
+      "Comment thread proposes expanding scope to URL sourcing from servers[0], which could broaden the change beyond the minimal guard"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: convert a spec with paths:{} and assert publishMCPToHigress returns a clear error instead of panicking",
+      "Positive control: spec with one valid GET operation yields tools==1 and no error",
+      "Runtime red/green: run hgctl mcp add --type openapi --spec <zero-path spec> before (panic) and after (clean error, non-zero exit)"
+    ],
+    "unknowns": [
+      "Whether a maintainer has approved the Proposal or opened the follow-up Design Issue",
+      "Whether the issue will be assigned to the contributor",
+      "Whether the URL-sourcing change will be folded in or split into a separate proposal",
+      "Whether base_sha change invalidates the cited code anchors"
+    ],
+    "why": "The issue clearly identifies a real latent index panic at hgctl/pkg/agent/mcp.go:250 (config.Tools[0] without a length check) and proposes a concrete guard plus regression test, with a verified out-of-tree reproduction. However, the supplied evidence contains materially blocking unknowns: the repository requires assignment before implementation (assignmentRequired=true, no assignees), the AI-disclosure policy is flagged as conflicting (aiDisclosureConflict=true), and the pre-review gate failed on base_sha_changed, policy_or_disclosure_uncertain, assignment_required, and reproduction_or_validation_missing. The issue itself explicitly states implementation will not begin until a maintainer approves the Proposal and a follow-up Design Issue, so code work is not yet actionable."
   },
   "bc9e9b7e51aff67e8c703b161a3a170dd939e572895bce7983a072347d187207": {
     "confidence": 0.7,
@@ -120407,6 +120935,46 @@
     ],
     "why": "The issue reports empirical observations about DBCache knobs on MiniMax-H3, but lacks a clear root cause for the default threshold being inert and the quality gap. It is a performance/quality investigation with no concrete code change proposed. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the issue is more of a tuning report than an actionable code contribution. The candidate suggests fixing after adding failing tests, but the issue itself does not specify a code path or design. Maintainer confirmation is needed before work starts."
   },
+  "ee5ef41cf446797dea4e0d7148cc10f38529b2c29596147b58c7f6b8e9a3e775": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes a new hook as necessary, but a comment states merged #6696 already provides @durable_operation and the motivating SpendLimits now uses it, suggesting the issue may be superseded"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py (DurableModel.request)",
+      "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py",
+      "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py",
+      "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_durability.py",
+      "AbstractCapability hook surface (if not superseded)"
+    ],
+    "risks": [
+      "Merged #6696 may already supersede the proposed hook, making this a duplicate/covered opportunity",
+      "Open PR #9701 has semantic overlap on the same durable_exec paths and may conflict",
+      "The 'exactly once' contract for external writes is not achievable by process placement alone; needs effect identity/idempotency, which the issue does not fully specify",
+      "Pre-review gate failed on assignment_required and reproduction_or_validation_missing"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the SpendLimits double-accrual under Temporal/DBOS/Prefect on current main and confirm whether @durable_operation from #6696 already prevents it",
+      "If still failing, add a regression test asserting the hook runs exactly once per billed model response across replay/recovery",
+      "Compare against open PR #9701 to determine whether its run_id/conversation_id stability changes cover the same root cause"
+    ],
+    "unknowns": [
+      "Whether the original reproduction still fails on current main after #6696",
+      "Whether #6696's durable_operation fully covers the capability-hook use case or leaves a gap",
+      "Whether PR #9701 already addresses the same root cause",
+      "Whether maintainers require assignment before contribution"
+    ],
+    "why": "The issue proposes a new AbstractCapability hook (after_durable_model_request) to make external side effects commit once under durable execution, but a recent comment reports that merged #6696 already provides a general durable-operation primitive (@durable_operation) that the motivating SpendLimits consumer now uses, potentially superseding this issue. The supplied evidence also flags semantic overlap with open PR #9701 and a pre-review failure for missing reproduction/validation and assignment requirement. Whether the original reproduction still fails on current main is a materially blocking unknown that determines whether any code work is actionable."
+  },
   "ee6beabee2bf8a235a48edcae014e74a8d899ab6831483aa76b003ec38d9c66e": {
     "confidence": 0.6,
     "contradictions": [],
@@ -126063,6 +126631,48 @@
     ],
     "why": "The issue provides a clear root cause: the managed Zoom OAuth app lacks webinar write scopes, the toolkit lacks webinar creation tools, and search/workbench mislead users into an unfixable OAuth loop. Concrete reproduction steps and a minimal example are supplied, making the fix actionable."
   },
+  "f958ce90f983a24af7e330128dd0c87130cbe692ab57815c4435114d8335b319": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Design claims maintainer approval and authorized TASKs, but pre-review gate reports policy_or_disclosure_uncertain and assignment_required",
+      "Verification Plan item 5 requires a trailing-newline VERSION, but runtime evidence shows real updater outputs contain no trailing newline"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/standalone.go: strict version read and version-only Profile write after successful upgrade",
+      "hgctl/pkg/installer/standalone_agent.go: add strict version-read path while keeping tolerant Agent.Version()",
+      "hgctl/pkg/installer/installer_docker.go: reopen stored file-backed Profile and persist only HigressVersion",
+      "hgctl/pkg/installer tests: whitespace normalization, updater failure, unreadable/empty/invalid VERSION, save failure, overlay non-persistence"
+    ],
+    "risks": [
+      "Open draft PR #4954 may already cover the same root cause, making a new implementation duplicative",
+      "Repository requires assignment and AI disclosure confirmation before contribution",
+      "base_sha_changed invalidates the pre-review baseline",
+      "Verification item 5 (trailing-newline VERSION) cannot be reproduced with real runtime artifacts, leaving a verification gap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "go test ./pkg/installer -count=1 from hgctl",
+      "go test ./... -count=1 from hgctl",
+      "Deterministic regression: successful updater + VERSION with surrounding whitespace persists trimmed value",
+      "Field-by-field comparison of saved vs pre-upgrade stored Profile excluding higressVersion, asserting --set gateway.httpPort=18080 overlay is not persisted",
+      "Controlled local-docker upgrade verifying stored install-local-docker.yaml contains trimmed installed version without config drift"
+    ],
+    "unknowns": [
+      "Whether PR #4954 already resolves the same root cause and should supersede new work",
+      "Whether the repository's assignment and AI disclosure requirements are satisfied for this candidate",
+      "Maintainer's preferred resolution for the unresolved TASK-4534002 verification item 5 question"
+    ],
+    "why": "The Design issue #4534 is maintainer-approved and specifies a concrete root cause (StandaloneComponent.Upgrade not persisting version, Agent.Version hiding read errors, DockerInstaller.Upgrade returning without saving Profile) with a detailed verification plan. However, the supplied evidence contains materially blocking unknowns: (1) open PR #4954 ('fix(hgctl): persist installed version after local-docker upgrade') has semantic overlap on the same code paths and distinctive term 'local_docker', and the duplicate status is 'semantic_overlap_requires_review' — unresolved duplicate coverage determines whether new code work is actionable; (2) the pre-task policy is 'ai_disclosure_and_assignment' with assignmentRequired=true and aiDisclosureConflict=true, and the pre-review failed on base_sha_changed, policy_or_disclosure_uncertain, assignment_required; (3) an open verification question (TASK-4534002) about whether real runtime VERSION evidence satisfies item 5 remains unanswered by a maintainer. These are not normal implementation uncertainties."
+  },
   "f95c127e819584df60400ff929d239ff9eefef8b57c474b9fc21475495eb8b13": {
     "confidence": 0.85,
     "contradictions": [
@@ -126654,6 +127264,37 @@
       "Whether any existing tests already cover forkserver signal behavior"
     ],
     "why": "Issue provides a concrete root cause: signal handlers are installed at module import guarded by current_process().name == 'job_proc', but under forkserver the module is imported in the forkserver (MainProcess) and inherited via sys.modules by forked job processes, so the guard never fires. It includes a minimal reproduction comparing spawn vs forkserver signal states and a concrete fix location (proc_main())."
+  },
+  "fa0daaf16420af8f152b856e9a46e82038ea64939279b6a799735a47e7a2eec3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/common/low_precision_transformations/src/fake_quantize.cpp",
+      "src/common/low_precision_transformations/src/group_convolution.cpp",
+      "src/common/low_precision_transformations/src/reshape.cpp",
+      "src/core/shape_inference/include/fake_quantize.hpp",
+      "src/core/src/op/fake_quantize.cpp"
+    ],
+    "risks": [
+      "The exact indexing bug is inferred from outputs, not confirmed in plugin source, so the fix location may differ from the listed anchors.",
+      "Changing FakeQuantize range handling could affect other broadcastable range shapes."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the issue's synthetic GroupConvolution + weight FakeQuantize with ranges [C,1,1,1,KW] and assert GPU output matches CPU within tolerance and contains no NaN.",
+      "Run the targeted low-precision-transformations and GPU plugin unit tests for GroupConvolution/FakeQuantize."
+    ],
+    "unknowns": [
+      "Whether the GPU plugin or the low-precision transformation is the actual faulty component."
+    ],
+    "why": "Issue provides a self-contained synthetic reproduction, a clear CPU-vs-GPU divergence, and a plausible root cause (weight FakeQuantize range tensor of shape [C,1,1,1,KW] indexed as if it held C values) with concrete code anchors in the low-precision transformations and FakeQuantize paths. No duplicate or merged-fix coverage is reported, and no maintainer design preference is required to attempt a minimal fix."
   },
   "fa305ff418acef9c18d32e0df855b28371a6048a99bbfff1a0c4886a02f66414": {
     "confidence": 0.85,
