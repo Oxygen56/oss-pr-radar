@@ -14848,6 +14848,39 @@
     ],
     "why": "The issue's own reporter retracted the QSA kernel bounds root cause and now hypothesizes an overlap-scheduler race between host sequence_lengths snapshot and device-derived row ranges; the merged PR #38346 (compress gather clamp) is claimed by a second reporter to match their low-concurrency crashes, but the first reporter explicitly says #37638 should not be credited and that #38346 fixes a different problem. Coverage is unresolved and contradictory, so code work is not yet clearly actionable."
   },
+  "1e708fed77c9abfe8733a46fae8d6f6db51dd3206998c727f0f51cabd907784b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/management_endpoints/mcp_management_endpoints.py: call invalidate_user_oauth_token_cache unconditionally on DELETE",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/per_user_oauth_store.py: make per-user Authorization Code token cache coherent across replicas",
+      "litellm/proxy/common_utils/auth_cache_invalidation_pubsub.py: publish/consume invalidation for (user_id, server_id) on connect, refresh, disconnect"
+    ],
+    "risks": [
+      "Changing DELETE semantics to always invalidate could mask other errors if not scoped to the exact (user_id, server_id) key",
+      "Redis-only backend option may alter behavior when coordination Redis is unavailable",
+      "Multi-replica behavior is hard to reproduce in CI without a shared-cache harness"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that warms the local cache on two simulated replicas, deletes the credential via one, and asserts the other replica can no longer list/call upstream tools",
+      "Add a test that a repeated DELETE after the row is gone still invalidates the local cache entry",
+      "Run targeted proxy MCP OAuth unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the Redis-only backend or the pub/sub invalidation approach",
+      "Whether a shared-cache multi-replica test harness already exists in the repo"
+    ],
+    "why": "Issue provides a concrete multi-replica cache-coherence bug with ordered reproduction steps, expected/actual behavior, and specific code anchors (per_user_oauth_store.py, mcp_management_endpoints.py, dual_cache_token_backend.py, auth_cache_invalidation_pubsub.py). A confirming comment on v1.103.1 adds a second concrete defect: the DELETE handler only invalidates when the credential row still exists, so repeated DELETEs skip invalidation. Both fixes are actionable and testable."
+  },
   "1e92d6f17c971c840b9e6b34333d047d091814f5e5119264b36c837a49d7c543": {
     "confidence": 0.7,
     "contradictions": [],
@@ -41158,6 +41191,45 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue clearly describes a silent truncation bug in the cmd branch of build_shell_command with a concrete repro and code anchor. However, the submission policy requires assignment and the gate decision is HUMAN_REVIEW, so work cannot start without maintainer confirmation."
   },
+  "510fe97019d8ca2f462e79186c239efe8c4af4545f9277c7f9c6a9a9a99c5d13": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Original report (0.2.5/Codex 0.146.1) shows no Paseo tools on the Codex surface, while r0mm4k reports 39 Paseo tools visible on 0.10.1/Codex 0.157.1",
+      "Issue body frames the failure as missing tools, while several comments describe a protocol-version 400 that agents recover from and still call tools successfully"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/server/src/server/bootstrap.ts (Codex MCP injection / createAgentMcpBaseUrl)",
+      "Codex app-server config mapping (toCodexMcpConfig / buildCodexInnerConfig) so injected mcpServers.paseo is accepted",
+      "MCP startup-status diagnostics surfaced from Codex app-server into daemon log/agent timeline"
+    ],
+    "risks": [
+      "Case A did not reproduce on 0.10.1/Codex 0.157.1, so the original 0.2.5 symptom may be version-specific or already partially addressed",
+      "Multiple distinct failure modes (protocol-version 400, Windows proxy 502, blocking-tool hang) are conflated in one issue; a fix for one may not resolve the others",
+      "Open PR #4375 and #5890 address protocol-version handling and may overlap with part of the fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a fresh Codex agent: confirm persistence.metadata.mcpServers.paseo exists and direct tools/list returns 60 tools (22 browser_*)",
+      "Assert the Codex model tool surface lists browser_*/paseo tools and that browser_list_tabs succeeds via the model",
+      "Regression test for the injected config shape against the current Codex RawMcpServerConfig schema, plus a control run with injection disabled",
+      "Add a test that a Codex app-server mcpServer/startupStatus/updated failure is surfaced rather than silently dropped"
+    ],
+    "unknowns": [
+      "Whether the original 0.2.5 missing-tools symptom still reproduces on current main",
+      "Which of the several reported mechanisms (config shape, protocol version, proxy, blocking-tool transport drop) is the root cause for the original case",
+      "Whether open PRs #4375/#5890 already cover the actionable portion"
+    ],
+    "why": "Issue #3009 documents a concrete, reproducible Codex MCP injection failure: mcpServers.paseo is present in agent metadata and the direct MCP endpoint returns 60 tools (22 browser_*), yet the Codex model tool surface exposes none. The body supplies ordered reproduction steps, code anchors (bootstrap.js, toCodexMcpConfig, buildCodexInnerConfig, supportsMcpServers), and a clear validation path (fresh-session tool discovery plus direct endpoint control). Recent comments add independent data points (protocol-version rejection, Windows proxy 502, Claude blocking-tool hang) but also show case A did not reproduce on 0.10.1, so the root cause is not fully pinned to one mechanism."
+  },
   "5112753161c34edb2aed9a36aafbd08f211fa063472a1bad8106ec5a35dabdc8": {
     "confidence": 0.8,
     "contradictions": [
@@ -53496,6 +53568,38 @@
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, causing unnecessary cache matching and host-cache load-back. The reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. An open PR exists but lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "672609a89b4e6bb4163afa7d3d6f9934ac5c1c551ec0a3334a3141804ed9c539": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/agent_endpoints/a2a_endpoints.py: honor negotiated upstream protocol version in task dispatch and _forward_jsonrpc",
+      "litellm/proxy/a2a/version_convert.py: avoid unconditional down-conversion of task params to 0.3",
+      "Preserve existing 0.3 upstream compatibility"
+    ],
+    "risks": [
+      "Changing version negotiation could regress 0.3 upstream compatibility if not gated on negotiated version",
+      "Error-body handling in _forward_jsonrpc may mask upstream VERSION_NOT_SUPPORTED details"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test with a 1.0-only upstream stub asserting GetTask is forwarded as native 1.0 method with A2A-Version: 1.0 and no 0.3 param down-conversion",
+      "Add a compatibility test asserting 0.3 upstreams still receive tasks/get with 0.3 params",
+      "Run targeted a2a endpoint unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for upstream version negotiation in the A2A forwarding path"
+    ],
+    "why": "Issue provides a concrete, reproducible A2A 1.0-only upstream failure: GetTask is rewritten to legacy tasks/get and params down-converted to 0.3, while the upstream only supports 1.0. Controlled wire comparison isolates the cause and shows a static version header alone is insufficient. Code anchors at the pinned main revision identify the exact forwarding and normalization paths."
+  },
   "6764cb66725f476268731538f36a6518989c4ca40f3498fb6827fda07103cf40": {
     "confidence": 0.7,
     "contradictions": [],
@@ -57081,6 +57185,36 @@
     ],
     "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied duplicate assessment flags semantic overlap with open PR #40919 and other PRs touching reasoning_effort; the overlap is unresolved and could mean the root cause is already covered, which materially affects whether new code work is actionable."
   },
+  "6cbacb99830adf0d939bf26a7c1e150eb0359ab8569cd53465d8d3c93428ea9e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate claims 'agent/inference/RAG critical path' but issue is a generic CI upgrade-check failure with no code anchors"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Unknown until failing job/logs are identified; possibly pyproject.toml dependency floor or type/lint fixes"
+    ],
+    "risks": [
+      "Fixing the wrong job or masking a real dependency incompatibility",
+      "Bumping version floors may hide genuine type/lint regressions"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run `uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto` to reproduce, then add a targeted regression test for whichever failure is found"
+    ],
+    "unknowns": [
+      "Which workflow job failed (static analysis vs tests)",
+      "The actual error output from run #908",
+      "Whether the failure is in fastmcp code or an upstream dependency"
+    ],
+    "why": "Auto-generated upgrade-check failure issue with no identified failing job, no root cause, and no code surface; the body only lists generic causes (ty, ruff, MCP SDK) and generic steps. Reproduction evidence is only 'ordered_steps' from a template, not an actual failing case, and probe_ready is false."
+  },
   "6cd469ed0f0006174ac877c9179ea2497b5d3157add94d894be4716775701d88": {
     "confidence": 0.85,
     "contradictions": [],
@@ -59337,6 +59471,44 @@
       "Whether a deterministic synthetic reproduction can be constructed at all"
     ],
     "why": "The issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not reproduce it synthetically; only long real agentic sessions trigger it. A maintainer comment attributes it to 'tool call / vllm frontend', which is parser/frontend plumbing rather than an LLM algorithm mechanism (training objective, kernel algorithm, quantization/numerical method, or evaluation methodology). The candidate's algorithm_evidence claims model_architecture/distributed_training/numerics_quantization/evaluation_method, but the supplied evidence shows no formula, no experiment, and no concrete algorithmic root cause — the code anchors are collect_env.py, finished_reason, clear_thinking, bash, max_tokens, and glm parser files, i.e. frontend/parser plumbing. Additionally, the pre-task policy status is ai_disclosure_conflict, which is a materially blocking disclosure requirement, and there is a potential duplicate issue #56583 sharing stack/failure signatures. These unknowns determine whether code work is actionable."
+  },
+  "709125e6562ba1702d2c09f224fcfb8543096abcc965eb745434a19d21f53fbd": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes a new after_durable_model_request hook, while comments state merged #6696's @durable_operation already covers the motivating SpendLimits case on current main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "durable_exec/temporal/_durability.py",
+      "durable_exec/dbos/_durability.py",
+      "durable_exec/prefect/_durability.py",
+      "durable_exec/_utils.py",
+      "durable_exec/_toolset.py",
+      "tests/durable_exec/test_capability_durable_operation.py"
+    ],
+    "risks": [
+      "Adding a second model-request-specific durable hook API duplicating the general @durable_operation mechanism",
+      "Claiming exactly-once external writes when the effect-commit/journal-completion crash window remains",
+      "Overlapping open PR #9701 touching the same durable_exec paths"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Re-run the original SpendLimits double-accrual reproduction against current main c68786e9bc525574daa9914b23de05daf9ca4ca0 under Temporal/DBOS/Prefect",
+      "Run tests/durable_exec/test_capability_durable_operation.py and add a regression only if a still-failing case exists that @durable_operation cannot express"
+    ],
+    "unknowns": [
+      "Whether the original reproduction still fails on current main after #6696",
+      "Whether any remaining case cannot be expressed via @durable_operation",
+      "Assignment/ownership status required by repository policy"
+    ],
+    "why": "The issue's root cause (capability hooks run in orchestration code, outside the durable unit) is well argued, but supplied comments assert the motivating case is already covered by merged #6696 via @durable_operation, with SpendLimits _read/_accrue now decorated and tests/durable_exec/test_capability_durable_operation.py passing on current main. That unresolved supersession/coverage question determines whether any code work is actionable, and the pre-task evidence also flags assignment_required and reproduction_or_validation_missing."
   },
   "7095cb254f0fb8286cdfbb1b1082ff8aedd54f4e7f0bd0ec582c3935ac044505": {
     "confidence": 0.7,
@@ -80126,6 +80298,38 @@
     ],
     "why": "Issue provides a concrete CPU-only reproduction, traceback, and a precise root cause: transformers 5.18.0 moved do_convert_rgb out of BaseVideoProcessor._preprocess(), while vLLM's MiniMaxM3VLVideoProcessor._preprocess() still declares it as a required unused argument. The proposed fix (drop the unused parameter, relying on existing **kwargs) is minimal and backward-compatible with transformers <=5.17.0."
   },
+  "996e6b4565ec88b1660276a6884cab62213cd8c86ceec90571330c8b37a08884": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body initially points at ast_analyzer.py/type_facts.py, but a follow-up comment corrects the fix site to variable_analyzer.py"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "codebase_rag/parsers/py/variable_analyzer.py: strip surrounding quotes from decoded parameter annotations in _process_typed_parameter and _process_typed_default_parameter",
+      "Handle qualified and subscripted forward refs (Optional[\"Node\"], list[\"Node\"]) consistently with existing annotation helpers"
+    ],
+    "risks": [
+      "PR #2955 touches overlapping files (ast_analyzer.py, variable_analyzer.py) and may partially cover related typing fixes; implementation boundaries should be compared before submitting",
+      "Subscripted/qualified forward refs may need additional normalization beyond a simple quote strip"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: class Quoted with def use(self, n: \"Node\") calling n.weight() yields one exact CALLS edge Quoted.use -> Node.weight",
+      "Verify bare annotation and from __future__ import annotations still resolve identically",
+      "Run cgr dead-code on fastapi and confirm APIRouter._contains_router is no longer reported dead"
+    ],
+    "unknowns": [
+      "Whether PR #2955 already fixes the quoted forward-reference case or only the Annotated[T, ...] case"
+    ],
+    "why": "Issue provides a minimal reproduction, a verified root cause in variable_analyzer.py (_process_typed_parameter/_process_typed_default_parameter storing quoted annotations verbatim), and a concrete fix mirroring existing .strip(\"\\\"'\") logic. Real-world impact shown on fastapi and pydantic. Open PR #2955 overlaps semantically but is not linked to the issue and does not cover the quoted forward-reference root cause, so it is not a blocking duplicate."
+  },
   "99864e26e9a7974851dde8a2697b7de63ffa1d6c5d5a8ab2ffca646a8853dec7": {
     "confidence": 0.72,
     "contradictions": [],
@@ -86001,6 +86205,42 @@
       "Whether maintainers have already started an investigation or have a preferred fix direction."
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, identifying a specific model architecture and version range. The root cause is not yet pinpointed but the evidence is sufficient to start a focused investigation and build a regression test."
+  },
+  "a45d57facf5da7bb03da38f8de29a0b35702a472f2711a239e36dd796be5a588": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims crash stack is new evidence, but no root cause is established and no reproduction is provided",
+      "Open PR assessment flags semantic overlap requiring review while also stating no PR references the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sglang/srt/session/streaming_session.py session_held_tokens ownership/free path",
+      "sglang/srt/mem_cache/unified_radix_cache.py session slot release",
+      "sglang/srt/managers/scheduler_components/invariant_checker.py idle check robustness"
+    ],
+    "risks": [
+      "Root cause may be in a free path not exercised by the idle walk, so a fix could mask rather than resolve corruption",
+      "Overlapping open PRs may already touch scheduler.py and conflict",
+      "No maintainer design confirmation on whether the idle check should be hardened or the free path fixed"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a minimal reproducer that drives session/mamba slot release and then triggers the idle _check_full_pool walk",
+      "Run targeted unit tests for streaming_session and unified_radix_cache free/ownership paths under ASAN or glibc malloc checking"
+    ],
+    "unknowns": [
+      "Whether the corruption originates in session slot release, mamba cache free, or radix cache ownership",
+      "Whether any existing open PR actually fixes this specific crash path",
+      "Whether maintainers consider the idle invariant check itself the defect or only the detector"
+    ],
+    "why": "Issue reports a heap-corruption abort in the idle invariant walk, but the supplied evidence contains no confirmed root cause (root_cause_signal=false) and no maintainer confirmation; the crash is only observed after ~22h of production serving with no minimal reproduction. The three candidate PRs are semantically overlapping only via scheduler.py and none references or covers this issue, so duplicate/coverage status is unresolved. Under the track rules, agent_ai_infra is not llm_algorithm, but the actionable code fix still depends on an unestablished root cause."
   },
   "a460af5ee1f0fe46b18ffc4da2296fc8def574f04f3221a31e281b8c32dc1967": {
     "confidence": 0.7,
@@ -112176,6 +112416,42 @@
       "No maintainer confirmation on preferred fix approach, but the issue is clearly actionable and no competing PR exists."
     ],
     "why": "Issue reports a user-visible bug where transient MCP transport failure leaves the active conversation permanently pending. A contributor reproduced the root cause on current main: the configured read timeout is never passed to the MCP SDK ClientSession, so in-flight requests can hang indefinitely. The fix is a small, well-scoped change with a clear regression test path."
+  },
+  "d77971688cee110d66cb5acab08e56547f6cf133846e9711de50a16659d9a66a": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue proposes a scheduler-side early release, while overlapping PR #42529 title suggests a loader-side skip of shared draft embedding/head weights; both could address the same root cause differently"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: release draft embed/lm_head before target/draft pool sizing",
+      "python/sglang/srt/speculative/eagle_worker_v2.py: ensure early release is idempotent with alloc_memory_pool path",
+      "python/sglang/srt/models/qwen3_5_mtp.py: optionally avoid materializing redundant embed/lm_head copies at load"
+    ],
+    "risks": [
+      "Open PR #42529 may already implement the same fix, making a new contribution duplicative",
+      "Early init_lm_head/init_token_map on the inner worker may not be safe on all PP ranks or non-sharing draft configurations",
+      "The issue's own alternative (loader-side fix) touches tie-words/PP paths and is more invasive"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the supplied Qwen3.8-27B-NVFP4 EAGLE same-checkpoint command and confirm startup OOM and #tokens 106501 without the fix",
+      "Apply the scheduler-side early-release patch and confirm the requested 139000 tokens are reached with non-trivial free memory",
+      "Add a regression test asserting draft embed/lm_head tensors are shared with the target before pool profiling, and that the late release path remains a no-op"
+    ],
+    "unknowns": [
+      "Whether PR #42529 already fixes the same root cause and would make this issue redundant",
+      "Whether the early init_lm_head/init_token_map call is safe across PP ranks and non-sharing draft setups",
+      "Whether maintainers prefer the scheduler-side or loader-side approach"
+    ],
+    "why": "Issue describes a concrete EAGLE/MTP memory-ordering bug with code anchors, a measured before/after table, and a one-hunk scheduler patch, but the supplied duplicate assessment reports an open PR #42529 ('Skip loading shared draft embedding and head weights') with semantic overlap on eagle_worker_v2.py and the 'checkpoint' distinctive term, and the duplicate status is explicitly 'semantic_overlap_requires_review'. Whether that PR already covers the same root cause is unresolved and materially determines whether new code work is actionable."
   },
   "d77b96fd7f284cd5d2d4f6fe5932985473d35dde63a72dc471b464bcbf5ba9da": {
     "confidence": 0.82,
