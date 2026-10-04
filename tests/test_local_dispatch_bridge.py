@@ -37223,6 +37223,8 @@ def _completed_dirty_controller_handoff_fixture(tmp_path, monkeypatch, *, renew_
     MODULE.write_task_context(
         store, issue_url=source["issueUrl"], thread_id="thread-1", cwd=worktree
     )
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
     context = json.loads(context_path.read_bytes())
     assert context["contextDigest"] != source["contextDigest"]
     assert context["targetBase"] == old_context["targetBase"]

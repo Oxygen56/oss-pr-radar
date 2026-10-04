@@ -20758,6 +20758,8 @@ def _completed_dirty_controller_handoff_validation(
         return None
     candidate = candidate | {"resultDigest": digest, "missing": list(deferred[1]["missing"])}
     with _task_worktree_private_descriptor(candidate) as opened:
+        if not _local_changed_files(opened.worktree):
+            return None
         context_raw = _read_task_context_bytes_from_private(opened)
         context = json.loads(context_raw)
         value, raw = _read_authenticated_validation_result(candidate)
