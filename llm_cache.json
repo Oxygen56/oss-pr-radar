@@ -3738,6 +3738,38 @@
     "unknowns": [],
     "why": "Issue provides a concrete, reproducible root cause: pinned wolfi-base digest has drifted from current apk python3 packages, causing both the apk trigger failure and the uvloop source-build failure; the suggested fix (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never) is specific and actionable. No open PR or duplicate issue covers it."
   },
+  "07b88fe2c266705968d453322d0c2a622235e86b9d19bc417c828bd3e8b4dcda": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels the issue as agent/inference/RAG critical path, but the body describes only generic dependency/static-analysis upgrade failures"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until the failing workflow job and error are identified; likely pyproject.toml dependency constraint or a type/lint fix in the affected module"
+    ],
+    "risks": [
+      "Fixing the wrong job or bumping a dependency floor without evidence could mask the real failure",
+      "Auto-generated issue may be transient or already resolved on main"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Retrieve workflow run #908 logs to identify the failing job",
+      "Reproduce locally with uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto",
+      "Add a targeted regression test only after the specific failure is known"
+    ],
+    "unknowns": [
+      "Which workflow job failed and the exact error output",
+      "Whether the failure is code, dependency constraint, or upstream SDK breakage",
+      "Whether the failure still reproduces at the current base SHA"
+    ],
+    "why": "Auto-generated upgrade-check failure issue with no identified failing job, no root cause, and no code anchor; the body only lists generic causes (ty, ruff, MCP SDK) and asks the reader to inspect logs. No reproduction or validation path is established, and the candidate's own pre-review flags no_code_surface and reproduction_or_validation_missing."
+  },
   "07bfee077669e7ab51a5fae983ad8a5b168956f797df5a3919941f3f6d061e03": {
     "confidence": 0.85,
     "contradictions": [],
@@ -47156,6 +47188,41 @@
     ],
     "why": "Issue provides precise code anchors and a clear root cause: IM paths never populate LanguageContextKey, so ResolveLanguage falls through to DefaultLanguage(), pinning all IM replies to one deployment-wide language. Step 1 (per-channel locale column + context.WithValue in withIMIdentity) is a concrete, reviewable fix with a clear validation path."
   },
+  "5c6a4e4c127bcb1fcebc48ed735e32e7ba05c70a2d1e3a87abf3e2c93dc01cd5": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate labels this PR_COMPETITION_OPPORTUNITY with high score, but actionability_evidence reports root_cause_signal=false and duplicate status semantic_overlap_requires_review"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/session/streaming_session.py",
+      "python/sglang/srt/mem_cache/unified_radix_cache.py",
+      "python/sglang/srt/managers/scheduler_components/invariant_checker.py"
+    ],
+    "risks": [
+      "Root cause may be in a different free/ownership path than the idle walk that merely detects it",
+      "Open PR #42072 may already cover the same root cause, making a new fix duplicative",
+      "Heap corruption may be non-deterministic and hard to reproduce without the 22h production profile"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic failing test that triggers the idle invariant walk over session slots and reproduces the heap corruption or an ownership violation",
+      "Run targeted unit tests for streaming_session/unified_radix_cache and the scheduler idle-check path"
+    ],
+    "unknowns": [
+      "Whether PR #42072 already fixes the same free/ownership bug",
+      "A minimal deterministic reproduction of the heap corruption",
+      "Confirmed root cause location in the session/mamba/KV release paths"
+    ],
+    "why": "The issue provides a crash stack and reproduction context, but the root cause is explicitly speculative ('most plausibly from a free/ownership bug') and no minimal reproduction or failing test is established. The candidate's own actionability evidence marks root_cause_signal=false, and the duplicate assessment flags semantic overlap with open PR #42072 (score 34) touching the same streaming_session.py path, which must be compared before any code work is actionable."
+  },
   "5c83dc9b124cd89d8c54abf1a8a017b88ad8aebb8f6f48d7418c48abd459fe3b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -57792,6 +57859,50 @@
       "Whether the repository's AI disclosure policy blocks automated contribution on this issue"
     ],
     "why": "Issue presents a concrete root-cause hypothesis (logical_topk_ready recorded inside a piecewise cudagraph capture segment, then waited on after eager_break_during_capture ends capture) with a bisected regression bracket and code anchors. However, supplied evidence shows an open PR #56825 with strong semantic overlap (21 distinctive terms including logical_topk_ready, eager_break_during_capture, piecewise) and an overlapping path (index_group.py), plus a potential duplicate issue #56900 sharing stack signatures. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review', which is a materially blocking unknown: whether the fix is already covered determines whether new code work is actionable."
+  },
+  "6eccc7e05f481c1076b4c6e7d42c110f8cadc9724c44b0a7ba5a94f4aa112f11": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes a new model-request-specific hook, while recent comments state merged #6696 already provides @durable_operation and the motivating SpendLimits now uses it.",
+      "Issue claims exactly-once commit for external writes, while comments argue durable placement alone cannot guarantee exactly-once external effects without effect identity/idempotency or reconciliation."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "durable_exec/temporal/_durability.py",
+      "durable_exec/dbos/_durability.py",
+      "durable_exec/prefect/_durability.py",
+      "durable_exec/_utils.py",
+      "durable_exec/temporal/_run_context.py",
+      "durable_exec/_toolset.py",
+      "tests/durable_exec/test_capability_durable_operation.py"
+    ],
+    "risks": [
+      "Adding a second durable-hook API may duplicate the general @durable_operation mechanism from #6696.",
+      "The 'exactly once' claim for arbitrary external writes is not established; crash windows between external commit and durable unit completion require effect identity/idempotency or reconciliation.",
+      "PR #9701 overlaps durable_exec paths and may conflict with or partially cover the change.",
+      "Assignment is required by repository policy, so unassigned implementation may be rejected."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Re-run the original SpendLimits double-accrual reproduction against current main c68786e9bc525574daa9914b23de05daf9ca4ca0 under Temporal, DBOS, and Prefect.",
+      "Run tests/durable_exec/test_capability_durable_operation.py and confirm whether @durable_operation covers the reported hook-side-effect path.",
+      "If a gap remains, add a focused regression test that exercises a capability hook writing to an external store across replay/recovery and asserts single logical commit."
+    ],
+    "unknowns": [
+      "Whether the original reproduction still fails on current main after #6696.",
+      "Whether maintainers consider the issue superseded by #6696 or still want the proposed hook.",
+      "Whether the repository will assign the issue to an external contributor.",
+      "Whether PR #9701 already covers the relevant durable_exec behavior."
+    ],
+    "why": "The issue proposes a new AbstractCapability hook (after_durable_model_request) to run side-effecting capability code inside the durable model-request unit. However, supplied comments assert that merged #6696 already provides a general @durable_operation mechanism, that the motivating SpendLimits consumer now uses it, and that tests/durable_exec/test_capability_durable_operation.py passes on current main. This creates unresolved duplicate/merged-fix coverage: it is unclear whether the original reproduction still fails on main or whether the issue is superseded. Additionally, the submission policy is needs_assignment and the pre-task evidence flags assignment_required, so code work is not actionable without assignment."
   },
   "6efd5cabce57452838813df6796b0a5e096ac9e953d7c54297e1cc1c82ba0380": {
     "confidence": 0.7,
@@ -101526,6 +101637,44 @@
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to re-check the updated chunk budget before scanning the waiting queue, causing unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. An open PR exists but lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "c676cf653532ce2d3ab8f3ae3a42ea4c045cb387021df055c46e9a96a26ea499": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal=false conflicts with the detailed root cause and traceback in issue_data.issue_body",
+      "candidate.open_pr_assessment reports semantic_overlap_requires_review with PR #42210 while also listing only unrelated Mamba/HiCache/AMD PRs as overlaps"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: release draft embed/lm_head before target/draft pool sizing",
+      "python/sglang/srt/speculative/eagle_worker_v2.py: ensure early init_lm_head/init_token_map is idempotent with alloc_memory_pool path",
+      "python/sglang/srt/models/qwen3_5_mtp.py: optionally avoid materializing redundant draft embed/lm_head at load time"
+    ],
+    "risks": [
+      "Early init_lm_head may not be safe for all draft configurations (standalone EAGLE, different-checkpoint drafts, PP ranks without draft)",
+      "The try/except fallback could mask a real failure and leave the late-release path as the only protection",
+      "Existing PR #42210 may already cover the same root cause, making a new contribution duplicative"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the provided Qwen3.8-27B-NVFP4 EAGLE/MTP command on 2 GPUs and confirm the pre-patch OOM at draft pool torch.zeros",
+      "Apply the early-release patch and verify target KV pool reaches requested --max-total-tokens 139000 with non-trivial free memory",
+      "Add a regression test asserting draft embed/lm_head tensors are shared with target before pool profiling and that init_lm_head remains idempotent when called again in alloc_memory_pool"
+    ],
+    "unknowns": [
+      "Whether PR #42210 already implements the same early-release fix or otherwise covers this root cause",
+      "Whether the base_sha_changed and duplicate_changed pre-review failures reflect a stale base or a real duplicate",
+      "Whether the proposed scheduler-side early release is acceptable to maintainers versus the more invasive loader-side fix"
+    ],
+    "why": "Issue describes a plausible startup OOM from redundant draft embed/lm_head copies and proposes an early-release scheduler hook, but the supplied evidence is internally contradictory about coverage: the candidate's own actionability evidence sets root_cause_signal=false while the issue body supplies a concrete root cause, traceback, and measured before/after table. The duplicate assessment also reports semantic overlap with PR #42210 requiring human comparison, and the pre-review gate failed on base_sha_changed and duplicate_changed. These unresolved coverage/duplicate facts determine whether new code work is actionable."
+  },
   "c6824b58e9523d67fd0b08ff5936eb201be741117ffd6e67be61c2f4a58aee9b": {
     "confidence": 0.85,
     "contradictions": [
@@ -119711,6 +119860,39 @@
       "Whether maintainers accept the root cause analysis; status of PR #1726 and its failing CI details"
     ],
     "why": "Issue reports stale get_episodes results; maintainer comment attributes to queue latency, but user analysis identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent episodes. Existing PR #1726 addresses this but has failing CI and lacks full evidence. A materially better PR with robust tests and root-cause analysis is plausible."
+  },
+  "e771240aeacf34bb09a57d3f1acb4a6f4964b2557534c16dedbc85e7782cd07b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks #3642 as CLOSED draft with root_cause_coverage=false while also reporting technical_complete=true and semantic_overlap_count=4, leaving coverage unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mcp-types ServerCapabilities/ClientCapabilities model config to preserve unknown keys",
+      "ServerRunner._serialize / serialize_server_result sieve behavior for capability keys"
+    ],
+    "risks": [
+      "Broadening extra='allow' on capability models may weaken schema validation or leak cross-era keys",
+      "Overlap with closed draft PR #3642 could make the change redundant or conflict with maintainer intent"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting ServerCapabilities(tools={}, events={}).model_dump(by_alias=True, exclude_none=True) retains 'events'",
+      "End-to-end Streamable HTTP server/discover test asserting capabilities.events appears on the wire",
+      "Verify malformed known fields still fail validation and nested known capability objects remain closed"
+    ],
+    "unknowns": [
+      "Whether closed draft PR #3642 already implements or supersedes the proposed fix",
+      "Maintainer preference among the three proposed fix options (extra='allow', supported extension mechanism, first-class Events support)"
+    ],
+    "why": "Issue describes a concrete root cause (ServerCapabilities drops unknown keys; ServerRunner._serialize sieves results) with a minimal repro, and commenters report independent replays. However, the supplied duplicate assessment is unresolved: PR #3642 ('Keep unknown server and client capability keys') references the issue with COVERAGE relation and is CLOSED/draft, and the duplicate status is explicitly 'human_review_required'. Whether that closed draft already covers the fix materially determines whether new code work is actionable."
   },
   "e79735d9395873543a71c9b38ee8a3546e0188925c3a31dd857861f1a17f568c": {
     "confidence": 0.8,
