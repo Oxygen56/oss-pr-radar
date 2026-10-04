@@ -208,6 +208,7 @@ VALIDATION_PREFETCH_TIMEOUTS = {
     "go_locked_download": 300,
     "uv_locked_sync": 600,
     "npm_locked_install": 600,
+    "npm_patch_package_apply": 600,
     "pnpm_locked_install": 600,
 }
 VALIDATION_POLICY_REVISION = "ci_delegation_v1"
@@ -963,7 +964,10 @@ def _is_immediate_recovery(state: dict[str, Any] | None) -> bool:
     if code in IMMEDIATE_RECOVERY_ERROR_CODES:
         return True
     message = str(state.get("message") or "").casefold()
-    if code == "other" and message == "workspace routing discovery timed out":
+    if code == "other" and message in (
+        "workspace routing discovery timed out",
+        "workspace routing discovery failed",
+    ):
         return True
     return code == "other" and any(
         marker in message
@@ -19573,6 +19577,20 @@ def _validation_prefetch_plan(
                     ],
                 }
             )
+            manifest = json.loads((root / "package.json").read_text(encoding="utf-8"))
+            scripts = manifest.get("scripts") if isinstance(manifest, dict) else None
+            if isinstance(scripts, dict) and scripts.get("postinstall") == "patch-package":
+                commands.append(
+                    {
+                        "kind": "npm_patch_package_apply",
+                        "cwd": str(root),
+                        "argv": [
+                            "node",
+                            "node_modules/patch-package/index.js",
+                            "--error-on-fail",
+                        ],
+                    }
+                )
     if (
         "pnpm" in failure_text.casefold()
         or "node_modules" in failure_text.casefold()
@@ -19699,7 +19717,7 @@ def _validation_policy_reassessment_needed(candidate: dict[str, Any]) -> bool:
 def _execute_validation_prefetch(
     candidate: dict[str, Any], commands: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Run only the deterministic lockfile prefetch plan built by this bridge."""
+    """Prepare locked dependencies and repository-declared dependency patches."""
 
     worktree = Path(candidate["worktreePath"]).resolve()
     allowed_argv = {
@@ -19711,6 +19729,11 @@ def _execute_validation_prefetch(
             "--ignore-scripts",
             "--no-audit",
             "--no-fund",
+        ],
+        "npm_patch_package_apply": [
+            "node",
+            "node_modules/patch-package/index.js",
+            "--error-on-fail",
         ],
         "pnpm_locked_install": [
             "pnpm",
@@ -19758,6 +19781,11 @@ def _execute_validation_prefetch(
             raise RuntimeError("validation prefetch cwd escapes the prepared worktree")
         if not cwd.is_dir():
             raise RuntimeError("validation prefetch cwd does not exist")
+        if kind == "npm_patch_package_apply":
+            manifest = json.loads((cwd / "package.json").read_text(encoding="utf-8"))
+            scripts = manifest.get("scripts") if isinstance(manifest, dict) else None
+            if not isinstance(scripts, dict) or scripts.get("postinstall") != "patch-package":
+                raise RuntimeError("validation dependency patch command is not declared")
         started = monotonic()
         timeout = VALIDATION_PREFETCH_TIMEOUTS[kind]
         try:

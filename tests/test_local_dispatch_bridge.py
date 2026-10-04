@@ -9816,6 +9816,7 @@ def test_recovery_skips_a_recently_active_thread(monkeypatch, tmp_path):
     [
         ("cyber_policy", "try rephrasing"),
         ("other", "workspace routing discovery timed out"),
+        ("other", "workspace routing discovery failed"),
     ],
 )
 def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(
@@ -9898,9 +9899,12 @@ def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(
     assert result["recoverable"][0]["terminalError"]["code"] == error_code
 
 
-@pytest.mark.parametrize("routing_timeout", [False, True])
+@pytest.mark.parametrize(
+    "routing_error",
+    [None, "workspace routing discovery timed out", "workspace routing discovery failed"],
+)
 def test_recovery_immediately_resumes_an_interrupted_validation_followup(
-    monkeypatch, tmp_path, routing_timeout
+    monkeypatch, tmp_path, routing_error
 ):
     store, worktree = registered_store(tmp_path)
     run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
@@ -9936,9 +9940,9 @@ def test_recovery_immediately_resumes_an_interrupted_validation_followup(
         )
 
     interrupted = {
-        "status": "failed" if routing_timeout else "interrupted",
-        "code": "other" if routing_timeout else "turn_interrupted",
-        "message": "workspace routing discovery timed out" if routing_timeout else "interrupted",
+        "status": "failed" if routing_error else "interrupted",
+        "code": "other" if routing_error else "turn_interrupted",
+        "message": routing_error or "interrupted",
         "turnId": "turn-validation",
     }
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
@@ -10172,7 +10176,8 @@ def test_refreshed_quota_recovery_preserves_retry_limit(monkeypatch, tmp_path):
     assert exhausted[0]["reason"] == "RECOVERY_RETRY_EXHAUSTED"
 
 
-def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path):
+@pytest.mark.parametrize("routing_failed", [False, True])
+def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path, routing_failed):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
         connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER)")
@@ -10200,9 +10205,11 @@ def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path):
         lambda _ids: {
             "thread-1": {
                 "turnId": "turn-1",
-                "status": "interrupted",
-                "code": "turn_interrupted",
-                "message": "interrupted",
+                "status": "failed" if routing_failed else "interrupted",
+                "code": "other" if routing_failed else "turn_interrupted",
+                "message": "workspace routing discovery failed"
+                if routing_failed
+                else "interrupted",
             }
         },
     )
@@ -10258,7 +10265,8 @@ def test_interrupted_recovery_keeps_active_worker_despite_previous_abort(monkeyp
     assert MODULE._rearm_interrupted_recovery_turns(Store()) == ([], [])
 
 
-def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
+@pytest.mark.parametrize("routing_failed", [False, True])
+def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path, routing_failed):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
         connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER)")
@@ -10287,9 +10295,11 @@ def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
         lambda _ids: {
             "thread-1": {
                 "turnId": "turn-2",
-                "status": "interrupted",
-                "code": "turn_interrupted",
-                "message": "interrupted",
+                "status": "failed" if routing_failed else "interrupted",
+                "code": "other" if routing_failed else "turn_interrupted",
+                "message": "workspace routing discovery failed"
+                if routing_failed
+                else "interrupted",
             }
         },
     )
@@ -10305,10 +10315,12 @@ def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
             "nonce": "nonce-2",
             "retry_count": 2,
             "terminal_error": {
-                "status": "interrupted",
-                "code": "turn_interrupted",
+                "status": "failed" if routing_failed else "interrupted",
+                "code": "other" if routing_failed else "turn_interrupted",
                 "turnId": "turn-2",
-                "message": "interrupted",
+                "message": "workspace routing discovery failed"
+                if routing_failed
+                else "interrupted",
             },
         }
     ]
@@ -32505,12 +32517,16 @@ def test_validation_followup_reassesses_ci_delegation_once(tmp_path):
     )
 
 
+@pytest.mark.parametrize("patch_package", [False, True])
 def test_validation_prefetch_execution_enforces_command_and_worktree_boundaries(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, patch_package
 ):
     worktree = tmp_path / "worktree"
     package = worktree / "ui"
     package.mkdir(parents=True)
+    (package / "package.json").write_text(
+        json.dumps({"scripts": {"postinstall": "patch-package"}} if patch_package else {})
+    )
     calls = []
 
     def fake_command(args, cwd=None, timeout=300, stdin=None):
@@ -32532,19 +32548,33 @@ def test_validation_prefetch_execution_enforces_command_and_worktree_boundaries(
             ],
         }
     ]
+    if patch_package:
+        commands.append(
+            {
+                "kind": "npm_patch_package_apply",
+                "cwd": str(package),
+                "argv": ["node", "node_modules/patch-package/index.js", "--error-on-fail"],
+            }
+        )
 
     completed = MODULE._execute_validation_prefetch(candidate, commands)
 
     assert calls == [
         (
-            commands[0]["argv"],
+            item["argv"],
             package.resolve(),
-            MODULE.VALIDATION_PREFETCH_TIMEOUTS["npm_locked_install"],
+            MODULE.VALIDATION_PREFETCH_TIMEOUTS[item["kind"]],
             None,
         )
+        for item in commands
     ]
     assert completed[0]["kind"] == "npm_locked_install"
     assert completed[0]["cwd"] == str(package.resolve())
+    assert [item["kind"] for item in completed] == [item["kind"] for item in commands]
+    if patch_package:
+        (package / "package.json").write_text("{}")
+        with pytest.raises(RuntimeError, match="not declared"):
+            MODULE._execute_validation_prefetch(candidate, [commands[1]])
 
     with pytest.raises(RuntimeError, match="not allowlisted"):
         MODULE._execute_validation_prefetch(
@@ -32615,6 +32645,13 @@ def test_validation_prefetch_timeout_has_structured_failure(monkeypatch, tmp_pat
             "result": "The targeted core regression command still fails before collection "
             "because the local vitest binary is absent.",
         },
+        {
+            "command": "npm run build",
+            "exitCode": 1,
+            "result": "Offline build with installed local tools generated required artifacts, "
+            "then failed in package CLI TypeScript checks because installed ink typings do not "
+            "expose the UI selection/selectable APIs used by unrelated CLI UI files.",
+        },
     ],
 )
 def test_validation_followup_reserve_runs_prefetch_inside_bridge(
@@ -32629,7 +32666,10 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(
     ui_root = worktree / "ui"
     ui_root.mkdir()
     (ui_root / "package-lock.json").write_text("{}\n", encoding="utf-8")
-    (ui_root / "package.json").write_text("{}\n", encoding="utf-8")
+    patch_package = failed_check["command"] == "npm run build"
+    (ui_root / "package.json").write_text(
+        json.dumps({"scripts": {"postinstall": "patch-package"}} if patch_package else {})
+    )
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value["changedFiles"] = ["runtime.py", "ui/app.tsx"]
     value["tests"] = [failed_check]
@@ -32653,7 +32693,7 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(
 
     def fake_execute(candidate, commands):
         executed.extend(commands)
-        return [{"kind": commands[0]["kind"], "cwd": commands[0]["cwd"], "durationMs": 1}]
+        return [{"kind": item["kind"], "cwd": item["cwd"], "durationMs": 1} for item in commands]
 
     monkeypatch.setattr(MODULE, "_execute_validation_prefetch", fake_execute)
 
@@ -32666,8 +32706,17 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(
         )
     )
 
-    assert [item["kind"] for item in executed] == ["npm_locked_install"]
+    expected_kinds = ["npm_locked_install"]
+    if patch_package:
+        expected_kinds.append("npm_patch_package_apply")
+        assert executed[1]["argv"] == [
+            "node",
+            "node_modules/patch-package/index.js",
+            "--error-on-fail",
+        ]
+    assert [item["kind"] for item in executed] == expected_kinds
     assert reserved["prefetch"][0]["kind"] == "npm_locked_install"
+    assert [item["kind"] for item in reserved["prefetch"]] == expected_kinds
     assert "系统已按项目锁文件补齐缺失依赖" in reserved["prompt"]
     context_path = worktree / ".oss-pr-radar" / "task-context.json"
     context = json.loads(context_path.read_bytes())
