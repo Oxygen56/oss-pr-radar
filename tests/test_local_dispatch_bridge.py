@@ -31407,6 +31407,15 @@ def _completed_validation_result_with_omitted_task_id(
         )
         result_path.write_text(json.dumps(initial_source), encoding="utf-8")
     if complete_normal_validation_audit:
+        if completed_fixture is not None:
+            completed_result_raw = result_path.read_bytes()
+            MODULE.write_task_context(
+                store,
+                issue_url="https://github.com/a/b/issues/1",
+                thread_id="thread-1",
+                cwd=worktree,
+            )
+            assert result_path.read_bytes() == completed_result_raw
         initial_context_path = result_path.parent / "task-context.json"
         initial_context_raw = initial_context_path.read_bytes()
         initial_result_raw = result_path.read_bytes()
