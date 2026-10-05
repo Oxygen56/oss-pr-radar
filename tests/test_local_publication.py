@@ -183,6 +183,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
 
     assert [operation for _, operation in calls] == [
         "context-recover",
+        "context-sync",
         "ingest-results",
         "independent-review-run",
         "title-reconcile",
@@ -247,7 +248,10 @@ def test_implementation_context_is_synced_before_followup_drain(tmp_path):
 
     result = advance_once(tmp_path, runner=runner)
 
-    assert calls.index("context-sync") < calls.index("drain-once")
+    assert calls.index("context-sync") < calls.index("ingest-results")
+    assert calls.index("context-sync", calls.index("ingest-results") + 1) < calls.index(
+        "drain-once"
+    )
     assert result["ok"] is True
     assert result["contextsSynced"][0]["key"] == "a/b#1"
     assert result["drain"]["action"] == "implementation_followup_dispatched"
@@ -755,6 +759,7 @@ def test_fast_publication_surfaces_title_reconciliation_failure(tmp_path):
 
     assert calls == [
         "context-recover",
+        "context-sync",
         "ingest-results",
         "independent-review-run",
         "title-reconcile",
@@ -829,6 +834,7 @@ def test_missing_historical_worktree_does_not_stop_fast_publication(tmp_path):
 
     assert calls == [
         "context-recover",
+        "context-sync",
         "ingest-results",
         "independent-review-run",
         "title-reconcile",
@@ -878,8 +884,9 @@ def test_independent_review_update_is_reingested_before_publication(tmp_path):
 
     result = advance_once(tmp_path, runner=runner)
 
-    assert calls[:4] == [
+    assert calls[:5] == [
         "context-recover",
+        "context-sync",
         "ingest-results",
         "independent-review-run",
         "ingest-results",
@@ -990,8 +997,9 @@ def test_review_update_continues_when_an_older_candidate_is_invalid(tmp_path):
 
     result = advance_once(tmp_path, runner=runner)
 
-    assert calls[:4] == [
+    assert calls[:5] == [
         "context-recover",
+        "context-sync",
         "ingest-results",
         "independent-review-run",
         "ingest-results",
@@ -1087,13 +1095,13 @@ def test_ingestion_failure_stops_publication(tmp_path):
 
     def runner(_root: Path, operation: str):
         calls.append(operation)
-        if operation == "context-recover":
+        if operation in {"context-recover", "context-sync"}:
             return {"ok": True, "verified": 0, "errors": []}
         return {"ok": False, "errors": [{"error": "invalid result"}]}
 
     result = advance_once(tmp_path, runner=runner)
 
-    assert calls == ["context-recover", "ingest-results"]
+    assert calls == ["context-recover", "context-sync", "ingest-results"]
     assert result["ok"] is False
     assert result["published"] == []
     assert result["errors"] == [{"error": "invalid result"}]
