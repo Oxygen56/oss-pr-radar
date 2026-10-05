@@ -14506,8 +14506,61 @@ def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
     artifact_path = Path(original_gate["artifactPath"])
     artifact_raw = artifact_path.read_bytes()
 
-    first = MODULE.recover_shared_task_contexts(store)
-    second = MODULE.recover_shared_task_contexts(store)
+    rejection_trace = []
+    recovery_lines = []
+
+    def observe_rejection(frame, event, arg):
+        if frame.f_code.co_filename != MODULE.__file__ or frame.f_code.co_name not in {
+            "restore_private",
+            "_private_context_matches_current_ledger",
+        }:
+            return None
+        if frame.f_code.co_name == "restore_private":
+            if event == "line":
+                recovery_lines.append(frame.f_lineno)
+                del recovery_lines[:-16]
+            elif event == "exception" and str(arg[1]) == (
+                "published result quarantine follow-up is invalid"
+            ):
+                rejection_trace.append(
+                    {
+                        "function": frame.f_code.co_name,
+                        "line": frame.f_lineno,
+                        "lastExecutedLines": list(recovery_lines),
+                        "currentFollowup": frame.f_locals.get("current_followup"),
+                        "sharedFollowup": frame.f_locals.get("shared_followup"),
+                    }
+                )
+        elif event == "return" and arg is False:
+            rejection_trace.append(
+                {
+                    "function": frame.f_code.co_name,
+                    "line": frame.f_lineno,
+                    "field": frame.f_locals.get("field"),
+                    "observed": frame.f_locals.get("observed"),
+                    "expected": frame.f_locals.get("value"),
+                }
+            )
+        return observe_rejection
+
+    previous_trace = sys.gettrace()
+    if missing_private_followup:
+        sys.settrace(observe_rejection)
+    try:
+        first = MODULE.recover_shared_task_contexts(store)
+        second = MODULE.recover_shared_task_contexts(store)
+    finally:
+        if missing_private_followup:
+            sys.settrace(previous_trace)
+    if missing_private_followup:
+        assert not first["errors"] and not second["errors"], json.dumps(
+            {
+                "originalErrors": [first["errors"], second["errors"]],
+                "rejectionTrace": rejection_trace,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
 
     if task_scoped:
         assert first["errors"] == second["errors"] == []
