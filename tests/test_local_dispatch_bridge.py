@@ -31668,7 +31668,7 @@ def _assert_completed_validation_envelope_original_queue_and_ingest(
     assert input_path.read_bytes() == original_input
     assert context_path.read_bytes() == original_context
     resumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
-    assert resumed["ok"] and resumed["errors"] == [], resumed
+    assert resumed["ok"] and resumed["errors"] == [], json.dumps(resumed, indent=2, sort_keys=True)
     assert resumed.get("workBlocked", []) == []
     assert resumed["validationDeferred"] and resumed["publicationRequests"] == [], resumed
     if current_context_digest is not None:
