@@ -442,7 +442,13 @@ idempotent local cleanup.
 `--status` is a runtime-bound read-only check. `--stage` requires the short-lived
 signed stage-only authorization; `--activate`, `--ensure`, and `--uninstall`
 require the active immutable release and full operational authorization before
-any plist write or service operation. The
+any plist write or service mutation. After a complete successful uninstall has
+revoked that authorization, a repeated `--uninstall` can only observe an already
+removed set: all four plists must be absent, every service read must confirm
+absence, and the original slow-worker lock and quiescence checks must pass.
+It changes no service, plist, or authorization record. An existing invalid
+authorization still rejects the command; any remaining worker requires the
+original full authorization. The
 historical `install_local_publication_agent.py` entrypoint is only a
 compatibility forwarder to the three-worker installer; it cannot generate,
 install, or start the old monolithic or fast-only service.

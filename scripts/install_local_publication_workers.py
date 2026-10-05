@@ -726,6 +726,39 @@ def uninstall_workers(
         raise RuntimeError("worker uninstall refused: slow worker lock is busy") from exc
 
 
+def observe_uninstalled_workers(
+    specs: list[dict[str, object]], *, home: Path, domain: str, runtime_root: Path
+) -> dict[str, object]:
+    """Confirm an already removed worker set without changing services or files."""
+
+    _validate_specs(specs)
+    runtime_root = runtime_root.resolve()
+    try:
+        with exclusive_lock(runtime_root / "state" / SLOW_WORK_LOCK):
+            _require_slow_worker_quiescent(runtime_root=runtime_root, domain=domain)
+            for spec in specs:
+                path = home / "Library" / "LaunchAgents" / f"{spec['Label']}.plist"
+                if path.exists() or path.is_symlink():
+                    raise RuntimeError("worker uninstall requires authorization: plist remains")
+            for spec in specs:
+                observation = launchctl("print", f"{domain}/{spec['Label']}", check=False)
+                if (
+                    observation.returncode != 113
+                    or "Could not find service" not in observation.stderr
+                ):
+                    raise RuntimeError(
+                        "worker uninstall requires authorization: service is present or uncertain"
+                    )
+            return {
+                "ok": True,
+                "changed": False,
+                "workers": [{"label": str(spec["Label"]), "installed": False} for spec in specs],
+                "errors": [],
+            }
+    except RuntimeLockBusy as exc:
+        raise RuntimeError("worker uninstall refused: slow worker lock is busy") from exc
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime-root", type=Path)
@@ -789,8 +822,21 @@ def main() -> int:
             )
             return 0
         if args.uninstall:
-            require_operational_authorization(runtime_root)
-            result = uninstall_workers(specs, home=home, domain=domain, runtime_root=runtime_root)
+            try:
+                require_operational_authorization(runtime_root)
+            except RuntimeError:
+                if (
+                    authorization_path(runtime_root).exists()
+                    or authorization_path(runtime_root).is_symlink()
+                ):
+                    raise
+                result = observe_uninstalled_workers(
+                    specs, home=home, domain=domain, runtime_root=runtime_root
+                )
+            else:
+                result = uninstall_workers(
+                    specs, home=home, domain=domain, runtime_root=runtime_root
+                )
         elif args.stage:
             if (
                 authorization_path(runtime_root).exists()

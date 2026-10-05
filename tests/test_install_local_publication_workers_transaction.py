@@ -591,6 +591,9 @@ def test_worker_write_modes_require_authorization_before_any_launchctl_or_plist_
             ),
         )
     else:
+        authorization = authorization_path(tmp_path)
+        authorization.parent.mkdir(parents=True, exist_ok=True)
+        authorization.write_bytes(b"invalid existing authorization")
         monkeypatch.setattr(
             INSTALL,
             "require_operational_authorization",
@@ -610,6 +613,48 @@ def test_worker_write_modes_require_authorization_before_any_launchctl_or_plist_
     assert INSTALL.main() == 1
     assert fake.calls == []
     assert not list((home / "Library" / "LaunchAgents").glob("*.plist"))
+
+
+def test_original_uninstall_cli_observes_already_uninstalled_workers_after_auth_revocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "path": str(tmp_path / "release")},
+    )
+    monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: specs(tmp_path))
+    calls = []
+
+    def observe(*arguments, check=True):
+        calls.append(arguments)
+        assert arguments[0] == "print" and check is False
+        return subprocess.CompletedProcess([], 113, "", "Could not find service")
+
+    monkeypatch.setattr(INSTALL, "launchctl", observe)
+    monkeypatch.setattr(
+        INSTALL,
+        "revoke_operational_authorization",
+        lambda *_args, **_kwargs: pytest.fail("already uninstalled observation must not revoke"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["install_local_publication_workers.py", "--runtime-root", str(tmp_path), "--uninstall"],
+    )
+
+    assert INSTALL.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is True and result["uninstalled"] is True
+    assert result["changed"] is False and len(result["workers"]) == 4
+    assert {call[1].split("/")[-1] for call in calls} == set(INSTALL.FIXED_WORKER_LABELS)
+    assert all(call[0] == "print" for call in calls)
+    assert not list((home / "Library" / "LaunchAgents").glob("*.plist"))
+    assert not authorization_path(tmp_path).exists()
+    assert not worker_staging_authorization_path(tmp_path).exists()
+    assert not staged_worker_receipt_path(tmp_path).exists()
 
 
 def test_authorized_stage_uses_only_the_current_required_worker_specs(
