@@ -14415,15 +14415,21 @@ def _published_followup_store(
 
 
 @pytest.mark.parametrize(
-    ("result_error_field", "different_shared_wake", "task_scoped"),
+    ("result_error_field", "different_shared_wake", "missing_private_followup", "task_scoped"),
     [
-        ("contextDigest", False, True),
-        ("worktreePath", False, False),
-        ("contextDigest", True, False),
+        ("contextDigest", False, False, True),
+        ("worktreePath", False, False, False),
+        ("contextDigest", True, False, False),
+        ("contextDigest", False, True, True),
     ],
 )
 def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
-    monkeypatch, tmp_path, result_error_field, different_shared_wake, task_scoped
+    monkeypatch,
+    tmp_path,
+    result_error_field,
+    different_shared_wake,
+    missing_private_followup,
+    task_scoped,
 ):
     """Use the recovery entry point with the retained PR_OPEN envelope shape."""
 
@@ -14447,6 +14453,32 @@ def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
     shared_path = MODULE.shared_context_path(context["issueUrl"])
     MODULE._atomic_json(shared_path, shared)
     shared_raw = shared_path.read_bytes()
+    replacement_followup = None
+    if missing_private_followup:
+        private = dict(context, prFollowup=None)
+        local_path.write_text(MODULE.canonical_json(private), encoding="utf-8")
+        private_raw = local_path.read_bytes()
+        checked_at = iso_z(datetime.now(UTC))
+        store.import_pr_followups(
+            {
+                "version": "pr_followup_v3",
+                "generatedAt": checked_at,
+                "items": [
+                    {
+                        "url": pr_url,
+                        "headSha": published_head,
+                        "actionDigest": "replacement-action",
+                        "taskActionDigest": "replacement-task-action",
+                        "taskFollowupRequired": True,
+                        "taskActions": ["当前分支检查失败"],
+                        "evidence": {"actionableCheckNames": ["Ruff"]},
+                        "checkedAt": checked_at,
+                    }
+                ],
+            }
+        )
+        replacement_followup = store.active_pr_followup(context["key"])
+        assert replacement_followup["wake_digest"] != shared["prFollowup"]["wakeDigest"]
     result_path = Path(context["resultPath"])
     value = {
         "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
@@ -14503,6 +14535,9 @@ def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
     assert current["publicationReceipt"]["commitSha"] == published_head
     assert store.active_task_quarantine(context["key"])["reason"] == "SHARED_CONTEXT_INVALID"
     assert store.publication_work_items() == []
+    if missing_private_followup:
+        assert store.active_pr_followup(context["key"]) == replacement_followup
+        assert current["prFollowup"]["wakeDigest"] == replacement_followup["wake_digest"]
 
 
 def test_late_pr_followup_result_unblocks_pending_new_issue_claim(monkeypatch, tmp_path):

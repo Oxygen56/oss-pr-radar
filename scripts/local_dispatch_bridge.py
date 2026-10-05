@@ -4187,9 +4187,9 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                 and str(exc) == "published task result mismatch: contextDigest"
                 and shared_cleanup_path is not None
             ):
-                # An observation-only split must retain the shared task's
-                # quarantine, rather than turn its rejected result into a
-                # controller-wide private-context failure.
+                # Retain this task's rejected result in quarantine. A newer
+                # ledger-bound follow-up may coexist with an older shared
+                # wake and a private projection made between the two wakes.
                 try:
                     shared_raw, shared_stat, shared_path = _read_shared_context_file(
                         shared_cleanup_path
@@ -4203,14 +4203,54 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                     mirrors = [
                         json.loads(canonical_json(item)) for item in (context, shared_context)
                     ]
-                    for mirror in mirrors:
-                        followup = mirror.get("prFollowup")
-                        if not isinstance(followup, dict) or not isinstance(
-                            followup.get("evidence"), dict
+                    if mirrors[0].get("prFollowup") is None:
+                        current = store.task_context(
+                            issue_url=str(context.get("issueUrl") or ""),
+                            intent_id=str(context.get("intentId") or ""),
+                            thread_id=str(context.get("threadId") or ""),
+                            worktree_path=str(context.get("worktreePath") or ""),
+                        )
+                        current_followup = current.get("prFollowup") if current else None
+                        shared_followup = mirrors[1].get("prFollowup")
+                        if (
+                            not isinstance(current_followup, dict)
+                            or not isinstance(shared_followup, dict)
+                            or not isinstance(current_followup.get("evidence"), dict)
+                            or not isinstance(shared_followup.get("evidence"), dict)
+                            or _task_context_binding(current) != _task_context_binding(context)
+                            or not re.fullmatch(
+                                r"[0-9a-f]{64}", str(current_followup.get("wakeDigest") or "")
+                            )
+                            or not re.fullmatch(
+                                r"[0-9a-f]{64}", str(shared_followup.get("wakeDigest") or "")
+                            )
+                            or current_followup["wakeDigest"] == shared_followup["wakeDigest"]
+                            or any(
+                                current_followup.get(field) != shared_followup.get(field)
+                                for field in ("prUrl", "headSha")
+                            )
+                            or parse_time(str(current_followup.get("checkedAt") or ""))
+                            <= parse_time(str(shared_followup.get("checkedAt") or ""))
+                            or not _private_context_matches_current_ledger(
+                                store, dict(context, prFollowup=current_followup)
+                            )
                         ):
                             raise RuntimeError("published result quarantine follow-up is invalid")
-                        followup.pop("checkedAt", None)
-                        followup["evidence"].pop("pullResponseDigest", None)
+                        # Only the comparison copy loses the obsolete wake.
+                        # Neither mirror, the active follow-up nor the rejected
+                        # result is rewritten or accepted by this quarantine.
+                        mirrors[1]["prFollowup"] = None
+                    else:
+                        for mirror in mirrors:
+                            followup = mirror.get("prFollowup")
+                            if not isinstance(followup, dict) or not isinstance(
+                                followup.get("evidence"), dict
+                            ):
+                                raise RuntimeError(
+                                    "published result quarantine follow-up is invalid"
+                                )
+                            followup.pop("checkedAt", None)
+                            followup["evidence"].pop("pullResponseDigest", None)
                     if mirrors[0] != mirrors[1]:
                         raise RuntimeError("published result quarantine mirrors disagree")
                     quarantined_item = _quarantine_shared_context(
