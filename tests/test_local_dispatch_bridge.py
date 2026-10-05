@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import fcntl
 import gc
 import hashlib
@@ -10972,6 +10973,75 @@ def test_validation_progress_marker_tracks_check_outcomes_not_wording():
 
     assert first == rewritten
     assert fixed != first
+
+
+def test_validation_progress_marker_ignores_success_rewrites_and_owned_tmp_suffix():
+    first = {
+        "tests": [
+            {"command": "test -x .venv/bin/python", "exitCode": 1},
+            {
+                "command": 'env TMPDIR="/private/tmp/opr-AXDy7X" '
+                'PATH="/opt/homebrew/opt/node@22/bin:$PATH" '
+                "npm -w packages/core run test:ci",
+                "exitCode": 1,
+                "summary": "2 failed, 34351 passed; cold scan 186.8ms",
+            },
+            {"command": "jq . .oss-pr-radar/task-context.json", "exitCode": 0},
+            {"command": "npm -w packages/core run lint", "exitCode": 0},
+        ]
+    }
+    repeated = {
+        "tests": [
+            {"command": "test -x .venv/bin/python", "exitCode": 1},
+            {
+                "command": 'env TMPDIR="/private/tmp/opr-o4NH0L" '
+                'PATH="/opt/homebrew/opt/node@22/bin:$PATH" '
+                "npm -w packages/core run test:ci",
+                "exitCode": 1,
+                "summary": "2 failed, 34351 passed; cold scan 203.3ms",
+            },
+            {"command": "sed -n '1,220p' .oss-pr-radar/task-context.json", "exitCode": 0},
+            {"command": "npm run lint -- packages/core/src/extension", "exitCode": 0},
+        ]
+    }
+    unchanged = MODULE._validation_progress_marker(first)
+
+    assert MODULE._validation_progress_marker(repeated) == unchanged
+    assert repeated["tests"][1]["command"].startswith('env TMPDIR="/private/tmp/opr-o4NH0L"')
+    fixed = copy.deepcopy(repeated)
+    fixed["tests"][1]["exitCode"] = 0
+    assert MODULE._validation_progress_marker(fixed) != unchanged
+    new_failure = copy.deepcopy(repeated)
+    new_failure["tests"][3]["exitCode"] = 1
+    assert MODULE._validation_progress_marker(new_failure) != unchanged
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "/opt/homebrew/opt/node@26/bin",
+        "/private/tmp/opr-AXDy7X/child",
+        "/private/tmp/opr-AXDy7XX",
+        "/tmp/opr-AXDy7X",
+        "npm -w packages/core run test -- src/extension/extensionManager.test.ts",
+    ],
+)
+def test_validation_progress_marker_preserves_failed_runtime_paths_and_arguments(replacement):
+    command = (
+        'env TMPDIR="/private/tmp/opr-AXDy7X" '
+        'PATH="/opt/homebrew/opt/node@22/bin:$PATH" '
+        "npm -w packages/core run test:ci"
+    )
+    if replacement.startswith("/opt/"):
+        changed = command.replace("/opt/homebrew/opt/node@22/bin", replacement)
+    elif replacement.startswith("/"):
+        changed = command.replace("/private/tmp/opr-AXDy7X", replacement)
+    else:
+        changed = command.replace("npm -w packages/core run test:ci", replacement)
+
+    assert MODULE._validation_progress_marker({"tests": [{"command": command, "exitCode": 1}]}) != (
+        MODULE._validation_progress_marker({"tests": [{"command": changed, "exitCode": 1}]})
+    )
 
 
 def test_app_server_watchdog_polls_on_wall_clock_despite_continuous_events(monkeypatch):

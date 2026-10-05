@@ -22163,6 +22163,22 @@ def _validation_progress_marker(value: dict[str, Any]) -> str | None:
         checks.append(check)
     if not checks:
         return None
+    failed_checks = [
+        check
+        for check in checks
+        if isinstance(check.get("exitCode"), int) and check["exitCode"] != 0
+    ]
+    if failed_checks:
+        # Successful auxiliary invocations cannot resolve an unchanged failure.
+        # Keep the failed commands and outcomes, except the random suffix of the
+        # exact task-local TMPDIR prescribed by the validation continuation.
+        checks = failed_checks
+        for check in checks:
+            check["command"] = re.sub(
+                r"(?<!\S)TMPDIR=(['\"]?)/private/tmp/opr-[A-Za-z0-9]{6}\1(?=\s|$)",
+                "TMPDIR=/private/tmp/opr-XXXXXX",
+                check["command"],
+            )
     checks.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
     return sha256_json({"checks": checks})
 
