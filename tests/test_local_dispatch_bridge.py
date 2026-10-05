@@ -37479,6 +37479,11 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
         calls.append(operation)
         if operation == "context-recover":
             return MODULE.recover_task_contexts(args)
+        if operation == "context-sync":
+            synced = MODULE.sync_task_contexts(args)
+            assert result_path.read_bytes() == original_raw
+            assert input_path.read_bytes() == old_input
+            return synced
         if operation == "ingest-results":
             with store.connect() as connection:
                 before = [
@@ -37516,6 +37521,7 @@ def test_completed_validation_delivers_missing_exact_private_review_with_current
         sys.settrace(previous_trace)
     assert calls == [
         "context-recover",
+        "context-sync",
         "ingest-results",
         "independent-review-run",
         "title-reconcile",

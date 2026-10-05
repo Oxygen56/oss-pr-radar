@@ -1634,6 +1634,8 @@ def test_slow_worker_retries_stale_owner_when_persisted_retry_elapsed(monkeypatc
             return {"ok": True, "errors": []}
         if operation == "context-recover":
             return {"ok": True, "verified": 0, "unavailable": [], "quarantined": [], "errors": []}
+        if operation == "context-sync":
+            return {"ok": True, "written": [], "errors": []}
         if operation == "ingest-results":
             return {
                 "ok": True,
@@ -1699,6 +1701,8 @@ def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch
             return {"ok": True, "errors": []}
         if operation == "context-recover":
             return {"ok": True, "verified": 0, "unavailable": [], "quarantined": [], "errors": []}
+        if operation == "context-sync":
+            return {"ok": True, "written": [], "errors": []}
         if operation == "ingest-results":
             return {
                 "ok": True,
@@ -1751,6 +1755,8 @@ def test_slow_worker_does_not_back_off_for_persisted_task_evidence_block(monkeyp
             return {"ok": True, "errors": []}
         if operation == "context-recover":
             return {"ok": True, "verified": 0, "unavailable": [], "errors": []}
+        if operation == "context-sync":
+            return {"ok": True, "written": [], "errors": []}
         if operation == "ingest-results":
             ingestion_count += 1
             return {
@@ -1813,6 +1819,8 @@ def test_slow_worker_marks_terminal_missing_worktree_skip_as_success(monkeypatch
             return {"ok": True, "errors": []}
         if operation == "context-recover":
             return {"ok": True, "verified": 0, "unavailable": [], "errors": []}
+        if operation == "context-sync":
+            return {"ok": True, "written": [], "errors": []}
         if operation == "ingest-results":
             return {
                 "ok": True,
@@ -2251,6 +2259,7 @@ def test_synced_actionable_pr_followup_is_exposed_to_the_serial_drain(tmp_path):
         calls.append(operation)
         responses = {
             "context-recover": {"ok": True, "errors": [], "unavailable": []},
+            "context-sync": {"ok": True, "written": [], "errors": []},
             "ingest-results": {"ok": True},
             "independent-review-run": {"ok": True, "updated": []},
             "title-reconcile": {"ok": True},
@@ -2396,6 +2405,7 @@ def test_replayed_pr_followup_without_a_candidate_does_not_retrigger_drain(tmp_p
         calls.append(operation)
         responses = {
             "context-recover": {"ok": True, "errors": [], "unavailable": []},
+            "context-sync": {"ok": True, "written": [], "errors": []},
             "ingest-results": {"ok": True},
             "independent-review-run": {"ok": True, "updated": []},
             "title-reconcile": {"ok": True},
@@ -2492,6 +2502,7 @@ def test_synced_pending_work_triggers_the_existing_serial_drain(tmp_path):
         calls.append(operation)
         responses = {
             "context-recover": {"ok": True, "errors": [], "unavailable": []},
+            "context-sync": {"ok": True, "written": [], "errors": []},
             "ingest-results": {"ok": True},
             "independent-review-run": {"ok": True, "updated": []},
             "title-reconcile": {"ok": True},
