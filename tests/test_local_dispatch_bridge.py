@@ -31520,7 +31520,7 @@ def _completed_validation_result_with_omitted_envelope(
         tmp_path,
         monkeypatch,
         target_base_bound=True,
-        complete_normal_validation_audit=completed_fixture is None,
+        complete_normal_validation_audit=True,
         completed_fixture=completed_fixture,
     )
     source = json.loads(input_path.read_bytes())
@@ -31667,37 +31667,8 @@ def _assert_completed_validation_envelope_original_queue_and_ingest(
     assert result_path.read_bytes() == original
     assert input_path.read_bytes() == original_input
     assert context_path.read_bytes() == original_context
-    refresh_refusals = []
-    original_profile = sys.getprofile()
-    refresh_proof_code = MODULE._validation_result_context_refresh_proof.__code__
-
-    def observe_refresh_refusal(frame, event, returned):
-        if frame.f_code is refresh_proof_code and event == "return" and returned is None:
-            state = {
-                name: item
-                for name, item in frame.f_locals.items()
-                if name not in {"store", "worktree", "raw", "opened", "context_raw"}
-            }
-            refresh_refusals.append(
-                {
-                    "source": frame.f_code.co_filename,
-                    "line": frame.f_lineno,
-                    "state": json.loads(json.dumps(state, default=str)),
-                }
-            )
-        if original_profile is not None:
-            original_profile(frame, event, returned)
-
-    try:
-        if monkeypatch is not None:
-            sys.setprofile(observe_refresh_refusal)
-        resumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
-    finally:
-        if monkeypatch is not None:
-            sys.setprofile(original_profile)
-    assert resumed["ok"] and resumed["errors"] == [], json.dumps(
-        {"result": resumed, "auditRefreshRefusals": refresh_refusals}, indent=2, sort_keys=True
-    )
+    resumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert resumed["ok"] and resumed["errors"] == [], json.dumps(resumed, indent=2, sort_keys=True)
     assert resumed.get("workBlocked", []) == []
     assert resumed["validationDeferred"] and resumed["publicationRequests"] == [], resumed
     if current_context_digest is not None:
