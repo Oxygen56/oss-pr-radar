@@ -127,8 +127,11 @@ def test_run_bridge_requires_explicit_boolean_success(monkeypatch, tmp_path, res
         )
 
 
-def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
+@pytest.mark.parametrize("audit_refreshed", [False, True])
+def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path, audit_refreshed):
     calls = []
+    context_digest = "old-audit"
+    authority_digest = context_digest
     responses = {
         "context-recover": {"ok": True, "verified": 1, "errors": []},
         "ingest-results": {
@@ -158,6 +161,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
         "context-sync": {
             "ok": True,
             "written": [{"key": "a/b#1", "path": "/tmp/task-context.json"}],
+            "refreshed": [{"key": "a/b#1", "status": "ALLOW"}] if audit_refreshed else [],
             "errors": [],
         },
         "publication-feedback-list": {
@@ -176,7 +180,14 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     }
 
     def runner(root: Path, operation: str):
+        nonlocal context_digest, authority_digest
         calls.append((root, operation))
+        if operation == "context-sync" and audit_refreshed:
+            context_digest = "refreshed-audit"
+        elif operation == "context-recover":
+            authority_digest = context_digest
+        elif operation == "ingest-results":
+            assert authority_digest == context_digest
         return responses[operation]
 
     result = advance_once(tmp_path, runner=runner)
@@ -184,6 +195,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     assert [operation for _, operation in calls] == [
         "context-recover",
         "context-sync",
+        *(["context-recover"] if audit_refreshed else []),
         "ingest-results",
         "independent-review-run",
         "title-reconcile",
@@ -201,6 +213,28 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
     assert result["contextsSynced"][0]["key"] == "a/b#1"
     assert result["drain"]["threadId"] == "thread-3"
+    assert bool(result["contextRecoveryAfterSync"]) is audit_refreshed
+
+
+def test_refreshed_context_recovery_failure_stops_before_ingestion(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-sync":
+            return {"ok": True, "refreshed": [{"key": "a/b#1"}], "errors": []}
+        assert operation == "context-recover"
+        if len(calls) == 1:
+            return {"ok": True, "errors": []}
+        return {"ok": False, "errors": [{"key": "a/b#1", "error": "invalid signed context"}]}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls == ["context-recover", "context-sync", "context-recover"]
+    assert result["ok"] is False
+    assert result["errors"] == [{"key": "a/b#1", "error": "invalid signed context"}]
+    assert result["resultsIngested"] == []
+    assert result["published"] == []
 
 
 def test_implementation_context_is_synced_before_followup_drain(tmp_path):
