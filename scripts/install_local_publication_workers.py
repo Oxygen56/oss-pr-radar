@@ -719,7 +719,9 @@ def uninstall_workers(
         with exclusive_lock(runtime_root / "state" / SLOW_WORK_LOCK):
             _require_slow_worker_quiescent(runtime_root=runtime_root, domain=domain)
             snapshots = _snapshot_workers(specs, home=home, domain=domain)
-            return _uninstall_snapshots(snapshots, domain=domain)
+            result = _uninstall_snapshots(snapshots, domain=domain)
+            revoke_operational_authorization(runtime_root)
+            return result
     except RuntimeLockBusy as exc:
         raise RuntimeError("worker uninstall refused: slow worker lock is busy") from exc
 

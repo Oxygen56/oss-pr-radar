@@ -416,7 +416,13 @@ rerun the live PR snapshot plus Stage 6 verification/rehearsal, regenerate
 managed-counts, then repeat staging, preflight, authorization, worker activation,
 and final acceptance. If it contains `automation_snapshot_stale`, regenerate the
 automation snapshot while the same pause is active and repeat preflight through
-final acceptance. Never extend the ten-minute freshness limit or accept a changed
+final acceptance. Workers must first be uninstalled: a successful complete
+uninstall revokes the previous operational and staging authorizations, allowing
+the same release to repeat managed-counts evidence, staging, snapshot capture,
+preflight, authorization, activation, and final acceptance. Worker stop or plist
+removal failures preserve the previous authorization along with the restored
+workers.
+Never extend the ten-minute freshness limit or accept a changed
 PR projection as an append-only bookkeeping update.
 
 The pause helper keeps `radar.yml` enabled. It closes the repository-variable

@@ -14,6 +14,11 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.local_publication import slow_advance_once
+from oss_pr_radar.operational_auth import (
+    authorization_path,
+    staged_worker_receipt_path,
+    worker_staging_authorization_path,
+)
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "install_local_publication_workers.py"
 sys.path.insert(0, str(SCRIPT.parent))
@@ -328,6 +333,17 @@ def test_uninstall_bootout_failure_restores_all_three_workers(
     launch_dir = home / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True)
     worker_specs = specs(tmp_path)
+    (tmp_path / "state").mkdir()
+    authorization_before = {
+        path: b"keep authorization"
+        for path in (
+            authorization_path(tmp_path),
+            worker_staging_authorization_path(tmp_path),
+            staged_worker_receipt_path(tmp_path),
+        )
+    }
+    for path, content in authorization_before.items():
+        path.write_bytes(content)
     before: dict[Path, bytes] = {}
     modes: dict[Path, int] = {}
     for index, spec in enumerate(worker_specs):
@@ -353,6 +369,7 @@ def test_uninstall_bootout_failure_restores_all_three_workers(
     assert {path: path.stat().st_mode & 0o777 for path in before} == modes
     assert fake.loaded == set(services)
     assert not list(launch_dir.glob(".*.tmp"))
+    assert {path: path.read_bytes() for path in authorization_before} == authorization_before
 
 
 def test_uninstall_unlink_failure_restores_all_three_workers(
@@ -362,6 +379,17 @@ def test_uninstall_unlink_failure_restores_all_three_workers(
     launch_dir = home / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True)
     worker_specs = specs(tmp_path)
+    (tmp_path / "state").mkdir()
+    authorization_before = {
+        path: b"keep authorization"
+        for path in (
+            authorization_path(tmp_path),
+            worker_staging_authorization_path(tmp_path),
+            staged_worker_receipt_path(tmp_path),
+        )
+    }
+    for path, content in authorization_before.items():
+        path.write_bytes(content)
     before: dict[Path, bytes] = {}
     modes: dict[Path, int] = {}
     for index, spec in enumerate(worker_specs):
@@ -396,6 +424,7 @@ def test_uninstall_unlink_failure_restores_all_three_workers(
     assert {path: path.stat().st_mode & 0o777 for path in before} == modes
     assert fake.loaded == services
     assert not list(launch_dir.glob(".*.tmp"))
+    assert {path: path.read_bytes() for path in authorization_before} == authorization_before
 
 
 @pytest.mark.parametrize(
@@ -492,6 +521,13 @@ def test_uninstall_removes_all_workers_when_slow_worker_is_quiescent(
     worker_specs = specs(tmp_path)
     _write_staged_plists(home, worker_specs)
     (tmp_path / "state").mkdir()
+    authorization_records = (
+        authorization_path(tmp_path),
+        worker_staging_authorization_path(tmp_path),
+        staged_worker_receipt_path(tmp_path),
+    )
+    for path in authorization_records:
+        path.write_bytes(b"existing authorization")
     domain = "gui/4242"
     services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
     fake = FakeLaunchctl(domain, services)
@@ -504,6 +540,7 @@ def test_uninstall_removes_all_workers_when_slow_worker_is_quiescent(
     assert result["ok"] is True
     assert fake.loaded == set()
     assert all(not plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
+    assert all(not path.exists() for path in authorization_records)
 
 
 def test_uninstall_requires_runtime_binding_and_authorization_before_launchctl(
