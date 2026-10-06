@@ -759,6 +759,57 @@ def observe_uninstalled_workers(
         raise RuntimeError("worker uninstall refused: slow worker lock is busy") from exc
 
 
+def uninstall_staged_workers(
+    specs: list[dict[str, object]], *, home: Path, domain: str, runtime_root: Path
+) -> dict[str, object]:
+    """Remove only intact, signed staged configs while all workers are unloaded."""
+
+    _validate_specs(specs)
+    runtime_root = runtime_root.resolve()
+    try:
+        with worker_staging_transaction_lock(runtime_root):
+            with exclusive_lock(runtime_root / "state" / SLOW_WORK_LOCK):
+                if (
+                    authorization_path(runtime_root).exists()
+                    or authorization_path(runtime_root).is_symlink()
+                ):
+                    raise RuntimeError("staged worker uninstall refuses operational authorization")
+                _require_slow_worker_quiescent(runtime_root=runtime_root, domain=domain)
+                snapshots = _snapshot_workers(specs, home=home, domain=domain)
+                if any(snapshot.loaded or not snapshot.exists for snapshot in snapshots):
+                    raise RuntimeError("staged worker uninstall requires complete unloaded configs")
+                reports = [
+                    {
+                        "label": str(spec["Label"]),
+                        "loaded": snapshot.loaded,
+                        "actualConfigMatch": _config_matches(snapshot.path, spec),
+                    }
+                    for spec, snapshot in zip(specs, snapshots, strict=True)
+                ]
+                if not verify_staged_worker_receipt(
+                    runtime_root,
+                    specs=specs,
+                    worker_reports=reports,
+                    home=home,
+                    require_current=False,
+                ):
+                    raise RuntimeError(
+                        "staged worker uninstall receipt does not match current files"
+                    )
+                for spec in specs:
+                    observation = launchctl("print", f"{domain}/{spec['Label']}", check=False)
+                    if (
+                        observation.returncode != 113
+                        or "Could not find service" not in observation.stderr
+                    ):
+                        raise RuntimeError("staged worker uninstall requires absent services")
+                result = _uninstall_snapshots(snapshots, domain=domain)
+                revoke_operational_authorization(runtime_root, _lock_held=True)
+                return result
+    except RuntimeLockBusy as exc:
+        raise RuntimeError("worker uninstall refused: slow worker lock is busy") from exc
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime-root", type=Path)
@@ -830,9 +881,15 @@ def main() -> int:
                     or authorization_path(runtime_root).is_symlink()
                 ):
                     raise
-                result = observe_uninstalled_workers(
-                    specs, home=home, domain=domain, runtime_root=runtime_root
-                )
+                receipt_path = staged_worker_receipt_path(runtime_root)
+                if receipt_path.exists() or receipt_path.is_symlink():
+                    result = uninstall_staged_workers(
+                        specs, home=home, domain=domain, runtime_root=runtime_root
+                    )
+                else:
+                    result = observe_uninstalled_workers(
+                        specs, home=home, domain=domain, runtime_root=runtime_root
+                    )
             else:
                 result = uninstall_workers(
                     specs, home=home, domain=domain, runtime_root=runtime_root

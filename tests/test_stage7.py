@@ -940,6 +940,68 @@ def test_expired_worker_staging_reset_preserves_bound_plists_and_allows_reissue(
     assert renewed["state"] == "ACTIVE"
 
 
+def test_original_uninstall_cli_removes_expired_signed_unloaded_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "staging-uninstall-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    receipt = _consume_signed_staging_fixture(runtime, home, specs)
+    receipt_path = staged_worker_receipt_path(runtime)
+    before = {
+        path: path.read_bytes()
+        for path in [
+            token_path,
+            receipt_path,
+            *[Path(str(item["plistPath"])) for item in receipt["workers"]],
+        ]
+    }
+    later = utc_now() + timedelta(minutes=20)
+
+    class AfterStaging(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return later.astimezone(tz) if tz is not None else later.replace(tzinfo=None)
+
+    monkeypatch.setattr(operational_auth_module, "datetime", AfterStaging)
+    reports = [
+        {"label": spec["Label"], "loaded": False, "actualConfigMatch": True} for spec in specs
+    ]
+    assert not verify_staged_worker_receipt(runtime, specs=specs, worker_reports=reports, home=home)
+    assert verify_staged_worker_receipt(
+        runtime, specs=specs, worker_reports=reports, home=home, require_current=False
+    )
+    assert {path: path.read_bytes() for path in before} == before
+    assert not authorization_path(runtime).exists()
+    calls = []
+
+    def observe(*arguments, check=True):
+        calls.append(arguments)
+        assert arguments[0] == "print" and check is False
+        return subprocess.CompletedProcess([], 113, "", "Could not find service")
+
+    monkeypatch.setattr(workers_module.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(workers_module, "launchctl", observe)
+    monkeypatch.setattr(
+        workers_module,
+        "finalize_operational_authorization",
+        lambda *_args, **_kwargs: pytest.fail("staged uninstall must never activate authorization"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["install_local_publication_workers.py", "--runtime-root", str(runtime), "--uninstall"],
+    )
+    assert workers_module.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is True and result["uninstalled"] is True
+    assert len(result["workers"]) == 4
+    assert all(not path.exists() for path in before)
+    assert not authorization_path(runtime).exists()
+    assert {call[1].split("/")[-1] for call in calls} == set(workers_module.FIXED_WORKER_LABELS)
+    assert all(call[0] == "print" for call in calls)
+
+
 def test_expired_worker_staging_reset_is_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
