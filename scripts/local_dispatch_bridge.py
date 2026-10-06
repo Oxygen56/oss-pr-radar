@@ -19600,7 +19600,8 @@ def _unresolved_validation_dependency_failures(
     for failure in failures:
         command_text = str(failure.get("command") or "").casefold()
         text = (
-            f"{command_text}\n{failure.get('summary', '')}\n{failure.get('outcome', '')}"
+            f"{command_text}\n{failure.get('summary', '')}\n{failure.get('outcome', '')}\n"
+            f"{failure.get('result', '')}"
         ).casefold()
         covered = False
         if re.search(r"(?:^|\s)cargo\s", command_text):
@@ -19675,6 +19676,43 @@ def _locked_python_dependency_groups(pyproject: Path, failure_text: str) -> list
             for tool in requested
         ):
             selected.append(group)
+    return sorted(selected)
+
+
+def _locked_python_dependency_extras(pyproject: Path, failure_text: str) -> list[str]:
+    """Select declared optional dependencies matching an actually missing module."""
+
+    missing = {
+        re.sub(r"[-_.]+", "-", module.split(".", 1)[0].casefold())
+        for module in re.findall(
+            r"\bNo module named\s+['\"]?([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)", failure_text
+        )
+    }
+    if not missing:
+        return []
+    try:
+        value = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    project = value.get("project")
+    extras = project.get("optional-dependencies") if isinstance(project, dict) else None
+    if not isinstance(extras, dict):
+        return []
+    selected = []
+    for extra, dependencies in extras.items():
+        if not isinstance(extra, str) or not isinstance(dependencies, list):
+            continue
+        names = {
+            re.sub(
+                r"[-_.]+",
+                "-",
+                re.split(r"[<>=!~\[ ;]", dependency.strip().casefold(), maxsplit=1)[0],
+            )
+            for dependency in dependencies
+            if isinstance(dependency, str)
+        }
+        if missing & names:
+            selected.append(extra)
     return sorted(selected)
 
 
@@ -19801,6 +19839,8 @@ def _validation_prefetch_plan(
         argv = ["uv", "sync", "--frozen", "--no-install-project"]
         for group in _locked_python_dependency_groups(worktree / "pyproject.toml", failure_text):
             argv.extend(["--group", group])
+        for extra in _locked_python_dependency_extras(worktree / "pyproject.toml", failure_text):
+            argv.extend(["--extra", extra])
         commands.append(
             {
                 "kind": "uv_locked_sync",
@@ -20109,11 +20149,23 @@ def _execute_validation_prefetch(
                 if isinstance(cwd_value, str)
                 else set()
             )
+            try:
+                manifest = (
+                    tomllib.loads((Path(cwd_value) / "pyproject.toml").read_text(encoding="utf-8"))
+                    if isinstance(cwd_value, str)
+                    else {}
+                )
+            except (OSError, tomllib.TOMLDecodeError):
+                manifest = {}
+            project = manifest.get("project")
+            optional = project.get("optional-dependencies") if isinstance(project, dict) else None
+            declared_extras = set(optional) if isinstance(optional, dict) else set()
             valid_extras = (
                 extras is not None
                 and len(extras) % 2 == 0
                 and all(
-                    extras[index] == "--group" and extras[index + 1] in groups
+                    (extras[index] == "--group" and extras[index + 1] in groups)
+                    or (extras[index] == "--extra" and extras[index + 1] in declared_extras)
                     for index in range(0, len(extras), 2)
                 )
             )

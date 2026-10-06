@@ -33325,6 +33325,90 @@ docs = ["mkdocs>=1"]
     ]
 
 
+def test_validation_prefetch_executes_only_declared_extras_for_missing_proxy_modules(
+    monkeypatch, tmp_path
+):
+    worktree = tmp_path / "worktree"
+    private = worktree / ".oss-pr-radar"
+    private.mkdir(parents=True)
+    (worktree / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (worktree / "pyproject.toml").write_text(
+        """
+[project]
+name = "x"
+[project.optional-dependencies]
+extra_proxy = ["prisma>=0.11.0,<1.0"]
+proxy = ["apscheduler>=3.11.2,<4.0", "fastapi-sso>=0.19.0,<1.0"]
+unrelated = ["other-package>=1"]
+[dependency-groups]
+test = ["pytest>=9", "ruff>=0.15"]
+""".strip(),
+        encoding="utf-8",
+    )
+    result = {
+        "changedFiles": ["litellm/proxy/guardrails/guardrail_hooks/headroom/headroom.py"],
+        "tests": [
+            {
+                "command": ".venv/bin/python -B -m pytest -q tests/unit/proxy/test_headroom.py",
+                "exitCode": 4,
+                "result": "from prisma.errors import ClientNotConnectedError\n"
+                "ModuleNotFoundError: No module named 'prisma'",
+            },
+            {
+                "command": ".venv/bin/python -B -m litellm.proxy._lazy_openapi_snapshot",
+                "exitCode": 1,
+                "result": "ImportError: Missing dependency No module named 'apscheduler'. "
+                "Run `pip install 'litellm[proxy]'`",
+            },
+        ],
+    }
+    raw = json.dumps(result).encode()
+    result_path = private / "result.json"
+    result_path.write_bytes(raw)
+    candidate = {"worktreePath": str(worktree), "resultDigest": hashlib.sha256(raw).hexdigest()}
+    commands, failures = MODULE._validation_prefetch_plan(candidate)
+    argv = [
+        "uv",
+        "sync",
+        "--frozen",
+        "--no-install-project",
+        "--group",
+        "test",
+        "--extra",
+        "extra_proxy",
+        "--extra",
+        "proxy",
+    ]
+    assert commands == [{"kind": "uv_locked_sync", "cwd": str(worktree.resolve()), "argv": argv}]
+    assert failures == result["tests"]
+    calls = []
+    monkeypatch.setattr(MODULE, "command", lambda args, **kwargs: calls.append((args, kwargs)))
+    completed = MODULE._execute_validation_prefetch(candidate, commands)
+    assert calls == [(argv, {"cwd": worktree.resolve(), "timeout": 600})]
+    assert completed[0]["kind"] == "uv_locked_sync"
+    assert completed[0]["cwd"] == str(worktree.resolve())
+    assert MODULE._unresolved_validation_dependency_failures(commands, failures) == []
+    with pytest.raises(RuntimeError, match="not allowlisted"):
+        MODULE._execute_validation_prefetch(
+            candidate,
+            [{**commands[0], "argv": [*argv, "--extra", "undeclared"]}],
+        )
+    with pytest.raises(RuntimeError, match="not allowlisted"):
+        MODULE._execute_validation_prefetch(
+            candidate,
+            [{**commands[0], "argv": [*argv, "--all-extras"]}],
+        )
+    assert len(calls) == 1
+    assert result_path.read_bytes() == raw
+    assert (worktree / "uv.lock").read_text(encoding="utf-8") == "version = 1\n"
+    assert MODULE._locked_python_dependency_extras(
+        worktree / "pyproject.toml", "ModuleNotFoundError: No module named 'fastapi_sso.sso'"
+    ) == ["proxy"]
+    assert (
+        MODULE._locked_python_dependency_extras(worktree / "pyproject.toml", "pytest failed") == []
+    )
+
+
 def test_validation_followup_blocks_missing_python_dependencies_without_lockfile(
     tmp_path,
 ):
