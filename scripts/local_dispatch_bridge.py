@@ -19822,6 +19822,30 @@ def _validation_prefetch_plan(
                 )
                 if manifest_root is not None and (manifest_root / "package.json").is_file():
                     roots.add(manifest_root)
+        for failure in dependency_failures:
+            command_text = str(failure.get("command") or "")
+            if "npm " not in command_text.casefold():
+                continue
+            working_directory = failure.get("workingDirectory") or failure.get("cwd")
+            if not isinstance(working_directory, str) or not working_directory.strip():
+                change_directory = re.match(r"^\s*cd\s+([A-Za-z0-9_./-]+)\s*&&\s*", command_text)
+                working_directory = change_directory.group(1) if change_directory else None
+            if not isinstance(working_directory, str) or not working_directory.strip():
+                continue
+            candidate_root = Path(working_directory.strip())
+            if not candidate_root.is_absolute():
+                candidate_root = worktree / candidate_root
+            try:
+                candidate_root = candidate_root.resolve()
+            except OSError:
+                continue
+            if candidate_root != worktree and worktree not in candidate_root.parents:
+                continue
+            manifest_root = _nearest_manifest_root(
+                candidate_root, stop=worktree, manifest="package-lock.json"
+            )
+            if manifest_root is not None and (manifest_root / "package.json").is_file():
+                roots.add(manifest_root)
         for root in sorted(roots, key=str):
             commands.append(
                 {

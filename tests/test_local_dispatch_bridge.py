@@ -33236,6 +33236,44 @@ def test_validation_prefetch_supports_pnpm_and_go_failure_working_directory(tmp_
     ]
 
 
+@pytest.mark.parametrize("directory_field", ["cwd", "workingDirectory"])
+def test_validation_prefetch_uses_npm_failure_directory_for_python_change(
+    tmp_path, directory_field
+):
+    worktree = tmp_path / "worktree"
+    private = worktree / ".oss-pr-radar"
+    dashboard = worktree / "ui/litellm-dashboard"
+    private.mkdir(parents=True)
+    dashboard.mkdir(parents=True)
+    (dashboard / "package.json").write_text("{}\n", encoding="utf-8")
+    (dashboard / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    failure = {
+        "command": "NEXT_TELEMETRY_DISABLED=1 ../../scripts/with_dashboard_node.sh npm run build",
+        directory_field: "ui/litellm-dashboard",
+        "exitCode": 127,
+        "result": "Dashboard build did not start because next is not found "
+        "without ui/litellm-dashboard/node_modules.",
+    }
+    result = {"changedFiles": ["runtime.py"], "tests": [failure]}
+    raw = json.dumps(result).encode()
+    (private / "result.json").write_bytes(raw)
+
+    commands, failures = MODULE._validation_prefetch_plan(
+        {"worktreePath": str(worktree), "resultDigest": hashlib.sha256(raw).hexdigest()}
+    )
+
+    assert failures == [failure]
+    assert commands == [
+        {
+            "kind": "npm_locked_install",
+            "cwd": str(dashboard.resolve()),
+            "argv": ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        }
+    ]
+    assert MODULE._unresolved_validation_dependency_failures(commands, failures) == []
+    assert (private / "result.json").read_bytes() == raw
+
+
 def test_validation_prefetch_includes_locked_group_that_provides_missing_pytest(tmp_path):
     worktree = tmp_path / "worktree"
     result_dir = worktree / ".oss-pr-radar"
@@ -33498,6 +33536,13 @@ def test_validation_prefetch_timeout_has_structured_failure(monkeypatch, tmp_pat
             "then failed in package CLI TypeScript checks because installed ink typings do not "
             "expose the UI selection/selectable APIs used by unrelated CLI UI files.",
         },
+        {
+            "command": "cd ui/litellm-dashboard && NEXT_TELEMETRY_DISABLED=1 "
+            "../../scripts/with_dashboard_node.sh npm run build",
+            "exitCode": 127,
+            "result": "Dashboard build did not start because next is not found "
+            "without ui/litellm-dashboard/node_modules.",
+        },
     ],
 )
 def test_validation_followup_reserve_runs_prefetch_inside_bridge(
@@ -33509,15 +33554,16 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(
         worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
     )
     monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
-    ui_root = worktree / "ui"
-    ui_root.mkdir()
+    dashboard_failure = failed_check["command"].startswith("cd ui/litellm-dashboard &&")
+    ui_root = worktree / ("ui/litellm-dashboard" if dashboard_failure else "ui")
+    ui_root.mkdir(parents=True)
     (ui_root / "package-lock.json").write_text("{}\n", encoding="utf-8")
     patch_package = failed_check["command"] == "npm run build"
     (ui_root / "package.json").write_text(
         json.dumps({"scripts": {"postinstall": "patch-package"}} if patch_package else {})
     )
     value = json.loads(result_path.read_text(encoding="utf-8"))
-    value["changedFiles"] = ["runtime.py", "ui/app.tsx"]
+    value["changedFiles"] = ["runtime.py"] if dashboard_failure else ["runtime.py", "ui/app.tsx"]
     value["tests"] = [failed_check]
     raw = json.dumps(value).encode()
     result_path.write_bytes(raw)
@@ -33561,6 +33607,7 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(
             "--error-on-fail",
         ]
     assert [item["kind"] for item in executed] == expected_kinds
+    assert executed[0]["cwd"] == str(ui_root.resolve())
     assert reserved["prefetch"][0]["kind"] == "npm_locked_install"
     assert [item["kind"] for item in reserved["prefetch"]] == expected_kinds
     assert "系统已按项目锁文件补齐缺失依赖" in reserved["prompt"]
