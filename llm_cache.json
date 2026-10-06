@@ -67393,6 +67393,38 @@
     ],
     "why": "Issue clearly identifies missing input-item normalization and 4xx masking in bedrock_mantle, with a concrete repro. However, an open PR #36530 already overlaps the same code path and semantics, and the deterministic gate requires HUMAN_REVIEW. Need maintainer confirmation on PR scope and design before starting new work."
   },
+  "7f00d5e5ae53f320ee324a99f2843162fee8d7f44e2e3872c7a52e653448821e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/management_endpoints/mcp_management_endpoints.py: invalidate user OAuth token cache unconditionally on DELETE",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/per_user_oauth_store.py: make per-user Authorization Code token cache coherent across replicas",
+      "litellm/proxy/common_utils/auth_cache_invalidation_pubsub.py: publish/consume invalidation for the (user_id, server_id) token key on connect, refresh, and disconnect"
+    ],
+    "risks": [
+      "Broadening invalidation to connect/refresh paths could add pub/sub overhead or race with token refresh.",
+      "Switching to a Redis-only backend may change behavior when coordination Redis is unavailable.",
+      "Unconditional invalidation must not mask genuine credential-lookup errors."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that warms the per-user OAuth token cache on two simulated replicas, deletes the credential via one, and asserts the other replica can no longer list or call upstream tools.",
+      "Add a test that a repeated DELETE for an already-removed credential still invalidates the local cache entry and returns has_credential=false.",
+      "Run the targeted proxy MCP OAuth unit tests and static checks for the touched modules."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the Redis-only backend approach or the pub/sub invalidation approach for the full fix."
+    ],
+    "why": "Issue and confirming comment establish a concrete cross-replica cache-coherence bug: per-user OAuth token backend uses process-local user_api_key_cache in front of Redis, disconnect only invalidates locally, and repeated DELETE skips invalidation when the row is already gone. Code anchors and ordered reproduction steps are supplied, and the commenter offers to test a fix on a multi-replica setup."
+  },
   "7f0ab9d7163f8380342fcf114ba1e5a1030bfa1462c5ecf2dcd5e4ea55e06666": {
     "confidence": 0.55,
     "contradictions": [
@@ -114578,6 +114610,43 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a performance regression with MTP variants on Apple Silicon, but lacks code-level root cause and maintainer confirmation. The gate decision is HUMAN_REVIEW, and the issue is a bug report without a proposed fix or clear implementation path."
   },
+  "d949e129a6ee9c1b48e745017a7a6d7d03d26c5b778d2138ca576dbf4f21d62b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims server does not forward User-Agent to zen API; l7feng's measurement shows UA is forwarded on the direct client path and passing/failing requests are header-identical",
+      "Issue attributes 403 to missing UA; iagorobo24-hub's bisection attributes 403 to agent permission footprint / request body"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/opencode/src/provider (outgoing request header construction)",
+      "server proxy path for /session/:id/message",
+      "possibly request body/system-prompt or tool-definition construction rather than headers"
+    ],
+    "risks": [
+      "Implementing a UA-forwarding fix may not resolve the 403 if the real differentiator is request body/tool definitions",
+      "Changing global outgoing headers could affect all providers",
+      "The secondary HTML-instead-of-JSON error response is a separate defect that may be conflated with this one"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with `opencode serve` + a zen free-tier model, capturing outgoing headers and body to a local listener to confirm whether User-Agent is actually absent on the server path",
+      "A/B the same session with a tool-denied agent vs a tool-enabled agent to isolate whether the 403 keys off permission footprint/body rather than UA",
+      "Add a regression test asserting the outgoing zen request carries the expected UA and that a free-tier request returns 200"
+    ],
+    "unknowns": [
+      "Whether the server proxy path specifically omits User-Agent (no direct capture of the server->zen request headers supplied)",
+      "What the zen gateway actually matches on to grant free-tier access (UA vs body vs permission footprint)",
+      "Whether the reported 403 and the HTML-instead-of-JSON response are one defect or two"
+    ],
+    "why": "The issue's stated root cause (missing User-Agent on the server proxy path) is directly contradicted by supplied comment evidence: l7feng measured that the direct client path does forward User-Agent and that a passing and failing request carried byte-identical user-agent/x-opencode-* headers, concluding the differentiator is the request body (system prompt + tool definitions), not headers. iagorobo24-hub's bisection further shows 403 correlates with agent permission footprint (fully tool-denied agents fail, agents with tool access pass), not with UA forwarding. The claimed mechanism is therefore unresolved and the fix target is ambiguous."
+  },
   "d960266b8096eb9889c11d9586d2cfa232e11b27ad7c08221cee2eed052ea46c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -126774,6 +126843,44 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "The issue clearly identifies a fail-open Helm ownership check in hgctl that can lead to unsafe cluster mutation, with a concrete reproduction and maintainer approval. However, the repository requires assignment and the candidate's own submission policy mandates maintainer approval before implementation, so work cannot start without an explicit assignment."
+  },
+  "eed949e226dec7addfe8f6b0476d9690be813b26c61239e0e44a43faadc09390": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate gate_decision is ALLOW_PRIVATE_WORK while preTaskEvidence policy status is ai_disclosure_conflict",
+      "Candidate actionability_evidence root_cause_signal is false, but the issue body and maintainer comment supply a clear root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal OpenCode routing step: replace normalizing filemerge.MergeJSONObjects with JSONC-preserving merge for background policy, review provider roles, ODD parity agents, default_agent, and share writers",
+      "legacy agent migration path: preserve JSONC comments and refuse escaped/commented touched keys",
+      "prepare-stage OpenCode settings validation scoped to keys the planned writers touch"
+    ],
+    "risks": [
+      "Repository policy status is ai_disclosure_conflict, which may block public submission regardless of technical merit",
+      "Preflight flags base_sha_changed and duplicate_changed, so the base may have moved since the issue was filed",
+      "Item 4 (upstream engram setup opencode) is explicitly out of scope and must not be attempted here",
+      "Broadening the fix to all writers could expand API/behavior changes beyond the issue scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that loads a project opencode.jsonc containing comments and the retired trigger block, runs install/sync with OpenCode routing guidance, and asserts comments survive byte-for-byte",
+      "Add a test asserting an unsafe selected settings file is refused before any managed file is written (compare managed file bytes before/after refusal)",
+      "Add a test asserting escaped or commented touched keys are refused rather than normalized",
+      "Run targeted package unit tests and static checks for the OpenCode settings writer path"
+    ],
+    "unknowns": [
+      "Whether the five remaining ownership writers and legacy agent migration are still unfixed on current main after #5052/#5053",
+      "Whether the ai_disclosure_conflict policy permits any submission path for this repository"
+    ],
+    "why": "Issue #5035 describes a concrete, reproducible OpenCode settings invariant bug: JSONC comments are dropped by filemerge.MergeJSONObjects in stripLegacyTriggerRulesFromOrchestrator and routing-guidance injection, and unsafe selected settings are refused only after earlier install steps mutate managed files. The maintainer comment confirms items 1 and 2 are fixed by #5052/#5053 but explicitly keeps the issue open for five remaining ownership writers (background policy, review provider roles, ODD parity agents, default_agent, share) plus legacy agent migration that still normalize JSONC. This is a well-scoped, testable code fix with clear code anchors and a validation path (byte-compare settings before/after, assert comments survive, assert refusal precedes mutation)."
   },
   "eedb6f98197eeaad63421e0e15c27cbe8c237c8bdbfc92fdb985bfed58858d04": {
     "confidence": 0.8,
