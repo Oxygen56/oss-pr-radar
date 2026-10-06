@@ -1781,7 +1781,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert automation["schema"] == "oss-pr-radar.stage7-automation-snapshot.v3"
     assert automation["generator"] == "stage7-automation-toml-v3"
     assert automation["dailyWarRoom"]["kind"] == "heartbeat"
-    assert automation["heartbeat"]["targetThreadId"] == "019f71c3-4f26-7030-b126-25f8cfbac4c4"
+    assert automation["heartbeat"]["targetThreadId"] == "01a11091-6498-73f2-bffb-1bd114e4347a"
     assert automation["dailyWarRoom"]["targetThreadId"] == ("01a047a5-88da-7113-8355-218215cd037a")
     assert automation["dailyWarRoom"]["targetThreadId"] != automation["heartbeat"]["targetThreadId"]
     assert {
@@ -2248,7 +2248,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     daily_toml.write_text(daily_text, encoding="utf-8")
     heartbeat_toml.write_text(
         heartbeat_text.replace(
-            'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
+            'target_thread_id = "01a11091-6498-73f2-bffb-1bd114e4347a"',
             'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
         ),
         encoding="utf-8",
@@ -2259,7 +2259,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     daily_toml.write_text(
         daily_text.replace(
             'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
-            'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
+            'target_thread_id = "01a11091-6498-73f2-bffb-1bd114e4347a"',
         ),
         encoding="utf-8",
     )
@@ -2571,7 +2571,7 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert contracts["heartbeat"]["releaseCommand"][1].endswith("/scripts/controller_cycle.py")
     assert contracts["heartbeat"]["kind"] == "heartbeat"
     assert contracts["dailyWarRoom"]["kind"] == "heartbeat"
-    assert contracts["heartbeat"]["targetThreadId"] == ("019f71c3-4f26-7030-b126-25f8cfbac4c4")
+    assert contracts["heartbeat"]["targetThreadId"] == ("01a11091-6498-73f2-bffb-1bd114e4347a")
     assert contracts["dailyWarRoom"]["targetThreadId"] == ("01a047a5-88da-7113-8355-218215cd037a")
     assert contracts["dailyWarRoom"]["targetThreadId"] != contracts["heartbeat"]["targetThreadId"]
     assert contracts["dailyWarRoom"]["rrule"] == ("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0")
