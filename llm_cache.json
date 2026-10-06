@@ -2657,6 +2657,46 @@
     ],
     "why": "The issue provides a clear root cause: the sequential pipeline FX-traces the vision tower even when it is in the ignore list, and Qwen3-VL's rot_pos_emb is not traceable, causing a CUDA driver error. It includes a minimal reproduction script, environment details, and evidence that RTN works, isolating the problem to the calibration/tracing path. This is a concrete, actionable bug in an algorithm repository with a clear validation path."
   },
+  "0630be1598f9605d134b4fc2fdf34553f5ce1fe8ea156db13afa409db9e63406": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body lists 15 unfixed k-bit sites, but maintainer comments state #1045 already threaded the value at all text, vision and audio k-bit sites",
+      "Candidate actionability evidence reports root_cause_signal=false while the issue body provides a detailed root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/trainer/grpo.py, ipo.py, bco.py, reward_model.py, online_dpo.py: pass resolved gradient_checkpointing into TRL configs",
+      "src/soup_cli/trainer/pretrain.py, embedding.py: pass resolved value into TrainingArguments",
+      "src/soup_cli/utils/unsloth.py: map config field instead of hardcoded 'unsloth'",
+      "tests: drive real vision/audio setup and fail by name when opposite value is forced"
+    ],
+    "risks": [
+      "Overlap with merged #1045 and #1564 may make part of the work redundant",
+      "base_sha_changed means the described line numbers and remaining gaps may be stale",
+      "Multiple independent sub-items risk a sprawling, hard-to-review PR"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Parametrised test over trainer/ asserting effective model.is_gradient_checkpointing equals config value for true and false",
+      "k-bit-flagged model test asserting false survives prepare_model_for_kbit_training",
+      "Structural test failing when prepare_model_for_kbit_training is called without use_gradient_checkpointing=",
+      "Vision and audio setup tests that fail by name when the opposite value is forced at each site"
+    ],
+    "unknowns": [
+      "Which specific sub-item (vision/audio test, TRL/HF args, unread trainers, unsloth) is the intended target",
+      "Whether the base_sha_changed invalidates the described remaining gaps on current main",
+      "Whether any of the remaining sub-items are already covered by other open PRs"
+    ],
+    "why": "The issue documents a clear, verifiable root cause (three independent mechanisms override training.gradient_checkpointing), but the supplied evidence shows the primary k-bit path is already fixed by merged PR #1045, and the maintainer's comments explicitly enumerate remaining sub-items (vision/audio test, TRL/HF args threading, unread trainers, unsloth) with a stated acceptance bar. The candidate's own actionability evidence reports root_cause_signal=false and no reproduction evidence, and the preTaskEvidence shows base_sha_changed, so the exact remaining scope and current base state are not pinned down enough to select a concrete, non-duplicative code change."
+  },
   "063ba142d3ef610dfb6896a7c0a4359071c2da84cf2c46cb4eddef11ad078cb4": {
     "confidence": 0.8,
     "contradictions": [
@@ -8459,6 +8499,35 @@
     ],
     "why": "Issue provides a concrete, reproducible performance bug: local ONNX embeddings (Xenova/all-MiniLM-L6-v2) pin the opencode Worker at ~100% CPU from model load, starving the event loop. Reproduction steps, expected/actual behavior, measured CPU evidence, version range (0.38.0-0.42.5), and a confirmed workaround (embedding.provider=off) are all supplied. Root cause is well-supported by upstream references (onnxruntime#26026, transformers.js#488) and a concrete fix direction (numThreads=1 or worker isolation). No open PR or duplicate issue covers it."
   },
+  "112dda087e7238281217de3f26e968031d041a09fc6c512d8c8b48aee55a39a9": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and mechanism_count=4 conflict with the issue body being a configuration/throughput field report with no code path or training objective",
+      "actionability_evidence.root_cause_signal=false and probe_ready=false conflict with the claim of a verifiable algorithm mechanism"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Treating an operational field report as an algorithm contribution would produce no code change",
+      "The Exited 137 hypothesis is explicitly unproven and not reproducible on demand"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [],
+    "unknowns": [
+      "Whether any maintainer has requested a code change from this report",
+      "Whether the SM120 topology rejections correspond to a fixable code defect or intended model limitation"
+    ],
+    "why": "The candidate is a field report / operational configuration write-up for DeepSeek-V4.1-Flash on SM120 hardware, not a code contribution. It contains no concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology that would support a reference-vs-implementation test or numerical regression. The only algorithmic-adjacent content is a speculative-decoding A/B and a hypothesis about a Triton JIT compile stalling the watchdog, but the root cause is explicitly unproven and the report itself is a measurement/configuration narrative. The pre-task evidence also flags base_sha_changed and reproduction_or_validation_missing, and the issue is a report rather than an actionable code fix."
+  },
   "1139c9b3d001ed1b4866d0212ea8d94d9a44359eb91b4a114db3150f5979c068": {
     "confidence": 0.85,
     "contradictions": [],
@@ -12982,6 +13051,43 @@
       "Exact implementation details of existing PR #5006 and its coverage of this issue"
     ],
     "why": "Issue clearly identifies a bug in is_final_response() for non-streaming A2A responses, with a concrete reproduction and two proposed fixes. Existing PR #5006 overlaps semantically but is not directly linked and may not fully address the issue; a new PR could provide a more targeted fix."
+  },
+  "1a878aa2e95d4bc79ff6b774bb66f0a1363cb7e96ab4f67b399bb8e746241905": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports semantic overlap requiring review while related_issue_assessment reports no related issues",
+      "issue asks for kernel extension or documentation, but existing PRs may already cover the root cause"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/platforms/cuda.py backend candidate list for major==12 MLA",
+      "SM120 sparse-MLA kernel support for rope-free (qk_rope_head_dim=0) shape",
+      "supported_kv_cache_dtypes for the no-rope lane"
+    ],
+    "risks": [
+      "PR #15 may already implement the same fix, making a new contribution duplicative",
+      "AI disclosure policy conflict may block automated public action",
+      "Kernel work requires SM120 hardware not guaranteed available"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Boot GLM-5.3-Flash (qk_rope_head_dim=0) on SM120 with bf16 KV and confirm backend selection no longer fails",
+      "Numerical parity check of sparse-MLA output vs an fp32 reference for the rope-free shape",
+      "Regression test asserting the SM120 candidate list includes a rope-free-capable backend"
+    ],
+    "unknowns": [
+      "Whether PR #15 or #54929 already resolves the rope-free SM120 gap",
+      "Whether the repository's AI disclosure policy permits the required contribution workflow",
+      "Whether SM120 hardware is available for validation"
+    ],
+    "why": "The issue describes a concrete SM120 sparse-MLA gap for rope-free MLA (qk_rope_head_dim=0), but the supplied evidence shows unresolved duplicate/overlap coverage: PR #15 ('Make the rope-free MLA path work on SM12x', 3 test files, overlapping vllm/platforms/cuda.py) and PR #54929 (SM12x sparse-MLA fallback) both semantically overlap and are not linked to the issue. The duplicate status is explicitly 'semantic_overlap_requires_review', and the pre-task policy is 'ai_disclosure_conflict' with reproduction_or_validation_missing. These are materially blocking unknowns for deciding whether new code work is actionable."
   },
   "1aa7ddca57603a6f8f4861c4d09f73f494607eb046b80218a7c00b7492d2ccaa": {
     "confidence": 0.85,
@@ -41588,6 +41694,39 @@
     ],
     "why": "The issue is a well-documented proxy health-check aggregation bug, but the track is llm_algorithm and the required concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is absent. The 'evaluation_method' match is a keyword artifact from health-check aggregation, not an LLM algorithm contribution. This is ordinary proxy/API plumbing, which the track rules explicitly reject."
   },
+  "504e23dd5b02ef7bfb5347458fd44e014432f4d4331192c8976033ad7582c13f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate frames this as an open distributed/numerics algorithm bug, but the traceback and comments show a parser error-handling bug already fixed by merged #59254"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/parser/harmony.py process_chunk error handling (likely already covered by merged #59254)"
+    ],
+    "risks": [
+      "Work would duplicate merged fix #59254 and open PRs #52055/#47350/#43408/#56216",
+      "Repo AI-disclosure policy conflict blocks automated public action",
+      "Post-error parser state silently drops subsequent tokens, which the merged fix may not address"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the reported 500 with the supplied Chinese-prompt payload against a build without #59254, then confirm the same request succeeds on a build including #59254 to establish whether any code work remains."
+    ],
+    "unknowns": [
+      "Whether the merged #59254 is present in the base SHA cbe1f9740d0ae7f6eb82bd752a984c7db8ab85fe",
+      "Whether any residual gap (silent token dropping after HarmonyError) is in scope for a new contribution",
+      "How the repo's ai_disclosure_conflict policy can be satisfied"
+    ],
+    "why": "The issue's root cause (unguarded self._harmony_parser.process(token_id) in vllm/parser/harmony.py process_chunk) is well established by the traceback and comments, but comment evidence states it is already fixed on main by merged PR #59254, which covers both streaming and non-streaming paths. That makes the candidate's code work likely redundant, and the duplicate/coverage status is unresolved (open PRs #52055, #47350, #43408, #56216 plus potential duplicate issue #57726). Additionally the repo policy status is ai_disclosure_conflict, a materially blocking disclosure requirement."
+  },
   "504ec7d236c983011e949a8d6438427431f2bd28c9bbfe9c3dd5ae432279f743": {
     "confidence": 0.8,
     "contradictions": [
@@ -43142,6 +43281,42 @@
       "Whether PR #35936 already fully addresses the issue; requires manual comparison."
     ],
     "why": "Issue provides a clear root cause (regression from revert #34160), a concrete reproduction with commands, and a verified minimal fix. The proposed changes are actionable and testable."
+  },
+  "52a7be67fbd170bf47bf6363acf68136995b5b7bc0ff63ed4b5afd2da5bcc97a": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue body says the run was stopped from the UI, while the reporter's follow-up shows a steering_restart triggered by a follow-up message rather than a plain Stop"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Grok provider turn finalization / turn_completed handling so a completed answer settles the run",
+      "Attempt status assignment in the steering_restart path so a complete final message is not folded as superseded",
+      "MessagesTimeline.logic.ts deriveSupersededAttemptFolds and the 'Partial output retained' copy when output was not actually cut off"
+    ],
+    "risks": [
+      "Maintainer has not yet chosen the fix direction among the three likely areas",
+      "Changing superseded-fold semantics could affect legitimate partial-output folding for other providers",
+      "Grok provider event ordering may differ across CLI versions"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that a Grok attempt with a complete final message and turn_ended outcome=completed is not marked superseded",
+      "Add a test that a steering_restart after a complete final answer does not fold the finished reply under 'Partial output retained'",
+      "Reproduce with the issue's ordered steps: long Grok task, wait for final answer, observe header state, then steer/stop and inspect the fold"
+    ],
+    "unknowns": [
+      "Whether turn_completed / prompt_complete actually arrived for the affected turn (trace rotated)",
+      "Which of the three likely fix areas the maintainer will choose"
+    ],
+    "why": "Issue provides a concrete user-visible bug with ordered reproduction steps, expected/actual behavior, and code anchors in MessagesTimeline.tsx / MessagesTimeline.logic.ts. Maintainer triage confirms it is not a duplicate and identifies two plausible root-cause areas: Grok turn finalization not settling after a complete answer, and steering_restart marking an already-complete attempt as superseded. The reporter's follow-up supplies provider timestamps showing turn_ended completed at 04:43:09Z while the T3 attempt stayed open until 04:56:58Z, which supports a concrete reference-vs-implementation validation path. No open PR directly covers this path; PR #15413 is keyword-overlap only."
   },
   "52a9233ce2a1843c4796f845eea1899629665f61f705cb399c246515f4a2a63a": {
     "confidence": 0.8,
@@ -55972,6 +56147,43 @@
       "Maintainer decision on scope split and PR approach"
     ],
     "why": "Issue reports a reproducible teardown bug with a plausible root cause (TMS paused-free) and a maintainer has outlined a multi-step plan, but the fix depends on upstream TMS changes and maintainer guidance on scope. Existing PR #1571 is draft and incomplete, leaving room for a better PR, but actionability is blocked by pending upstream and design confirmation."
+  },
+  "6997653cb7167fad39cc5820d2348849dc6d515f4a4cf6e4f4515b707e09663f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body lists items 1 and 2 as open gaps, but the recent comment states both are done on main via #5052/#5053",
+      "Candidate gate_decision is ALLOW_PRIVATE_WORK while submission_policy is ai_disclosure_conflict"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "JSONC-preserving merge in the five routing-step ownership writers (background policy, review provider roles, ODD parity agents, default_agent, share)",
+      "legacy agent migration path",
+      "prepare-stage OpenCode settings validation (already reported done, needs confirmation)"
+    ],
+    "risks": [
+      "Open PR #5305 may already implement the remaining writer fixes, making duplicate work",
+      "Upstream engram setup opencode behavior (item 4) is explicitly out of scope and not fixable in this repo",
+      "AI disclosure policy conflict (ai_disclosure_conflict) may block public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a commented project opencode.jsonc containing the retired trigger block and run install/sync with OpenCode, routing guidance, Persona and Engram; assert comment bytes survive and escaped touched keys are refused",
+      "Add regression test asserting refusal occurs before any managed file mutation under each failure policy",
+      "Run targeted package unit tests and static checks for the settings-writer path"
+    ],
+    "unknowns": [
+      "Whether the five remaining routing-step writers and legacy agent migration are still unfixed at the current base SHA",
+      "Whether open PR #5305 already covers the remaining writer scope",
+      "Whether the ai_disclosure_conflict permits any submission path"
+    ],
+    "why": "Issue #5035 is a follow-up tracking item whose two main gaps (items 1 and 2) are already reported fixed on main by #5052/#5053; the remaining scope is a set of five routing-step ownership writers plus legacy agent migration, and the only candidate PR (#5305) is a keyword-overlap-only, non-referencing open PR that is not technically complete. The supplied evidence does not establish which writers remain unfixed at the current base, nor whether #5305 already covers them, so the actionable code surface is unresolved."
   },
   "69ab059914b253e7f096b8ae953608be264553cfb78c667a401a70452db8bb2d": {
     "confidence": 0.8,
@@ -74826,6 +75038,39 @@
       "How the ai_disclosure_conflict policy requirement must be satisfied before any public contribution"
     ],
     "why": "Issue describes a concrete M-RoPE offset double-count in Qwen3-Omni with a synthetic reproduction, but the supplied evidence shows an open PR #58890 with the same title and overlapping code paths (qwen3_omni_moe_thinker.py, test_qwen3_omni_mrope.py) that is not linked to this issue. Whether that PR already covers the root cause is unresolved, and the repo policy status is ai_disclosure_conflict, which is a materially blocking disclosure requirement."
+  },
+  "8c21a7e58330a3e7845ddbe85adc49632e8897d16f18d1aa10bc3cf41ef3133e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Prune non-existent paths from the persisted recent-workspaces list (at launch or dropdown open)",
+      "Reset or reassign `lastWorkspace` when its path no longer exists",
+      "Optionally add a per-entry remove control in the workspace switcher"
+    ],
+    "risks": [
+      "Filesystem existence checks on Windows paths may need normalization (case, separators) to avoid false negatives",
+      "Pruning at launch could race with slow/removable drives and drop valid entries",
+      "Maintainer may prefer UI removal over automatic pruning, but this is normal review preference, not a blocker"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: given a stored workspace-selection JSON containing a deleted path, assert the pruner drops it and updates `lastWorkspace`",
+      "Regression test in `workspace-paths.test.ts` covering pruning and lastWorkspace reset",
+      "Manual repro: open folder, delete it from disk, reopen switcher and confirm the entry is gone and no error toast appears"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer automatic pruning vs. explicit UI removal (or both)"
+    ],
+    "why": "Issue provides ordered reproduction steps, a concrete root cause (persisted `workspaces` array under `cline.code.workspace-selection.v2` never validated against the filesystem), and code anchors (`workspaces`, `lastWorkspace`). A commenter independently confirms the root cause and sketches a pruner; another user proposes a UI removal path. No duplicate/merged fix is established: the only overlapping PR (#14855) is keyword-overlap-only with no direct code path or semantic overlap, so it does not block. This is actionable desktop workspace-list work with a clear validation path."
   },
   "8c238c048c0c7bed1e10d2c4abaac29ef26e699dce8606ae6416a6284e06c82f": {
     "confidence": 0.85,
@@ -113512,6 +113757,41 @@
     ],
     "why": "Issue provides a self-contained reproduction of a probabilistic ring-backend deadlock in mx.distributed.all_sum/average_gradients, with measured ~3-4% per-collective failure rate, ruled-out variables (tree shape, chunking, skew, pre-barrier), and independent py-spy stack traces from a second reporter showing both ranks parked inside all_sum. This is a concrete distributed-training invariant failure with a clear reference-vs-implementation validation path."
   },
+  "d4d7d52dfad25e6a90a45c8050867c41a48c15c8b9ea8390e228bd77408c7454": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims allocator reports sufficient joint available size yet alloc returns None, while PR #42700 describes 'SWA over-admission of host load-backs' as the crash cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/allocation.py: alloc_token_slots / evict_to_free_tokens / reclaim_plan behavior under unified SWA",
+      "python/sglang/srt/managers/schedule_batch.py: prepare_for_extend fallback/retract path",
+      "python/sglang/srt/managers/scheduler.py: _get_new_batch_prefill_raw error handling"
+    ],
+    "risks": [
+      "PR #42700 may already fix the same root cause, making a new contribution duplicative",
+      "Fix may require allocator invariant changes with broad impact on SWA/unified memory paths",
+      "Reproduction depends on a specific request stream and hardware (RTX 4090 / A100-40GB)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay request_stream.jsonl with repro_wire_log_replay.py against openai/gpt-oss-20b with --enable-unified-memory and confirm scheduler OOM",
+      "Run same replay without --enable-unified-memory as control",
+      "Add a regression test that exercises /flush_cache and /reset_prefix_cache interleaved with mixed traffic and asserts alloc_token_slots does not raise when joint available size exceeds request"
+    ],
+    "unknowns": [
+      "Whether PR #42700 actually addresses the same root cause or a different SWA over-admission path",
+      "Whether the issue's flush_cache/reset_prefix_cache hypothesis is the true root cause",
+      "Whether maintainers have a preferred fix direction for unified SWA allocation"
+    ],
+    "why": "Issue provides a strong reproduction (traceback, ordered steps, executable replay client) and a plausible root-cause hypothesis (flush_cache/reset_prefix_cache emptying the radix tree while pages stay allocated in the unified SWA allocator), but the root cause is explicitly not reduced and the open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') has semantic overlap on alloc_token_slots/scheduler and may already cover the same root cause. Duplicate/merged-fix coverage is unresolved, which materially determines whether new code work is actionable."
+  },
   "d4d7f4702a351398f4e27e9eb5ef2733cb30355d1a684756f398bfa4ec251ffc": {
     "confidence": 0.85,
     "contradictions": [
@@ -114513,6 +114793,43 @@
       "Whether maintainers want a separate fix given the existing open PR"
     ],
     "why": "The issue is a proxy health-check aggregation bug, not an LLM algorithm contribution; the supplied evidence shows an open PR #44320 that directly references the issue and overlaps the same code path, so duplicate/coverage status is unresolved and materially blocks independent implementation."
+  },
+  "d6e03184db15021f8c17186f1f06ddb8b02415bd1764f5e64acbae0b69b348ea": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states the helper is available at terminate-reason.ts:18, but triage verification says that helper only exists on the #13466 branch and is module-private on main",
+      "Commenter doudouOUC recommends accessor return string | null while triage bot recommends LoopType | null"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/agents/runtime/agent-headless.ts: add getLoopType() accessor beside getTerminateMode()",
+      "packages/core/src/agents/forkedAgent.ts: add loopType?: string | null to ForkedAgentResult and populate at the getTerminateMode() read site",
+      "terminateReasonMessage: pass loopType through to describeAgentTerminateReason"
+    ],
+    "risks": [
+      "Implementing before #13466 merges requires exporting or duplicating the module-private helper, which is exactly the refactor #13466 performs",
+      "string | null vs LoopType | null mismatch could widen the helper's type and lose enum exhaustiveness",
+      "terminateReason reaches TUI, telemetry, and tools/agent/agent.ts beyond the memory planners, so an optional field must stay backwards compatible"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test asserting a forked/background agent stopped by loop detection reports the detector name (e.g. consecutive_identical_tool_calls) in its terminate message",
+      "Regression test that the six memory call sites still compile and emit the generic sentence when loopType is absent",
+      "Type-level check that the accessor return type matches the helper's LoopType | null parameter without widening the helper"
+    ],
+    "unknowns": [
+      "Whether #13466 will merge and when, since the required helper is not on main",
+      "Whether maintainers want this issue held until #13466 lands or implemented with a temporary export/duplication"
+    ],
+    "why": "The issue is precisely diagnosed and independently verified: loopType exists on AgentHeadless but has no accessor, ForkedAgentResult lacks the field, and the shared helper is already loopType-aware. However, the triage bot's verification establishes a hard dependency: the helper describeAgentTerminateReason/terminateReasonMessage only exists on the unmerged #13466 branch; on main the equivalent terminateModeMessage is module-private, so steps 2-3 are unimplementable until #13466 merges. This unresolved dependency/coverage question materially determines whether code work is actionable now."
   },
   "d6eefac14e739988e5efda63309becded2afb5f82696864a99248979dc9b89d8": {
     "confidence": 0.95,
@@ -121385,6 +121702,42 @@
       "Relevant code path in ollama/llama.cpp for tokenizer loading"
     ],
     "why": "Issue reports tokenizer misbehavior on Windows CPU, but maintainer cannot reproduce and user's own llama.cpp tests show correct tokenization. Root cause unclear; likely environment-specific (GBK codepage, mixed GPU/CPU) rather than a clear algorithm bug. No code path identified."
+  },
+  "e2f161b1cc4c46fa5af79569cf116712dfef922979cc2d07dda9df111a1cefc1": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states the fix was removed from #52677 when it became V2-only, while open_pr_assessment still lists #52677 as semantically overlapping with the issue's code paths",
+      "Maintainer comment 'Please use MRV2' suggests V1 fixes may be out of scope, while the issue author and another contributor argue V1 remains reachable via unsupported-feature routing"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/sample/thinking_budget_state.py: derive end-sequence progress from accepted tokens and force every position of the verification window (drafts and bonus), including transitions that start part-way through a window"
+    ],
+    "risks": [
+      "V1 may be considered won't-fix by maintainers, making the change non-actionable",
+      "The fix was previously part of PR #52677 and may be re-landed there, creating duplicate work",
+      "Corruption rate is model/phrase/temperature dependent, so a single-arm reproduction may not generalize"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run tests/v1/sample/test_thinking_forced_end_spec.py against unfixed code and confirm the 5 failing cases (target rejects matching draft, forcing starts inside draft window, loop-break variants, drafts reach last end token) pass after the fix",
+      "Reproduce with VLLM_USE_V2_MODEL_RUNNER=0 and a multi-token reasoning_end_str under speculative decoding, comparing corrupted-end counts against the V2 arm"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept a standalone V1 fix or close the issue as won't-fix for V1",
+      "Whether the fix will be re-landed inside #52677 or a successor PR, making a separate contribution redundant"
+    ],
+    "why": "The issue provides a concrete root cause (single-position forcing and draft-based end_count advancement in ThinkingBudgetStateHolder._update_think_state) and a reproduction, but the supplied evidence contains a material unresolved coverage question: PR #52677 previously carried the fix df93fe6c67 and has since been narrowed to V2-only, and the maintainer's 'Please use MRV2' comment leaves the V1 fix's acceptability undecided. Whether the V1 code work is actionable depends on that unresolved maintainer policy, which is a materially blocking unknown rather than normal implementation uncertainty."
   },
   "e30ad5ccb4e67adb280977974292d32b856b7954156f17d89404ff2d8e04f382": {
     "confidence": 0.7,
