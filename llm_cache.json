@@ -3070,6 +3070,39 @@
     ],
     "why": "The issue provides a clear root cause: workflow watch events spread prior step results into start/result payloads, causing duplicate state and OOM on Cloudflare Workers. Existing PR #20661 is open but has failing CI and lacks comprehensive tests, leaving room for a materially better PR with focused watch-payload tests and a minimal fix."
   },
+  "06c3a7319850de82163573355536d526549112298af700f4412c2e8f2dc5c3ca": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/per_user_oauth_store.py: make per-user Authorization Code token cache coherent across replicas",
+      "litellm/proxy/management_endpoints/mcp_management_endpoints.py: invalidate user OAuth token cache unconditionally on DELETE",
+      "litellm/proxy/common_utils/auth_cache_invalidation_pubsub.py: publish/consume invalidation for (user_id, server_id) on connect, refresh, disconnect"
+    ],
+    "risks": [
+      "Changing DELETE semantics to always invalidate could affect callers relying on current no-op behavior for missing rows",
+      "Redis-only backend option may not be viable for deployments without Redis, as the confirming comment notes",
+      "Cross-worker pub/sub invalidation must handle connect/refresh/disconnect consistently to avoid stale or prematurely dropped tokens"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test simulating two replicas with a shared store: warm replica B's local cache, disconnect via replica A, assert replica B can no longer use the token",
+      "Test that a repeated DELETE on a replica with no credential row still clears that replica's local cache entry",
+      "Run targeted unit tests for the MCP outbound credentials and management endpoints modules plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the Redis-only backend approach or the pub/sub invalidation approach",
+      "Whether the repository requires CLA/DCO sign-off before a PR can be accepted (policy status is legal_confirmation)"
+    ],
+    "why": "Issue provides a concrete multi-replica cache-coherence bug with ordered reproduction steps, expected/actual behavior, and specific code anchors (per_user_oauth_store.py, mcp_management_endpoints.py, dual_cache_token_backend.py, auth_cache_invalidation_pubsub.py). A confirming comment adds a second independent reproduction and pinpoints an additional defect: the DELETE handler only invalidates when the credential row still exists, so repeated DELETEs skip invalidation. Root cause is clear and a concrete validation path exists."
+  },
   "06c6c5be1804c06ee5ed678e8b1a307da494bb5a085bf558ed42688e83429176": {
     "confidence": 0.85,
     "contradictions": [
@@ -17877,6 +17910,38 @@
     ],
     "why": "Issue #5629 has a clear, deterministic root cause (HTMLSerializer drops visible <code> elements whose id contains 'data'/'state' without checking node.is_visible) and a concrete reproduction, but the opportunity is already covered: open PR #5631 explicitly references the issue and, per the issue comments, gates the data/state ID filtering on node.is_visible is False while preserving hidden state blocks and bpr-guid filtering. Closed PR #5783 also had root-cause coverage. A new competing implementation would duplicate existing work rather than add distinct value."
   },
+  "23e98bb7f10e7aa79d29b5f11b22a0dc4ada8770342b99c93b693575301c0dc9": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims consistent 400-700ms inter-node delay on Databricks, but a reproduction attempt on current main measured 2-7ms and did not reproduce the latency"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until root cause is identified; candidate paths are callback/tracing overhead or graph scheduling, but neither is confirmed"
+    ],
+    "risks": [
+      "Environment-specific performance issue may not be reproducible in CI or on maintainer hardware",
+      "Changing scheduler or callback paths without a confirmed root cause risks regressions",
+      "Issue may be caused by Databricks runtime, tracing, or user callbacks rather than langgraph code"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Obtain a timing profile of the same example on an affected environment across node callback/tracing boundaries and state-write/next-step transitions, with package versions and tracing/callback configuration"
+    ],
+    "unknowns": [
+      "Whether the delay reproduces on any current version or environment accessible to contributors",
+      "Whether tracing/callbacks or Databricks runtime is the actual source of the delay",
+      "Whether the issue is still present in current langgraph versions"
+    ],
+    "why": "Issue reports environment-specific inter-node latency on Databricks, but the supplied evidence includes a reproduction attempt on current main that did not reproduce the delay and explicitly states the original environment-specific problem is not ruled out. No root cause is established; the reporter admits they cannot root-cause it. The only concrete code anchors are from a user's application file (siplastagent.py), not from the langgraph repository, so there is no actionable code surface identified."
+  },
   "23ecd531dc907c9cc912b58904062eb683c09ed1b541088c13d5cd947b31174d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -18933,6 +18998,34 @@
       "Whether maintainers consider changing the documented contract acceptable"
     ],
     "why": "Issue provides a concrete minimal reproduction with FunctionModel, a clear regression boundary (2.52 retried vs 2.54 takes announcement as output), and a specific code anchor (CallToolsNode / run_stream behavior introduced by #9594). The bot comment confirms the behavior is a documented, tested contract, which frames the work as a scoping/design change rather than an unknown root cause. This is a user-visible correctness regression on the agent runtime path with a concrete validation path."
+  },
+  "25f31b6c53517c4b0c130fbda40515ce2c7f053a60d356a2d3ee97a6fc9eb9c6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "livekit/agents _ToolExecutor._deliver_reply: drop or retarget the async tool reply when the owning activity is paused/draining for handoff",
+      "session._next_activity routing: avoid scheduling a reply on an activity that has not started"
+    ],
+    "risks": [
+      "Session-scoped executors (AsyncToolset on AgentSession) need retargeting rather than dropping, so a blanket drop could regress that path",
+      "Behavior change in reply delivery during handoff could affect other async tool flows"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's scripted-LLM reproduction as a regression test asserting no 'cannot schedule new speech' and no 'no activity context found' errors",
+      "Run the targeted livekit-agents unit tests for tool executor and handoff paths"
+    ],
+    "unknowns": [
+      "Whether PR #7633 already implements the same fix and would make this duplicate work"
+    ],
+    "why": "Issue provides a concrete root cause in _ToolExecutor._deliver_reply: wait_for_idle() returns while the owning activity is draining for a handoff, so generate_reply() routes to session._next_activity and raises 'cannot schedule new speech' plus 'no activity context found'. A full scripted-LLM reproduction and a proposed minimal fix are supplied, and the code anchors match the described path. The open PR #7633 is a coverage candidate but lacks root-cause coverage, so it does not fully cover the issue."
   },
   "260aab41783267ddbf700c84f6772f9ac8c3cb3339d8ae95fa1759a7cee6f684": {
     "confidence": 0.85,
@@ -31087,6 +31180,41 @@
       "No maintainer design confirmation, but issue itself specifies a recommended fix and scope boundaries; not blocking"
     ],
     "why": "Issue provides a concrete root cause: the clear guard compares original editor text against transformed displayText, misclassifying preprocessing changes as newer user edits, plus an unordered debounced draft write race. Code anchors (editorStillContainsSubmittedText, displayText, develop) and a specific introducing commit are supplied, along with ordered reproduction steps and a concrete validation path (rendered E2E starting from Command+Enter/Send click, checking editor, transcript, Session switch/remount, persisted draft)."
+  },
+  "3ded9c747f5fc13eff0edf4a67a561ab905bcf8dc6bc2c54e35764f6046c7d19": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "peft/tuners/lora (or equivalent) warning check to also match targeted_parameter_names",
+      "regression test asserting no 'ignored' warning when rank_pattern/alpha_pattern keys match targeted parameters",
+      "docs/source/package_reference/lora.md MoE section wording (forward-looking note on vLLM scaling and required vLLM options)"
+    ],
+    "risks": [
+      "Scope creep: docs change and code fix should be separate PRs per maintainer",
+      "vLLM-side scaling fix may land independently, making docs wording stale if not forward-looking",
+      "Floating-point/seed sensitivity in any perplexity-based validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the supplied CPU-only Qwen3MoeConfig snippet: assert no rank_pattern warning and that lora_A weight shape reflects rank 2 x 4 experts",
+      "Add a unit test covering rank_pattern and alpha_pattern keys matching targeted_parameter_names",
+      "Verify existing targeted_module_names warning behavior is unchanged"
+    ],
+    "unknowns": [
+      "Exact file/line of the #3588 warning check in current main",
+      "Whether maintainer prefers the conversion helper function in addition to docs snippet"
+    ],
+    "why": "Issue identifies a concrete PEFT-side bug: the #3588 rank_pattern/alpha_pattern warning check only compares against targeted_module_names, not targeted_parameter_names, producing a misleading 'ignored' warning for MoE target_parameters adapters. Maintainer BenjaminBossan explicitly agreed and requested a separate PR with a test, and approved triage. The vLLM scaling mismatch is a documented cross-project behavior with a concrete workaround, and the PEFT fix is a one-line change with a CPU-only reproducer."
   },
   "3dfd057704f0d2175e208b4265d8d44bb30c3830ca4d520496467eea9115dbf1": {
     "confidence": 0.85,
@@ -48125,6 +48253,45 @@
       "Whether the two remaining quiet readers should be fixed in the same PR"
     ],
     "why": "Issue provides a precise root cause (two writers of requestContext user with different shapes) and a verified workaround. Existing PR #20690 is open but has failing CI/checks and may not cover all affected readers, leaving room for a materially better PR."
+  },
+  "5cffbbd8129af56b6110c16a84e27b5204e3371f8f1905da88d58726160e0946": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.algorithm_evidence.qualified=true and score=9 versus candidate.actionability_evidence.root_cause_signal=false and needs_confirmation=true",
+      "candidate.preTaskEvidence.duplicate.status='none' versus related_issue_assessment.status='potential_overlap' with #6077"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "flashinfer_nvlink_one_sided workspace sizing/offset computation for dispatch vs combine regions",
+      "all-to-all workspace allocation when MTP BF16 payload width exceeds target NVFP4 payload width",
+      "CUDA-graph capture path for the one-sided NVLink all-to-all"
+    ],
+    "risks": [
+      "Root cause may be in vLLM workspace allocation rather than FlashInfer, making the fix out of scope for this repo",
+      "Overlap with #6077/#5996/#6081 could mean the defect is already tracked or fixed elsewhere",
+      "Requires 8x B300/SM103 NVLink hardware, limiting independent verification"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with DP8EP + CUDA graphs on 8 GPUs and compare per-rank spec-dec acceptance against --enforce-eager",
+      "Unit test asserting dispatch/combine region offsets and total workspace size for mixed BF16 (12,352 B/token) and NVFP4 (3,520 B/token) payloads",
+      "Numerical regression: verify combine output for rank i is not overwritten by another rank's dispatch write under graph replay"
+    ],
+    "unknowns": [
+      "The truncated 'Collision' section: the actual computed overlap and the proposed fix location",
+      "Whether the workspace sizing lives in FlashInfer or in the vLLM integration layer",
+      "Whether #6077/#5996/#6081 already cover this failure signature",
+      "A minimal standalone reproduction command independent of the full GLM-5-3 DP8EP deployment"
+    ],
+    "why": "The issue describes a plausible workspace-overlap mechanism (MTP BF16 dispatch rows at 12,352 B/token vs target NVFP4 rows at 3,520 B/token writing into a workspace sized for the target layout), but the supplied issue body is truncated mid-sentence in the 'Collision' section, so the actual root-cause conclusion and any concrete reproduction command are not present. The candidate's own actionability evidence reports root_cause_signal=false and needs_confirmation=true with a DESIGN_CONFIRMATION wait reason, and the related-issue assessment flags potential overlap with #6077/#5996/#6081 based only on shared stack signatures. These are materially blocking unknowns for deciding whether a code change is actionable."
   },
   "5cffc40cd219df32a0917f89b7214f45745b860873e964a69bd09d54bcc0a2f6": {
     "confidence": 0.8,
@@ -83262,6 +83429,42 @@
     ],
     "why": "The issue presents a plausible root cause (archive-completed commits only a todos-partition entry while the candidate head retains a released lease, so source and head projections diverge), but the candidate itself lists three mutually exclusive fixes and explicitly defers the choice to the owner. The supplied evidence also flags base_sha_changed and assignment_required, and no maintainer design decision is recorded, so the actionable code change is not yet determined."
   },
+  "9df6bf4e59466c1f8fe401f3a0cbcb06eb1934f74dd4acdbb8be4d2f054228e3": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER/gate HUMAN_REVIEW while owner triage comments repeatedly set outcome=ready-for-pr with no captain_flag"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/agent/claude.go: surface stdout/stream-json isApiErrorMessage or usage-limit banner into the returned error instead of empty stderr",
+      "internal/agent/retry.go: bounded same-agent retry for empty-stderr exit-1 and/or leniency for nonzero exit after usable structured/text output",
+      "internal/agent/retry_test.go: regression tests for empty-stderr exit-1 classification and completed-work preservation"
+    ],
+    "risks": [
+      "Scope creep into silent ordered-agent fallback, which owner triage explicitly declines (#400 item 8 / #398)",
+      "Overlap with open mixed field report #400 items 2-3; fix should stay discrete and not duplicate that thread",
+      "Potential shared root cause with #391 XML-junk structured output; avoid conflating distinct fixes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test in internal/agent/retry_test.go asserting a bare exit-1 with empty stderr is classified retryable and the error message includes the stdout banner",
+      "Add a test that a nonzero exit after a usable structured/text result does not discard the completed work",
+      "Run targeted package tests and static checks for internal/agent"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers bounded crash retry as default or config knob",
+      "Whether #400 should absorb this fix rather than a separate PR"
+    ],
+    "why": "Owner triage comments repeatedly confirm on multiple tips that the waitErr path in internal/agent/claude.go formats errors from stderr only, parseClaudeEvents never lifts isApiErrorMessage/usage-limit banners, claudeRetryClassifier does not retry bare empty-stderr exit-1, and nonzero waitErr returns before finalizeClaudeResult, discarding completed work. This is a discrete, implementable fix with concrete code anchors and a clear validation path."
+  },
   "9e0539153ea6e672745998dc5d17697c901a1ac2b6b42df1102eee644b559a08": {
     "confidence": 0.85,
     "contradictions": [
@@ -84706,6 +84909,39 @@
       "Whether the failure is reproducible outside the A5/NPU environment"
     ],
     "why": "Issue reports a concrete failure (KeyError/ValueError for model_type 'deepseek_v41' in Transformers AutoConfig) with a full traceback and ordered reproduction steps, but the root cause is not established: it is unclear whether the fix belongs in sglang's HF config parsing (python/sglang/srt/utils/hf_transformers/config.py) or requires a Transformers version/architecture registration, and the candidate's own evidence marks root_cause_signal=false. Open PRs #38950 and #39370 semantically overlap on dsv4/dsv4_1/checkpoint without directly referencing this issue, so duplicate/coverage status is unresolved and must be compared before code work is actionable."
+  },
+  "a108ef4e3df58f29dd4deec0c6b4e4786e02169771b78587fbac56e5b14dab06": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "client auto-opened subscriptions/listen stream lifecycle (reopen or notify)",
+      "ClientOptions.listChanged docs/behavior",
+      "possibly client.onerror/onclose signaling for subscription end"
+    ],
+    "risks": [
+      "Two acceptable resolutions in the issue mean implementation could diverge from maintainer intent",
+      "Changing auto-reopen behavior may alter documented one-shot semantics of Client.listen()",
+      "No assignee means work may be uncoordinated or duplicated"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.mjs against a restarted server and assert onChanged fires again or a documented closure signal is emitted",
+      "Add a regression test that drops the listen stream and verifies either re-listen with backoff or an explicit application-visible notification"
+    ],
+    "unknowns": [
+      "Which of the two proposed resolutions maintainers prefer",
+      "Whether assignment will be granted",
+      "Whether the auto-opened subscription is intended to be one-shot per connection by design"
+    ],
+    "why": "Issue describes a real behavioral gap in the auto-opened subscriptions/listen stream lifecycle with a detailed repro script and code anchors, but the submission policy requires assignment (needs_assignment) and the issue has no assignee, no maintainer approval, and no design confirmation. The issue itself offers two alternative acceptable resolutions (auto-reopen with backoff + hook, or surface closure via existing channels + docs), so the concrete implementation target is not yet fixed. This is a materially blocking unknown for actionable code work."
   },
   "a1385aedc8238e32c900bf764da72cefb2494149620b5750f0ec374037632f98": {
     "confidence": 0.8,
@@ -87788,6 +88024,39 @@
     ],
     "why": "Issue provides a concrete, reproducible Vulkan-only failure with a traced root cause: MoE expert-cache bank tensors exceed the ggml-vulkan 1 GiB suballocation block, producing NULL buffers and tripping the scheduler assert. Evidence includes a threshold table (2048/2500 run, 2700+ assert), a workaround (GGML_VK_SUBALLOCATION_BLOCK_SIZE=4 GiB runs), CUDA non-reproduction, and named code anchors (ggml-backend.cpp, llama-moe-cache.cpp, ggml-vulkan.cpp, common_fit_auto_moe_cache). This supports a reference-vs-implementation test and a concrete fix path (chunk banks under ggml_backend_buft_get_max_size or clamp the auto budget). No duplicate/merged fix is identified; open PRs are keyword-only and unrelated."
   },
+  "a76af3f6e21f6a119536b0c59124b7b9c2fda2b7a5d64ec69bcae787035e592f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment reports an open PR #42740 with direct code overlap and semantic overlap on x-override-priority, while the candidate is scored as actionable independent work"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sgl-model-gateway/src/routers/header_utils.rs allowlist to forward x-override-priority",
+      "chat body priority preservation through openai_protocol::ChatCompletionRequest re-serialization"
+    ],
+    "risks": [
+      "Overlapping open PR #42740 may already implement the header fix, making a duplicate contribution low value",
+      "Body priority fix may require openai-protocol changes beyond the gateway, expanding scope",
+      "Blocking other x-override-* headers must be preserved to avoid unintended override exposure"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting x-override-priority is forwarded by the gateway to the worker",
+      "Add a test asserting chat body priority survives gateway re-serialization, contrasted with /generate and /v1/completions"
+    ],
+    "unknowns": [
+      "Whether PR #42740 fully resolves the header forwarding and body priority drop described in the issue",
+      "Whether the body priority drop is in scope for the same fix or requires separate openai-protocol changes"
+    ],
+    "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps and code anchors, but the supplied evidence shows an open PR #42740 that directly overlaps the same code path (header_utils.rs) and distinctive identifier (x-override-priority), with duplicate status 'human_review_required'. Whether that PR already covers the actionable fix is unresolved, which materially determines whether independent code work is warranted."
+  },
   "a776595f434d29112b31bcc0c29d5068ad291450307bf03b9e74a202f028fc7e": {
     "confidence": 0.9,
     "contradictions": [
@@ -88277,6 +88546,46 @@
       "Exact code location where the model name is forwarded (not specified in issue)."
     ],
     "why": "Issue provides a clear root cause: lemonade launches vLLM with --served-model-name user.<model> but forwards requests using the bare model name, causing vLLM 404 and silent stream failure. Multiple user reports confirm the mismatch. The fix is a straightforward name alignment in the router/backend, with a concrete reproduction path via chat completion request."
+  },
+  "a8c3f18f580d723f3f02ee0701c4dbffcd453f0477c291d83f456806f07a9061": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Pre-review reports duplicate_changed while duplicateStatus is 'none' and the related PR is closed/unmerged",
+      "Proposal claims a concrete root cause and code anchors but actionability_evidence shows root_cause_signal=false and public_repro_signals=0"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "registry/reconcile/reconcile.go error handling and readiness bookkeeping",
+      "registry/memory/cache.go registry-scoped owner-checked deletion (ForRegistry)",
+      "consumer notification on purge",
+      "focused reconciliation/cache regression tests"
+    ],
+    "risks": [
+      "Repository requires assignment and AI disclosure confirmation before implementation",
+      "Duplicate/overlap status is uncertain (duplicate_changed) and the only related PR is closed and unmerged",
+      "Changing the exported memory.Cache interface with ForRegistry may break downstream implementers",
+      "Maintainer design preference for the stop-then-reconcile lifecycle is unconfirmed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test reproducing the failed-replacement path where the old watcher is stopped, replacement construction fails, and stale service deletions remain",
+      "Run targeted package tests for registry/reconcile and registry/memory",
+      "Add a runtime fixture (kind/k3s) demonstrating stale OLD traffic on baseline and withdrawal plus NEW recovery on the fix"
+    ],
+    "unknowns": [
+      "Whether maintainer approval and TASK authorization will be granted",
+      "Whether the closed PR #4970 already covers the same fix or was rejected for a specific reason",
+      "Whether assignment and AI disclosure requirements can be satisfied for this contributor",
+      "Whether a public minimal reproduction exists beyond the proposal text"
+    ],
+    "why": "The issue is a detailed proposal for retiring stale discovery data after a failed registry replacement, with concrete code anchors (registry/reconcile/reconcile.go, memory.Cache, ForRegistry) and a plausible root cause. However, the supplied evidence contains materially blocking unknowns: the repository requires assignment and AI disclosure, the pre-review failed with duplicate_changed, policy_or_disclosure_uncertain, assignment_required, and reproduction_or_validation_missing, and the only related PR (#4970) is closed and unmerged with no direct code overlap. The proposal itself states maintainer approval and TASK authorization are pending, and no public reproduction or validation evidence is present."
   },
   "a8c7d2fd3452a3f4d2f3ab4f7f2bf3d52b64a594baf24bf67da40d45e7b8ab43": {
     "confidence": 0.6,
@@ -89732,6 +90041,42 @@
       "Exact root cause (e.g., token expiry vs. session invalidation) is not confirmed."
     ],
     "why": "Issue provides a clear reproduction with ordered steps and expected behavior, indicating a concrete bug in the approval flow after long-pending requests. Root cause is not explicitly identified but the reproduction path is sufficient to start investigation. No duplicate PRs or issues found, and the repository is mature."
+  },
+  "ac5a19420aea62b48d997b6f7d48fd4f0f8c69ce9cc956c028c2f99912765b3c": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body describes a complete design with tests already existing in the inspected candidate, yet preTaskEvidence reports design_confirmation=true and wait_reasons=[DESIGN_CONFIRMATION], indicating maintainer approval is still pending"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "registry/reconcile/reconcile.go: finalize constructor failures after readiness barrier with scoped deletion",
+      "registry/memory/cache.go: add ForRegistry scoped view and owner-checked DeleteServiceWrapper",
+      "registry/reconcile/reconcile_test.go and registry/memory/cache_test.go: regression tests for R1-R6"
+    ],
+    "risks": [
+      "Pending initialization barrier can delay cleanup for a failed sibling over retries",
+      "Adding ForRegistry to memory.Cache breaks downstream custom implementations/mocks",
+      "Shared-host owner predicate is type/name not generation token; overwritten values not restored"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "go test ./registry/memory ./registry/reconcile -count=1 -v",
+      "go test -race ./registry/memory ./registry/reconcile -count=10",
+      "Real-kind paired baseline/fixed run reproducing #4394 stale OLD traffic and candidate withdrawal with KEEP intact"
+    ],
+    "unknowns": [
+      "Whether maintainer has approved the design and authorized the corresponding TASKs",
+      "Whether the repository's assignment requirement has been satisfied",
+      "How the AI disclosure conflict will be resolved",
+      "Whether the inspected candidate revision d671027 is the exact revision to be reviewed"
+    ],
+    "why": "The issue is a design/proposal document for a registry reconciler defect (#4394) with concrete code anchors and a detailed test plan, but the supplied evidence shows unresolved blocking unknowns: the repository requires assignment (assignmentRequired=true, no assignees) and there is an AI disclosure conflict (aiDisclosureConflict=true, policy=ai_disclosure_and_assignment), plus a design confirmation wait (DESIGN_CONFIRMATION). The issue body itself states it is a 'draft for maintainer approval' and that verification should only be executed 'after maintainer approval and authorization of the corresponding TASKs.' These are materially blocking unknowns that determine whether code work is actionable, not normal implementation uncertainty."
   },
   "ac5b2998d6abc14c06b7213c9aeecb9377c50c4ee0d5c02988ab4c4a6f053857": {
     "confidence": 0.85,
@@ -114124,6 +114469,43 @@
     ],
     "why": "Issue provides a concrete, reproducible Vulkan-only failure: MoE expert cache banks exceed the 1 GiB ggml-vulkan suballocation block size, leaving view tensors with buffer==NULL and tripping the scheduler assert. Root cause is traced to llama-moe-cache.cpp bank construction vs ggml_backend_buft_get_max_size(), with a clear threshold table and a working workaround (GGML_VK_SUBALLOCATION_BLOCK_SIZE=4GiB), plus a CUDA control showing backend specificity. This is a real code-level fix with a concrete validation path."
   },
+  "da2cb6c8c49450dc5d19fe55f4a0026092bbfb1e736853da2d1a44b5a86146ee": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue cites extensionManager.ts:3398-3399/3422-3425 while the verifier re-derived 3406/3430-3434 at HEAD; content matches, line numbers differ due to base revision"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/github.ts: distinguish credential/auth failure from other ERROR returns and carry a reason",
+      "packages/core/src/extension/extensionManager.ts: extend update-check callback payload or status to carry a reason through startup dispatch",
+      "packages/cli/src/ui/state/extensions.ts: add reason field to ExtensionUpdateStatus and SET_STATE payload",
+      "packages/cli/src/ui/components/extensions/steps/ExtensionListStep.tsx: surface the reason in the extension list UI"
+    ],
+    "risks": [
+      "Open PR #12183 touches packages/core/src/extension/extensionManager.ts with semantic overlap; compare implementation boundaries before duplicating work",
+      "Broadening the update-state API/UI contract could affect other ERROR-returning paths",
+      "The deferred unrestricted-environment branch in extension-git-client.ts is out of scope and should not be conflated with this fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test where a type:git extension has a revoked credential/GITHUB_TOKEN and assert the update check surfaces a credential-specific reason rather than a bare ERROR",
+      "Assert ref-not-found and credential-rejected produce distinguishable outcomes",
+      "Run targeted unit tests for the extension update-check path and CLI extension state/UI, plus static checks"
+    ],
+    "unknowns": [
+      "Whether PR #12183 already implements or conflicts with the reason-surfacing change",
+      "Maintainer preference between callback payload vs. reason field on update status"
+    ],
+    "why": "Issue is a concrete, independently verified follow-up: the update-check catch in packages/core/src/extension/github.ts drops the Git error to a no-op debugLogger and returns a bare ExtensionUpdateState.ERROR, indistinguishable from ref-not-found; extensionManager.ts flattens rejections to bare ERROR with no payload slot; and the CLI update status/UI render only the localized enum label. A collaborator re-derived all cited findings at main HEAD, confirming root cause and code anchors. This is a multi-file product change with a clear validation path (failure test for credential-revoked git extension, then targeted unit tests and static checks)."
+  },
   "da3cf2f3aff4026401554e0792a2646f5948c6d2e4cef9ff0abafc9ac47446ff": {
     "confidence": 0.8,
     "contradictions": [],
@@ -129048,6 +129430,45 @@
       "Whether the maintainer's fix in v4.1.11 fully addresses the key-agnostic requirement across all seams, or if the proposed patch is still needed."
     ],
     "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter each assume a fixed 'command' key), a concrete reproduction (object-form command under 'cmd' key), and a proposed three-seam fix with local patch. The maintainer comment indicates a fix in v4.1.11, but the issue remains open and the proposed fix is more comprehensive (key-agnostic across all seams). This is actionable and valuable."
+  },
+  "f5a0733862065a7f3b727e35a8b0cb11b757e77efdf34cc3d23697ea57bbba27": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Comment claims issue resolved/closed via PR #38719 while issue state is open",
+      "Root cause attributed both to Cloudflare edge policy and to missing cost-map routing to a nonexistent endpoint",
+      "Workaround (/responses) described as both sufficient and only partially fixing the problem"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/openai/openai.py chatgpt provider routing",
+      "cost map / model-to-endpoint mapping for chatgpt models",
+      "litellm/litellm_core_utils/litellm_logging.py outbound header handling"
+    ],
+    "risks": [
+      "Cloudflare challenge may be environment/egress-specific and not fixable in LiteLLM code",
+      "Overlapping fixes (#44550, #38719, #30182) may already cover the actionable portion",
+      "Issue may already be resolved, making new code work redundant"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce chatgpt/gpt-5.4-mini call against /backend-api/codex/chat/completions and assert JSON vs challenge HTML",
+      "Regression test that chatgpt/* models route to /responses rather than /codex/chat/completions",
+      "Verify cost-map lookup does not fall through to a nonexistent endpoint"
+    ],
+    "unknowns": [
+      "Whether the actionable defect is LiteLLM routing/cost-map or external Cloudflare behavior",
+      "Whether referenced fixes #44550/#38719/#30182 already resolve the issue",
+      "Whether a reproducible in-repo failure exists independent of network environment"
+    ],
+    "why": "Issue reports a Cloudflare 403/challenge on chatgpt/* OAuth path, but supplied evidence shows the root cause is contested: one commenter attributes it to missing cost-map entries routing to a nonexistent /codex/chat/completions endpoint (fix in #44550), another says the /responses path is the workaround, and a later comment claims the issue was validated and closed as resolved via PR #38719. No confirmed root cause or concrete code anchor for the Cloudflare behavior is established."
   },
   "f5a8e519973a6ac02211da17c0870ec2b6960ed33961509015ee8f8571ae549f": {
     "confidence": 0.9,
