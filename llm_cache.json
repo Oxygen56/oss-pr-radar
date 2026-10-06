@@ -20530,6 +20530,42 @@
     ],
     "why": "Issue provides a concrete root cause: the shared composer compares original editor text against transformed displayText to decide whether to clear, so preprocessing-induced differences are misread as newer user input; a second race is the 300ms debounced draft write completing after the send-path clear. Reproduction steps, affected surfaces, and acceptance criteria are explicit, and the recommended fix (monotonic edit version plus clearIfUnchanged and per-Session latest-value-wins draft serialization) is actionable."
   },
+  "287abdea39ebfccb835e86d5b6b1baa7b2e7844d4bd8655fc1b98dc8cefa6614": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims the GGUF file exists at the linked Hugging Face repo, but collaborator rick-github states there is no Swift-full.gguf there; reporter clarifies they merged two split files"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "fs/gguf/gguf.go tensor size/offset arithmetic for Q2_0 block quantization",
+      "internal/testutil/gguf/gguf.go test fixtures for 640-width MoE tensors",
+      "mlxrunner/model/llama/llama.go tensor loading path"
+    ],
+    "risks": [
+      "The referenced Hugging Face repo lacks the exact Swift-full.gguf file, so the reproducer may need to be reconstructed by merging the two split GGUFs",
+      "Overflow may be int32 arithmetic or incorrect block_size assumption; fixing one without the other could leave the bug",
+      "PR #18443 may already cover the Q2_0 path, making a separate fix redundant"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a Q2_0-quantized GGUF containing a 640x2560x512 ffn_down_exps tensor and confirm the overflow error",
+      "Add a unit test in internal/testutil/gguf asserting correct byte-size computation for ne0=640 with 32-block quantization",
+      "Cross-check parsed tensor sizes against llama.cpp dumpgguf output for the same file"
+    ],
+    "unknowns": [
+      "Whether open PR #18443 already resolves this exact overflow for Q2_0 tensors",
+      "Whether the overflow is caused by int32 arithmetic or by an incorrect block_size default"
+    ],
+    "why": "Issue reports a concrete GGUF parser overflow on a Q2_0-quantized MoE tensor (blk.1.ffn_down_exps.weight, 640x2560x512), and collaborator rick-github supplied a dumpgguf trace plus a direct pointer to open PR #18443 which adds Q2_0 GGUF tensor support. This is a numerical/quantization parsing defect with a clear reference-vs-implementation validation path."
+  },
   "288a8e0f0330f2c415921bf4d3c53e9965a0ab73100a764431779de13c7e028b": {
     "confidence": 0.85,
     "contradictions": [
@@ -54255,6 +54291,36 @@
     ],
     "why": "The issue reports a user-visible 404, but a contributor's end-to-end simulation on current main could not reproduce it and showed the error state (webhook row present, app_triggers row missing) does not arise through the normal draft-sync/publish paths. The reporter's version/commit is unknown, and the contributor explicitly asks for the self-hosted version, app_triggers row state, and whether undo/redo or node re-adding occurred. Without that, the root cause is not established and the fix is not actionable."
   },
+  "682022326b5a96b13b775f05b688685ffc630d2934289b1c90f161ffe22971c0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body lists items 1 and 2 as open gaps, but the maintainer comment states both are done via merged PRs #5052 and #5053"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Remaining OpenCode ownership writers (background policy, review provider roles, ODD parity agents, default_agent, share) and legacy agent migration should use the JSONC-preserving merge"
+    ],
+    "risks": [
+      "Residual scope is narrow and may be considered low-value relative to already-merged fixes",
+      "Upstream engram setup opencode behavior is out of scope for this repository"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Regression test asserting comments survive each remaining ownership writer and legacy agent migration on a commented opencode.jsonc",
+      "Test that escaped touched keys are refused rather than normalized"
+    ],
+    "unknowns": [
+      "Whether maintainers still want a separate PR for the remaining ownership writers or consider the issue effectively resolved"
+    ],
+    "why": "Issue #5035 is a follow-up tracking item whose two main gaps (JSONC-preserving cleanup and pre-mutation OpenCode settings validation) were already fixed by merged PRs #5052 and #5053, as confirmed by the maintainer comment. Remaining work is residual ownership-writer cleanup and an upstream Engram dependency explicitly marked not fixable here, so the actionable surface is largely covered."
+  },
   "683299118fcf08738596f524968be4862b417d9fa3cfa212733d7f7d043f4607": {
     "confidence": 0.7,
     "contradictions": [],
@@ -63833,6 +63899,45 @@
       "Whether PR #35629 actually addresses this issue; needs manual comparison."
     ],
     "why": "The issue provides a concrete, reproducible bug with clear root causes: CUDA graph capture hangs for hybrid GDN models, dtype mismatch in gdn_backend.py, and MTP memory allocation failure. It includes executable reproduction commands and specific code anchors, enabling a targeted fix and validation."
+  },
+  "780bb625d01e6efe27a5acb6c14e1c714d23a062fb946ebd2e94ed21a9242d67": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with gate_decision HUMAN_REVIEW, but actionability_evidence shows maintainer_approved false and no wait_reasons",
+      "Duplicate status is semantic_overlap_requires_review while open PRs are marked technical_complete false and root_cause_coverage false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: stop forcing reconnect_on_error=False and honor reconnect_on_error=True",
+      "src/pipecat/services/sarvam/stt.py: complete in-flight utterance on each drop in _reconnect_websocket",
+      "src/pipecat/services/sarvam/stt.py: report non-retryable closes (4000, non-rate-limit 1003) as permanent",
+      "src/pipecat/services/sarvam/stt.py: give a failed first connect bounded retry or mark it permanent"
+    ],
+    "risks": [
+      "PR #6031 may already implement the same Sarvam reconnect fix, making a new contribution redundant",
+      "PR #6032 may generalize the fix across websocket STT services, overlapping the same root cause",
+      "Changing reconnect defaults could alter behavior for other Sarvam users or pipelines relying on failover via ServiceSwitcher"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py drop scenario and assert 2 handshakes, transcripts from both connections, and is_usable True",
+      "Run the issue's repro.py connect scenario and assert retry then transcription, or is_usable False when retries are exhausted",
+      "Add a regression test for 1003 rate-limit vs non-rate-limit close classification",
+      "Compare behavior against PR #6031 and #6032 to confirm no duplicate coverage"
+    ],
+    "unknowns": [
+      "Whether PR #6031 or #6032 already fully fixes the Sarvam drop and failed-connect scenarios",
+      "Whether maintainers prefer the Sarvam-specific fix in #6031 or the generalized websocket STT fix in #6032",
+      "Whether the existing PRs are intended to close this issue"
+    ],
+    "why": "Issue provides a concrete reproduction and root cause for SarvamRealtimeSTTService losing transcription after a dropped or failed connection, but two open PRs (#6031, #6032) already target the same code path and semantics, and the duplicate/coverage status is explicitly 'semantic_overlap_requires_review'. Whether the existing PRs fully cover the root cause is unresolved, which materially determines whether new code work is actionable."
   },
   "781463c57436fd007c7489a0971e434027c68697bff0cb869fd711dd3f4f7c08": {
     "confidence": 0.8,
@@ -74676,6 +74781,45 @@
       "Exact implementation details of per-model threading and whether maintainers prefer explicit constructor arg vs lazy capture."
     ],
     "why": "Issue clearly identifies a process-wide global causing incorrect tensor splitting for multiple models with different KV head counts, with a concrete root cause and a suggested fix mirroring an existing PR. Validation path includes a regression test with two models."
+  },
+  "8d2bcbec6561cebc994d35050926c20b7b121d634d2214bae9cd697c9e9da1d9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue cites extensionManager.ts:3398-3399/3422-3425 while verification re-derives 3406/3430-3434 at HEAD",
+      "Issue frames work as follow-up to unmerged PR #13454, so current main lacks the referenced GIT_TERMINAL_PROMPT change"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/github.ts: distinguish credential/auth failure from other ERROR returns and carry a reason",
+      "packages/core/src/extension/extensionManager.ts: extend update-check callback payload or status to carry reason",
+      "packages/cli/src/ui/state/extensions.ts: add reason field to ExtensionUpdateStatus",
+      "packages/cli/src/ui/components/extensions/steps/ExtensionListStep.tsx: render reason in UI"
+    ],
+    "risks": [
+      "Parent PR #13454 is unmerged; implementing against main may conflict with its pending changes",
+      "PR #12183 overlaps extensionManager.ts and may already cover part of the root cause",
+      "Scope spans core, CLI state, and UI, increasing review surface"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that a revoked credential during startup update check yields a distinguishable reason rather than bare ERROR",
+      "Regression test that ref-not-found still returns ERROR without a credential reason",
+      "Run targeted unit tests for extension update-check and UI state modules"
+    ],
+    "unknowns": [
+      "Whether PR #12183 already implements the reason-surfacing change",
+      "Whether maintainers want the callback-payload approach vs a status reason field",
+      "Whether the parent PR #13454 will merge first and change the baseline"
+    ],
+    "why": "Issue describes a concrete multi-file product change (surface update-check failure reason) with code anchors, but supplied evidence shows no public reproduction, no root-cause signal flag, and an unresolved semantic-overlap PR #12183 touching extensionManager.ts; the issue itself is a follow-up whose parent PR #13454 is unmerged, so the actionable baseline is uncertain."
   },
   "8d3b49f070eda3a23a52ec812c433cd22c6ca59a51d9f9f86aa156f5d304165a": {
     "confidence": 0.8,
@@ -88103,6 +88247,37 @@
     ],
     "why": "The issue presents a concrete, well-bisected root cause (logical_topk_ready recorded inside the piecewise capture segment, then waited on after eager_break_during_capture ends capture) with a clear reproduction and regression bracket. However, the supplied evidence contains a materially blocking unknown: open PR #56825 ('[Bugfix][SparseMLA] Fix piecewise cudagraph capture crash in index group') has strong semantic overlap (21 distinctive terms including logical_topk_ready, eager_break_during_capture, piecewise) and touches the same overlapping path (vllm/v1/attention/backends/mla/index_group.py), yet the duplicate status is 'semantic_overlap_requires_review' and root_cause_coverage is false. Whether this PR already covers the root cause determines whether independent code work is actionable, so this must be resolved before proceeding."
   },
+  "a6728805384cefe7cef3e4cb3d8fa0159c6c5a3454b253c872516ea184a92e7a": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels the issue as llm_algorithm with high algorithm score, but the issue body and code anchors describe only resource-cleanup plumbing"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No algorithm-level change; per-site cleanup fixes in export.py, cans/run.py, sweep.py, sft.py/stream_setup.py, eval/aider_polyglot.py, best_of_n_stream.py, ui/app.py"
+    ],
+    "risks": [
+      "Treating a multi-site cleanup issue as one PR conflicts with the maintainer's explicit request for small standalone PRs",
+      "The sweep site is already addressed by open PR #1640, risking duplicate work",
+      "No algorithm correctness or numerical regression path exists for this issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Per-site regression tests that fail on main (e.g. fake docker on PATH for aider; Windows-only reproduction for the best-of-n staging file), as the maintainer requested"
+    ],
+    "unknowns": [
+      "Which of the remaining six sites, if any, is still unclaimed after the maintainer released the issue"
+    ],
+    "why": "Issue #1464 is a resource-cleanup bug report (temp dirs, tracker rows, reader threads, Docker containers, temp files) in a CLI/training-wrapper repository. Although the repo contains LLM training code, the issue itself is ordinary lifecycle/plumbing work with no training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. Under track=llm_algorithm this is out of scope. Additionally, the sweep site is already covered by open PR #1640, and the maintainer has explicitly released the issue and asked for it to be split into small per-site PRs, so a single broad contribution is not the desired shape."
+  },
   "a69f5b91ee3f182472aed7fdffe2a0363389dde86de00462a9cdfeaffb4c2c7b": {
     "confidence": 0.8,
     "contradictions": [
@@ -96807,6 +96982,39 @@
     ],
     "why": "Issue provides a concrete traceback, ordered reproduction, and a specific root cause: OMP's reload-tagged dynamic import of onnxruntime-web creates a second module identity that re-registers the CPU backend, failing with 'cannot register backend \"cpu\" using priority 10'. A candidate fix (import.meta.resolve) is described with before/after verification. This is a real user-visible bug on the agent/RAG embedding path with a clear code anchor (embedding.ts / loadTransformersForLocalEmbedding)."
   },
+  "b85c5f8c0794008cc992798ca161d26a55f0784efa624f4f42b6b73382cce48a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/shared/src/nodeSqliteClient.ts: use BEGIN IMMEDIATE (or retry) for event-write transactions",
+      "RunExecutionService.startRootRun: interrupt/close live provider session when ingest fails",
+      "ClaudeAdapterV2.interruptTurn wiring on the failure path"
+    ],
+    "risks": [
+      "BEGIN IMMEDIATE increases write-lock contention and may serialize concurrent event writes",
+      "Interrupting the provider on ingest failure could mask transient errors or double-terminate turns",
+      "Overlap with #14856 (lost failed terminal) and #15447 (Cursor orphan) may require coordinated fix direction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with node:sqlite: deferred BEGIN upgrade under a concurrent writer fails in ~0 ms while BEGIN IMMEDIATE waits ~5 s with busy_timeout=5000",
+      "Integration test: force EventSink.write failure and assert the provider session is interrupted and no orphan claude process remains",
+      "Regression test asserting a failed ingest still writes a terminal run state"
+    ],
+    "unknowns": [
+      "Maintainer has not yet chosen between BEGIN IMMEDIATE and write retry",
+      "Whether the fix should be scoped to cover #15447's Cursor path in the same change"
+    ],
+    "why": "Maintainer triage confirms two concrete root causes on main: deferred BEGIN in packages/shared/src/nodeSqliteClient.ts causes immediate SQLITE_BUSY on read-to-write upgrade (bypassing busy_timeout), and RunExecutionService.startRootRun never calls ClaudeAdapterV2.interruptTurn on ingest failure, orphaning the claude process. Independent reproduction with node:sqlite and a second occurrence report corroborate both."
+  },
   "b881da7736467a41e1fb58c198c63b6d73c93e66e14c9a155075713542a8ab0b": {
     "confidence": 0.6,
     "contradictions": [
@@ -104939,6 +105147,45 @@
       "Maintainer confirmation of root cause and desired fix approach"
     ],
     "why": "Issue reports deterministic SWA KV position corruption in hierarchical cache for DeepSeek-V4, with kv-canary evidence and a plausible root cause in draft-SWA backup/restore. However, open PR and related issue lookups timed out, and a merged PR #30393 may already address the problem, requiring verification. Maintainer has not confirmed the diagnosis or assigned work."
+  },
+  "c7cfd295191af16fa8beb03f3d0e131893990838ad580c3eb117bcb495c8ff8d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body presents the k-bit preparation defect as open, while maintainer comments state #1045 already threads the resolved value at every k-bit text site and later at vision/audio sites",
+      "Candidate duplicate summary says no related open PR, yet #1045 is MERGED with direct semantic overlap on training_gradient_checkpointing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/peft_wiring.py shared resolver/wrapper",
+      "src/soup_cli/trainer/grpo.py, ipo.py, bco.py, reward_model.py, online_dpo.py TRL config threading",
+      "src/soup_cli/trainer/pretrain.py and embedding.py TrainingArguments threading",
+      "src/soup_cli/utils/unsloth.py use_gradient_checkpointing mapping",
+      "src/soup_cli/commands/train.py and profile.py VRAM pre-flight consistency"
+    ],
+    "risks": [
+      "Overlap with merged #1045 means a new PR may duplicate shipped k-bit work",
+      "Multiple maintainer-scoped sub-items risk an unfocused or conflicting change",
+      "Numerical/VRAM behavior differences between CPU reproduction and real 4-bit GPU runs"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Parametrised test over trainer/ asserting effective model.is_gradient_checkpointing equals config value for true and false, failing on current code for grpo+false and pretrain+true with quantization: none",
+      "k-bit-flagged model test asserting false survives prepare_model_for_kbit_training",
+      "Structural test failing when trainer/*.py calls prepare_model_for_kbit_training( without use_gradient_checkpointing=",
+      "Vision and audio setup test that fails by name when the opposite value is forced at each site"
+    ],
+    "unknowns": [
+      "Which specific remaining sub-item (vision/audio test, TRL/HF args, never-read trainers, unsloth) the candidate intends to implement",
+      "Whether any of the remaining sub-items are already claimed or covered by other merged PRs such as #1564"
+    ],
+    "why": "The issue body gives a clear, code-anchored root cause and a concrete reproduction for the 4-bit case, but the supplied maintainer comments show the k-bit half is already shipped in merged PR #1045 and that the remaining work is split into several explicitly scoped follow-ups (vision/audio test, TRL/HF args threading, trainers that never read the field, unsloth). The candidate's own duplicate assessment lists #1045 as MERGED with semantic overlap on training_gradient_checkpointing, so the actionable scope is materially narrowed and partly covered; without a chosen sub-scope and confirmation of what remains unclaimed, the code work is not yet determinate."
   },
   "c7fe14dee6ff232d4a0f6dbedc035089552cc1efb6410814ef6c84055e8cc9c0": {
     "confidence": 0.8,
