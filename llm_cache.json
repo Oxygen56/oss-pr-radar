@@ -10849,6 +10849,37 @@
     ],
     "why": "Issue clearly identifies root cause: Codex filters env vars matching *KEY*, *SECRET*, *TOKEN* before MCP startup, and the plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request design confirmation on the credential contract (rename vs. allowlist), and an existing PR #6792 partially addresses it but lacks tests. Work should wait for maintainer direction to avoid wasted effort."
   },
+  "153ae1403ed84667a2422ae480a08026d0c9580d504e086008a5e8521e3fe7b5": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Open PR #42740 is marked COVERAGE with direct code overlap, yet root_cause_coverage is false and no tests exist, leaving independent implementation space uncertain"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sgl-model-gateway/src/routers/header_utils.rs allowlist to forward x-override-priority",
+      "chat body priority preservation through openai_protocol::ChatCompletionRequest serialization"
+    ],
+    "risks": [
+      "Overlapping open PR #42740 may already cover the fix, making a duplicate contribution low value",
+      "Broadening the header allowlist could unintentionally forward other x-override-* headers the gateway injects itself"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting x-override-priority is forwarded to the worker in regular and PD modes",
+      "Add a test asserting chat body priority survives gateway re-serialization, contrasting with /generate and /v1/completions"
+    ],
+    "unknowns": [
+      "Whether PR #42740 fully resolves the header and body priority paths or only the header path",
+      "Whether maintainers consider the issue already covered by the open PR"
+    ],
+    "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps, but the supplied evidence shows an open PR #42740 that directly overlaps the same code path (sgl-model-gateway/src/routers/header_utils.rs) and distinctive identifier x-override-priority, with duplicate status human_review_required. Whether independent implementation space exists is unresolved, which materially determines actionability."
+  },
   "156834cfe31ebb72dd859620b01172d5c3d8c3bf582c4666a1dc865913e85ac8": {
     "confidence": 0.8,
     "contradictions": [],
@@ -26192,6 +26223,38 @@
       "Whether maintainers consider a service-level watchdog in scope versus a documented workaround."
     ],
     "why": "The issue describes a plausible production failure (Flux stream stays open but stops sending events, leaving an open user turn), and it points at concrete code anchors (flux/stt_base.py watchdog, flux/stt.py reconnect_on_error=False, user_turn_controller.py stop-timeout gating). However, the supplied evidence explicitly records reproduction_or_validation_missing: no public repro, no reproduction evidence, root_cause_signal=false, probe_ready=false. The failure is not reproducible on demand and depends on Deepgram going quiet, so the root cause (server-side silence vs. client-side state handling) is not established. Without a deterministic reproduction or a concrete validation path, it is not yet clear whether a code change is actionable or what behavior to assert in a regression test."
+  },
+  "31d180277ddc999f6a2cb35de32f3346e23a7fdc9679ddbf6d189120978b67c1": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Candidate labels the issue as an actionable llm_algorithm distributed/numerics task, but the evidence shows a parser error-handling bug already fixed by merged PR #59254"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new implementation needed; verify fix from #59254 covers both parse_delta and parse paths",
+      "Optionally add a warning log when the parser stays in the expecting-start-token state after a HarmonyError"
+    ],
+    "risks": [
+      "Duplicate/competing PRs (#52055, #47350, #43408, #56216) may conflict or be closed as redundant",
+      "Silent token dropping after the first HarmonyError can truncate output without warning"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the supplied non-streaming repro (Chinese system prompt, top_p=0.1, temperature=0.1, N=10) against a build including #59254 and confirm no HTTP 500",
+      "Add a regression test feeding a malformed header mid-stream to HarmonyParser.process_chunk and asserting the completed message is preserved rather than raising"
+    ],
+    "unknowns": [
+      "Whether #59254 is present in the reporter's vLLM 0.29.0 build",
+      "Whether maintainers want a follow-up warning-log change beyond the merged guard"
+    ],
+    "why": "The supplied evidence establishes the root cause (unguarded self._harmony_parser.process(token_id) in HarmonyParser.process_chunk at harmony.py:338) and shows it is already fixed on main by merged PR #59254, with four other open PRs (#52055, #47350, #43408, #56216) covering the same guard. The remaining work is retest/confirmation and closing redundant PRs, not a new code contribution."
   },
   "31d40577730745541a9d9a43730298093e8f9fbb26b3dc199d63a5386a795825": {
     "confidence": 0.6,
@@ -42182,6 +42245,41 @@
     ],
     "why": "Issue provides a concrete, reproducible defect: get_supported_openai_params omits reasoning_effort for gpt-4.1/gpt-4o, and drop_params silently strips it, converting a provider 400 into a silent 200. Reproduction steps, expected behavior, and code anchors are supplied; no duplicate or open PR covers it."
   },
+  "4ee93e478ba0ec27cba90c5bbcb019c80ba777d5bb17a306b185897e884d7008": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue reports the allocator's own accounting says the allocation fits, yet alloc returns None and evicts nothing — the reported available/evictable numbers conflict with the observed failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/allocation.py (alloc_token_slots / evict_to_free_tokens / reclaim_plan)",
+      "python/sglang/srt/managers/schedule_batch.py (prepare_for_extend)",
+      "python/sglang/srt/managers/scheduler.py (_get_new_batch_prefill_raw)"
+    ],
+    "risks": [
+      "PR #42700 may already fix the same root cause, making a new contribution duplicative",
+      "The unified-memory allocator accounting (full vs SWA evictable tokens) is subtle; a naive fix could regress non-unified-memory paths",
+      "The issue's own hypothesis (flush_cache/reset_prefix_cache) is unconfirmed and may misdirect the fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's server flags plus repro_wire_log_replay.py against request_stream.jsonl and confirm the scheduler OOM",
+      "Add a regression test that exercises flush_cache/reset_prefix_cache interleaved with mixed completions/chat/streaming/cancelled requests under --enable-unified-memory and asserts the scheduler survives",
+      "Compare against PR #42700's test to determine whether the same root cause is already covered"
+    ],
+    "unknowns": [
+      "Whether PR #42700 fixes the same root cause or a different SWA over-admission path",
+      "The exact code-level root cause in alloc_token_slots/reclaim_plan for the unified SWA pool",
+      "Whether the flush_cache/reset_prefix_cache interaction is necessary and sufficient to trigger the bug"
+    ],
+    "why": "Issue provides a strong reproduction (traceback, ordered steps, executable replay client) and a plausible hypothesis (flush_cache/reset_prefix_cache emptying the radix tree while pages stay allocated in the shared unified buffer), but the root cause is explicitly not reduced ('This has not been reduced further') and no code-level root cause is established. More importantly, open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') has high semantic overlap (9 shared terms including alloc_token_slots and scheduler) and may already cover the same root cause; the duplicate status is 'semantic_overlap_requires_review', which is a materially blocking unknown for deciding whether new code work is actionable."
+  },
   "4eeb85aae63d5bf8b35f914cd11445825b682c44170d326ba7ffc10780a56c50": {
     "confidence": 0.85,
     "contradictions": [
@@ -44191,6 +44289,33 @@
     ],
     "why": "Issue reports search_web returning no usable results with a local Ollama model, but supplies no logs, no error text, and no root-cause evidence; the only code anchor is the tool name. Historical PRs #7163/#7165 gated search_web to signed-in/hub users, which is a plausible but unconfirmed explanation for local-model failure, so the actual defect is unresolved."
   },
+  "51f4a366d5cddbfdff8952728c790c4a2cb459374640cb68a4b314d58262ed1d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.algorithm_evidence.qualified=true and mechanism_count=4 conflict with the issue body, which is a config/throughput report with no algorithmic proposal",
+      "candidate.actionability_evidence.root_cause_signal=false and probe_ready=false conflict with the WAIT_MAINTAINER/HUMAN_REVIEW framing that implies a pending code fix"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Treating an operational field report as an algorithm contribution would produce no actionable code change",
+      "The only defect hypothesis (Exited 137 / Triton JIT stall) is self-described as unproven and not reproducible"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [
+      "Whether maintainers intend to convert any reported SM120 gap (MSCCL++ crash, prefill CUDA-graph crash, flashmla_sparse_q8) into a scoped code issue with reproduction"
+    ],
+    "why": "Issue #40877 is a field report / operational configuration write-up (docker env vars, topology rejections, throughput tables, measurement methodology) rather than a concrete code contribution. For track=llm_algorithm it lacks a training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology with a reference-vs-implementation test. The 'algorithm' terms (all-reduce, MoE, fp8, Triton) appear only as configuration/operational context, not as a proposed algorithmic change. No root cause is established for any code defect; the Exited 137 hypothesis is explicitly unproven and the author is not proposing a fix."
+  },
   "51fd7faf3b2d02e6404c2ce0fecf52e669289a2bb9400ca072d368c73699e9c3": {
     "confidence": 0.8,
     "contradictions": [],
@@ -45044,6 +45169,43 @@
       "Whether the reported word salad is a parser/chat-template bug or a model-weights issue"
     ],
     "why": "The issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not reproduce it synthetically; the only evidence is a build A/B plus rollback across a wide delta (vLLM commit range, FlashInfer 0.6.17→0.6.18, transformers 5.15.1→5.16.1). No isolated reproduction, no root-cause isolation, and the candidate's own evidence marks rootCauseCoverage=false and algorithm_wait_evidence=false. The related-issue overlap (#56443, #56790) is only a shared collect_env.py/compiler stack signature, which is not a genuine duplicate signal, but the open PR #56635 is a COVERAGE reference whose root cause is not established and which a contributor says targets a separate issue. Without a deterministic repro or a narrowed culprit, code work is not yet actionable."
+  },
+  "5390f60a9d4cbe62526973394bfab25d14b5051ccd49451dd42c1fb7157d4772": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body gives a detailed three-cause root-cause analysis",
+      "duplicate status is semantic_overlap_requires_review but PR #7067 does not reference the issue and direct_code_overlap is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "livekit-agents/livekit/agents/voice/audio_recognition.py: preserve word-end timestamp when END_OF_SPEECH lacks a timestamp",
+      "livekit-agents/livekit/agents/voice/agent_activity.py: align time base for STT streams started after session start",
+      "livekit-agents/livekit/agents/voice/audio_recognition.py: account for mic-audio gaps in wall-clock mapping"
+    ],
+    "risks": [
+      "Open PR #7067 may already fix the same root cause, making a new PR duplicative",
+      "Changing _last_speaking_time semantics could shift endpointing commit timing by ~0.6s",
+      "Proposed StreamClock adds state to the STT pipeline and may affect other plugins"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied repro_stopped_speaking_at.py in plain, task, and input_gap modes and assert stopped_speaking_at matches true last-word end",
+      "Add a regression test for a post-handoff STT stream with eos_timestamp=True",
+      "Add a regression test for a 5s mic gap asserting metrics are not dropped"
+    ],
+    "unknowns": [
+      "Whether PR #7067 already fixes the three causes described in the issue",
+      "Whether maintainers have a preferred design for the time-base fix (subtract startup offset vs compute from _input_started_at)",
+      "Whether the metric should be decoupled from _last_speaking_time to preserve endpointing timing"
+    ],
+    "why": "Issue provides a detailed three-cause analysis with a public repro script and code anchors, but the supplied duplicate assessment flags open PR #7067 as semantic_overlap_requires_review with overlapping paths (agent_activity.py, audio_recognition.py) and the distinctive token 'stopped_speaking_at'. Whether #7067 already covers the root cause is unresolved, which materially determines whether new code work is actionable."
   },
   "539b56c93c6193124da4c9b97745a715fcccd9dc1fd02255558911b4ab9660e8": {
     "confidence": 0.85,
@@ -47776,6 +47938,39 @@
       "Whether this is considered an algorithm issue by the project"
     ],
     "why": "The issue describes a clear data-loss bug in timeTravel() with a precise mechanism and reproduction, but it is a workflow engine bug rather than an LLM algorithm issue. The track requires algorithm-specific validation, which is absent. Maintainer triage is pending, and design confirmation is needed for the fix direction."
+  },
+  "578e6f17f356dade8d528bceaa881ad36b5045bfc1ba996c4af3dff9e1e8eabd": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/components/features/chat/chat-add-file-button.tsx: register useCloseOnEscape for the + tools menu with trigger ref",
+      "src/components/features/conversation/conversation-name-with-status.tsx: register useCloseOnEscape for click/hover status menu, no focus move on hover-open",
+      "src/components/features/conversation/conversation-tabs/conversation-tabs.tsx: register useCloseOnEscape for the tabs menu before the early return"
+    ],
+    "risks": [
+      "Hover-opened status menu must close without moving focus (WCAG 1.4.13)",
+      "Hook must be registered before the tabs component early return to avoid stale/unregistered layers",
+      "Stale stack entries after outside-click/toggle close could cause later Escape to close the wrong layer"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests asserting Escape closes each of the three menus and returns focus to its trigger",
+      "Add layering test: status menu over context-window popover, first Escape closes only status menu",
+      "Add layering test: Ctrl+K command menu over + menu / tabs menu, first Escape closes only command menu",
+      "Run npm test, npm run lint, npm run build and reproduce the issue's control-openhands steps on a fixed build"
+    ],
+    "unknowns": [
+      "Repository AI-disclosure policy conflict (ai_disclosure_conflict) may restrict automated public submission, though it does not affect technical actionability"
+    ],
+    "why": "Issue provides a scripted reproduction, screenshots, and file:line root cause: three menus (composer +, status-dot, drawer tabs) never call the shared useCloseOnEscape hook added in #18044, so Escape is ignored and layering order breaks. Fix is a bounded per-menu hook registration with a concrete validation path."
   },
   "578f9687d69535676d3127f46c044fa6c3f566b6c642291ef3667284300bdf51": {
     "confidence": 0.7,
@@ -55020,6 +55215,40 @@
       "Whether the fix should be bundled with #4692 or landed standalone (owner recommends standalone)"
     ],
     "why": "Issue pins a concrete root cause: decodeSchtasksOutput in src/service/windows-scheduler.ts probes UTF-16 then falls back to plain UTF-8, mangling GBK schtasks XML on ACP/OEMCP 936 hosts so CJK UserId becomes U+FFFD, windowsTaskRegistrationHealthy() returns false, and repair aborts at the recognition gate. The repo already has decodeWindowsTextBytes (src/lib/windows-text.ts) implementing UTF-16 -> strict UTF-8 -> locale legacy (GBK), used by sibling call sites; the schtasks call site is the remaining unwired one. Owner comment confirms the call site still exists on dev HEAD and endorses a one-line delegation plus a GBK fixture regression."
+  },
+  "6496e29b0991603ed9e1f1bebfcc650043aa53e80dc71aa7bc14c87a715a060b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.score is 9 and category WAIT_MAINTAINER, but actionability_evidence shows root_cause_signal false, probe_ready false, and no reproduction evidence"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/router.py async_function_with_fallbacks exception routing",
+      "litellm/types/router.py fallback configuration types",
+      "litellm/models/model.py UnsupportedParamsError handling"
+    ],
+    "risks": [
+      "Changing fallback behavior for config errors could break users who intentionally rely on fallbacks for misconfigured deployments",
+      "A new router setting adds API surface that needs maintainer design approval",
+      "The reporter's code reading may not match current main after base_sha_changed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that configures a fallback and a deployment with an unsupported param, then asserts the request returns 400 with UnsupportedParamsError instead of a 200 from the fallback",
+      "Regression test that provider outages, timeouts, and rate limits still fall back as before"
+    ],
+    "unknowns": [
+      "Whether current main still routes UnsupportedParamsError into fallbacks",
+      "Whether maintainers prefer a hard behavior change or an opt-in router setting",
+      "Whether an existing setting already covers this case"
+    ],
+    "why": "Issue describes a plausible routing behavior (UnsupportedParamsError triggering fallbacks) with a concrete config and observed 200 response, but supplies no reproduction evidence, no failing test, and no confirmed code anchor beyond the reporter's reading of async_function_with_fallbacks. The requested behavior change (do not fall back on config errors, or add a router setting) is a maintainer design decision, and the issue itself states the shape of the setting is a maintainer decision. Pre-task evidence marks reproduction_or_validation_missing and base_sha_changed, and probe_ready is false, so the actionable code path is not yet established."
   },
   "64b3b033d186b598fe1d34ed4976b1db0489fa8622f70116482abb43bd0a0287": {
     "confidence": 0.7,
@@ -69884,6 +70113,45 @@
     ],
     "why": "Issue provides a clear root cause: FlashInfer GDN prefill requires FP32 state_checkpoints while decode requires BF16 on SM120, causing mutually incompatible dtype requirements. Reproduction steps and environment are provided, and the fix is actionable: either reject the invalid combination or allocate/cast prefill checkpoints to FP32 independently. This is a concrete kernel/numerics bug in an LLM algorithm path."
   },
+  "7eb5ce7ec86fd6834ff4bd7c1dc6e3fd13cc705343e15cd8a5cddb768814dfd0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate gate_decision ALLOW_PRIVATE_WORK conflicts with collaborator bot and commenters stating the fix belongs in software-agent-sdk",
+      "Candidate category LOCAL_FIX_ONLY conflicts with evidence that enforcement lives in the agent-server/SDK"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "software-agent-sdk: add budget to conversation-creation request and enforce before each LLM call",
+      "software-agent-sdk: publish live accumulated cost during a run",
+      "typescript-client: expose new budget/cost fields",
+      "OpenHands/OpenHands: only client bump, settings UI, and BudgetDisplay after SDK/client land"
+    ],
+    "risks": [
+      "Fix is out of scope for this repository per AGENTS.md ownership boundaries",
+      "Reverses a deliberate V0-to-V1 removal (#11920) without maintainer decision",
+      "No reproduction or validation path established in the candidate evidence"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "In software-agent-sdk, add a failing test that a conversation with a budget below the next call's worst-case cost is refused before the provider call",
+      "Add a regression test that accumulated_cost is non-zero while execution_status is running",
+      "In this repo, verify src/api/no-direct-agent-server-calls.test.ts still passes and no raw axios/fetch workaround is introduced"
+    ],
+    "unknowns": [
+      "Whether maintainers want this tracked here or moved/split to software-agent-sdk",
+      "Which of the three proposed approaches (settable budget, live cost, server-wide default) is in scope",
+      "Whether the events/count?kind= filter bug is part of this issue or separate"
+    ],
+    "why": "The issue describes a real gap (no per-conversation budget, accumulated cost only published at termination), but the supplied evidence shows the fix belongs in OpenHands/software-agent-sdk, not this repo. A collaborator bot and multiple commenters state the settable budget field and server-side enforcement are agent-server behavior, and src/api/no-direct-agent-server-calls.test.ts blocks raw client workarounds. The candidate's own preTaskEvidence flags reproduction_or_validation_missing and base_sha_changed, and the actionability evidence shows no public repro, no root-cause signal, and no maintainer approval. Repository assignment is a materially blocking unknown for actionability."
+  },
   "7ecdde56b1d607d0bcd314e17ac34909419531de45601ce9a3cde3e1c1620895": {
     "confidence": 0.85,
     "contradictions": [],
@@ -72122,6 +72390,39 @@
       "Whether the ai_disclosure_conflict policy permits any automated contribution to this repository"
     ],
     "why": "Issue establishes a clear root cause in _is_preflight_ping() and a concrete validation path, but the supplied evidence shows three open PRs (#17555, #17876, #17636) with semantic overlap on the same mock-LLM server file, and the issue itself states the fix already exists inside PR #17876. Whether that fix is already covered by an open PR is a materially blocking unknown for deciding if new code work is actionable."
+  },
+  "83fab0b5825d4638cddb4c6f35490cf2e38f6dd5cc4cbbf519e9b9df08a762f2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Desktop workspace switcher list pruning of non-existent paths at launch or dropdown open",
+      "Optional per-entry remove control in the workspace switcher UI",
+      "lastWorkspace reset when the persisted path no longer exists"
+    ],
+    "risks": [
+      "Pruning at launch could remove entries on temporarily unavailable network/removable drives",
+      "UI removal control may conflict with existing workspace switcher interaction patterns",
+      "Persisted schema version cline.code.workspace-selection.v2 may need migration handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test in workspace-paths.test.ts that seeds a workspaces array containing a deleted path and asserts it is pruned",
+      "Regression test that lastWorkspace is reset to a live entry (or null) when its path is missing",
+      "Manual repro: open folder, delete it from disk, reopen dropdown and confirm the entry is gone or removable"
+    ],
+    "unknowns": [
+      "Exact desktop module/file owning the workspace-selection persistence is not confirmed by supplied evidence"
+    ],
+    "why": "Issue provides ordered reproduction steps, a concrete persisted-state root cause (workspaces array under cline.code.workspace-selection.v2 never validated against filesystem), and code anchors (workspaces, lastWorkspace). No duplicate or merged fix covers it; the only nearby PR #14855 is keyword-overlap-only with no direct code overlap and does not reference the issue. Track is agent_ai_infra, so the llm_algorithm rejection rule does not apply."
   },
   "840f049b1af16ab1fa4991aef344f33ec427b5b1aea0d59a178b2fa50e231455": {
     "confidence": 0.7,
@@ -83023,6 +83324,38 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a gateway OOM/SIGABRT crash on a non-documented configuration path. Maintainer comment indicates a likely fix in 2.2.4 due to ABI mismatch, but no verification from reporter. The issue is not a code contribution; it's a bug report requiring maintainer confirmation and reproduction on the documented path."
+  },
+  "975c93041a9a2e6c0482cb7888256def9b7376017165de1b28d27fd544f93de1": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment marks duplicate status human_review_required while also listing PR #50543 as direct code overlap with the same title"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugin module resolver for scoped @opencode/* imports in local plugin files",
+      "regression test covering local plugin loading with @opencode/plugin import"
+    ],
+    "risks": [
+      "Overlapping open PR #50543 may already implement the fix, making a new contribution redundant",
+      "Resolver change could alter module resolution semantics for other bare/scoped imports"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create .opencode/plugins/probe.js importing @opencode/plugin and Plugin.define, run opencode run --print-logs, assert plugin loads with source: local and status: active",
+      "Add regression test in the plugin loader package asserting scoped @opencode/* resolution from the plugin file directory"
+    ],
+    "unknowns": [
+      "Whether PR #50543 will be merged or superseded, and whether any independent implementation space remains",
+      "Exact resolver code location and current behavior in the target branch"
+    ],
+    "why": "Issue reports a concrete, reproducible plugin resolver failure with strong isolation evidence, but the supplied open-PR assessment shows PR #50543 (OPEN) and PR #50466 (CLOSED) already directly cover the same code path with the same title, and duplicate status is human_review_required. Whether independent implementation space remains is unresolved, which materially determines actionability."
   },
   "97659db7b651238f6030337e9cb1a52f88171b5e71ac2ae05b050aa9fc89d6f7": {
     "confidence": 0.55,
@@ -97032,6 +97365,41 @@
     ],
     "why": "The issue reports a concrete FP8 tensor-parallel weight_loader overwrite assertion, but the root cause is not fully diagnosed and an existing PR (#47023) directly targets the same code path with a fix, though it is stale and has CI failures. The deterministic gate requires HUMAN_REVIEW, and the repository has an AI disclosure conflict that blocks automated action."
   },
+  "b2aefa57d8ca13ff21b26aa0c336b10b483e04c35b330b08fae13e93dd2e9837": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body claims the fix was removed from #52677 and is still needed on V1, while maintainer comment directs 'Please use MRV2' and the author has narrowed #52677 to V2-only",
+      "candidate.open_pr_assessment lists PR #52677 as semantic overlap requiring review, but the issue body states that PR no longer carries the V1 fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/sample/thinking_budget_state.py: derive end-sequence progress from accepted tokens and force every position of the verification window"
+    ],
+    "risks": [
+      "Maintainer policy may be to close V1-only fixes as won't-fix, making the change unmergeable",
+      "V1 path is only reachable via specific spec-decode methods, limiting impact",
+      "Corruption rate is model/phrase/temperature dependent, so a single-arm repro may be flaky"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run tests/v1/sample/test_thinking_forced_end_spec.py on CPU against unfixed code (expect 5/6 failures) and fixed code (expect pass)",
+      "Reproduce with VLLM_USE_V2_MODEL_RUNNER=0 plus a spec-decode method that routes to MRV1 (e.g. ngram/draft_model) and a multi-token reasoning_end_str, comparing corrupted-end counts against the V2 path"
+    ],
+    "unknowns": [
+      "Whether the maintainer will accept a V1-only fix or close the issue as won't-fix",
+      "Whether the V1 path is reachable for the reporter's config without VLLM_USE_V2_MODEL_RUNNER=0",
+      "Whether the AI-disclosure policy conflict blocks contribution to this repository"
+    ],
+    "why": "The issue gives a concrete root cause (single-position forcing and draft-based end_count advancement in ThinkingBudgetStateHolder._update_think_state) and a CPU-only unit test path, but the supplied evidence contains a material unresolved blocker: a maintainer (njhill, MEMBER) explicitly directed 'Please use MRV2', and the author has already narrowed the overlapping PR #52677 to V2-only, removing the V1 fix. Whether a V1 fix is still acceptable is an open maintainer decision that determines whether any code work here is actionable."
+  },
   "b2c0f1ff5f29667d3c450a163140e78d1c3a86071ccbfe9c8fdc571e98b60d8a": {
     "confidence": 0.6,
     "contradictions": [],
@@ -102521,6 +102889,42 @@
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP children, breaking external Python interpreters. Reporter supplies a minimal repro command, /proc environ evidence, and a working workaround. Triage bot disputes the AppImage attribution, but the reporter's follow-up provides live /proc evidence with a mount prefix matching the Qwen AppImage and a binary-level format string, plus a second leak channel (LD_LIBRARY_PATH) with a reproduction matrix. Code anchors (mcp-client.ts, sanitize-child-env.ts, shared-env-keys.ts) point to a concrete spawn-env scrubbing change. No open PR or duplicate issue covers it. Remaining uncertainty is which env vars to scrub and whether maintainers accept the deferred-tradeoff reversal, which is normal implementation/review uncertainty rather than a blocking unknown."
   },
+  "bc77e2282eb83330ccfe067339eeb90c55fb2e6704cf55894f4bf11217b2b310": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Docs state both 'SDK never re-listens' and that listChanged 'opens and manages the stream itself', leaving intended behavior ambiguous"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/client/src/client/client.ts: observe autoOpenedSubscription.closed and either re-listen with backoff or clear the stale handle and surface via onerror",
+      "docs/clients/subscriptions.md: clarify one-shot vs durable semantics of listChanged auto-opened stream",
+      "packages/client/src/client/listen.test.ts: regression test for graceful and remote stream end"
+    ],
+    "risks": [
+      "Auto re-listen requires a backoff policy and may contradict documented 'never re-listens' behavior; maintainer must choose report-vs-relisten",
+      "PR #2750 touches client.ts with overlapping subscriptions/listen semantics and may partially cover the root cause",
+      "2025-era sessionful server behavior (404/session expiry) is a separate general transport issue and should not be conflated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.mjs on main and confirm onChanged stays silent after server restart",
+      "Add/execute listen.test.ts case asserting the client either re-listens or reports the closed subscription; verify it fails on main and passes with the fix",
+      "Run the full client test suite (999 tests) to check for regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer auto re-listen or explicit reporting",
+      "Whether PR #2750 already addresses the same root cause",
+      "Assignment requirement (needs_assignment) is unresolved"
+    ],
+    "why": "Issue provides a concrete reproduction (repro.mjs) and a commenter traced the mechanism to client.ts:1252 auto-opening the subscription with nothing observing its closed promise, plus a verified workaround and a direction-neutral failing test. This is a real behavioral gap in the client subscription lifecycle, not plumbing."
+  },
   "bc78007f03222bf59fb6fb64c02f0ec95696b8000ef9126f5eecaa7a7221fe1d": {
     "confidence": 0.85,
     "contradictions": [
@@ -102587,6 +102991,38 @@
       "Whether #8653 already covers this exact scrub"
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP child processes, breaking external Python interpreters. The reporter supplied a minimal repro, /proc environ evidence, and a working workaround. Triage bot disputed the root cause (claims the AppImage ships no Python and exports no PYTHON*), but the reporter rebutted with binary-level evidence (AppRun.wrapped format string PYTHONHOME=%s/usr/), a mount-prefix match to Qwen-Code-Desktop_0.3.0_amd64, and a second leak channel (LD_LIBRARY_PATH → bundled libsqlite3 3.37.2 breaking sqlite-vec KNN). Code anchors (mcp-client.ts spawn env, sanitize-child-env.ts, shared-env-keys.ts) give a concrete fix location. This is a real, actionable code change: scrub PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH from the MCP child env. Not an llm_algorithm track item, so no training-objective requirement applies."
+  },
+  "bc7b2236ae2d1dde9ee87f1b3a46ec6f8c3e93ca7dd1447acdccc140f8395f55": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asserts 405 on GET is fatal in opencode; comment reports 405 is handled fine on current dev with successful tool calls",
+      "Issue attributes the generic error to opencode's transport wrapper; comment attributes it to the C# MCP SDK server-side"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "MCP remote transport GET-stream fallback handling (only if root cause is confirmed)"
+    ],
+    "risks": [
+      "Fixing a non-existent client bug could introduce unnecessary transport behavior changes",
+      "The reported symptom may be a server-side tool exception misattributed to opencode"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce against a POST-only Streamable HTTP server returning 405 on GET on current dev and capture the full wire sequence",
+      "Inspect server-side logs for the tool invocation to determine whether the error originates in the tool or the client transport"
+    ],
+    "unknowns": [
+      "Whether the failure reproduces on the current dev base SHA",
+      "Whether the generic error originates in opencode or the remote server/tool",
+      "Concrete code location in opencode handling the GET stream response"
+    ],
+    "why": "The issue claims GET /mcp 405 is treated as fatal, but the only supplied comment reports an independent reproduction attempt on current dev where the 405 is handled fine and tool calls succeed. The comment also attributes the generic 'An error occurred invoking' string to the C# MCP SDK on the server side, not opencode, directly contradicting the issue's root-cause claim. No code anchors, no reproduction evidence, and no probe-ready path are supplied."
   },
   "bc83794f22b47fc7e9e507b503364dc222a671f872252ad498f49237d03f433f": {
     "confidence": 0.8,
@@ -123430,6 +123866,39 @@
     ],
     "why": "The issue presents a concrete, independently reproduced FA3 Hopper FP8 decode/prefill tiling divergence (kBlockN 96 vs 192, boundary at seqlen_k=97) with a kernel-level reproducer and a BF16 control, which is a genuine numerical/kernel-algorithm contribution. However, the proposed fix belongs in the separate vllm-project/flash-attention fork (hopper/tile_size.h), and an open fork PR #184 already targets exactly that root cause with overlapping path hopper/tile_size.h and matching title. The supplied duplicate assessment is 'semantic_overlap_requires_review' with root_cause_coverage=false and technical_complete=false, so it is unresolved whether the candidate work is already covered. Additionally, the repository policy status is ai_disclosure_conflict, a materially blocking disclosure requirement for any public action."
   },
+  "e16a2c515382bc03c2a18222bee29f016509ea3a943e572b88e4f1289114f551": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter attributes the stringification to either Ollama's qwen3coder parser or Continue, while a commenter asserts it is in Continue's agent serialization without evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP tool-call argument serialization path in the Continue agent/runtime (unidentified)",
+      "Possibly Ollama provider tool-call parsing (out of repo scope)"
+    ],
+    "risks": [
+      "Fixing the wrong layer (Continue vs Ollama parser) would not resolve the bug",
+      "Changing tool-argument serialization could affect all MCP tool calls and other providers"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a local MCP server: issue two consecutive read_multiple_files calls and assert the second request's arguments.paths is a JSON array, not a string",
+      "Add a regression unit test around the tool-call argument serialization/validation boundary"
+    ],
+    "unknowns": [
+      "Exact Continue source location where tool-call arguments are serialized",
+      "Whether the stringification happens inside Continue or in the Ollama provider/parser",
+      "Whether the bug reproduces with non-Ollama providers, which would localize it to Continue"
+    ],
+    "why": "The issue provides a strong reproduction (MCP tee log showing the second read_multiple_files call sends paths as a quoted string) but the root cause is explicitly unresolved: the reporter states the stringification could occur in Ollama's qwen3coder parser or in Continue after receiving the call. The only root-cause comment is an unverified, unexecuted hypothesis from a non-maintainer who could not build or test the extension, and the supplied code anchors (frontend React files, mcp-tee.js, qwen3coder.go) are not confirmed Continue source locations. No code path in continuedev/continue has been identified, so the fix site is unknown."
+  },
   "e17d70d651699cf07da68f636808088082f1596fda9a8415fe8b35b92d73897b": {
     "confidence": 0.8,
     "contradictions": [],
@@ -137117,6 +137586,38 @@
     ],
     "why": "Issue identifies two concrete, independently verified defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the frozen base, so the learned function is discarded rather than restarted (base weight delta = 0, effective-map MSE 142.12 vs 8.77e-13 for a merge-then-reset control); (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both factors and producing zero gradients (measured 0.0 for both), violating the requested keep count. Maintainer confirmed both halves with real peft LoRA runs on a pinned SHA, and the code path src/soup_cli/utils/relora.py is named. This is a genuine algorithm-conformance and numerical-correctness defect with a clear reference-vs-implementation validation path."
   },
+  "f909cffa903c12bffa8ebb9a08ef955b65caa0b7098bc9c33f970ce1095e5dd0": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/api/agent-server-adapter.ts toHooksResponse() carries prompt and system_prompt",
+      "HookDefinition type in agent-server-conversation-service.types.ts widened",
+      "hook-matcher-content.tsx renders prompt/agent hook text instead of empty box",
+      "i18n keys added to src/i18n/translation.json for all locales"
+    ],
+    "risks": [
+      "Repository policy flags an AI disclosure conflict, which may affect submission handling",
+      "Widening HookDefinition locally may diverge from the typed client in software-agent-sdk",
+      "Label choice (Commands vs Prompt/System prompt) is a minor design decision"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Extend __tests__/components/features/conversation-panel/hooks-modal.test.tsx to assert a prompt hook renders its prompt and an agent hook renders its system_prompt",
+      "Regression: command hook still renders its command under Commands",
+      "Run npm run lint, npm test, and npm run check-translation-completeness after npm run make-i18n"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer widening the local HookDefinition or a companion change in software-agent-sdk clients/typescript"
+    ],
+    "why": "Issue provides a concrete, reproduced UI defect with exact code anchors: toHooksResponse() in src/api/agent-server-adapter.ts drops prompt/system_prompt, HookDefinition lacks those fields, and hook-matcher-content.tsx renders only {hook.command}. Server response evidence confirms the data is present on the wire, so the fix is bounded to Canvas rendering/type plumbing with a clear validation path."
+  },
   "f919d62193ad7f61a52ee9d5a7aa76fe4e73a039e58dac2c0672b79ba444b98c": {
     "confidence": 0.9,
     "contradictions": [],
@@ -139178,6 +139679,37 @@
       "Whether PR #10244/#10252 will be extended to cover this tool_choice path"
     ],
     "why": "Issue provides a concrete, code-anchored root cause: ReActV2's forced submit passes tool_choice while adapters/base.py omits tools when lm.supports_function_calling is False, producing a provider 400. A minimal reproduction with a NoToolLM subclass and a clear validation path (assert no tool_choice without tools, forced submit succeeds) are supplied. Open PRs #10244/#10252 touch react_v2.py but address Signature output-field retention on terminal/failure exits, not the tool_choice-without-tools mismatch, so they do not cover this root cause."
+  },
+  "fc1479b79888d657547fb699147b99dd7e5207f0af23f8b4eb68fdfc502d6fdf": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue claims all hook dispatch fails, while the commenter reports CLI-built agent_start/tool_call payloads validate fine on current main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/utils/hooks.ts: include rejected field paths/messages from HookEventPayloadSchema in the session.hook validation error",
+      "hook dispatch error path so users can self-diagnose the offending payload field"
+    ],
+    "risks": [
+      "The 'every dispatch fails' claim may already be fixed on main, leaving only the error-message improvement as actionable scope",
+      "Changing the error string could affect consumers that match on the current message"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test in run-handlers.test.ts that dispatches an invalid session.hook payload and asserts the error names the offending field path",
+      "Re-run the three CLI reproduction variants from the issue and confirm either successful dispatch or a field-naming error"
+    ],
+    "unknowns": [
+      "Whether the dispatch failure itself still reproduces on current main or only the unhelpful error message remains"
+    ],
+    "why": "Issue reports a concrete CLI hook-dispatch failure with verbatim stderr and three reproduction variants; a commenter confirms the schema path (apps/cli/src/utils/hooks.ts, HookEventPayloadSchema) and proposes a scoped fix (surface failing field paths in the session.hook error) with a test in run-handlers.test.ts. The open PR #14856 is keyword-overlap only (no code-path or semantic overlap, does not reference the issue), so it does not establish coverage. No algorithm-track requirement applies (track=agent_ai_infra)."
   },
   "fc218c9da843331f587869de20b0af67bc06830cca7f3949c8640984bba7cacf": {
     "confidence": 0.85,
