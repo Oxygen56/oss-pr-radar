@@ -64955,6 +64955,46 @@
     ],
     "why": "The issue clearly identifies a missing `project` parameter in `google.STT` that prevents in-memory credentials (e.g., impersonated) from working, with a precise code path and workaround. No competing PR or issue exists, and the fix is a minimal API addition."
   },
+  "7aab28238fb858dce419c1809ad7294458e6fee3436e7974ef73e71c533479d0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with gate_decision HUMAN_REVIEW, while actionability_evidence reports maintainer_approved false and no wait_reasons",
+      "Duplicate status is semantic_overlap_requires_review but open PRs do not reference the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: allow reconnect_on_error, default True, and stop forcing reconnect_on_error=False",
+      "src/pipecat/services/sarvam/stt.py: complete in-flight utterance on each drop, not only on final loop exit",
+      "src/pipecat/services/sarvam/stt.py: classify 4000 and non-rate-limit 1003 closes as permanent",
+      "src/pipecat/services/sarvam/stt.py: give failed first connect bounded retry or mark permanent so ServiceSwitcher can fail over"
+    ],
+    "risks": [
+      "PR #6031 may already implement the same Sarvam reconnect fix, making a new contribution redundant",
+      "PR #6032 may generalize the fix across websocket STT services, changing the appropriate scope",
+      "Changing reconnect defaults could alter behavior for existing Sarvam users",
+      "Reconnect backoff and retry caps interact with QuickFailureTracker and ServiceSwitcher usability semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py drop scenario and assert 2 handshakes, transcripts from both connections, and is_usable True",
+      "Run the issue's repro.py connect scenario and assert retry then transcription, or unusable state if retries are exhausted",
+      "Add regression tests for 1006, 1011, 1003 rate-limit, and 4000 close codes",
+      "Compare behavior against PR #6031 and PR #6032 to avoid duplicating or conflicting fixes"
+    ],
+    "unknowns": [
+      "Whether PR #6031 or #6032 already fully fixes the root cause described in issue #6001",
+      "Whether maintainers prefer the Sarvam-specific fix in #6031 or the broader websocket STT fix in #6032",
+      "Whether the issue is already assigned or being actively worked by a maintainer"
+    ],
+    "why": "Issue #6001 provides a concrete reproduction and root cause for SarvamRealtimeSTTService losing transcription after a dropped or failed connection. However, two open PRs (#6031 and #6032) already target the same code path and semantics, and the supplied duplicate assessment explicitly says semantic_overlap_requires_review with no direct issue link. Whether those PRs already cover the root cause is a materially blocking unknown for deciding if new code work is actionable."
+  },
   "7ab32ae82a3f39286a4cee7fbf5cfafa1d094ceb263bf8600a3d5173c56e673c": {
     "confidence": 0.85,
     "contradictions": [
@@ -69873,6 +69913,39 @@
       "Exact instruction text and trial logs not provided; maintainer interest in implementing such a validation is unknown."
     ],
     "why": "Issue describes a probabilistic agent behavior where the model fabricates success without tool calls, but the root cause is upstream LLM behavior, not a clear code defect. The suggested fix (detect terminal answer with zero tool calls) is a feature/improvement requiring design confirmation. Existing PR #40000 overlaps in code path but targets a different issue (retaining tool call inputs/results), so it is not a direct competitor. The deterministic gate is HUMAN_REVIEW, and the issue lacks maintainer approval or design confirmation."
+  },
+  "84ea95a506d1ec4d4f82ace3f0178202c0480f2e2fcce1bb94f1bc03c8096456": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims 'Probably not an SGLang code change' yet the candidate is classified as an llm_algorithm code contribution opportunity"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until root cause is established; possibly pinning or rolling back a runtime-fetched artifact, or marking the test non-blocking"
+    ],
+    "risks": [
+      "Root cause may be external to the repository (runner environment or downloaded artifact), making a code contribution ineffective",
+      "Existing PR #42750 semantically overlaps and is maintainer-owned, so a duplicate fix may be redundant",
+      "Fixing the threshold or marking non-blocking would mask a real accuracy regression"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Compare passing (06:05Z) and failing (09:02Z) B200 runner environments, including JIT/autotune caches and GSM8K eval data source, to identify the changed input"
+    ],
+    "unknowns": [
+      "What runtime-fetched artifact or runner state changed between 06:05Z and 08:14Z on 2026-10-06",
+      "Whether PR #42750 actually addresses this root cause or is coincidental semantic overlap",
+      "Whether the regression is reproducible outside the specific B200 runner environment"
+    ],
+    "why": "The issue explicitly states the root cause is not confirmed and no fix PR is attached. The failure is a GSM8K accuracy regression on B200 runners, but the issue rules out code changes, Python environment, model weights, and test partitioning, leaving only a suspected time-varying runtime artifact (JIT/autotune caches or eval data source) that requires runner access to compare environments. This is a materially blocking unknown: without reproduction or root-cause evidence, no concrete code change can be validated."
   },
   "84f0b2d6fa1f3b6876eec7ad7df5bcd489d9c8038d08acdba6d28a2a752d343e": {
     "confidence": 0.6,
@@ -79818,6 +79891,44 @@
     ],
     "why": "Issue describes a concrete bootstrap gap in plugin_sync.sync_api_key() and api_key() resolution, but the follow-up comment materially changes the root cause: clear_stale_api_key_cache() actively deletes data_dir()/api-key at SessionStart, so the fix surface and validation path are not settled. Open PR #7282 shows semantic overlap (score 46) with the same 'pre_existing' semantics and is not linked to this issue, so duplicate/coverage status is unresolved. Policy status ai_disclosure_conflict also blocks automated public action."
   },
+  "977abcaee4b671d6232c0c75bbed5dcdb62ffebc60950fc5e0a6c9931d8cab30": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims missing User-Agent causes the 403; l7feng reports UA is forwarded on the direct path and passing/failing requests are header-identical",
+      "iagorobo24-hub attributes the 403 to agent permission/tool footprint rather than headers",
+      "Issue claims provider.opencode.headers config is not forwarded; l7feng notes the wire UA includes extra AI-SDK/Bun tokens, so a strict-match theory is unverified"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/opencode/src/provider (or equivalent zen provider request construction)",
+      "server proxy path for /session/:id/message",
+      "possibly agent permission/tool-definition serialization affecting the zen request body"
+    ],
+    "risks": [
+      "Implementing a User-Agent forwarding fix may not resolve the 403 if the real differentiator is the request body",
+      "Changing agent permission/tool-definition serialization could alter model behavior broadly",
+      "The secondary HTML-instead-of-JSON error response is a separate defect that may be conflated with this one"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture and diff full request headers AND body (system prompt + tool definitions) for a passing vs failing zen request against a local listener",
+      "Reproduce the 403 with a minimal agent config (e.g. task: deny) and confirm whether adding a tool permission flips it to 200",
+      "Verify whether an explicit User-Agent header on the server->zen request changes the 403 outcome at all"
+    ],
+    "unknowns": [
+      "Which request attribute (body/system prompt/tool definitions vs headers) actually triggers the zen free-tier 403",
+      "Whether the server proxy path differs from the direct path in a way that reproduces the 403",
+      "Whether the reported HTML-instead-of-JSON response is the same defect or a separate one"
+    ],
+    "why": "The issue's stated root cause (User-Agent not forwarded by the server proxy) is directly contradicted by supplied comment evidence: l7feng measured that the direct client path does forward User-Agent and that passing vs failing requests carried byte-identical user-agent/x-opencode-client/x-opencode-project headers, concluding the differentiator is the request body (system prompt + tool definitions), not UA. iagorobo24-hub's bisection instead attributes the 403 to the agent's permission/tool footprint. These are mutually incompatible root causes, so the actionable code change is undetermined."
+  },
   "978838c99ab75044954755a3086d641126f43ee1d6076743bdcccf333a2fdf07": {
     "confidence": 0.6,
     "contradictions": [],
@@ -84902,6 +85013,44 @@
     ],
     "why": "Issue provides a concrete, reproducible root cause: SarvamRealtimeSTTService forces reconnect_on_error=False, its receive-loop override marks the service unusable on any close, and a failed first connect is never retried while the service stays usable. Reproduction is executable with a local websocket server and expected/actual outputs are given, so the fix is actionable."
   },
+  "a0ea9a30c80f30182181be6ab1e2c48c84b56b86a8d38f2591db62456980ed3d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate actionability evidence reports root_cause_signal=false while the issue body presents a detailed collision hypothesis",
+      "Related-issue assessment claims potential overlap with #6077 based on shared stack signatures, but the titles and described mechanisms are unrelated"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Workspace sizing for dispatch/combine regions in the nvlink one-sided all-to-all path",
+      "Validation that MTP BF16 payload width is accounted for when sizing the combine region",
+      "Guard or assertion preventing dispatch writes from overlapping combine"
+    ],
+    "risks": [
+      "Distinguishing genuine memory corruption from CUDA-graph scheduling or NCCL nondeterminism",
+      "Potential overlap with #6077/#5996/#6081 may mean the fix is already covered or belongs to a different root cause",
+      "Requires multi-GPU NVLink hardware (B300, 8 ranks) to validate, limiting reproducibility"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with DP8EP + CUDA graphs + flashinfer_nvlink_one_sided and compare per-rank spec-dec acceptance against --enforce-eager",
+      "Unit test that allocates the workspace with the MTP BF16 payload width and asserts dispatch row end <= combine start",
+      "Numerical regression comparing combine outputs against a reference all-to-all with fixed seed and synthetic batch"
+    ],
+    "unknowns": [
+      "The truncated remainder of the issue body describing the exact collision condition and any proposed fix",
+      "The specific source location where the dispatch/combine workspace is sized",
+      "Whether the MTP BF16 path is expected to share the same workspace as the NVFP4 target path by design"
+    ],
+    "why": "The issue describes a plausible memory-corruption mechanism in flashinfer_nvlink_one_sided where the MTP BF16 dispatch row (12,352 B/token) overruns the workspace sized for the NVFP4 target dispatch row (3,520 B/token), corrupting the combine region. However, the supplied issue body is truncated mid-sentence ('we can understand when ra...'), so the actual collision condition, the exact workspace sizing code path, and the proposed fix are not established. The candidate's own actionability evidence reports root_cause_signal=false and needs_confirmation=true with a DESIGN_CONFIRMATION wait reason, and the related-issue assessment flags potential overlap with #6077/#5996/#6081 based only on shared stack signatures. Without the full root-cause narrative and a concrete code anchor in the workspace allocation logic, the code work is not yet actionable."
+  },
   "a0ecccf6d35d950881a09a71277aef7ab8ddb82371dfd6fcaad684b9ecd3fa3f": {
     "confidence": 0.6,
     "contradictions": [
@@ -87510,6 +87659,29 @@
       "Whether the hang is reproducible in a controlled CI environment without the specific PCIe-only hardware"
     ],
     "why": "The issue is a startup hang with multiple mutually inconsistent explanations in the comments: one thread attributes it to PCIe ACS/P2P with custom all-reduce (workaround NCCL_P2P_DISABLE=1 + --disable-custom-all-reduce), another reports that workaround does not help, a third attributes it to model download time, and a py-spy dump points at the FlashInfer top-k/top-p sampler during warmup (workaround VLLM_USE_FLASHINFER_SAMPLER=0). No single root cause is established, and the candidate's algorithm_evidence is keyword-matched (awq, fp8, tensor parallel, all reduce) rather than a concrete training objective, numerical method, or kernel algorithm. The supplied duplicate/overlap evidence is also contradictory: related issue #55238 is a different sm100 CUDA-graph greedy-output bug, and the 'best' competing PR #46296 is described as weakly matched with no test files, while PR #45004 (NCCL_P2P_DISABLE in custom allreduce) is the only plausibly relevant open PR and is not confirmed to cover this issue."
+  },
+  "a6151ee0301e2b8fbc5d0c8ab2ee3f29c2a9f6d23e744f23657f7a22430bcf1b": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.algorithm_evidence claims qualified=true with 6 mechanisms, but the issue body describes only resource cleanup, not any training objective or numerical method"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Misclassifying a cleanup/lifecycle bug as an algorithm task would produce a low-value PR",
+      "The sweep site is already covered by open PR #1640, risking duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [],
+    "why": "Issue #1464 is a resource-leak/cleanup bug report (temp dirs, tracker rows, reader threads, Docker containers, temp files) in CLI/UI plumbing, not an LLM algorithm contribution. The candidate's algorithm_evidence matched generic terms (lora, sft, fp16, shard) from the reproduction snippets, but the actual work is try/finally and lifecycle management. Track=llm_algorithm requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; none is present. Additionally, the sweep site is already covered by open PR #1640, and the owner has explicitly scoped the remaining six sites to a specific contributor, so this is not an open competition opportunity."
   },
   "a62b56ab33470692450ef3a3cf85a1076b4a16dd4a8c4fdccd6e4bfad6f2f17c": {
     "confidence": 0.55,
@@ -106405,6 +106577,44 @@
     ],
     "why": "Issue describes a concrete user-visible bug with a reproducible path, but the supplied evidence does not establish the root cause: the issue itself notes get_supported_openai_params omitting reasoning_effort is arguably correct, and the desired behavior (forward vs raise UnsupportedParamsError under drop_params) is an unresolved design choice. The open-PR assessment also flags semantic overlap requiring human review, and the candidate's own actionability evidence has root_cause_signal=false."
   },
+  "cab98f4037066fe0e32c9b9937f9d70400b9fa3f05e96c4a4dec0b7ba568555c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue cites extensionManager.ts:3398-3399/3422-3425 while verification re-derives 3406/3430-3434 at HEAD, attributed to a different base commit"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/github.ts: distinguish credential/auth failure from other ERROR returns and carry a reason",
+      "packages/core/src/extension/extensionManager.ts: extend the dispatch callback payload or update-status shape to survive startup dispatch",
+      "packages/cli/src/ui/state/extensions.ts: add a reason field to ExtensionUpdateStatus and SET_STATE payload",
+      "packages/cli/src/ui/components/extensions/steps/ExtensionListStep.tsx: surface the reason in the extension list UI"
+    ],
+    "risks": [
+      "PR #12183 overlaps extensionManager.ts and may already cover or conflict with the intended change",
+      "Broadening the callback/status shape is a multi-file product change that may conflict with maintainer design preferences",
+      "The deferred extension-git-client.ts restrictEnvironment branch is a separate hang issue and should not be conflated with this reason-surfacing fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that simulates a revoked credential/GITHUB_TOKEN during the startup update check and asserts a reason-bearing status rather than a bare ERROR",
+      "Regression test asserting ref-not-found and credential failure remain distinguishable",
+      "Run targeted unit tests for packages/core extension and packages/cli extensions UI state"
+    ],
+    "unknowns": [
+      "Whether PR #12183 already implements or supersedes the reason-surfacing change",
+      "The truncated final finding (7, 'Deferred:') in the verification comment",
+      "Whether maintainers want the reason carried via callback payload versus a status field"
+    ],
+    "why": "The issue body and independent verification establish a clear root cause: the update-check catch in github.ts drops the Git error to a no-op debugLogger and returns a bare ExtensionUpdateState.ERROR, which is indistinguishable from other ERROR returns; the callback signature and ExtensionUpdateStatus lack a reason slot, so the UI renders only a localized '(error)'. However, the supplied evidence is truncated mid-comment (finding 7 'Deferred:' is cut off), and the open-PR assessment flags PR #12183 as semantic_overlap_requires_review with overlapping path extensionManager.ts and no direct issue reference. The duplicate/coverage question is unresolved, which materially affects whether this follow-up is actionable as a distinct contribution."
+  },
   "cac6ec28c73f637cab25e5d714e0322740432e03adcf942ee75f4acad23eda77": {
     "confidence": 0.55,
     "contradictions": [
@@ -121853,6 +122063,39 @@
     ],
     "why": "Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling, so maintainer confirmation is needed."
   },
+  "e70c529da88be286358342d909b7c8e2fc84eb2447fb28375522b833dd3d18ae": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/management_endpoints/mcp_management_endpoints.py: call invalidate_user_oauth_token_cache unconditionally on DELETE",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/per_user_oauth_store.py: make per-user Authorization Code token cache coherent across replicas",
+      "litellm/proxy/common_utils/auth_cache_invalidation_pubsub.py: publish/consume invalidation for (user_id, server_id) on connect, refresh, disconnect"
+    ],
+    "risks": [
+      "Changing DELETE semantics or cache backend could affect other user_api_key_cache consumers",
+      "Redis-only backend option may not be viable for deployments without Redis",
+      "Cross-worker pub/sub invalidation must handle connect/refresh/disconnect consistently to avoid stale or over-invalidated entries"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates two replicas with separate in-memory caches over shared Redis/DB, disconnects via replica A, and asserts replica B can no longer use the cached token",
+      "Add a test that a repeated DELETE after the row is gone still invalidates the local cache entry",
+      "Run targeted proxy MCP OAuth unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the Redis-only backend approach or the pub/sub invalidation approach",
+      "Whether the repository requires CLA/DCO sign-off before a PR can be accepted"
+    ],
+    "why": "Issue provides a concrete multi-replica cache-coherence bug with ordered reproduction steps, expected/actual behavior, and specific code anchors (per_user_oauth_store.py, mcp_management_endpoints.py, dual_cache_token_backend.py, auth_cache_invalidation_pubsub.py). A confirming comment reproduces it on v1.103.1 and identifies an additional concrete defect: the DELETE handler only invalidates when the credential row still exists, so repeated DELETEs skip invalidation. Root cause and validation path are established."
+  },
   "e710f087f437041886af5f25d26899f595e6a251ee224d52b392aa05a8b23c14": {
     "confidence": 0.7,
     "contradictions": [
@@ -127861,6 +128104,42 @@
       "The actual code path emitting the stale encrypted_content"
     ],
     "why": "Issue is a user-facing provider error report with no reproduction beyond 'send a chat', no code anchors, and no root-cause evidence. The bot comment lists multiple potentially duplicate issues (#48805, #48915, #48741, #48947, #48319) covering the same encrypted_content error, and two open PRs (#48908, #48918) already target stale encrypted reasoning recovery. Duplicate/merged-fix coverage is unresolved, which materially blocks actionable code work."
+  },
+  "f150c8f76415df94acb97fd8b1bb25441475d9274092ce353cb54607a68c0d1b": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER/gate HUMAN_REVIEW conflicts with owner comments explicitly promoting #407 to ready-for-pr and stating no maintainer pre-approval is needed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/agent/claude.go: include stdout/transcript tail and isApiErrorMessage in the exit error",
+      "internal/agent/retry.go: bounded same-agent retry for empty-stderr exit-1 and/or nonzero-exit-after-usable-output leniency",
+      "internal/agent/retry_test.go: regression coverage for blank-stderr exit-1 and structured-output retry cap"
+    ],
+    "risks": [
+      "Overlap with open issue #400 (mixed field report) could cause duplicate or conflicting fixes",
+      "Bounded retry default could mask genuine agent crashes if not configurable",
+      "Silent backend fallback must remain declined per owner guidance"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test reproducing exit-1 with empty stderr and assert the surfaced error contains the usage-limit banner",
+      "Add test where agent emits usable structured/text output then exits nonzero and assert the step succeeds or retries rather than failing",
+      "Run targeted package tests for internal/agent plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers want the fix scoped to #407 or folded into #400",
+      "Whether bounded crash retry should be default-on or config-gated"
+    ],
+    "why": "Owner triage comments repeatedly confirm on multiple main tips that the waitErr path in internal/agent/claude.go reports stderr only, parseClaudeEvents never lifts isApiErrorMessage/usage-limit banners, claudeRetryClassifier does not retry bare empty-stderr exit-1, and nonzero waitErr returns before finalizeClaudeResult, discarding completed work. Issue is labeled bug + ready-for-pr with a concrete code-path plan and validation path."
   },
   "f15625f58c013565f264861383e67bae02ad723c0b1bbe95cc85a5bde65fffd9": {
     "confidence": 0.85,
