@@ -13749,6 +13749,46 @@
     ],
     "why": "The issue describes a plausible config/validation wiring defect (use_flash_attn/use_liger validated and autopilot-enabled for tasks that never consume them), but the supplied evidence is a config/CLI plumbing problem rather than a concrete LLM algorithm mechanism. For track=llm_algorithm this is ordinary API/CLI plumbing, and the open PR #911 has semantic overlap on use_liger and mlx_sft.py without referencing the issue, so duplicate/coverage is unresolved."
   },
+  "1bbce6571d439ee532a16a3489e59881f840c8377ee33728a1c492a97fef124a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.open_pr_assessment reports status 'none' while listing merged PR #1045 that directly overlaps the issue's k-bit mechanism"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/trainer/grpo.py, ipo.py, bco.py, reward_model.py, online_dpo.py: pass resolved gradient_checkpointing into TRL configs",
+      "src/soup_cli/trainer/pretrain.py, embedding.py: pass resolved value into TrainingArguments",
+      "src/soup_cli/trainer/distill.py, classifier.py, asr.py, unlearn.py: read and apply the field",
+      "src/soup_cli/utils/unsloth.py: map field to use_gradient_checkpointing instead of hardcoded 'unsloth'",
+      "tests: vision/audio k-bit setup test that fails when opposite value is forced"
+    ],
+    "risks": [
+      "Distinguishing genuine config-plumbing bug from intended TRL defaults",
+      "Tests must avoid GPU/bitsandbytes dependency by flagging is_loaded_in_4bit manually",
+      "Scope creep across many trainers; maintainer requests one PR per item"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Drive real _setup_vision_transformers and _setup_audio_transformers and assert model.is_gradient_checkpointing matches config for true/false",
+      "For grpo/ipo/bco/reward_model/online_dpo with quantization: none, assert false is honored after setup",
+      "For pretrain/embedding with quantization: none, assert true is honored",
+      "Force opposite value at each new site and confirm a named test fails"
+    ],
+    "unknowns": [
+      "Whether remaining items 2-4 are already claimed by another contributor",
+      "Exact current line numbers on main after #1045 and #1564 landed"
+    ],
+    "why": "Issue documents three concrete mechanisms (TRL config defaults, peft k-bit prep, unsloth hardcode) with file/line anchors and a CPU reproduction; maintainer comments confirm #1045 shipped the k-bit text path and enumerate remaining open items (vision/audio test, TRL/HF args threading, unread trainers, unsloth), each with a named-test acceptance bar."
+  },
   "1bcf6e892c063190d2ab121baac92b50822ff51ec1d26e8cab82470ac2ebef94": {
     "confidence": 0.6,
     "contradictions": [],
@@ -60064,6 +60104,45 @@
     ],
     "why": "The issue provides a clear root cause (idle PostgreSQL connections dropped by RDS, no validation on checkout) and a concrete validation path (reproduce with the given DATABASE_URL parameters and observe error frequency). The suggested fix (default max_idle_connection_lifetime or retry on kind: Closed) is actionable and testable."
   },
+  "70790b9af3ca5677f6cfb0d31ac893b3f966b344579f584f8bd56c20a898591f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body cites extensionManager.ts:3398-3399/3422-3425 while the collaborator verification re-derives them at 3406/3430-3434, attributed to a base-SHA difference",
+      "Open-PR assessment reports semantic overlap requiring review while also stating direct_code_overlap is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/github.ts: carry a reason out of the update-check catch instead of only debugLogger.error",
+      "packages/core/src/extension/extensionManager.ts: add a payload slot to the update-check dispatch callback and stop flattening rejections to bare ERROR",
+      "packages/cli/src/ui/state/extensions.ts: add a reason field to ExtensionUpdateStatus and the SET_STATE payload",
+      "packages/cli/src/ui/components/extensions/steps/ExtensionListStep.tsx: render the reason alongside the localized update state"
+    ],
+    "risks": [
+      "PR #12183 overlaps the extensionManager.ts path and may already cover part of the root cause",
+      "The recent_comments evidence is truncated, so the full verification findings are unknown",
+      "Base SHA changed, so cited line numbers may drift",
+      "Expanding the callback signature and status type is a multi-file product change that may conflict with maintainer design preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test that simulates a revoked credential / auth failure during the startup update check and asserts the reason reaches the update status",
+      "Add a regression test distinguishing credential/auth failure from ref-not-found ERROR returns",
+      "Run targeted extension package unit tests and static checks after the minimal fix"
+    ],
+    "unknowns": [
+      "Full content of the truncated recent_comments verification",
+      "Whether PR #12183 already implements the reason-surfacing change",
+      "Whether the base SHA change invalidates the cited code anchors"
+    ],
+    "why": "The issue body and the collaborator verification establish a clear root cause and concrete code anchors for the reason-less extension update error, but the supplied evidence is materially incomplete: the recent_comments array is truncated mid-sentence, the open-PR assessment flags semantic overlap with PR #12183 that requires human comparison, and the pre-task evidence records base_sha_changed plus reproduction_or_validation_missing. These unresolved facts determine whether the work is already covered or actionable."
+  },
   "707b0b2e6b343c97883921e0eb1ff6c50acc9502688b2e16acad37b2ac204399": {
     "confidence": 0.55,
     "contradictions": [
@@ -72261,6 +72340,43 @@
       "Whether the FFmpeg color defect is in scope for this repository or requires an upstream/runtime image change"
     ],
     "why": "Issue reports two defects: (A) response_format=b64_json dropped in _engine_inputs_from_video() with a concrete one-line diff and code anchors, and (B) FFmpeg MMXEXT color corruption with a model-free reproduction. However, open PR #13707 ('feat(vllm-omni): preserve generated video audio') overlaps the same omni_handler.py/output_formatter.py paths and the distinctive 'base64' semantic, is unmerged, and its root-cause coverage is unverified. Whether that PR already fixes the field-propagation defect is a materially blocking unknown that determines whether new code work is actionable."
+  },
+  "87d30e230823d41c6a484cb1fb9d91dfeed921e24859edc2a37703c313b3c6ac": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body states the fix was removed from #52677 and is no longer carried there, while open_pr_assessment still lists #52677 as semantic overlap requiring review",
+      "Author asks whether V1 fixes are still acceptable while the issue remains open with a proposed standalone V1 PR"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/sample/thinking_budget_state.py: derive end-sequence progress from accepted tokens and force every position of the verification window (drafts and bonus)"
+    ],
+    "risks": [
+      "Maintainer direction is to use MRV2, so a V1-only fix may be rejected as won't-fix",
+      "Overlap with open PR #52677 (now V2-only) needs manual comparison before any new work",
+      "Corruption rate depends on model, phrase and temperature, so a single-config regression test may be weak"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run tests/v1/sample/test_thinking_forced_end_spec.py against unfixed code and confirm the 5 failing cases (target rejects a matching draft; forcing starts inside the draft window; loop-break variants; drafts reach the last end token) pass after the fix",
+      "Reproduce on V1 with VLLM_USE_V2_MODEL_RUNNER=0 and a multi-token reasoning_end_str under speculative decoding, comparing corrupted-end counts against V2"
+    ],
+    "unknowns": [
+      "Whether the maintainer will accept a V1-only fix or close as won't-fix for MRV1",
+      "Whether the V1 fix should be split from #52677 into a standalone PR and who owns that decision",
+      "Whether the AI-disclosure policy conflict blocks public submission of this work"
+    ],
+    "why": "The issue gives a concrete root cause (single-position forcing and draft-based end_count advancement in ThinkingBudgetStateHolder._update_think_state) and a reproducible V1-vs-V2 comparison, but the supplied evidence contains a material unresolved blocker: maintainer njhill explicitly directs 'Please use MRV2', the author has already narrowed #52677 to V2-only, and the author is asking whether V1 fixes are still acceptable. Whether V1 code work is actionable is therefore undetermined by the supplied facts, and the duplicate/overlap assessment with PR #52677 is flagged as requiring human review."
   },
   "87d3bdf574edd51cd1f3d5d16ea9ec4b531f23bd986d29b93551b2dba3123311": {
     "confidence": 0.9,
@@ -98485,6 +98601,34 @@
     ],
     "why": "Issue identifies a concrete algorithm-conformance defect in ReLoRACallback._prune_and_reset: adapter weights are magnitude-pruned without merging B@A into the frozen base, and strict thresholding (abs(t) > threshold) can zero both factors under ties, producing a dead zero-gradient branch. Maintainer independently reproduced both claims with measured MSE (142.12 vs 8.77e-13 control), max|delta|=0 on base weight, and zero nonzero entries/grad norms, and confirmed the module docstring conformance gap at relora.py:3-5. This is a parameter-efficient-finetuning mechanism with a clear reference-vs-implementation validation path."
   },
+  "bacb365edb3d0ae9d32e1a25d5fe84890ac058c90f28a3846cb63b965f4bc34a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body lists items 1 and 2 as open gaps, but the maintainer comment states both are done on main via #5052 and #5053"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Remaining OpenCode ownership writers (background policy, review provider roles, ODD parity agents, default_agent, share) and legacy agent migration should use the JSONC-preserving merge"
+    ],
+    "risks": [
+      "Upstream engram setup opencode behavior is out of scope and cannot be fixed in this repo",
+      "Broadening the fix to all writers risks touching unrelated settings behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add a regression test that a commented project opencode.jsonc survives each remaining ownership writer and the legacy agent migration byte-for-byte except for the intended key change"
+    ],
+    "unknowns": [
+      "Whether the remaining ownership writers are considered in-scope for this issue or a separate follow-up"
+    ],
+    "why": "The issue's two main items (JSONC-preserving merge in trigger-rule cleanup and pipeline-level OpenCode preflight) are already fixed on main by merged PRs #5052 and #5053, per the maintainer comment. Remaining work is a narrow set of ownership writers plus an upstream Engram dependency explicitly marked not fixable here, so the actionable surface is largely covered."
+  },
   "bad7c41131eeab631317d27b52bf5312bdd8f57d79444c073ab1716d49788a9e": {
     "confidence": 0.8,
     "contradictions": [],
@@ -123990,6 +124134,38 @@
       "Whether maintainers prefer the defensive watch.ignored fix over the root-cause env expansion fix; this is a design choice, not a blocker."
     ],
     "why": "Issue provides a precise root cause (Node --env-file literal expansion) and a concrete reproduction with empirical HMR evidence. The proposed fix (extend Vite watch.ignored) is actionable and testable. Existing PRs lack regression tests, leaving room for a proper contribution."
+  },
+  "e95aecd1620d819b6bdd05ba7f584267e5255f918eec6146609d0507f908ff15": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue proposes a fix while open PRs #6031/#6032 already target the same code path and semantics but do not reference the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: stop forcing reconnect_on_error=False, default True, complete in-flight utterance on drop, classify permanent closes (4000, 1003 non-rate-limit), bounded retry for failed first connect"
+    ],
+    "risks": [
+      "PR #6031 may already implement the same fix, making a new contribution duplicative",
+      "PR #6032 may generalize the fix across other STT services, changing the scope",
+      "Behavior change to reconnect defaults could affect existing pipelines"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py drop and connect scenarios against a local websocket server; assert 2 handshakes and transcripts from both connections for drop, and retry then unusable for connect",
+      "Add regression tests for 1006, 1003 rate-limit, and 4000 close codes"
+    ],
+    "unknowns": [
+      "Whether PR #6031 or #6032 fully resolves the issue's root cause and would be merged",
+      "Whether maintainers prefer the issue's proposed fix or the existing PR implementations"
+    ],
+    "why": "Issue provides a concrete reproduction and root-cause analysis for SarvamRealtimeSTTService's forced reconnect_on_error=False and missing first-connect retry. However, two open PRs (#6031, #6032) semantically overlap with the same code path and fix, and the duplicate status is 'semantic_overlap_requires_review' with no direct issue linkage. Whether the issue is already covered by these PRs is a materially blocking unknown for deciding if new code work is actionable."
   },
   "e961fc62ac1830e1f8607054443878e95e909c8c3e0405434194e77eba4cba14": {
     "confidence": 0.8,
