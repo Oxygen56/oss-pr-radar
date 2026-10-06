@@ -22883,6 +22883,42 @@
     ],
     "why": "Issue clearly identifies a user-visible bug where manual thread renames are overwritten by Observational Memory's auto-generated titles. Root cause is precisely located in three OM strategies that unconditionally update titles, with no distinction between manual and generated titles. Proposed fix is concrete: add a pinned flag in thread metadata, set it on rename, clear on regenerate, and centralize title-update logic. Test surface is specified. No blocking unknowns; open PR #23039 has only semantic overlap on one file and does not cover the root cause."
   },
+  "2b9d1fa690cad4be9802759e05f7a60dba05d577caa1fc4a679f9eec7b46a45b": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Maintainer comment 'Please use MRV2' conflicts with the issue's premise of fixing the V1 path",
+      "Author states the V1 fix was removed from #52677, while open_pr_assessment still lists #52677 as semantic overlap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/sample/thinking_budget_state.py: force every position of the verification window and derive end-sequence progress from accepted tokens"
+    ],
+    "risks": [
+      "Maintainer may close as won't-fix for V1, making the change non-actionable",
+      "V1 is only reachable via specific speculative methods (ngram, draft_model, medusa, etc.), limiting impact",
+      "Corruption rate is model/phrase/temperature dependent, complicating regression thresholds"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run tests/v1/sample/test_thinking_forced_end_spec.py against unfixed code to confirm the 5 failing cases, then against the fix",
+      "Reproduce with VLLM_USE_V2_MODEL_RUNNER=0 and a multi-token reasoning_end_str under speculative decoding, comparing corrupted-end counts to the V2 arm"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept a V1-only fix or close as won't-fix",
+      "Whether the V1 fix will be split into a standalone PR"
+    ],
+    "why": "The issue presents a concrete, well-evidenced root cause in ThinkingBudgetStateHolder._update_think_state (single-position forcing and end_count advancing on drafts rather than accepted tokens) with a reproduction and unit tests. However, a maintainer (njhill) explicitly directed 'Please use MRV2', and the author is asking whether V1 fixes are still acceptable; the issue's actionability hinges on an unresolved maintainer policy decision about whether the V1 path should be fixed at all. This is a materially blocking unknown for whether code work is actionable."
+  },
   "2bc6e7e39fe1b427ce26ba10ca9574c0e1f4be80df8e41c67a7b5956539a9ae3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -95085,6 +95121,42 @@
     ],
     "why": "The issue provides a clear root cause and a minimal fix for a deterministic crash in the standalone DisRM reward path. However, the supplied open PR #7151 directly targets the same reward_extra_info contract and is still open, creating potential competition. The issue is not assigned and no maintainer has confirmed the fix approach, so maintainer input is needed to avoid duplicate work."
   },
+  "b3e9a9bf85ab8961e8743c7179a63b068cf9773d929a77afa7591fbb3ff0806e": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims allocator reports the allocation fits, yet alloc returns None and reclaim_plan evicts nothing — root cause not yet isolated",
+      "Open PR #42700 semantically overlaps alloc_token_slots/scheduler but does not reference this issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/allocation.py alloc_token_slots / evict_to_free_tokens reclaim_plan",
+      "python/sglang/srt/managers/schedule_batch.py prepare_for_extend",
+      "python/sglang/srt/managers/scheduler.py _get_new_batch_prefill_raw"
+    ],
+    "risks": [
+      "PR #42700 may already fix the same root cause, making a new fix duplicative",
+      "Unified-memory allocator semantics are subtle; a minimal fix could regress non-SWA paths",
+      "Repro depends on /flush_cache and /reset_prefix_cache interactions that are not fully reduced"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the provided request_stream.jsonl and repro_wire_log_replay.py under --enable-unified-memory and confirm scheduler OOM",
+      "Add a regression test asserting alloc_token_slots does not raise when joint available size exceeds the request",
+      "Run the same replay without --enable-unified-memory as a control"
+    ],
+    "unknowns": [
+      "Whether PR #42700 actually fixes this issue's root cause or only a related SWA over-admission path",
+      "Exact allocator state that causes reclaim_plan to evict nothing despite evictable tokens"
+    ],
+    "why": "Issue reports a concrete, reproducible scheduler OOM with --enable-unified-memory on hybrid-SWA models, including traceback, ordered repro steps, and a replay client. However, the supplied evidence shows an open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') with semantic overlap on alloc_token_slots and scheduler, and the duplicate status is 'semantic_overlap_requires_review'. Whether that PR already covers this root cause is unresolved, which materially determines whether independent code work is actionable."
+  },
   "b3f091158cf47d3089e4cc1e500bdfacfdc89c41fbd681b4d5b79897c2bc4cd6": {
     "confidence": 0.7,
     "contradictions": [
@@ -95267,6 +95339,43 @@
       "Whether maintainers consider the issue already covered by #8482."
     ],
     "why": "Issue provides a plausible root cause in parameter_offload.py (ds_grads_remaining reset in _run_after_backward_function causing post_backward_function to run once instead of per-branch), but the supplied evidence shows an open PR #8482 that directly references this issue and overlaps the same code path, with duplicate status 'human_review_required'. Whether independent implementation space remains is unresolved, which materially determines actionability."
+  },
+  "b4378e54ec09c0ce7bd9b734365daeb7116292908077f11d572343a86caf632f": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment says semantic_overlap_requires_review while candidate gate_decision is HUMAN_REVIEW",
+      "PRs #6031/#6032 do not reference the issue but a contributor comment links them to it"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: stop forcing reconnect_on_error=False and default it to True",
+      "src/pipecat/services/sarvam/stt.py: complete in-flight utterance on each drop",
+      "src/pipecat/services/sarvam/stt.py: classify 4000/1003 as permanent, retry failed first connect"
+    ],
+    "risks": [
+      "PR #6031 may already cover the same root cause, making this duplicate work",
+      "PR #6032 may cover the failed-first-connect path",
+      "Changing reconnect defaults could alter behavior for other websocket STT services if generalized"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py drop scenario and assert 2 handshakes plus transcripts from both connections and is_usable True",
+      "Run repro.py connect scenario and assert retry then transcription, or unusable state when retries are exhausted",
+      "Add regression test for 1006 and 1003 close codes"
+    ],
+    "unknowns": [
+      "Whether PR #6031 or #6032 already fully fixes the reported root cause",
+      "Whether maintainers have a preferred design for reconnect defaults across websocket STT services"
+    ],
+    "why": "Issue provides a strong reproduction and a plausible root cause (reconnect_on_error forced off, no retry path for failed first connect), but two open PRs (#6031, #6032) already target the same code path and semantics, and the duplicate assessment explicitly says semantic_overlap_requires_review. Whether the candidate work is still actionable depends on comparing those implementations, which is a materially blocking unknown."
   },
   "b43df068b655d8f1cedc87b8db8f1046546a827797b7322f3352df114dc5c9bb": {
     "confidence": 0.9,
@@ -100034,6 +100143,40 @@
       "Whether base_sha change invalidates the cited code anchors"
     ],
     "why": "The issue clearly identifies a real latent index panic at hgctl/pkg/agent/mcp.go:250 (config.Tools[0] without a length check) and proposes a concrete guard plus regression test, with a verified out-of-tree reproduction. However, the supplied evidence contains materially blocking unknowns: the repository requires assignment before implementation (assignmentRequired=true, no assignees), the AI-disclosure policy is flagged as conflicting (aiDisclosureConflict=true), and the pre-review gate failed on base_sha_changed, policy_or_disclosure_uncertain, assignment_required, and reproduction_or_validation_missing. The issue itself explicitly states implementation will not begin until a maintainer approves the Proposal and a follow-up Design Issue, so code work is not yet actionable."
+  },
+  "bc86e13df02364068e1bd245e59894e3cc6598a8030582baf086958f48ebd2e3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Grok turn finalization: settle the run attempt when the provider turn completes instead of waiting for the next message",
+      "Superseded-attempt fold logic in MessagesTimeline.logic.ts: do not mark an attempt superseded when it already produced a complete final message",
+      "MessagesTimeline.tsx: make 'Partial output retained' copy conditional on whether the attempt output was actually cut off"
+    ],
+    "risks": [
+      "Changing superseded-fold semantics could affect legitimate steering-restart cases where output really was cut off",
+      "Grok provider event handling (turn_completed / prompt_complete) may have additional deferral conditions (background tools, monitor hydration, injected reports) that need separate handling",
+      "Reporter did not attach logs or screenshots, so the exact provider event sequence relies on the redacted session-log summary"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that feeds a completed Grok turn (turn_ended outcome: completed) followed by a steering_restart and asserts the completed attempt is not folded as superseded",
+      "Unit-test deriveSupersededAttemptFolds with an attempt whose status is superseded but whose final message is complete, asserting it stays in the main timeline",
+      "Reproduce the reported sequence (long Grok task, wait past provider completion, send follow-up) and verify the header settles and the final answer is not hidden behind the partial banner"
+    ],
+    "unknowns": [
+      "Whether turn_completed / prompt_complete was actually received for the affected turn (trace rotated; reporter says not in retained trace)",
+      "Whether the header showed 'Working for' during the 13-minute gap between provider completion and the follow-up"
+    ],
+    "why": "Issue provides a concrete, reproducible user-visible bug with ordered steps and expected/actual behavior. Maintainer triage and reporter follow-up establish the mechanism: Grok provider turn settles (turn_ended outcome: completed) but T3 keeps the run attempt open until a steering_restart marks it superseded, so a complete final answer is folded under 'Superseded attempt / Partial output retained'. Code anchors (MessagesTimeline.tsx, MessagesTimeline.logic.ts, deriveSupersededAttemptFolds, dispatchSteerIntoRun) give a clear fix area. No duplicate or merged-fix coverage; open PR #15413 is keyword-only overlap on a different path."
   },
   "bc9e9b7e51aff67e8c703b161a3a170dd939e572895bce7983a072347d187207": {
     "confidence": 0.7,
@@ -117550,6 +117693,38 @@
     ],
     "why": "Issue provides a concrete, code-anchored amplifier: decode-side KVPoll.Bootstrapping has no deadline (decode.py:926 bare pass; mooncake/conn.py:2742 only checks WaitingForInput timeout; _check_bootstrap_timeout exists only on sender side in common/conn.py:1548), causing an unbounded decode hang even when prefill times out at 300s. This is a well-scoped, independently actionable fix with a clear validation path (reproduce stall, assert bounded failure). The primary root cause of the handshake stall remains unknown, but the deadline fix is separable and does not depend on it."
   },
+  "dc6f9f1a387423bb77229205764cc277e3556625aa65fe2480f046ab14539127": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Prune non-existent paths from the persisted recent-workspaces list (at launch or dropdown open)",
+      "Reset or repair `lastWorkspace` when it points to a deleted folder",
+      "Optionally add a per-entry remove control in the workspace switcher UI"
+    ],
+    "risks": [
+      "Pruning at launch could remove entries for temporarily unavailable network/removable drives",
+      "UI removal control may conflict with existing switcher interaction patterns",
+      "Persisted schema version `v2` may need migration handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test in `workspace-paths.test.ts` that seeds a workspace list containing a deleted path and asserts it is pruned",
+      "Regression test that `lastWorkspace` is reset when its path no longer exists",
+      "Manual repro: open folder, delete it from disk, reopen switcher and confirm the entry is gone or removable"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer automatic pruning versus an explicit remove control (both are reasonable; not blocking)"
+    ],
+    "why": "Issue provides a concrete reproduction (open folder, delete from disk, switcher still lists it, click yields error toast), a specific persisted key `cline.code.workspace-selection.v2`, and a clear root cause: the `workspaces` array is never validated against the filesystem and has no removal UI. A commenter independently confirms the mechanism and proposes pruning non-existent paths. This is actionable desktop-app code work with a concrete validation path."
+  },
   "dca92afcd10f65f457760e08be844c2746a9346437c1deb50b81e4496f114e3c": {
     "confidence": 0.8,
     "contradictions": [
@@ -131148,6 +131323,40 @@
       "No missing facts that block actionability; fix choice is a maintainer decision, not a blocker"
     ],
     "why": "Issue provides concrete algorithmic bugs with root cause, reproduction, and acceptance criteria. Maintainer confirmed both claims with measurements. Track llm_algorithm requires concrete mechanism and validation path; this qualifies."
+  },
+  "f45157484590c1183376e3d642ebea17c7004fba4e6e29bc58d85033f984b76e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims 'TP8/EP8 is the only layout that starts', but a later author update states the deployment now runs TP4/EP4 successfully, contradicting the original topology claim.",
+      "Issue body reports a ~500K request SIGKILL (Exited 137) as a crash, but the author later states it could not be reproduced and labels the cause 'unproven'.",
+      "Issue body quotes '1040K in 74.5 s (13,962 tok/s)' which the author later corrects as a prefix-cache artifact, not a real prefill rate."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Treating an operational field report as an implementable code task would produce speculative changes without a confirmed root cause.",
+      "The author's own measurements are self-corrected and partially unreproducible, so any derived fix would rest on unstable evidence."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "No actionable code change is defined; a falsifiable test for the Exited 137 hypothesis (cold >=500K request as first request after restart) is proposed by the author but is diagnostic, not a code contribution."
+    ],
+    "unknowns": [
+      "No confirmed root cause for any code defect; the Exited 137 hypothesis is explicitly unproven.",
+      "No concrete code change, module, or algorithm modification is proposed.",
+      "Reproduction/validation path for a code fix is absent (reproduction_or_validation_missing).",
+      "Whether any maintainer has requested a specific code change from this report is unknown."
+    ],
+    "why": "This is a field report / operational configuration write-up for DeepSeek-V4.1-Flash on SM120 hardware, not a concrete code contribution. The issue itself states 'Not established' items and the author's own updates correct earlier measurements (prefix-cache artifacts, unreproducible Exited 137). No root cause is established for any code defect, and the only candidate root cause (Triton JIT compile stalling the watchdog) is explicitly labeled 'unproven' by the author. The actionability evidence confirms root_cause_signal=false and reproduction_or_validation_missing. For track=llm_algorithm, no concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is proposed for implementation."
   },
   "f45c6fcbaca825d50f87627a5719ad5bdca321bbc991bf8e57a1910f6c4a2729": {
     "confidence": 0.7,
