@@ -18969,6 +18969,41 @@
     ],
     "why": "The issue provides a clear root cause: the capability guard checks symbol presence and device capability but not cubin arch coverage, leading to a kernel launch failure on sm_110a. The reproduction is concrete with commands and traceback, and a verified workaround exists. The suggested fixes are actionable and testable."
   },
+  "24d64fee715856a4ba214a29703a9596dbfc84baae262bd6893e51b97a2c377d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims a clear V1 bug with a fix, but maintainer comment 'Please use MRV2' suggests V1 fixes may not be accepted",
+      "PR #52677 previously carried the fix but was narrowed to V2-only, removing the V1 fix"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/sample/thinking_budget_state.py: derive end-sequence progress from accepted tokens and force every position of the verification window"
+    ],
+    "risks": [
+      "Maintainer may close V1 path as won't-fix, making the change non-mergeable",
+      "V1 path reachability is limited to spec methods routed back to MRV1 (ngram, draft_model, medusa, etc.)",
+      "Corruption rate is model/phrase/temperature dependent, so validation may need specific hardware and checkpoint"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run tests/v1/sample/test_thinking_forced_end_spec.py against unfixed code to confirm the 5 failing cases, then against the fix",
+      "Reproduce with VLLM_USE_V2_MODEL_RUNNER=0, speculative decoding, and a multi-token reasoning_end_str, comparing corrupted-end counts to V2"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept a standalone V1 fix or close as won't-fix",
+      "Whether the V1 path is considered supported enough to warrant the fix"
+    ],
+    "why": "Issue describes a concrete V1 speculative-decoding bug in ThinkingBudgetStateHolder._update_think_state with a detailed mechanism, reproduction command, and unit-test evidence, and a contributor independently confirmed the single-position force_index pattern. However, a maintainer (njhill) explicitly directed 'Please use MRV2', and the author is asking whether V1 fixes are still acceptable; the issue's disposition (fix vs. won't-fix) is unresolved, and the fix was removed from PR #52677 which is now V2-only. Whether code work on the V1 path is actionable depends on this unresolved maintainer policy decision."
+  },
   "24d90dfa5c31f978906ccd4ebed0b30117386dcf81269a62315206190f16a560": {
     "confidence": 0.72,
     "contradictions": [
@@ -19334,6 +19369,37 @@
       "Status of PR #33458's failing CI and whether it will be updated."
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but an existing PR #33458 directly addresses it with failing CI, and a maintainer has not yet approved or assigned. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "259f6ac5df515da499124f808b9c0bf82f564ce0fa78ad877ff51468f3684ef1": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment marks PR #42740 as COVERAGE with direct code overlap while also reporting root_cause_coverage false and no tests"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sgl-model-gateway/src/routers/header_utils.rs allowlist to forward x-override-priority",
+      "chat body priority preservation in gateway request serialization"
+    ],
+    "risks": [
+      "Overlapping open PR #42740 may already implement the same fix",
+      "Forwarding x-override-priority could interact with auth-layer priority semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting x-override-priority reaches the worker through the gateway",
+      "Add a test asserting chat body priority is preserved through the gateway"
+    ],
+    "unknowns": [
+      "Whether PR #42740 fully resolves the issue or leaves independent implementation space",
+      "Maintainer preference on header allowlist vs body priority handling"
+    ],
+    "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps, but the supplied evidence shows an open PR #42740 that directly overlaps the same code path (sgl-model-gateway/src/routers/header_utils.rs) and distinctive identifier x-override-priority, with duplicate status human_review_required. Whether that PR already covers the fix is unresolved, which materially determines whether independent code work is actionable."
   },
   "25a41ab3ee76279a648d641e280ee387112c4537f0130ae163da81cad6c0d520": {
     "confidence": 0.75,
@@ -25131,6 +25197,43 @@
       "Whether the stall is reproducible without the superpowers plugin/skills."
     ],
     "why": "The issue reports a model/provider behavior stall (announcement without tool call) with only a narrative reproduction and no root-cause evidence. The bot comment points to two potentially covering issues (#46492, #44659) with the same core symptom, and duplicate/merged-fix coverage is unresolved. The candidate's own actionability evidence shows root_cause_signal=false and probe_ready=false, so it is not yet established whether code work in this repo is actionable."
+  },
+  "2fac83bc008073497dae2cd82b4ff124781f2a9478ae0183b97837bf5e886739": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while the issue body provides a detailed traceback and allocator state analysis",
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #42700 but root_cause_coverage false, leaving coverage unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/allocation.py: alloc_token_slots / evict_to_free_tokens / reclaim_plan must account for evictable FULL+SWA tokens in the unified allocator",
+      "python/sglang/srt/managers/schedule_batch.py: prepare_for_extend should retract or fall back instead of raising when alloc returns None",
+      "python/sglang/srt/managers/scheduler.py: _get_new_batch_prefill_raw error handling for unified-memory OOM"
+    ],
+    "risks": [
+      "PR #42700 may already fix the same root cause, making a new contribution duplicative",
+      "Unified-memory allocator semantics (joint FULL+SWA token accounting) are subtle; a naive fix could over-evict or corrupt KV cache",
+      "Repro depends on a specific request stream and flush/reset-prefix-cache interleaving that may be hard to reduce"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay request_stream.jsonl with repro_wire_log_replay.py against gpt-oss-20b with --enable-unified-memory and confirm scheduler survives and /health returns 200",
+      "Run the same replay without --enable-unified-memory as a control to confirm no regression",
+      "Add a focused regression test that exercises /flush_cache and /reset_prefix_cache interleaved with mixed completions/chat requests under unified memory"
+    ],
+    "unknowns": [
+      "Whether PR #42700 actually fixes the same root cause or only a related HiCache SWA over-admission path",
+      "Whether the issue's flush_cache/reset_prefix_cache interleaving is the true trigger or a symptom",
+      "Whether maintainers have a preferred fix location (allocator vs scheduler retract path)"
+    ],
+    "why": "Issue reports a concrete scheduler OOM with --enable-unified-memory on hybrid-SWA gpt-oss-20b, with traceback, ordered repro steps, and a replay client. However, the supplied evidence shows an open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') with semantic overlap on alloc_token_slots and scheduler, and the duplicate status is 'semantic_overlap_requires_review'. Whether that PR already covers this root cause is unresolved, which materially determines whether new code work is actionable."
   },
   "2fbbc13c2e6e0403f7892ba6a2135ca3d6c4a8fcfcaa18a8d3a3ba9be423b5c4": {
     "confidence": 0.7,
@@ -58097,6 +58200,43 @@
     ],
     "why": "Issue reports two concrete, user-visible defects on the avatar image-generation path: configured size (512x512) is ignored and a hard 1024x1024 is sent, and IMAGE_GEN_TIMEOUT_MS=1800000 is ignored with a ~300s undici HeadersTimeoutError. Reproduction steps, expected/actual pair, and a traceback frame are supplied, and a commenter adds a third symptom (avatar prompt not forwarded). No open PR or duplicate issue covers it, so the work is not already done."
   },
+  "6a89fc8d37ef74097abf694f4fed12847a91332a57291d23ab446de664499b4f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with gate_decision HUMAN_REVIEW, but actionability_evidence shows needs_confirmation=false and design_confirmation=false",
+      "preTaskEvidence validationPathPlan=true while reproductionPathPlan=false and probeRequired=true"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/router.py: async_function_with_fallbacks exception classification",
+      "litellm/types/router.py: optional router setting for non-fallback exception types",
+      "litellm/models/model.py: UnsupportedParamsError propagation"
+    ],
+    "risks": [
+      "Changing fallback semantics could break users who rely on fallbacks for all errors",
+      "The desired behavior may be a maintainer design choice rather than a clear bug",
+      "Base SHA changed, so any patch must be rebased before validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that configures a fallback and asserts UnsupportedParamsError is returned rather than routed to the fallback model",
+      "Regression test that provider outages/timeouts/rate limits still fall back",
+      "Run targeted router fallback unit tests and static checks"
+    ],
+    "unknowns": [
+      "No reproduction or failing test is supplied",
+      "No maintainer confirmation of desired fallback semantics",
+      "Whether an existing setting already covers this case",
+      "Current base SHA after base_sha_changed"
+    ],
+    "why": "The issue describes a plausible routing behavior (UnsupportedParamsError triggering fallbacks) and names async_function_with_fallbacks, but the supplied evidence contains no reproduction, no failing test, and no confirmed code anchor beyond the reporter's reading. The candidate's own actionability evidence shows public_repro_signals=0, reproduction_evidence=[], root_cause_signal=false, probe_ready=false, and the pre-review gate failed on base_sha_changed and reproduction_or_validation_missing. The requested behavior change (never fall back on config errors, or add a router setting) is also a maintainer design decision, so the concrete code work is not yet determined."
+  },
   "6ab6ef79ea14b7a4f4415b9d606924d4d25da641157b23420c42de10bc65975f": {
     "confidence": 0.85,
     "contradictions": [
@@ -76050,6 +76190,40 @@
     ],
     "why": "Issue clearly identifies a missing error code in HARD_QUOTA_ERROR_CODES causing long retries; root cause and fix location are explicit."
   },
+  "8b8a98c66620a495d3ee0d695e1eea2cdf657977f942a0981f79912cd1421bcd": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports direct code overlap with open PR #50543 while duplicate status is human_review_required"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugin module resolver for scoped @opencode/* imports in local plugin files",
+      "regression test covering local plugin loading with bare scoped import"
+    ],
+    "risks": [
+      "Overlap with open PR #50543 may make new work redundant",
+      "Resolver change could affect node_modules tracking behavior",
+      "Bun virtual-module approach vs project-directory resolution are competing designs"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with .opencode/plugins/probe.js importing @opencode/plugin and confirm ResolveMessage in server log",
+      "After fix, assert plugin appears active via /api/plugin and hooks register",
+      "Add regression test for scoped package resolution from project/global config plugin dirs"
+    ],
+    "unknowns": [
+      "Whether PR #50543 already resolves the issue or will be merged",
+      "Whether maintainers prefer the Bun virtual-module approach (PR #49097) over project-directory resolution"
+    ],
+    "why": "Issue has strong reproduction evidence (multiple independent reports, ordered steps, expected/actual, isolation checks) but the supplied evidence shows an open PR #50543 with direct code overlap and COVERAGE relation to this issue, plus a closed PR #50466 with the same title/overlap. Duplicate/merged-fix coverage is unresolved (duplicateStatus=human_review_required), which materially determines whether independent code work is actionable."
+  },
   "8b9725ca117e974e98c5475d5a927c3719b6d129030342dad2e59b9e2d86749c": {
     "confidence": 0.8,
     "contradictions": [
@@ -77553,6 +77727,34 @@
       "Whether maintainers consider the DB-overlay behavior a bug or intended precedence"
     ],
     "why": "Issue describes two distinct bugs: (1) check_provider_endpoint not in LITELLM_SETTINGS_SAFE_DB_OVERRIDES so DB-stored litellm_settings overrides config.yaml, and (2) VertexAIModelInfo.get_models() is a NotImplementedError stub. The supplied open-PR assessment flags semantic overlap with PR #43043 (score 40) and two other PRs, but none directly reference the issue and none cover the root cause, so duplicate/merged-fix coverage is unresolved. The issue itself is a proxy/config plumbing bug, not an algorithm contribution, and the candidate track is agent_ai_infra, so no algorithm evidence is required. However, the unresolved duplicate overlap and the ambiguity of which of the two bugs is the intended fix make the actionable scope uncertain."
+  },
+  "8da50c7995fb2498a87b3a3c4a86cb5459eb79bf894ce836dd2d180a90a2165a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ui/desktop/src/components/GooseMessage.tsx copy-button render condition"
+    ],
+    "risks": [
+      "Duplicating an existing collaborator draft PR",
+      "Submitting without required assignment"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test rendering an assistant message with a thinking block plus text and assert the copy button appears"
+    ],
+    "unknowns": [
+      "Whether PR #12726 will be completed or abandoned",
+      "Whether maintainers will accept an independent contribution despite the existing draft PR"
+    ],
+    "why": "Issue has a clear root cause and reproduction, but a collaborator-owned draft PR #12726 already directly covers the same file and behavior, and the issue requires assignment per policy. The duplicate coverage is unresolved and materially determines whether independent code work is actionable."
   },
   "8da700b5b6f0448f8012e2e27fcedfd1142a04e956d81884c55f7913d6bf5e16": {
     "confidence": 0.85,
@@ -97022,6 +97224,38 @@
     ],
     "why": "Issue provides version-paired reproductions for both providers and names concrete code anchors (anthropic-provider.ts builtinTools, main.yaml, codex-app-server-provider.ts buildThreadConfigurationOverrides). Root cause is a silent tool-name drift after dependency upgrades, with a clear validation path (tool-list assertion / plan-update event regression). No duplicate PR or merged fix is reported."
   },
+  "b4251ba67b9c886a8414cb732e5f5715f8978a09be5c038fc6e38385ecab704b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels the issue as an LLM algorithm mechanism (distributed_training, numerics_quantization), but the actual failure is a parser error-handling bug in vllm/parser/harmony.py with no training/quantization/kernel content",
+      "Candidate actionability evidence claims root_cause_signal true and probe_ready true, while recent comments state the fix is already merged on main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/parser/harmony.py process_chunk error handling"
+    ],
+    "risks": [
+      "Parser remains in 'expecting <|start|>' state after first HarmonyError, silently dropping later tokens with no warning",
+      "Duplicate work against already-merged #59254 and open #52055/#47350/#43408/#56216"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the malformed-header HarmonyError with the supplied Chinese-prompt request against a build including #59254 and confirm no 500",
+      "Add a regression test feeding a malformed header mid-stream through parse_delta/parse"
+    ],
+    "unknowns": [
+      "Whether #59254 is actually merged and present in the target base SHA",
+      "Whether any residual gap remains after #59254 (e.g., the silent token-drop state) that would justify a distinct contribution"
+    ],
+    "why": "The issue's root cause is clearly identified (unguarded self._harmony_parser.process(token_id) in vllm/parser/harmony.py process_chunk), but supplied evidence states it is already fixed on main by merged PR #59254, and four other open PRs (#52055, #47350, #43408, #56216) target the same guard. This is unresolved duplicate/merged-fix coverage, which materially blocks whether new code work is actionable."
+  },
   "b43386f344af075b179e374cd3881bde0b7f7e46245478a2e82e28d227f1fe73": {
     "confidence": 0.6,
     "contradictions": [
@@ -112734,6 +112968,38 @@
       "Maintainer confirmation on root cause and desired fix direction"
     ],
     "why": "The issue reports a concrete LLM quantization regression (FP8 to MXFP4) with a clear reproduction path and numerical evidence (completion length increase). However, the root cause is unconfirmed, and the open PR search failed due to rate limits, leaving potential duplicate implementations unassessed. The deterministic gate requires HUMAN_REVIEW."
+  },
+  "d06ea4e6995d3778df3ff66a14c851add86a93578b13cab19fdfebecd374df77": {
+    "confidence": 0.82,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and mechanism_count=4 conflict with the issue body, which is a production field report with no proposed algorithmic change.",
+      "The issue's own update retracts the 'TP8/EP8 is the only layout that starts' claim and corrects prior throughput numbers, showing the report is still in flux rather than a settled defect."
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Treating operational field data as an algorithm contribution would produce no code change.",
+      "The Exited 137 root cause is explicitly unproven and non-reproducible, so any fix would be speculative.",
+      "Hardware-specific (SM120, PCIe-only, no NVLink) findings may not generalize to supported CI hardware."
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No actionable code change is defined; a reproduction would require the specific 8x/4x RTX PRO 6000 SM120 PCIe hardware and the unrecorded local image, which is not a regression test."
+    ],
+    "unknowns": [
+      "Whether maintainers want this converted into a documentation or config-validation change.",
+      "Whether the Exited 137 / Triton JIT watchdog hypothesis can be reproduced at all.",
+      "Whether any specific code path in server_args.py or kv_cache_dtype.py is actually defective versus merely misconfigured."
+    ],
+    "why": "This is a field report / operational configuration write-up for DeepSeek-V4.1-Flash on SM120 hardware, not a code contribution. It documents working docker flags, measured throughput, rejected topologies, and measurement traps. No concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is proposed for implementation. The 'algorithm' terms (all reduce, attention, fp8, moe, triton kernel) appear only as configuration labels and operational observations, not as a fixable algorithmic defect. The only candidate code-adjacent item is an unproven Exited 137 hypothesis about Triton JIT compile stalling the watchdog, which the author explicitly labels unproven and non-reproducible."
   },
   "d076bd033e98a40b4b4268a47501e7fb7f7009727395d05edc0287bd278b264b": {
     "confidence": 0.85,
@@ -132627,6 +132893,36 @@
       "Whether the existing PRs are merged or superseded, and maintainer's preferred fix approach."
     ],
     "why": "Issue clearly identifies a bug in malformed-key warning logic for resource URIs containing '@', with a concrete repro and expected behavior. However, two PRs (#4821, #4822) already reference the issue and are closed, indicating potential competition or maintainer action. The deterministic gate requires HUMAN_REVIEW, and assignment is requested, so maintainer confirmation is needed before starting work."
+  },
+  "f1a3d576cdb26322443f749431f02fe55403719bf5cdedfcdfcbfd1d1fb28c71": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue asserts 405 GET is fatal in opencode; comment reports 405 is handled fine on current dev",
+      "Issue attributes failure to opencode transport; comment attributes the error string to the C# MCP SDK server-side tool exception"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "No actionable client change identified; possibly none in opencode"
+    ],
+    "risks": [
+      "Fixing a non-existent client bug could regress working Streamable HTTP fallback behavior"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a POST-only 405-on-GET server on current dev and capture full wire sequence plus server-side tool logs"
+    ],
+    "unknowns": [
+      "Whether the failure reproduces on current dev base SHA 63be8f95",
+      "Server-side logs for the failing tools/call",
+      "Whether any tools/call POST is actually attempted on current dev"
+    ],
+    "why": "The issue claims 405 on GET /mcp is treated as fatal, but the only supplied comment reports that current dev handles 405 fine and that the generic error string originates from the C# MCP SDK when a server-side tool throws. This directly contradicts the stated root cause and leaves no confirmed client-side defect."
   },
   "f1a5ca1ea97b26fc71e8f1ab8a683a1f6578a29205dfebb15b139c05edbafb6e": {
     "confidence": 0.85,
