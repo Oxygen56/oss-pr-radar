@@ -22480,6 +22480,39 @@
     ],
     "why": "Issue reports a user-visible bug where code-explorer subagent hangs and fails, with a concrete repro prompt and environment. No competing PR or issue found, and the gate allows work. However, root cause is unknown and no maintainer confirmation exists, so confidence is moderate."
   },
+  "2b3d0699297f04b17ee3cdd3ef9799c3d08f4daf06bf943bb2c321ba61b1fe36": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate gate_decision ALLOW_PRIVATE_WORK and score 9 conflict with collaborator bot and commenters stating the issue cannot be fixed in this repo",
+      "Candidate category LOCAL_FIX_ONLY conflicts with evidence that the fix is cross-repo (SDK + typescript-client)"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No actionable change in OpenHands/OpenHands until SDK and typescript-client land the budget field and live cost publication",
+      "If scoped here, only client bump plus threading budget through buildStartConversationRequest() and settings UI"
+    ],
+    "risks": [
+      "Cross-repo ownership boundary: fix belongs in software-agent-sdk and typescript-client",
+      "Repository AI disclosure conflict (policy status ai_disclosure_conflict) blocks automated public action",
+      "No reproduction evidence or root-cause signal supplied for this repo"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Not actionable in this repo without the SDK/typescript-client changes; a failing test cannot be written against the current agent-server contract"
+    ],
+    "unknowns": [
+      "Whether maintainers will track the cross-repo work in this issue or move/split it to software-agent-sdk",
+      "Whether the events/count?kind= filter bug is in scope here or a separate SDK issue"
+    ],
+    "why": "The issue describes a real gap (no per-conversation budget, cost only published at termination), but the supplied evidence shows the fix belongs in OpenHands/software-agent-sdk and OpenHands/typescript-client, not this repo. A collaborator bot and multiple commenters state the settable budget field and server-side enforcement are agent-server behavior, and src/api/no-direct-agent-server-calls.test.ts:32 blocks raw client workarounds. The candidate's own actionability evidence has root_cause_signal=false, public_repro_signals=0, probe_ready=false, and reproduction_evidence empty, so no concrete validation path is established for this repository."
+  },
   "2b3e97e3b7737f8dab05028e8c8dad3801e40ed5b871eb309a3ba5cf59357a04": {
     "confidence": 0.8,
     "contradictions": [
@@ -25131,6 +25164,42 @@
       "Whether maintainers prefer the conservative fix (drop fallback) or the more complete fix (serialize add_tool_output) first; but this is a design choice that can be decided during implementation."
     ],
     "why": "The issue precisely identifies a logic error in tool-mode detection: output-level tool_mode is misinterpreted as capability, causing _enable_tool_mode to never refuse and produce impossible outputs. It provides a concrete repro and a clear suggested fix (drop output-side fallback, optionally serialize add_tool_output). This is a well-scoped, actionable bug in the agent/inference path."
+  },
+  "31984387035215b54d17f7e6b2df63aad722691f6845fb72488409b4cfc6ce52": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue proposes a fix while open PRs #6031/#6032 already claim to address the same scenarios"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: accept reconnect_on_error and default True",
+      "src/pipecat/services/sarvam/stt.py: complete in-flight utterance on drop",
+      "src/pipecat/services/sarvam/stt.py: classify 4000/1003 as permanent, retry 1011/1006",
+      "src/pipecat/services/sarvam/stt.py: bounded retry for failed first connect"
+    ],
+    "risks": [
+      "PR #6031 may already implement the same fix, making a new contribution duplicate",
+      "PR #6032 may cover the failed-first-connect path across multiple STT services",
+      "Changing default reconnect behavior could affect other Sarvam service consumers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py drop scenario and assert 2 handshakes plus transcripts from both connections and is_usable True",
+      "Run repro.py connect scenario and assert retry then transcription, or unusable after retries exhausted",
+      "Add regression test for 1003 rate-limit vs invalid-key classification"
+    ],
+    "unknowns": [
+      "Whether PR #6031 or #6032 fully covers the root cause and all four scenarios",
+      "Maintainer preference on reconnect default and permanent-close classification"
+    ],
+    "why": "Issue provides a concrete reproduction and root cause (reconnect_on_error forced off, no retry path for failed first connect), but two open PRs (#6031, #6032) already target the same code path and semantics, and the duplicate status is 'semantic_overlap_requires_review' with no maintainer resolution. Whether the existing PRs fully cover the root cause is unresolved, which materially determines whether new code work is actionable."
   },
   "319a0d622334f6877552e1efbb6c613cba95f527f05585a6ca9e19dff6e0b087": {
     "confidence": 0.55,
@@ -63437,6 +63506,41 @@
     "unknowns": [],
     "why": "The issue is a well-evidenced Feishu channel integration bug (rich-post parsing drops images/links/code, quoted file/image references return no content), but it is ordinary channel/API plumbing in a messaging adapter, not an LLM algorithm contribution. The supplied algorithm_evidence only matched the generic term 'adapter' and mislabeled it as parameter_efficient_finetuning; there is no training objective, model mechanism, distributed invariant, quantization/numerical method, kernel, or evaluation methodology. Additionally, PR #11563 by a collaborator already covers the same code path (FeishuAdapter.ts) with tests and CI, so the opportunity is largely covered."
   },
+  "761d8d0847d364cc941124bbec52fb3d7c22ea792f319d99dea9ede79cc888b9": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence lists code_anchors that are unrelated frontend files and an Ollama source file, while the bug is in Continue's MCP argument handling",
+      "candidate.actionability_evidence reports root_cause_signal=false and public_repro_signals=0, yet the issue body contains a detailed reproduction and wrapper log"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP tool-call argument serialization path in Continue (candidate: core MCP client/tool-call handling)",
+      "Possibly Ollama qwen3coder parser if Continue passes arguments through unchanged"
+    ],
+    "risks": [
+      "Fixing the wrong layer (Continue vs Ollama parser) would not resolve the bug",
+      "Changing argument serialization could affect other MCP tools or providers",
+      "Intermittent nature may make a single reproduction insufficient"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the provided mcp-tee wrapper: issue two consecutive read_multiple_files calls with array arguments and assert both arrive as JSON arrays, not strings",
+      "Add a unit test that feeds a tool call whose arguments contain an array value through Continue's MCP call path and asserts the serialized JSON-RPC arguments preserve the array type",
+      "Regression test for edit_file with array 'edits' and boolean 'dryRun' to confirm type preservation"
+    ],
+    "unknowns": [
+      "Whether Continue or Ollama's qwen3coder parser converts the array argument into a string",
+      "The exact Continue code path that serializes MCP tool-call arguments",
+      "Whether the bug is provider-specific (Ollama) or general to MCP tool calls"
+    ],
+    "why": "The issue provides a strong reproduction (MCP tee log showing the same tool call arriving once as a real array and once as a JSON-encoded string), but the root cause is explicitly unresolved: the reporter states the stringification could originate either in Ollama's qwen3coder parser or in Continue's MCP argument handling. No code anchor in the Continue MCP tool-call path is identified, and the supplied code_anchors are unrelated frontend files plus qwen3coder.go (an Ollama file). Without knowing which side stringifies the arguments, the fix location and validation path are not determined."
+  },
   "762cf2305b4b37a8f61882d4c8f68dd26f9a5d1a90456ca0b6e2a011e24c3609": {
     "confidence": 0.8,
     "contradictions": [
@@ -79530,6 +79634,41 @@
     ],
     "why": "The traceback shows UsageLimitExceeded raised by UsageLimits.check_before_request because the gh-aw runner exhausted its explicitly configured 200-request budget; this is documented, test-pinned library contract behavior, not a product defect. The actionable levers are workflow configuration (raise budget, budget-aware prompt, report-failure-as-issue: false) and maintainer spend decisions, not library code. The bot status comment already resolved this as not actionable, and the issue requires assignment."
   },
+  "94e129f396543f784a3cd5b221e1492d068bc1bd433cb13816b084635b9b7be3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue reports allocator available_size (4658) exceeds request (2389) yet alloc returns None, while PR #42700 frames the crash as SWA over-admission of host load-backs"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/allocation.py: alloc_token_slots / evict_to_free_tokens / reclaim_plan behavior for UnifiedSWATokenToKVPoolAllocator",
+      "python/sglang/srt/managers/schedule_batch.py: prepare_for_extend handling when alloc returns None",
+      "python/sglang/srt/managers/scheduler.py: fallback/retract path instead of scheduler exception"
+    ],
+    "risks": [
+      "PR #42700 may already fix the same root cause, making a new contribution duplicative",
+      "Fix may require allocator-level changes with broad impact on SWA/unified-memory scheduling",
+      "Reproduction depends on a specific request stream and flush/reset-prefix-cache interleaving that is not yet minimized"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay request_stream.jsonl with repro_wire_log_replay.py against openai/gpt-oss-20b with --enable-unified-memory and confirm scheduler OOM",
+      "Run the same replay without --enable-unified-memory as the control and confirm no failure",
+      "Add a focused regression test around UnifiedSWATokenToKVPoolAllocator.alloc/evict_to_free_tokens after flush/reset-prefix-cache to assert reclaim frees evictable FULL/SWA tokens"
+    ],
+    "unknowns": [
+      "Whether PR #42700 actually addresses the unified-memory alloc_token_slots OOM root cause or a different SWA over-admission path",
+      "Minimal reproduction without the full 1,437-request stream",
+      "Whether maintainers consider this issue already covered by an existing fix"
+    ],
+    "why": "Issue provides a strong reproduction (traceback, ordered steps, executable replay client) and a plausible root-cause area (UnifiedSWATokenToKVPoolAllocator eviction/reclaim after /flush_cache and /reset_prefix_cache), but the root cause is explicitly not reduced and an open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') semantically overlaps on alloc_token_slots/scheduler. Whether that PR already covers this root cause is unresolved, which materially determines whether new code work is actionable."
+  },
   "94f4474b437b0e6f37b8a1dbc590289fe28ed7a62b543efa3f12e3b85b0d5545": {
     "confidence": 0.85,
     "contradictions": [
@@ -93968,6 +94107,43 @@
     ],
     "why": "Issue provides a clear root cause (server injects default version status without checking editor presence, causing guaranteed per-request error log) and a concrete reproduction path. The suggested fixes are actionable and minimal. Although a merged PR (22471) exists with semantic overlap, it does not reference this issue and may not fully cover the root cause, so the issue remains actionable."
   },
+  "b1525f8d70ef84d7de2683081ff64014d930d7b2bac4c50310ac514daf23db17": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Maintainer says 'Please use MRV2' while the issue documents a reachable V1 path and the author asks whether V1 fixes remain acceptable",
+      "PR #52677 is cited as formerly containing the fix but now narrowed to V2-only, leaving the V1 fix uncovered"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/sample/thinking_budget_state.py: derive end-sequence progress from accepted tokens and force every position of the verification window (drafts and bonus)"
+    ],
+    "risks": [
+      "Maintainer policy may be to not fix V1 issues, making the change non-actionable",
+      "PR #52677 semantic overlap may already cover or supersede the fix",
+      "Corruption rate depends on model, phrase, and temperature, so validation may be noisy"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run tests/v1/sample/test_thinking_forced_end_spec.py against unfixed code and confirm the 5 failing cases pass after the fix",
+      "Reproduce with VLLM_USE_V2_MODEL_RUNNER=0 and a multi-token reasoning_end_str under speculative decoding, comparing corrupted-end counts against V2"
+    ],
+    "unknowns": [
+      "Whether the repository still accepts V1 bug fixes or will close this as won't-fix",
+      "Whether a standalone V1 PR will be opened or is expected",
+      "Whether PR #52677's remaining scope already covers this root cause"
+    ],
+    "why": "The issue presents a concrete V1 root cause (single-position forcing and end_count advancing on drafts rather than accepted tokens in thinking_budget_state.py) with a reproduction command, unit-test evidence, and a candidate fix. However, the supplied evidence contains materially blocking unknowns: the maintainer (njhill) directed 'Please use MRV2', and the author explicitly asks whether V1 fixes are still acceptable and whether this should close as won't-fix; the V1 fix was removed from PR #52677, and no standalone PR exists. Whether V1 code work is actionable is therefore unresolved by the supplied evidence, and the duplicate/coverage status (PR #52677 semantic overlap) is flagged as requiring review."
+  },
   "b159bd459cbc9560724ee69550ec7a99e0a8f2db84cc5a5e1e5123b94d753522": {
     "confidence": 0.85,
     "contradictions": [
@@ -100087,6 +100263,34 @@
       "Whether the maintainer intends #2955 to close this issue, which would make independent work redundant"
     ],
     "why": "Issue describes a concrete, reproducible bug (quoted forward-reference parameter annotations not stripped, dropping CALLS edges) with a minimal repro and a specific fix site in variable_analyzer.py. However, an open maintainer-owned PR #2955 overlaps on the same code paths and the distinctive symbol 'contains_router', and its root-cause coverage is explicitly marked false/technical_complete false. Whether that PR already fixes this exact root cause is unresolved, which materially determines whether independent code work is actionable."
+  },
+  "bcffdb3ab66b0cafaa79b4349e796d47c56d3fa7c9ee95e9d1bb7de09faba2b4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels the issue status:approved and gate ALLOW_PRIVATE_WORK, but the maintainer comment states items 1 and 2 are already done and only the writers covered by #5305 remain"
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "No new code work warranted; remaining JSONC-preservation writers are already addressed by PR #5305"
+    ],
+    "risks": [
+      "Duplicating an active, technically complete PR (#5305) on the same writers",
+      "Item 4 (upstream engram setup opencode) is explicitly out of scope for this repo"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If competing, first verify PR #5305 does not already cover all five routing-step writers and the legacy agent migration with regression tests"
+    ],
+    "unknowns": [
+      "Whether PR #5305 fully covers the legacy agent migration path in addition to the five routing-step writers"
+    ],
+    "why": "Issue #5035 is a follow-up tracking issue whose main items (1 and 2) are already fixed on main per the maintainer comment, and the remaining work (five routing-step settings writers plus legacy agent migration) is already covered by open PR #5305 ('keep JSONC comments through every routing-step settings writer', 8 files, 3 test files, CI green, references the issue). The candidate's own open_pr_assessment rates #5305 as technically complete with no material competition gaps, so a new contribution would duplicate existing coverage rather than add root-cause, test, or key-path value."
   },
   "bd09a3b5f27947b1432cc3777c4a993b6abd6d342fd2291fd898e6b030992012": {
     "confidence": 0.8,
@@ -109852,6 +110056,45 @@
     ],
     "why": "Issue documents an unbounded, payload-proportional retention in ManagedToolExecutor.entries on the raw path, with code anchors (managed-runtime-tool-executor.ts L168, L213, L314, L416) and independent static confirmation from two collaborators. Root cause is clear: entries Map is append-only, no delete/clear, and JournalEntry holds input, inputJson, and result. Measured RSS growth (~325 KiB per released 200 KiB Session) and provider-route flatness support the claim. Triage notes the proposed eviction point (closeSessionAdmission) is provider-route-only, but this is a design choice between two reasonable fixes, not a blocking unknown."
   },
+  "cf7272b9c8c29029cb9e9307eb2cccfeffad09493fbec6b5b7d113e3387f59ce": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Maintainer's 09-21 note said vision/audio k-bit sites were still open, but 09-27 note corrects that #1045 already threads them; only the test is missing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "trainer/grpo.py, ipo.py, bco.py, reward_model.py, online_dpo.py: pass gradient_checkpointing into TRL configs",
+      "trainer/pretrain.py, embedding.py: pass gradient_checkpointing into TrainingArguments",
+      "trainer/distill.py, classifier.py, asr.py, unlearn.py: read and apply the field",
+      "utils/unsloth.py: map field to use_gradient_checkpointing instead of hardcoded 'unsloth'",
+      "tests: drive real vision/audio setup and fail by name when opposite value is forced"
+    ],
+    "risks": [
+      "Distinguishing genuine config-override bug from intended TRL defaults",
+      "Multiple independent mechanisms require separate PRs; partial fix may leave inconsistent behavior",
+      "unsloth backend semantics differ and need careful mapping"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Parametrised test over every trainer in trainer/ asserting effective model.is_gradient_checkpointing equals config value for true and false",
+      "k-bit-flagged model test asserting false survives prepare_model_for_kbit_training",
+      "Vision and audio setup test that fails by name when use_gradient_checkpointing is forced to the opposite value at each site",
+      "Structural test failing if any trainer/*.py calls prepare_model_for_kbit_training without use_gradient_checkpointing="
+    ],
+    "unknowns": [
+      "Whether the remaining items are already claimed by another contributor at review time",
+      "Exact current state of main beyond baseSha dbbe39090d390b4515508cb6f48971020c2a41c3"
+    ],
+    "why": "Issue #797 documents three concrete mechanisms (TRL config defaults, peft k-bit preparation, unsloth hardcoding) that override training.gradient_checkpointing, with file/line anchors and a CPU reproduction. Maintainer comments confirm #1045 shipped only the k-bit text-path half and enumerate remaining open items (TRL/HF args threading, trainers that never read the field, unsloth mapping, vision/audio test), each with a named-test acceptance bar. This is a concrete, testable training-optimization defect, not plumbing."
+  },
   "cf8c7949590b93ed75b39dc05e868101aedec6681403f9d0d6e4ea7b827c1eb3": {
     "confidence": 0.8,
     "contradictions": [],
@@ -115871,6 +116114,37 @@
       "Whether #1448/#1440 already cover the same doc-vs-CLI mismatches"
     ],
     "why": "Issue documents concrete, reproducible doc-vs-CLI mismatches with exact file:line anchors, executed evidence, and acceptance criteria. Remaining work (8 doc spellings, decontamination wording, guard generalization) is actionable; the UI plugin registry has an explicit maintainer ruling pending but is separable and does not block the rest."
+  },
+  "d97e9422d35614106c0b0a69fe2c80c759989928b9e7e7a3804d0ed44cce8578": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/health_check.rs: idle timer reset semantics",
+      "lib/runtime/src/pipeline/network/ingress/push_handler.rs: notify on non-error engine chunk before publisher.send"
+    ],
+    "risks": [
+      "Overlap with open PR #15419 (busy-aware canary prototype) may require coordination to avoid conflicting changes",
+      "Changing notifier placement could mask genuinely stalled engines if error-chunk classification is wrong",
+      "No maintainer pre-approval or design confirmation on the targeted approach"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: publish fails but engine produces non-error chunks -> canary does not fire",
+      "Unit test: engine silent -> canary fires after timer expiry",
+      "Regression: reproduce overload scenario with canary enabled vs DYN_HEALTH_CHECK_ENABLED=false and compare decode restarts"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the targeted idle-timer fix over the busy-aware canary approach in PR #15419"
+    ],
+    "why": "Issue provides a concrete root cause: the health-check idle timer is only reset in the `else if !is_error` branch of `pump_response_stream` after `publisher.send` succeeds, so under overload a failed publish hides engine progress and the canary kills a busy decode worker. The proposed targeted fix (notify on any non-error engine chunk before publish) is specific, minimal, and testable. Existing PRs #15419, #13434, #13520 overlap on health_check.rs but are prototypes or different scopes (busy-aware canary, shutdown, rollback), not a merged fix for this idle-timer gap."
   },
   "d9850c81f1f17fccf83e593934d856435ed503053d727ca59dcfbcbfd27c2909": {
     "confidence": 0.9,
