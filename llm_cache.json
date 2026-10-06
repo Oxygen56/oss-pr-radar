@@ -5959,6 +5959,35 @@
     ],
     "why": "Issue provides a precise root cause (SQL NULL inequality in exclude_team_id filter), a concrete reproduction with curl commands and metric observations, and a suggested fix with code sketch. The bug is user-visible and affects monitoring reliability. The fix is localized and testable."
   },
+  "0c264c225055bc08eeadc6137dd488da44379161b676433d5c72bd9a0c96fc29": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Candidate gate_decision is ALLOW_PRIVATE_WORK while submission_policy is ai_disclosure_conflict"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Remaining OpenCode ownership writers (background policy, review provider roles, ODD parity agents, default_agent, share) and legacy agent migration switched to the comment-preserving merge"
+    ],
+    "risks": [
+      "Residual scope is a narrow extension of already-merged fixes, lowering marginal value",
+      "Item 4 is upstream Engram behavior explicitly not fixable in this repo",
+      "ai_disclosure_conflict policy blocks automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Byte-level regression test: run install/sync with a commented project opencode.jsonc and assert comments and escaped-key refusal survive each writer path"
+    ],
+    "unknowns": [
+      "Whether maintainers want the residual writer coverage handled in this issue or a new one"
+    ],
+    "why": "Issue #5035 is a follow-up tracking issue whose two main items (JSONC-preserving merge in trigger-rule cleanup/routing injection, and pipeline-level OpenCode preflight before mutations) are already covered by merged PRs #5052 ('preserve JSONC in settings writers') and #5053 ('preflight settings before mutations'), as the maintainer comment confirms. Remaining scope is residual writer coverage plus an explicitly out-of-scope upstream Engram dependency, so the actionable opportunity is largely covered."
+  },
   "0c2ed3cc29763256534c2feca0328f7c8ba665cf2f33b9d9b486563e6d00d700": {
     "confidence": 0.7,
     "contradictions": [
@@ -32181,6 +32210,36 @@
     ],
     "why": "The issue reports a plausible N+1 query problem in the console dataset list serialization path, and the bot comment supplies code anchors and a batching precedent. However, the supplied evidence does not establish a confirmed root cause (root_cause_signal=false), and the open PR assessment flags PR #42030 as semantic overlap requiring human comparison. The submission policy is ai_disclosure_conflict, which is a materially blocking unknown for whether code work can be actionably submitted."
   },
+  "3f9cd80a8f0328296d3fceb4362a35f265d71459f3f96833b1ffc3ce2f743ad7": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/llms/openai/responses/guardrail_translation/handler.py: extract text from typed tool-result items (e.g. local_shell_call_output.output) so guardrail runs",
+      "Headroom guardrail path: route native Responses body through /v1/compress gateway mode while preserving previous_response_id, call_id, item order, and opaque fields"
+    ],
+    "risks": [
+      "Broadening Responses item handling could alter behavior for other item types or opaque fields",
+      "Chat-shaped structured_messages conversion may not safely represent all Responses items; fix should avoid lossy conversion",
+      "Fallback policy when Headroom is unavailable must remain intact"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's portable regression test test_headroom_responses_tool_output.py and confirm it fails on unpatched code (await_count == 0)",
+      "After fix, assert guardrail.async_handler.post.await_count == 1 and provider_request preserves previous_response_id and compressed output",
+      "Run targeted unit tests for litellm/llms/openai/responses/guardrail_translation and Headroom guardrail hook"
+    ],
+    "unknowns": [
+      "Exact maintainer-preferred implementation for native Responses body routing vs chat structured_messages is not specified, but this is normal implementation choice, not a blocker"
+    ],
+    "why": "Issue provides a concrete, executable regression test, a named root-cause location (OpenAIResponsesHandler.process_input_messages / _extract_input_text_and_images not extracting `output` from typed tool-result items), and a clear expected-vs-actual behavior for Headroom guardrail invocation on Responses tool-output-only requests. No duplicate open PR/issue coverage is reported."
+  },
   "3fa29e92d2b4ec53406ba881dd8f4f5fea216d8e72d369edd2d7f8e1cb1ad06c": {
     "confidence": 0.85,
     "contradictions": [
@@ -48039,6 +48098,45 @@
     ],
     "why": "Issue is a bare provider error report with no reproduction evidence, no root-cause signal, and no code anchors beyond the error string `encrypted_content`. The bot comment lists five closely related issues (#48805, #48915, #48741, #48947, #48319) covering the same behavior, and the related-issue assessment flags #49247 as a potential duplicate. Two open PRs (#48908, #48918) already target stale encrypted reasoning recovery. Duplicate/merged-fix coverage is unresolved, which materially blocks whether new code work is actionable."
   },
+  "5be0897f90626eea392401aabf5154cabce267ab8d3a46bd2900696ae8b050db": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Maintainer's 09-21 note said vision/audio k-bit sites were open, then 09-27 corrected that #1045 already threads them and only the test is missing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/trainer/grpo.py, ipo.py, bco.py, reward_model.py, online_dpo.py: pass resolved gradient_checkpointing into TRL configs",
+      "src/soup_cli/trainer/pretrain.py, embedding.py: pass resolved value into TrainingArguments",
+      "src/soup_cli/trainer/distill.py, classifier.py, asr.py, unlearn.py: read and apply the field",
+      "src/soup_cli/utils/unsloth.py: map field to use_gradient_checkpointing instead of hardcoded 'unsloth'",
+      "tests: parametrised effective-state test per trainer plus vision/audio k-bit setup test"
+    ],
+    "risks": [
+      "Multiple independent mechanisms mean a partial fix leaves other trainers silently diverging",
+      "Unsloth backend semantics differ from standard checkpointing and may need separate handling",
+      "Tests must avoid GPU dependence by using the is_loaded_in_4bit flag trick"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Drive real _setup_transformers for grpo with gradient_checkpointing=false and quantization=none; assert model.is_gradient_checkpointing is False (fails on current main)",
+      "Drive real setup for pretrain/embedding with true and quantization=none; assert effective state is True",
+      "Drive real vision and audio setup with forced opposite use_gradient_checkpointing at each k-bit site; assert a named test fails",
+      "k-bit-flagged model test asserting false survives prepare_model_for_kbit_training"
+    ],
+    "unknowns": [
+      "Whether the vision/audio test item is still unclaimed after the 2026-10-04 deadline passed"
+    ],
+    "why": "Issue #797 documents three concrete mechanisms (TRL config defaults, peft k-bit preparation, unsloth hardcoding) that override training.gradient_checkpointing, with file/line anchors and a CPU reproduction. Maintainer comments confirm #1045 shipped only the k-bit text-path half and explicitly enumerate remaining open items (TRL/HF args threading, trainers that never read the field, unsloth mapping, vision/audio test), so the remaining work is concrete and actionable."
+  },
   "5bf1526df6a0b901a9d6e0f08aaef05bab8c2aec1d06e57e38fbad9045976163": {
     "confidence": 0.8,
     "contradictions": [],
@@ -53914,6 +54012,41 @@
       "Maintainer preference on pin metadata key and API design"
     ],
     "why": "The issue precisely identifies a cross-package bug where Observational Memory's threadTitle extractor overwrites manual thread renames, with clear code anchors and a proposed design (pinned titles) that is actionable and testable."
+  },
+  "67127ad70065e4b038a9e75349b0fb7c8b7fad62979d6379b9bacccf8c873c33": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes a fix while two open PRs already claim to address the same scenarios"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: accept/default reconnect_on_error=True and stop forcing it off",
+      "src/pipecat/services/sarvam/stt.py: complete in-flight utterance on drop and report non-retryable closes (4000, 1003 non-rate-limit) as permanent",
+      "src/pipecat/services/sarvam/stt.py: give a failed first connect bounded retry or mark permanent"
+    ],
+    "risks": [
+      "PR #6031 may already implement the same fix, making a new contribution duplicative",
+      "PR #6032 may cover the failed-first-connect path across multiple STT services",
+      "Changing reconnect defaults could alter behavior for other Sarvam users"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py drop scenario and assert 2 handshakes, transcripts from both connections, is_usable True",
+      "Run repro.py connect scenario and assert retry then transcription, or is_usable False when retries are exhausted",
+      "Add regression test for 1006 TCP drop and 1003 rate-limit close behavior"
+    ],
+    "unknowns": [
+      "Whether PR #6031/#6032 fully cover the issue's four scenarios or leave gaps",
+      "Whether maintainers intend to merge one of the existing PRs rather than accept a new contribution"
+    ],
+    "why": "Issue provides a concrete reproduction and root cause (reconnect_on_error forced off, no retry path for failed first connect), but two open PRs (#6031, #6032) already target the same code path and semantics, and the duplicate status is 'semantic_overlap_requires_review'. Whether the issue is already covered by those PRs is a materially blocking unknown for deciding if new code work is actionable."
   },
   "6718722f6768f44e94cf351a7228c61d420d4c02a77329d7a8dc4c8cc6792ff9": {
     "confidence": 0.7,
@@ -93712,6 +93845,43 @@
     ],
     "why": "The issue reports a memory leak on NPU with dynamic chunking and radix cache, but lacks a minimal reproducer and root cause analysis. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "b251e8bd2c2de6b92bf08e7fa9be65489e788dd5732dcb4ee683f270bf23f6b8": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue cites extensionManager.ts lines ~8 low versus HEAD, but the collaborator re-derived and confirmed the content at HEAD, so this is a line-number offset rather than a semantic conflict"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/github.ts: distinguish credential/auth failure from other ERROR returns and carry a reason",
+      "packages/core/src/extension/extensionManager.ts: extend the update-check callback payload to carry a reason",
+      "packages/cli/src/ui/state/extensions.ts: add a reason field to ExtensionUpdateStatus and SET_STATE payload",
+      "packages/cli/src/ui/components/extensions/steps/ExtensionListStep.tsx: render the reason in the extension list UI"
+    ],
+    "risks": [
+      "Open PR #12183 touches extensionManager.ts and may overlap; compare implementation boundaries before proceeding",
+      "Widening the callback signature and status type is a multi-file product change that may need maintainer design agreement",
+      "The deferred `if (!restrictEnvironment) return git;` branch in extension-git-client.ts is out of scope and should not be bundled"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that simulates a revoked credential/GITHUB_TOKEN during the startup update check and asserts a reason-bearing error state rather than a bare ERROR",
+      "Regression test asserting ref-not-found and credential failure produce distinguishable update states",
+      "Run targeted unit tests for the extension update-check path and the extensions UI state reducer"
+    ],
+    "unknowns": [
+      "Whether PR #12183's extensionManager.ts changes already cover or conflict with the callback-payload change",
+      "Whether maintainers prefer a callback payload versus a reason field on the update status"
+    ],
+    "why": "Issue is a concrete, independently verified follow-up: the update-check catch in github.ts drops the Git error to a no-op debugLogger and returns a bare ExtensionUpdateState.ERROR, the dispatch callback in extensionManager.ts has no payload slot, and the UI status type has no reason field, so credential/auth failures are indistinguishable from ref-not-found. All seven cited findings were re-derived at HEAD by a collaborator, giving a clear root cause and a concrete validation path."
+  },
   "b25befc30165c229d07b12cf040f4eb6af01422bf78ebac0a582e37cbc2c4ec6": {
     "confidence": 0.8,
     "contradictions": [
@@ -99147,6 +99317,41 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a runtime 400 error when using extra_body thinking with DeepSeek via react_agent, but lacks a minimal reproducible example and exact code. Comments suggest possible conversion issue but no confirmed root cause. Existing PR #8580 is closed and not merged, and repository requires assignment. No maintainer confirmation or design direction."
   },
+  "bcb632be4de5f807d3f234d5536a1d74fb0e5e7e969d7106ae513234669a29bb": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/shared/src/nodeSqliteClient.ts: use BEGIN IMMEDIATE (or retry) for event-write transactions so busy_timeout applies",
+      "RunExecutionService.startRootRun: on ingest failure, interrupt/close the live provider session via ClaudeAdapterV2.interruptTurn",
+      "Terminal-failure write path (writeIfRunCurrent) resilience so runs do not remain stuck in running"
+    ],
+    "risks": [
+      "BEGIN IMMEDIATE increases write-lock contention and could reduce concurrency under heavy load",
+      "Interrupting the provider on ingest failure may discard in-flight work or interact with steer/retry semantics",
+      "Fix direction (immediate transactions vs retry) is a maintainer design choice; scope may overlap with #14856 and #15488"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit/integration test with node:sqlite: hold a write lock on a second connection and assert a deferred-upgrade transaction fails immediately while BEGIN IMMEDIATE waits ~busy_timeout",
+      "Regression test: force EventSink.write to fail with database is locked and assert the run reaches a terminal state and the provider session is interrupted/closed",
+      "End-to-end repro per issue steps: long Claude turn plus concurrent t3 auth session issue/revoke loop; verify no orphaned claude process and no stuck running run"
+    ],
+    "unknowns": [
+      "Which fix direction maintainers will accept (BEGIN IMMEDIATE vs write retry)",
+      "Whether #14856/#15488 already cover part of the terminal-write and retry path"
+    ],
+    "why": "Maintainer triage on main confirms two concrete, code-anchored root causes: deferred BEGIN in packages/shared/src/nodeSqliteClient.ts causing immediate SQLITE_BUSY on lock upgrade (bypassing busy_timeout), and RunExecutionService.startRootRun failing the run without calling ClaudeAdapterV2.interruptTurn, leaving the claude process orphaned. Independent reproduction with node:sqlite and a second occurrence report corroborate both paths, including a lost-terminal variant. This is a reproducible, high-impact agent-runtime bug with a clear validation path."
+  },
   "bcbd1c3b81b190f049517259d8ff10692cb63e206a3a8e969f033c9d144b6046": {
     "confidence": 0.85,
     "contradictions": [],
@@ -103478,6 +103683,43 @@
       "Maintainer approval or design confirmation"
     ],
     "why": "The issue provides a detailed root cause and concrete fix suggestions for a real bug in the Datadog callback, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences."
+  },
+  "c5335861e4c4d234f495ddb8300bde02756db2706e340f9f0773dc75db5af34c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body claims the fix was removed from #52677, while open_pr_assessment lists #52677 as semantic overlap requiring review",
+      "Maintainer comment 'Please use MRV2' conflicts with the issue's V1-only scope and the author's offer to submit a standalone V1 fix"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/sample/thinking_budget_state.py: force every position of the verification window and advance end_count from accepted tokens",
+      "tests/v1/sample/test_thinking_forced_end_spec.py: regression coverage for multi-token reasoning_end_str under speculative decoding"
+    ],
+    "risks": [
+      "Maintainer may close V1 path as won't-fix, making the fix non-actionable",
+      "Overlap with PR #52677 which was narrowed to V2-only and no longer carries the V1 fix",
+      "Corruption rate is model/phrase/temperature dependent, limiting generality of the reproduction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run tests/v1/sample/test_thinking_forced_end_spec.py against unfixed code and confirm the 5 failing cases",
+      "Reproduce with VLLM_USE_V2_MODEL_RUNNER=0, speculative decoding, and a multi-token reasoning_end_str; compare corrupted-end counts against V2"
+    ],
+    "unknowns": [
+      "Whether the maintainer will accept a V1-only fix or close as won't-fix",
+      "Whether the V1 fix should be split from #52677 into a standalone PR"
+    ],
+    "why": "The issue provides a concrete root cause (single-position forcing and draft-based end_count advancement in ThinkingBudgetStateHolder._update_think_state) and a reproduction, but the supplied evidence contains a materially blocking unknown: maintainer njhill directed 'Please use MRV2', and the author is explicitly asking whether V1 fixes are still accepted or whether this should close as won't-fix. Whether V1 code work is actionable is unresolved and determines the contribution's value."
   },
   "c5358ce901a947636ef43fccc9ad0a57d61d0ef37aea846066feb261095cfa44": {
     "confidence": 0.9,
