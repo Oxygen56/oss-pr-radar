@@ -120,7 +120,7 @@ class DeepSeekEvaluator:
     def from_environment(cls, cache_path: Path) -> DeepSeekEvaluator:
         return cls(
             api_key=os.environ.get("DEEPSEEK_API_KEY"),
-            model=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+            model=os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
             base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             cache_path=cache_path,
             timeout=float(os.environ.get("DEEPSEEK_TIMEOUT_SECONDS", "90")),
