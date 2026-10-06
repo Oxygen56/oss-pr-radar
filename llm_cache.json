@@ -4938,6 +4938,40 @@
     ],
     "why": "Issue reports a concrete greedy-equivalence divergence at token 30 for DFlash2 speculative decoding with Qwen3.8-27B, with reproduction command, expected/actual pair, and multiple variants (K=1, no prefix cache, --enforce-eager). However, supplied evidence contains materially conflicting root-cause attributions: commenters point to BF16 numerical path differences, GDN gate row misalignment (#51812), and multiple unrelated kernel defects (#54945/#54948, #54076/#53798, #55122), while open PR #56431 semantically overlaps (dflash2, enforce_eager, qwen3) but is not linked to the issue and lacks regression tests. The duplicate/overlap status is 'semantic_overlap_requires_review' and the pre-task policy status is 'ai_disclosure_conflict', which is a repository disclosure requirement that blocks automated actionability. These unresolved coverage and policy facts determine whether code work is actionable."
   },
+  "09ff415d30661c61f74e7af3dee21cd4cc2cb3cb409e848d18ba94035f015c32": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims server does not forward User-Agent to zen API; l7feng's measurement shows UA is present on the direct path and identical between passing and failing requests",
+      "Issue attributes 403 to missing UA; iagorobo24-hub's bisection attributes 403 to agent permission footprint / request body"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/provider.ts",
+      "packages/llm/src/provider.ts",
+      "server proxy path for /session/:id/message"
+    ],
+    "risks": [
+      "Implementing UA forwarding may not fix the 403 and could mask the real cause",
+      "The secondary HTML-instead-of-JSON response bug is a separate concern that may be conflated with the 403"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a tool-denied agent vs a tool-enabled agent against opencode serve and diff the outgoing request body (system prompt + tool definitions) to the zen endpoint",
+      "Capture and compare full request headers and body for a passing and failing request in the same session to confirm the actual differentiator"
+    ],
+    "unknowns": [
+      "What exact request-body or permission-derived signal the zen gateway matches on to grant free-tier access",
+      "Whether the server proxy path differs from the direct path in a way that independently drops headers"
+    ],
+    "why": "The issue's stated root cause (missing User-Agent forwarding on the server proxy path) is directly contradicted by supplied comment evidence: l7feng measured that the direct client path does forward User-Agent, and that a passing and failing request carried byte-identical user-agent/x-opencode-client/x-opencode-project headers, concluding the differentiator is the request body (system prompt + tool definitions), not UA. iagorobo24-hub's bisection further shows 403 correlates with agent permission footprint (tool-denied agents fail, tool-enabled agents pass), not header forwarding. The proposed fix (forward User-Agent) would therefore not address the observed failure."
+  },
   "0a08cb2cfda9252017e89a25949beb50a233bd20edafbc320a73158d983f7caa": {
     "confidence": 0.85,
     "contradictions": [
@@ -26538,6 +26572,34 @@
     ],
     "why": "The issue reports a deterministic 'Failed to advance FSM' error under DFlash2 spec decode + xgrammar json_object grammar, but the supplied comment evidence strongly indicates the reported build (PR-head SHA 3406ec1da) predates the merged fix #53046 (c6e19b3be243), and multiple commenters confirm the validate_tokens guard is absent in the affected builds. This creates unresolved duplicate/merged-fix coverage: the bug may already be fixed on main, so code work is not clearly actionable without a post-fix reproduction."
   },
+  "353ed15963df1fc7261ba9062e24b24c91c725b417c9239a729264cf3edaac50": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue title/body frames both items as open gaps, but merged PRs #5052/#5053 and the maintainer comment state items 1 and 2 are done"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Remaining ownership writers (background policy, review provider roles, ODD parity agents, default_agent, share) and legacy agent migration should use the JSONC-preserving merge"
+    ],
+    "risks": [
+      "Upstream engram setup opencode behavior is out of scope and cannot be fixed in this repo",
+      "Residual writer work may be low-value incremental cleanup rather than a distinct actionable bug"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add regression tests asserting comments survive each remaining writer path and that escaped touched keys are refused"
+    ],
+    "unknowns": [
+      "Whether the remaining writer paths constitute a separately actionable issue or are already tracked elsewhere"
+    ],
+    "why": "The issue's two main items (JSONC-preserving merge in trigger-rule cleanup/routing injection, and pipeline-level OpenCode preflight before mutations) are already covered by merged PRs #5052 and #5053, as confirmed by the maintainer comment. Remaining work is residual writer coverage and an upstream Engram dependency explicitly marked not fixable here."
+  },
   "353f4dc670d412484bf5c788d8273fb32c7533848fd80f8090231f706d3af028": {
     "confidence": 0.7,
     "contradictions": [
@@ -26601,6 +26663,38 @@
       "Whether related issue #50720 will be resolved soon, affecting the priority of this fix"
     ],
     "why": "Issue reports a real crash on SM12x with FLASHMLA_SPARSE_DSV4, but a contributor has already proposed a fail-fast fix and is investigating. The proposed fix is a behavior change (rejecting unsupported backend) that needs maintainer confirmation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "35474f49638846855b2f696be740eabb5754fd991451e47629e29bf05be097d9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/management_endpoints/mcp_management_endpoints.py: invalidate user OAuth token cache unconditionally on DELETE",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/per_user_oauth_store.py: make per-user Authorization Code token cache coherent across replicas",
+      "litellm/proxy/common_utils/auth_cache_invalidation_pubsub.py: publish/consume invalidation for (user_id, server_id) on connect/refresh/disconnect"
+    ],
+    "risks": [
+      "Broadening invalidation to connect/refresh paths could add pub/sub load or race with in-flight refreshes",
+      "Redis-only backend option changes behavior when coordination Redis is unavailable",
+      "Unconditional invalidation must not break the has_credential=false response contract"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Two-replica integration test: warm token cache on replica B, DELETE via replica A, assert tools/list and tools/call on replica B no longer use the credential",
+      "Regression test: repeated DELETE routed to a different replica still clears that replica's local cache entry",
+      "Unit test asserting disconnect publishes an invalidation message for the exact (user_id, server_id) key"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Redis-only backend vs pub/sub invalidation for the full fix"
+    ],
+    "why": "Issue provides a concrete multi-replica cache-coherence root cause: per-user OAuth token backend wraps user_api_key_cache (process-local in front of Redis), disconnect only invalidates locally, and auth_cache_invalidation_pubsub has no MCP OAuth path. A confirming comment reproduces on v1.103.1 with ordered steps and pinpoints a second defect (conditional invalidation when row already deleted). Code anchors and a validation path exist."
   },
   "355e20e29e37656a4defc15dc1d73b2c7b222bde272f817d9d565b1656874b01": {
     "confidence": 0.55,
@@ -61195,6 +61289,44 @@
     ],
     "why": "The issue's own reproduction is concrete and the union gap is real, but the supplied bot status comment establishes that the failing shape is only reachable by hand-construction: both producer sites build NativeToolSearchReturnPart on ModelResponse, durable execution never invokes ModelMessagesTypeAdapter, and the AG-UI reachability lead is refuted by MessagesBuilder dispatch. The proposed one-line union arm was reportedly closed twice on substantive review objections, and accepting request-side native returns is a maintainer design call. This is a materially blocking unknown about supported reachability and design intent, not normal implementation uncertainty."
   },
+  "7314683b1fb3efd2b219713e7dc2411f83c3cdbb7adaf74c51fe846fe7fb2d3c": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment says semantic_overlap_requires_review while candidate category is PR_COMPETITION_OPPORTUNITY",
+      "PRs #6031/#6032 do not reference the issue but a contributor comment links them to it"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: accept reconnect_on_error and default True",
+      "src/pipecat/services/sarvam/stt.py: complete in-flight utterance on drop",
+      "src/pipecat/services/sarvam/stt.py: classify 4000/1003 as permanent",
+      "src/pipecat/services/sarvam/stt.py: bounded retry for failed first connect"
+    ],
+    "risks": [
+      "PR #6031 may already implement the same Sarvam reconnect fix",
+      "PR #6032 may cover the failed-first-connect retry path",
+      "Behavior change to reconnect_on_error default could affect existing pipelines"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run repro.py drop and assert 2 handshakes, transcripts from both connections, is_usable True",
+      "Run repro.py connect and assert retry then transcript, or is_usable False when retries exhausted",
+      "Add regression test for 1006 and 1003 close codes"
+    ],
+    "unknowns": [
+      "Whether PR #6031 or #6032 already resolves the root cause and would make a new contribution redundant",
+      "Maintainer preference on reconnect_on_error default and permanent-close classification"
+    ],
+    "why": "Issue provides a concrete reproduction, code anchors, and a clear root cause (forced reconnect_on_error=False plus no retry path for failed first connect). However, two open PRs (#6031, #6032) semantically overlap with the exact code path and fix, and the duplicate status is 'semantic_overlap_requires_review' with no maintainer resolution. Whether the candidate work is already covered is a materially blocking unknown for actionability."
+  },
   "733337bcf3c87277414f60dd1315f1676fd748dcac6334cf725cfd865868f68b": {
     "confidence": 0.6,
     "contradictions": [
@@ -64311,6 +64443,43 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The issue describes a UI bug in Agent V2 logs where the log icon is visible but non-functional, and clicking it causes a stale modal to appear on another page. Dosu's analysis identifies two concrete bugs: the click handler fires despite hideLogModal, and global state leaks across pages. However, the user also requests a feature: exposing per-message agent traces (tool calls, intermediate reasoning) in the Agent V2 log panel. The maintainers have not confirmed whether this is a bug fix or a feature request, and the desired behavior is ambiguous. Existing PRs (#39858, #40057) have already addressed related UI issues, and a new PR would need to align with maintainer design preferences."
+  },
+  "79105d0961c6a76960879893ee82b3eaa859da74f04b4aeee2a59e68198d409c": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence reports root_cause_signal=false while the issue narrative asserts a specific dispatch/combine overlap root cause",
+      "related_issue_assessment says potential_overlap with #6077 while preTaskEvidence duplicate.status is none"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "flashinfer_nvlink_one_sided dispatch/combine workspace sizing or offset computation",
+      "all-to-all workspace allocation when target NVFP4 and MTP BF16 payloads share a buffer"
+    ],
+    "risks": [
+      "Truncated issue body may hide the actual root cause or a different mechanism",
+      "Potential duplicate coverage with #6077/#5996/#6081 is unresolved",
+      "Requires 8x B300 NVLink hardware to reproduce, limiting validation"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with DP8EP + CUDA graphs on 8 GPUs and compare per-rank spec-dec acceptance against --enforce-eager",
+      "Add a unit test asserting dispatch row stride >= max(target NVFP4, MTP BF16) payload and that dispatch/combine regions do not overlap",
+      "Numerical regression: run MoE + MTP head with fixed seed and verify combine output equals reference without cross-rank corruption"
+    ],
+    "unknowns": [
+      "The truncated remainder of the issue body containing the collision analysis and any proposed fix",
+      "Whether the overlap is in FlashInfer workspace sizing or in vLLM's allocation of the shared buffer",
+      "Whether #6077/#5996/#6081 already cover this defect"
+    ],
+    "why": "The issue body is truncated mid-sentence ('we can understand when ra...'), so the actual collision mechanism, the offending code path, and the proposed fix are not established. The evidence shows a plausible NVLink one-sided dispatch/combine workspace overlap hypothesis with a concrete reproduction (DP8EP, CUDA graphs, rank 5 acceptance collapse, --enforce-eager removes it), but no root-cause signal (root_cause_signal=false) and no code anchor in the flashinfer dispatch/combine implementation. Related-issue assessment flags potential overlap with #6077/#5996/#6081 based only on shared stack signatures, which is unresolved duplicate coverage."
   },
   "7961bfa2c611b105779cfe8d2912ba32de7af3014aaaf313926c3d8ebbf5a3f2": {
     "confidence": 0.8,
