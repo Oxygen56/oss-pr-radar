@@ -36068,6 +36068,43 @@
     ],
     "why": "Issue provides a deterministic repro and root cause for a startup crash on SM100 with split-KV FA4 warmup. Existing PR #41834 overlaps semantically but is broad and not directly linked; a focused fix (DSL pin bump plus defensive kernel change) is actionable and materially better."
   },
+  "46e297b4c88fc751c3a99ce5be902485733c730804e0c83b13643036801bfc81": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body cites extensionManager.ts:3398-3399 and 3422-3425, but independent verification at HEAD re-derives these at 3406 and 3430-3434; content matches, line numbers differ due to base SHA"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/github.ts: distinguish credential/auth failure from other ERROR returns and carry a reason",
+      "packages/core/src/extension/extensionManager.ts: extend dispatch callback payload or update status to carry a reason through startup dispatch",
+      "packages/cli/src/ui/state/extensions.ts: add reason field to ExtensionUpdateStatus and SET_STATE payload",
+      "packages/cli/src/ui/components/extensions/steps/ExtensionListStep.tsx: surface the reason in the extension list UI"
+    ],
+    "risks": [
+      "Open PR #12183 touches packages/core/src/extension/extensionManager.ts with semantic overlap; must compare implementation boundaries before proceeding to avoid duplicate work",
+      "PR #13454 is open and not merged; this issue describes forward-looking follow-up work, so the fix must not assume #13454 has landed",
+      "Expanding the callback signature or status type may affect other callers of the update-check dispatch"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that simulates a revoked credential/GITHUB_TOKEN during the startup update check and asserts a distinguishable reason reaches the UI status",
+      "Add a regression test asserting ref-not-found and credential failure produce distinguishable outcomes",
+      "Run targeted unit tests for packages/core/src/extension and packages/cli/src/ui/state/extensions plus static checks"
+    ],
+    "unknowns": [
+      "Whether PR #12183's changes to extensionManager.ts already cover or conflict with the reason-propagation fix",
+      "Whether maintainers prefer a callback payload versus a reason field on the update status"
+    ],
+    "why": "Issue #13459 is a concrete, well-evidenced follow-up: the update-check catch in packages/core/src/extension/github.ts drops the Git error to a no-op debugLogger and returns a bare ExtensionUpdateState.ERROR, indistinguishable from ref-not-found; extensionManager.ts flattens rejections to bare ERROR with no payload slot; and the CLI UI status type has no reason field. An independent collaborator verification confirms all cited findings reproduce at main HEAD, with line numbers accurate for github.ts and UI files and ~8 lines low for extensionManager.ts. This is a multi-file product change with a clear validation path (failure test for credential/auth failure vs ref-not-found, then targeted unit tests)."
+  },
   "46e890e5326b60ec1ccdca37205df910242c0625245e089a916bccb77819422f": {
     "confidence": 0.6,
     "contradictions": [
@@ -47273,6 +47310,43 @@
       "The exact DeepGEMM commit that introduced the regression, though not necessary for actionability."
     ],
     "why": "The issue provides a clear root cause: a DeepGEMM revision regression between e21c821 and 8b1392b causes CUDA graph capture failure on SM90/H20. A controlled A/B test confirms the fix, and the issue includes concrete reproduction steps and code anchors. This is a kernel-level algorithm bug with a specific validation path."
+  },
+  "59cb799e8c808238ad7bcb0313eedbeffca6f016a45bda97521abdcbae5d8f5c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with design_confirmation=true, but root cause and fix are already concretely identified in issue comments",
+      "Open PR #1665 overlaps code paths and semantics but does not reference the issue, leaving duplicate coverage unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/mcp_atlassian/servers/jira.py: preserve explicit public=False instead of coercing to None",
+      "src/mcp_atlassian/jira/comments.py: ensure ServiceDesk comment path is used when public is explicitly False",
+      "tests/unit/servers/test_jira_server.py: add boundary regression test for explicit public=False on non-internal-only project"
+    ],
+    "risks": [
+      "PR #1665 may already implement or supersede the fix, making a new PR redundant",
+      "Changing coercion may break compatibility handling for MCP clients that synthesize false for omitted booleans",
+      "Behavior may differ between Jira Cloud and Data Center"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with jira_add_comment(public=false) on a JSM Data Center project not in JIRA_INTERNAL_ONLY_PROJECTS and verify via GET /rest/servicedeskapi/request/{key}/comment/{id} that public=false",
+      "Add unit test asserting explicit public=False is forwarded unchanged to jira.add_comment for unlisted projects",
+      "Run targeted pytest for tests/unit/servers/test_jira_server.py and tests/unit/jira/test_comments.py"
+    ],
+    "unknowns": [
+      "Whether PR #1665 already fixes the public=False coercion described in the issue",
+      "Whether maintainers require design confirmation before accepting a fix to the public argument contract"
+    ],
+    "why": "Issue #1726 reports a concrete, reproducible bug: jira_add_comment(public=false) creates a customer-visible comment on JSM Data Center. A commenter supplies a specific root cause in src/mcp_atlassian/servers/jira.py where public=False is coerced to None unless the project is in JIRA_INTERNAL_ONLY_PROJECTS, bypassing the ServiceDesk API path in src/mcp_atlassian/jira/comments.py. However, open PR #1665 ('internal-by-default mode for guarded JSM comments') overlaps the same code paths and semantics (customer_visible, comments.py, servers/jira.py) and is not linked to this issue, so duplicate/coverage status is unresolved. The candidate's own duplicate status is 'semantic_overlap_requires_review'. This materially blocks deciding whether a new fix is actionable or redundant."
   },
   "59d15a3247a7bb496205ef093328f5ee525ca92e11a475ebe26d343370876c69": {
     "confidence": 0.8,
@@ -72932,6 +73006,42 @@
     ],
     "why": "Issue identifies two concrete, separable defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the frozen base, contradicting the module docstring's ReLoRA conformance claim; (B) strict '>' thresholding wipes all entries on tied magnitudes, zeroing both factors and killing gradients. Maintainer reproduced both halves on a real peft LoRA model with measured numbers (base weight delta 0, effective-map MSE 142.12 vs 8.77e-13 control; nonzero A/B = 0 with requested keep = 4; grad norms 0.0). Root cause is localized to src/soup_cli/utils/relora.py with a clear reference-vs-implementation validation path."
   },
+  "88eebf8c04dcaec7272da10a3c85075232ad08e9f402810b3dac5185470d63bf": {
+    "confidence": 0.55,
+    "contradictions": [
+      "One comment reports the cause string listing `claude-code, opencode, codex` while refusing an opencode-bound request, then listing only `claude-code, codex` after a sync",
+      "One comment reports preflight succeeding and minting a lineage before capture-result refused, while others report refusal at preflight"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/reviewtransaction/status.go (runtime eligibility gating)",
+      "scripts/crosslane/opencode.go",
+      "internal/components/telemetryruntime/opencode.go"
+    ],
+    "risks": [
+      "Fix may already exist on main via #5289, making a new PR redundant",
+      "Reported cause strings are self-contradictory across occurrences (opencode listed as supported while being refused), so the true gating condition is unverified",
+      "Repository policy status is ai_disclosure_conflict, which may block automated public submission"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce selectorless `review status --agent opencode --next-transition` on a build containing #5289 and confirm whether immutable_review_transport_unsupported still fires",
+      "Add a regression test asserting opencode is present in the supported immutable-review runtime list and that preflight returns a START transition rather than a terminal refusal"
+    ],
+    "unknowns": [
+      "Whether merged PR #5289 already resolves this observable class on main",
+      "The actual code path that decides immutable-review runtime eligibility",
+      "Whether the ai_disclosure_conflict policy permits any public contribution for this issue"
+    ],
+    "why": "The issue is a long pile of privacy-scrubbed occurrence reports that explicitly assert no root cause. The only concrete code anchor is a merged PR (#5289, 'resolve OpenCode review eligibility once per process') that the reporter themselves notes was merged to main on 2026-10-06, after the last published release v4.0.0 (2026-10-01). That makes unresolved duplicate/merged-fix coverage a materially blocking unknown: it is unclear whether the observable class is already fixed on main and merely unpublished, which determines whether any code work is actionable."
+  },
   "88fdf5a5f9c05cdd0a449cc82158e938fd19da27b1a182c0d5c1917d852e4e4c": {
     "confidence": 0.7,
     "contradictions": [],
@@ -84511,6 +84621,39 @@
       "Whether undo/redo or node re-adding was involved"
     ],
     "why": "The issue reports a user-visible 404 after publishing a Webhook Trigger, but a contributor's end-to-end simulation on current main could not reproduce it and the error state (webhook row present, app_triggers row missing) did not arise through the described paths. The reporter has not supplied the self-hosted version/commit, DB row state, or logs, so the root cause is unresolved and the fix is not yet actionable."
+  },
+  "9dce51a9d66563fee9b96d927c2866480173b4ab9ed1db1d75d2addc5bbd107f": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/management_endpoints/mcp_management_endpoints.py: call invalidate_user_oauth_token_cache unconditionally on DELETE",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/per_user_oauth_store.py: make per-user Authorization Code token cache coherent across replicas",
+      "litellm/proxy/common_utils/auth_cache_invalidation_pubsub.py: publish/consume invalidation for the (user_id, server_id) token key on connect, refresh, disconnect"
+    ],
+    "risks": [
+      "Broadening invalidation to connect/refresh could add pub/sub overhead or race with in-flight token refresh",
+      "Switching to Redis-only backend may change behavior when coordination Redis is unavailable",
+      "Unconditional invalidation must remain safe when no credential row exists"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: two simulated replicas sharing Redis/DB, warm both local caches, DELETE via replica A, assert replica B can no longer list/call upstream tools",
+      "Unit test: repeated DELETE after row removal still invokes invalidate_user_oauth_token_cache and returns has_credential=false",
+      "Test pub/sub path: assert invalidation message is published on connect, refresh, and disconnect and consumed by other workers"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Redis-only backend vs pub/sub invalidation for the full fix",
+      "Whether the unconditional-invalidation partial fix is acceptable as a standalone PR"
+    ],
+    "why": "Issue and confirming comment establish a concrete multi-replica cache-coherence root cause: per-user OAuth token backend wraps user_api_key_cache (process-local in front of Redis), disconnect only invalidates locally, and auth_cache_invalidation_pubsub has no MCP OAuth path. Comment adds a second concrete defect: DELETE handler skips invalidation when the row is already gone, so retries on other replicas clear nothing. Code anchors and ordered reproduction steps are supplied."
   },
   "9dd9ccc66e75b6ec5cae8a9ca7bbfe1091cc2ec066304766df8c89b92f0463b4": {
     "confidence": 0.85,
@@ -128306,6 +128449,40 @@
     ],
     "why": "Issue describes a concrete user-visible bug with a reproduction script and root-cause anchors, but the supplied evidence shows an open PR #43935 that already references the issue and claims to fix both Chat Completions and Responses paths. The duplicate assessment marks rootCauseCoverage=false and keyPathCoverage=false, so it is unresolved whether the existing PR already covers the actionable fix or leaves a genuine gap. That coverage question materially determines whether independent code work is actionable."
   },
+  "ef462df341ac9f3bdae14ccd0d2acc8b6d3cccf8e15d30a9b3ce45ff7ef00a49": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue states the fix was removed from #52677, while open_pr_assessment still flags #52677 as semantic overlap requiring review",
+      "Maintainer comment 'Please use MRV2' versus author's stated intent to split the V1 fix into a standalone PR"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/sample/thinking_budget_state.py: force every position of the verification window and derive end-sequence progress from accepted tokens",
+      "tests/v1/sample/test_thinking_forced_end_spec.py: regression coverage for target-rejects-matching-draft, forcing starting inside the draft window, and drafts reaching the last end token"
+    ],
+    "risks": [
+      "V1 may be intentionally deprecated for this path, making the fix unwanted",
+      "Fix overlaps with PR #52677's history and could conflict with its V2-only narrowing",
+      "Corruption rate is model/phrase/temperature dependent, so regression tests must be deterministic and CPU-only"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run tests/v1/sample/test_thinking_forced_end_spec.py against unfixed code and confirm the 5 failing cases, then against the fix",
+      "Reproduce with VLLM_USE_V2_MODEL_RUNNER=0, speculative decoding, and a multi-token reasoning_end_str; compare corrupted forced-end counts against V2 and against the fixed tree"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept a V1-only fix or close as won't-fix",
+      "Whether the V1 fix is already covered by any other open PR"
+    ],
+    "why": "Issue provides a concrete root cause in ThinkingBudgetStateHolder._update_think_state (single-position forcing, advancing on draft rather than accepted tokens) and a reproduction, but the supplied evidence contains a materially blocking unresolved coverage/duplicate question: PR #52677 previously carried the exact fix df93fe6c67 and was narrowed to V2-only, and maintainer njhill's 'Please use MRV2' plus the author's open question about whether V1 fixes are acceptable leave the disposition unresolved. Whether the V1 fix is wanted at all determines whether code work is actionable."
+  },
   "ef77f8295c787bf49e33f63bad38fb6def781bb5c23f4d175598a105d026949d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -128914,6 +129091,42 @@
       "Whether the repository's AI-disclosure policy permits the intended contribution workflow"
     ],
     "why": "The issue reports a concrete, reproducible numerical anomaly (identical batches give different logprobs; batch-vs-alone drift up to ~0.2) with a minimal script and code anchors, and a commenter narrows the run-to-run part to batch composition in vllm/v1/engine/core.py. However, the actual root cause of the remaining shared-step divergence is unresolved: the commenter's FP8 in_proj_qkvz/Marlin finding on sm_89 does not explain the reporter's observation that the effect persists with the bf16 checkpoint and with FP8 kernels disabled, and the reporter explicitly lists three unseparated kernel candidates (Triton fused MoE, GDN chunked prefill, FA2 varlen). The supplied evidence also flags a semantic-overlap PR (#55947) requiring manual duplicate comparison and an ai_disclosure_conflict policy, both of which materially affect whether code work is actionable."
+  },
+  "f0288d19e295765da423ba03ed337217c30ff388626bf486ecc19612026bcd0c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body asserts the allocator's own report shows the allocation fits, while root_cause_signal is false and the reporter states the bug 'has not been reduced further'"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/allocation.py (alloc_token_slots / evict_to_free_tokens / reclaim_plan)",
+      "python/sglang/srt/managers/schedule_batch.py (prepare_for_extend)",
+      "python/sglang/srt/managers/scheduler.py (_get_new_batch_prefill_raw)"
+    ],
+    "risks": [
+      "PR #42700 may already fix the same root cause, making a new task duplicative",
+      "Reporter notes the failure is not reduced further; the exact interaction between /flush_cache, /reset_prefix_cache and unified-memory page accounting is unconfirmed",
+      "Fix could alter unified-memory admission behavior beyond the reported path"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay request_stream.jsonl with repro_wire_log_replay.py against gpt-oss-20b with --enable-unified-memory and confirm scheduler OOM",
+      "Run the same replay without --enable-unified-memory as the control and confirm no OOM",
+      "Add a regression test asserting alloc_token_slots does not raise when joint available size exceeds the requested token count"
+    ],
+    "unknowns": [
+      "Whether PR #42700's SWA over-admission fix already resolves this issue's root cause",
+      "The precise mechanism by which /flush_cache and /reset_prefix_cache leave pages allocated at both ends of the shared buffer",
+      "Whether the maintainers consider this a distinct bug from the HiCache SWA over-admission path"
+    ],
+    "why": "Issue provides a strong reproduction (traceback, ordered steps, executable command, A/B comparison with and without --enable-unified-memory) and code anchors in scheduler.py/schedule_batch.py/allocation.py. However, the supplied evidence explicitly marks root_cause_signal=false and the reporter states the failure 'has not been reduced further'. More importantly, open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') has semantic overlap on alloc_token_slots and scheduler, and the duplicate status is 'semantic_overlap_requires_review' with an explicit instruction to compare implementations before creating a task. Whether #42700 already covers this root cause is a materially blocking unknown that determines whether independent code work is actionable."
   },
   "f03b441336acba5d6c6c4e393c8728b3ba9ad9efee85db887344cff58a148298": {
     "confidence": 0.8,
