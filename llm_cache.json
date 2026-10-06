@@ -22147,6 +22147,39 @@
     ],
     "why": "Issue describes a concrete CUDA-12-vs-CUDA-13 runtime mismatch and a plausible root cause in gpuDetection.js, but the supplied evidence leaves the actionable fix undetermined: the reporter's own comment asks maintainers to confirm the supported policy for preferring an existing bundled/distro whisper-server and the minimum compatibility check for downloaded packs, and the open PR #1982 (Vulkan fallback, overlapping whisperCudaManager.js/TranscriptionModelPicker.tsx paths) may already cover part of the same surface. Without that policy decision, the code change could be banner suppression, a CUDA-major probe, or a binary-preference change."
   },
+  "2aece33f33a26073bd2adf8a36bfef0386c621231a923e27ccb8a87cef23a41d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue proposes a fix, but open PRs #6031 and #6032 already target the same Sarvam reconnect behavior without referencing the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/sarvam/stt.py: stop forcing reconnect_on_error=False, default to True, complete in-flight utterance on drop, mark unfixable closes permanent, bound first-connect retry"
+    ],
+    "risks": [
+      "PR #6031 may already implement the same Sarvam reconnect fix, making a new contribution duplicative",
+      "PR #6032 may already cover the failed-first-connect retry path",
+      "Changing reconnect defaults could alter behavior for existing pipelines relying on failover via ServiceSwitcher"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py drop and connect scenarios against a local websocket server and assert 2 handshakes plus transcripts from both connections for drop, and retry-then-transcribe or unusable for connect",
+      "Add a regression test that a 1011/1006/1003 close triggers reconnect with backoff and that 4000/1003-invalid-key becomes permanently unusable"
+    ],
+    "unknowns": [
+      "Whether PR #6031 or #6032 already fully resolves the root cause described in the issue",
+      "Whether maintainers have a preferred design for Sarvam reconnect semantics"
+    ],
+    "why": "Issue provides a concrete reproduction, code anchors, and a proposed fix for SarvamRealtimeSTTService reconnection, but two open PRs (#6031, #6032) already semantically overlap with the same code path and fix direction, and the duplicate status is explicitly 'semantic_overlap_requires_review'. Whether those PRs already cover the root cause is a materially blocking unknown for deciding if new code work is actionable."
+  },
   "2aef9badc5f86056b78ab0f75f1805c5901585baedf2881c0c133752d990d581": {
     "confidence": 0.85,
     "contradictions": [
@@ -29004,6 +29037,43 @@
       "Whether open PR #53577 already addresses the same root cause."
     ],
     "why": "Issue reports a concrete degenerate-decode signature (identical argmax token and identical logprob to 15 decimals at every position) on DeepSeek-V4-Flash/SM120 with FLASHINFER_MLA_SPARSE_DSV4, but no root cause is identified; the reporter explicitly rules out several known bugs and notes the closest known stride fix is already present. A non-reproducing report on newer vLLM 0.28.0/flashinfer 0.6.18 leaves the version gap as the cheapest untested variable, so the actionable code change is not yet determined."
+  },
+  "3901e3af398c408c489fa2580355a8779265983ea39fb7c8d72f45240b4c6a8c": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Allocator reports joint available 4,658 tokens and 141 FULL + 1,164 SWA evictable tokens, yet alloc(2389) returns None and reclaim_plan evicts nothing",
+      "Issue states root cause not reduced, while open PR #42700 claims to fix SWA over-admission crashing the scheduler with overlapping alloc_token_slots/scheduler semantics"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/allocation.py: alloc_token_slots / evict_to_free_tokens / reclaim_plan accounting for unified SWA pool",
+      "python/sglang/srt/managers/schedule_batch.py: prepare_for_extend retract/fallback path",
+      "python/sglang/srt/managers/scheduler.py: _get_new_batch_prefill_raw OOM handling"
+    ],
+    "risks": [
+      "PR #42700 may already fix the same root cause, making a new contribution duplicative",
+      "Fix could change unified-memory admission/eviction semantics and affect non-SWA models",
+      "Requires a 24GB+ GPU and the specific gpt-oss-20b hybrid-SWA configuration to validate"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay the attached request_stream.jsonl with repro_wire_log_replay.py against gpt-oss-20b with --enable-unified-memory and confirm the scheduler OOM reproduces",
+      "Run the same replay without --enable-unified-memory as the control and confirm zero OOMs",
+      "Add a regression test that exercises /flush_cache and /reset_prefix_cache interleaved with mixed traffic and asserts alloc_token_slots does not raise when joint available size exceeds the request"
+    ],
+    "unknowns": [
+      "Whether PR #42700 actually addresses the same root cause as this issue or a different SWA over-admission path",
+      "The exact mechanism by which flush_cache/reset_prefix_cache leaves pages allocated at both ends of the shared buffer",
+      "Whether the failure is in reclaim_plan accounting, eviction eligibility, or the unified pool's available_size computation"
+    ],
+    "why": "Issue provides a strong reproduction (traceback, ordered steps, executable command, request stream) and a plausible root-cause hypothesis (flush_cache/reset_prefix_cache emptying the radix tree while pages stay allocated in the shared unified buffer), but the root cause is explicitly not reduced and the allocator's own accounting contradicts the failure (joint available 4,658 vs request 2,389, plus evictable tokens). Open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') has semantic overlap on alloc_token_slots/scheduler and may already cover the same root cause; it is not linked to this issue, so duplicate coverage is unresolved."
   },
   "392a1f7c70cd2a17ec96bb15a6e1c29f82f891852d154c395fa635548a01552f": {
     "confidence": 0.85,
@@ -97722,6 +97792,43 @@
     ],
     "why": "The issue's own reporter retracted the QSA kernel bounds root cause and the #37638 coverage claim; the surviving hypothesis (host/device sequence-length disagreement in get_prefill_mqa_inputs under the overlap scheduler) is explicitly unconfirmed, and a later comment shows --disable-overlap-schedule is not sufficient, while the merged #38346 clamp is only a sanity-checked candidate. Root cause and duplicate/merged-fix coverage are therefore unresolved, which materially determines whether code work is actionable."
   },
+  "b8f26cdaf3cb20d5175072a4f5466c291f990ac2659d380e82f66e9616d557f6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body cites extensionManager.ts:3398-3399/3422-3425 while collaborator re-derives 3406/3430-3434 at HEAD; content matches, line numbers differ due to base SHA"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/github.ts: distinguish credential/auth failure from other ERROR returns and carry a reason",
+      "packages/core/src/extension/extensionManager.ts: propagate reason through the update-check dispatch callback instead of flattening to bare ERROR",
+      "packages/cli/src/ui/state/extensions.ts: add a reason field to ExtensionUpdateStatus/SET_STATE payload",
+      "packages/cli/src/ui/components/extensions/steps/ExtensionListStep.tsx: render the reason in the update state UI"
+    ],
+    "risks": [
+      "Open PR #12183 touches packages/core/src/extension/extensionManager.ts with semantic overlap; must compare implementation boundaries before proceeding",
+      "Broadening the update-status type/API may affect other consumers of ExtensionUpdateState",
+      "The deferred restrictEnvironment branch in extension-git-client.ts is out of scope and should not be conflated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that simulates a revoked credential/GITHUB_TOKEN during the startup update check and asserts a reason-bearing state rather than bare ERROR",
+      "Regression test asserting ref-not-found and credential failure produce distinguishable outcomes",
+      "Run targeted unit tests for packages/core extension update-check and packages/cli extensions UI state"
+    ],
+    "unknowns": [
+      "Whether PR #12183 already covers the same root cause or only shares the extensionManager.ts path",
+      "Whether maintainers prefer a callback payload versus a reason field on the update status"
+    ],
+    "why": "Issue #13459 is a concrete, well-evidenced follow-up: the update-check catch in packages/core/src/extension/github.ts drops the Git error to a no-op debugLogger and returns a bare ExtensionUpdateState.ERROR, indistinguishable from ref-not-found; extensionManager.ts flattens the rethrown ExtensionCredentialUnavailableError into bare ERROR, and the CLI status type/UI render only the localized enum label. A collaborator independently re-derived all cited findings at main HEAD, confirming the root cause and code anchors. This is a multi-file product change with a clear validation path (simulate a revoked credential/GITHUB_TOKEN and assert the reason surfaces in /extensions list and ExtensionListStep)."
+  },
   "b8fa56b900fcce5f52f773e3686fffd6e998e62cdf3b7abe28f53f985f90d25d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -116882,6 +116989,37 @@
     ],
     "why": "Issue provides ordered reproduction steps, a concrete persisted-state root cause (workspaces array under cline.code.workspace-selection.v2 never validated against filesystem), and a clear expected behavior (prune dead paths and/or add removal UI). No open PR or duplicate issue covers it, and no maintainer design constraint is recorded. The suggested Python pruner is only a diagnostic sketch, not a repo-appropriate fix, but it does not block a real implementation in the desktop workspace-selection code."
   },
+  "dcd2c0348b8a058e70211013afdec646ccef12b7c7f27550905bf0008f53ccaa": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/components/conversation-events/chat/event-message-components/thought-event-message.tsx: route action thought through splitInlineThink and CollapsibleThinking",
+      "src/components/conversation-events/chat/event-thought-helpers.ts: expose split reasoning vs visible text for action thoughts",
+      "Regression test covering tool-call turn with leading <think> block and reload of finalized event"
+    ],
+    "risks": [
+      "Repository policy flags an AI-disclosure conflict, so public submission may be blocked even though the code fix is actionable",
+      "Changing thought rendering could affect other ActionEvent consumers or streaming-delta behavior if helpers are shared"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing component/e2e test asserting no <think> tags reach the DOM for a tool-call ActionEvent.thought containing a leading <think> block",
+      "Assert reasoning renders only in the collapsible Thinking section and the visible bubble contains only post-</think> text",
+      "Verify plain assistant message path behavior is unchanged and reload renders identically"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the Canvas-side splitInlineThink fix over stripping inline reasoning in the SDK ActionEvent.thought"
+    ],
+    "why": "Issue provides a concrete user-visible bug, ordered reproduction via the mock-LLM e2e harness, DOM probe evidence, and named code anchors (thought-event-message.tsx, event-thought-helpers.ts) showing the tool-call thought path bypasses splitInlineThink while the message path already uses it. Fix direction is specific and testable; no duplicate or merged fix covers it."
+  },
   "dce7cfc8bee1655008e21d4ead2902ed8c265397eafd36072f0658b1ed203d09": {
     "confidence": 0.9,
     "contradictions": [],
@@ -134716,6 +134854,45 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue describes a plausible version-drift bug in effect-based plugin tool decoding, with a concrete repro and suggested fixes. However, the root cause is not confirmed by maintainers, no code-level verification is provided, and the suggested directions have different design tradeoffs. The only comment is from an unaffiliated user and adds no authoritative evidence."
+  },
+  "fbcfc763712ddb5423c9eed74f720e733b2d22f293a8746cae61b762b856a486": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate actionability evidence lists k-bit sites as the plan, but maintainer comments state #1045 already shipped that portion",
+      "Candidate category WAIT_MAINTAINER with base_sha_changed pre-review failure vs. maintainer actively inviting PRs on remaining items"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/trainer/grpo.py (pass gradient_checkpointing into GRPOConfig)",
+      "src/soup_cli/trainer/ipo.py, bco.py, reward_model.py, online_dpo.py (TRL config threading)",
+      "src/soup_cli/trainer/pretrain.py, embedding.py (TrainingArguments threading)",
+      "src/soup_cli/utils/unsloth.py (map field instead of hardcoded 'unsloth')",
+      "tests/test_issue797_kbit_checkpointing.py (vision/audio named-failure test)"
+    ],
+    "risks": [
+      "Scope ambiguity: k-bit sites already fixed by merged #1045, so a PR targeting them would be redundant",
+      "Multiple independent sub-items (TRL args, own-loop trainers, unsloth) may need separate PRs per maintainer guidance",
+      "Numerical/VRAM behavior differences may be hardware-dependent and hard to pin in CI"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Drive real _setup_transformers for a vision task and an audio task; force use_gradient_checkpointing=True at each site and assert a named test fails",
+      "For grpo/ipo/bco/reward_model/online_dpo with quantization: none, assert effective model.is_gradient_checkpointing equals config false",
+      "For pretrain/embedding with quantization: none, assert true is honored",
+      "For unsloth backend, assert config false disables checkpointing"
+    ],
+    "unknowns": [
+      "Which specific remaining sub-item (vision/audio test, TRL args, own-loop trainers, unsloth) the candidate intends to address",
+      "Whether the candidate has claimed any of the open items per the maintainer's 'comment before starting' instruction"
+    ],
+    "why": "The issue documents a clear, verifiable root cause (three mechanisms: TRL config defaults, peft k-bit prep, unsloth hardcode) with a concrete reproduction and acceptance criteria. However, the supplied evidence shows the k-bit portion is already shipped in merged PR #1045, and the maintainer's comments explicitly enumerate the remaining open items (vision/audio test, TRL/HF args threading, trainers that never read it, unsloth). The candidate's actionability evidence still lists the k-bit sites as the plan and does not resolve which of the remaining sub-items is the actual target, so the actionable scope is materially ambiguous."
   },
   "fbdc82cda1ee72f63db3b32bd2e28e1515c36dd8cc1959b53923a43085277ef8": {
     "confidence": 0.85,
