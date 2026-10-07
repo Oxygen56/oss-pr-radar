@@ -35046,6 +35046,39 @@
     ],
     "why": "Issue reports a heap-corruption abort in the idle invariant walk, but the supplied evidence contains no root-cause signal (root_cause_signal=false) and no maintainer confirmation; the crash is only observed after ~22h of production serving with no minimal reproduction. The open-PR assessment also flags semantic overlap with PR #42254 (and #42210) on scheduler paths that is unresolved, so duplicate/coverage status is materially uncertain."
   },
+  "404d074ab310950a110c06188f5c9203184d70baebb3748c2952d5439ccb5cdc": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/worker/model_runner.py or worker/gpu_worker.py: profile_cudagraph_memory() accounting",
+      "KV cache sizing / gpu_memory_utilization budget logic to reserve measured graph capture memory",
+      "early actionable error when config cannot fit"
+    ],
+    "risks": [
+      "Requires a matching GPU (24 GiB) to reproduce; CPU/mock may not exercise graph capture",
+      "Changing graph memory reservation may reduce usable KV cache and affect throughput for existing configs",
+      "Repository policy flags an AI disclosure conflict, which may block public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on a 24 GiB GPU: LLM(model='Qwen/Qwen3-0.6B', kv_cache_dtype='fp8') and confirm OOM at startup",
+      "Compare reported KV cache budget vs measured CUDA graph memory before/after capture for fp8 vs default dtype",
+      "Regression test asserting reserved graph memory is included in the budget and that an infeasible config fails early with a clear message"
+    ],
+    "unknowns": [
+      "Exact code location of profile_cudagraph_memory() and current budget formula not supplied",
+      "Whether maintainers have an existing design preference for reserving graph memory vs post-capture adjustment"
+    ],
+    "why": "Issue reports a concrete, reproducible startup OOM: FP8 KV cache sizing omits CUDA graph capture memory (~0.80 GiB), so an accepted config exceeds gpu_memory_utilization. Root cause is localized to profile_cudagraph_memory()/KV cache budget accounting, with a clear validation path (same config with/without fp8, memory accounting before/after graph capture). No duplicate or merged fix found; open PRs are keyword-only overlaps with no code-path or mechanism overlap."
+  },
   "4080e87964de44830c8e58e19321d250df25391ba3df8f1e0216c6133ec8ae5d": {
     "confidence": 0.82,
     "contradictions": [
@@ -74303,6 +74336,40 @@
     ],
     "why": "Issue describes a concrete multi-connector OAuth cascade failure in the dcr_bridge path with ordered reproduction steps and named code anchors (_OAUTH_STATE_COOKIE_TTL_SECONDS=600, _EPHEMERAL_DCR_CLIENT_CACHE, mcp_oauth_state_* cookies). The proposed TTL/configurability and stale-cookie-cleanup fixes are actionable and testable, and no open PR or issue covers the same mechanism (best match #36818 is keyword-only, no code-path overlap). Root cause remains a hypothesis rather than confirmed, but a concrete validation path exists."
   },
+  "830611cd7ee96b3115428debb174dc65ea194c3fee09b47af81272898cf4d15b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue acceptance criteria allow quarantine, but maintainer comment explicitly rejects quarantine as a resolution",
+      "Triage block says do not implement root-cause fixes here, while the issue is labeled ready-for-dev"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No new code change is actionable under this issue's stated scope; fixes belong to #17555, #17636, #17886, #17884, #15485, #16205/#17716"
+    ],
+    "risks": [
+      "Duplicating work already owned by open PRs #17555, #17636, #17876, #17889",
+      "Violating the repository's AI disclosure policy for automated public actions",
+      "Scope creep beyond the issue's declared aggregate-signal scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "If a specific owned sub-issue is targeted instead, reproduce via `npx playwright test --config=playwright.mock-llm.config.ts` and confirm the named test passes"
+    ],
+    "unknowns": [
+      "Which specific sub-issue/PR the candidate intends to implement",
+      "Whether the ai_disclosure_conflict policy permits the intended automated contribution",
+      "Whether open PRs #17889/#17636 already cover the intended change"
+    ],
+    "why": "The issue is an aggregate tracking bug for a red main-only E2E suite. Maintainer comment (neubig) explicitly states the individual root causes are owned by other issues/PRs (#17555, #17636, #17886, #17884, #15485, #16205/#17716) and that this issue's scope is the aggregate green signal, not implementing the fixes. The triage block also lists non-goals: 'Do not implement the individual root-cause fixes here.' Additionally, the repository has an ai_disclosure_conflict policy (submission_policy: ai_disclosure_conflict, policy.status: ai_disclosure_conflict), which is a materially blocking unknown for automated contribution. Open PRs #17889 and #17636 semantically overlap with the mock-llm paths and require human comparison before any new work."
+  },
   "831a78955195a8fd88f5d2c19588100ce19dba210852a703533e4e7fe7567ccd": {
     "confidence": 0.85,
     "contradictions": [],
@@ -86911,6 +86978,36 @@
     ],
     "why": "Issue identifies a deterministic contract mismatch in a live smoke script, with detailed evidence and proposed fixes. However, the gate decision is HUMAN_REVIEW and open PR lookup failed, so duplicate work cannot be excluded. Maintainer approval is absent, and the issue is a bug report rather than a direct code contribution."
   },
+  "98a1bfc3c37ba1464a0d11ae0d197a1a085ce7b3480475755acedd0eb0284535": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body implies no fix exists, but recent comments show maintainer PR #12726 already addresses it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ui/desktop/src/components/GooseMessage.tsx copy-button render condition"
+    ],
+    "risks": [
+      "Duplicating or conflicting with maintainer-owned PR #12726",
+      "Submitting without required assignment"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test rendering an assistant message with a thinking block plus text and assert the copy button appears"
+    ],
+    "unknowns": [
+      "Whether maintainer will accept an external contribution or merge PR #12726",
+      "Whether assignment will be granted"
+    ],
+    "why": "Issue has a clear root cause and reproduction, but a maintainer/collaborator already opened PR #12726 directly covering the same fix in the same file, and the issue requires assignment. Competing work is not clearly actionable until the existing PR is resolved or the maintainer explicitly invites a contribution."
+  },
   "98e2f618fa730be0f2715bbd17995145d29b5fd6917d0461057d8657729699dd": {
     "confidence": 0.85,
     "contradictions": [
@@ -89552,6 +89649,43 @@
       "Whether a code change is required or the stored references should be updated"
     ],
     "why": "The issue reports repeatable golden-reference mismatches in Muon checkpoint-resume tests, but explicitly states the root cause is not established and no affected gradient coordinates are identified. The evidence is a numerical drift in loss/zero-count aggregates, not a concrete training objective, model mechanism, or kernel algorithm defect. Without a root cause or a reference-vs-implementation test that isolates the divergence, the code work is not actionable."
+  },
+  "9d073fad1dff61616483d4fbb90deb47bed973dd579300c802beaeb0d1124874": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims poller omits X-Session-API-Key, but commenter's axios test shows the client does send it when a backend key is configured",
+      "health returns 200 while v1 returns 401 in the same page load, which the shared interceptor code path does not explain"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/api/automation-service/automation-service.api.ts (only if client-header omission is confirmed)",
+      "toast/error-surfacing path for background poll failures (alternative fix)"
+    ],
+    "risks": [
+      "Fixing the wrong layer (client header vs proxy vs toast suppression) if root cause is misidentified",
+      "Duplicating open PR #17746 which already modifies the same file with tests",
+      "Repository AI-disclosure policy conflict flagged in pre-task evidence"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a redacted Network capture showing whether X-Session-API-Key is present on the failing GET /api/automation/v1 request and the 401 body (missing vs invalid key)",
+      "Confirm reverse proxy forwards X-Session-API-Key unmodified on /api/automation/v1 vs /api/automation/health",
+      "Add a regression test asserting the poller attaches the session key and that a background 401 does not raise a user-facing toast"
+    ],
+    "unknowns": [
+      "Whether the reverse proxy forwards X-Session-API-Key on /api/automation/v1",
+      "Whether the 401 body indicates a missing or invalid key",
+      "Which of the two proposed fixes maintainers consider in scope",
+      "Whether open PR #17746 already resolves the root cause"
+    ],
+    "why": "The issue's own root-cause hypothesis (poller omits X-Session-API-Key) is contradicted by supplied evidence: a commenter tested the v1.22.0 automation client and found both the poller and health request DO send X-Session-API-Key when a backend key is configured, and the collaborator bot notes the reported health=200/v1=401 split is not explained by the shared axios interceptor code path. The actual cause (proxy header forwarding, missing vs invalid key, or toast suppression) is unresolved, and the issue itself offers two mutually exclusive fixes. Additionally, open PR #17746 already targets this exact issue with overlapping code path and tests, so duplicate coverage is unresolved."
   },
   "9d15012cd782a1372690774e0367b510a6a4e416d6b291a00db8c35f5ac4cd82": {
     "confidence": 0.8,
@@ -143411,6 +143545,40 @@
       "Whether PR #57415 fully resolves the root cause or leaves gaps that a competing contribution could fill"
     ],
     "why": "Issue provides a verified root cause (UVA views of pinned host memory are stale under GPU Confidential Computing), a minimal standalone reproduction of the stale-view behavior, and an end-to-end reproduction showing garbage output with the V2 runner vs correct output with VLLM_USE_V2_MODEL_RUNNER=0. Concrete code anchors (buffer_utils.py, UvaBuffer, get_accelerator_view_from_cpu_tensor) and a suggested fix path (detect CC via NVML or run a write-after-map coherence check in is_uva_available()) make the work actionable."
+  },
+  "fbfc4d4f541776e57e92a96880c6e85aebd98d48204c3969f92071eecd82c1f8": {
+    "confidence": 0.8,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body supplies a detailed root cause with code anchors"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe the watch receiver under the list_state read lock after a lag Resync so buffered pre-resync events are not replayed",
+      "Add a regression unit test in kube.rs using the existing client_with 16-slot channel that flaps 16 workers then adds worker 17 and asserts the next event is Added(17)"
+    ],
+    "risks": [
+      "Resubscribing under the read lock could deadlock or contend with the daemon's write lock if lock ordering is not preserved",
+      "Existing PR #15767 already modifies the same path; a competing PR must clearly add the missing regression test to be non-duplicative",
+      "Behavioral change in watch semantics could affect other consumers (push router, DynamicSubscriber, llm discovery controller) if resubscription timing differs"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the new unit test on a current-thread runtime with the 16-slot channel: 16 workers flap Removed/Added (32 events), then worker 17 joins; assert the first event after Resync is Added(instance_id 17), not a stale Removed/Added pair for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib to confirm no regressions in discovery tests",
+      "Verify the fix does not drop legitimate post-resync events by asserting worker 17's Added is still delivered"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the resubscribe-under-lock approach over an alternative fix in PR #15767",
+      "Whether the existing PR #15767 will be revised to include the missing regression test, which would reduce the marginal value of a competing PR"
+    ],
+    "why": "Issue provides a precise root cause (lagged broadcast receiver replays pre-resync buffered events after list_and_watch reconciles from list_state), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a concrete unit-test reproduction on a current-thread runtime with the 16-slot channel, and an expected-vs-actual event sequence. The proposed fix (resubscribe under the list_state read lock) matches the existing mem.rs pattern, giving a concrete validation path. The open PR #15767 covers the same path but lacks tests, so adding a regression test is a genuine, non-duplicative contribution."
   },
   "fbff4530251ca67ed380f59ccc69acee1e3d8ad52eb63988ff19b0f350213af2": {
     "confidence": 0.8,
