@@ -22035,9 +22035,7 @@ def _validation_gap_summary(candidate: dict[str, Any]) -> str:
 
 def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
     review_note = ""
-    if candidate.get("reviewFeedbackContract") == REVIEW_FEEDBACK_CONTRACT and candidate.get(
-        "snapshotId"
-    ):
+    if candidate.get("snapshotId"):
         raw = _validation_snapshot_bytes(
             candidate=candidate,
             reservation_digest=candidate["reservationDigest"],
@@ -22046,17 +22044,23 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
             snapshot_digest=candidate["snapshotDigest"],
         )
         source = json.loads(raw)
-        review = source.get("independentReview")
-        if (
-            not isinstance(review, dict)
-            or sha256_json(review) != candidate["reviewFeedbackCorrection"]["reviewMarker"]
-        ):
-            raise RuntimeError("immutable controller-review feedback binding is invalid")
-        review_note = (
-            "本轮控制器审查意见（只用于修订同一已有修复，不能作为通过证明）：\n"
-            + canonical_json(review)
-            + "\n按这些精确意见修改同一个最小修复，并真实复现修复前失败、修复后通过。\n"
-        )
+        if candidate.get("reviewFeedbackContract") == REVIEW_FEEDBACK_CONTRACT:
+            review = source.get("independentReview")
+            if (
+                not isinstance(review, dict)
+                or sha256_json(review) != candidate["reviewFeedbackCorrection"]["reviewMarker"]
+            ):
+                raise RuntimeError("immutable controller-review feedback binding is invalid")
+        else:
+            review = _controller_review_result(
+                argparse.Namespace(runtime_root=STATE.parent), source
+            )
+        if review and review.get("verdict") in {"FAIL", "HOLD"}:
+            review_note = (
+                "本轮控制器审查意见（只用于修订同一已有修复，不能作为通过证明）：\n"
+                + canonical_json(review)
+                + "\n按这些精确意见修改同一个最小修复，并真实复现修复前失败、修复后通过。\n"
+            )
     missing_summary = _validation_gap_summary(candidate)
     prefetch = bool(candidate.get("prefetchCommands"))
     dependency_note = (

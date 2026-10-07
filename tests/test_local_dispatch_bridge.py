@@ -29968,6 +29968,65 @@ def test_new_controller_review_feedback_rearms_a_stalled_validation(monkeypatch,
     assert changed["candidates"][0]["resultDigest"] == third_digest
 
 
+def test_normal_validation_delivers_exact_controller_review_for_revision(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("independent_review_passed",)
+    )
+    monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
+    args = SimpleNamespace(ledger=store.path, runtime_root=tmp_path)
+    MODULE.ingest_task_results(args)
+    raw = result_path.read_bytes()
+    source = json.loads(raw)
+    review = _write_explicit_controller_review(tmp_path, source)
+    review.update(
+        verdict="FAIL",
+        summary="Cache invalidation precedes the queued Redis write.",
+        findings=[
+            {
+                "severity": "P2",
+                "file": "runtime.py",
+                "line": 1,
+                "message": "Verify the pending write across disconnect before revising the fix.",
+            }
+        ],
+    )
+    review_path = _receipt_path(
+        tmp_path,
+        key=source["key"],
+        commit_sha=source["commitSha"],
+        source_digest=_source_digest(source),
+    )
+    envelope = json.loads(review_path.read_text())
+    envelope["review"] = review
+    review_path.write_text(json.dumps(envelope))
+    listed = MODULE.validation_followup_list(args)
+    assert listed["ok"] and listed["errors"] == [], listed
+    candidate = listed["candidates"][0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            runtime_root=tmp_path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+        )
+    )
+    queued = store.unresolved_validation_followups()[0]
+    snapshot = MODULE._ensure_validation_snapshot(
+        queued, reservation_digest=reserved["reservationDigest"]
+    )
+    prompt = MODULE._validation_followup_prompt(queued | snapshot)
+    assert "reviewFeedbackContract" not in queued
+    assert MODULE.canonical_json(review) in prompt
+    assert "按这些精确意见修改同一个最小修复" in prompt
+    assert "不要创建新任务或重新实现" not in prompt
+    assert "independent_review_passed 必须保留 false" in prompt
+    assert "未提交源码改动必须交回 controller_commit_required" in prompt
+    assert result_path.read_bytes() == raw
+    assert json.loads(raw)["quality"]["independent_review_passed"] is False
+    assert run_git(worktree, "rev-parse", "HEAD") == source["commitSha"]
+    assert run_git(worktree, "status", "--porcelain") == ""
+
+
 def test_dirty_worktree_rearms_a_stalled_validation_result(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
