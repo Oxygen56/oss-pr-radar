@@ -5414,13 +5414,24 @@ class RadarLedger:
                        AND NOT (i.status='DISPATCHED' AND EXISTS (
                          SELECT 1 FROM events stopped
                          WHERE stopped.opportunity_key=i.opportunity_key
-                           AND stopped.event_type='QUARANTINED_EXECUTION_STOPPED'
+                           AND stopped.event_type IN (
+                             'QUARANTINED_EXECUTION_STOPPED','TASK_EXECUTION_STOPPED'
+                           )
                            AND json_extract(stopped.payload_json,'$.intentId')=i.intent_id
                            AND json_extract(stopped.payload_json,'$.threadId')=i.thread_id
                            AND json_extract(stopped.payload_json,'$.worktreePath')=i.worktree_path
-                           AND EXISTS (
-                             SELECT 1 FROM task_quarantines q
-                             WHERE q.opportunity_key=i.opportunity_key AND q.status='ACTIVE'
+                           AND (
+                             (stopped.event_type='TASK_EXECUTION_STOPPED'
+                              AND json_array_length(stopped.payload_json,'$.quarantines')=0
+                              AND NOT EXISTS (
+                                SELECT 1 FROM task_quarantines q
+                                WHERE q.opportunity_key=i.opportunity_key AND q.status='ACTIVE'
+                              ))
+                             OR (stopped.event_type='QUARANTINED_EXECUTION_STOPPED'
+                               AND EXISTS (
+                                 SELECT 1 FROM task_quarantines q
+                                 WHERE q.opportunity_key=i.opportunity_key AND q.status='ACTIVE'
+                               ))
                            )
                            AND NOT EXISTS (
                              SELECT 1 FROM task_quarantines q

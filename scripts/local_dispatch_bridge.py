@@ -4598,6 +4598,352 @@ def _restore_overwritten_pending_pr_commits(
     return restored, errors
 
 
+def _refresh_published_validation_resource_binding(
+    store: RadarLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    source: dict[str, Any],
+    opened: _ValidationWorktreeDirectory,
+) -> dict[str, Any] | None:
+    """Refresh the prepared real MCP environment from the signed same-PR input.
+
+    Callers hold the original opportunity guard. Credentials, resource names,
+    baseline and scenario are retained; only the implementation HEAD changes.
+    """
+    directory_name = "validation-real-mcp-oauth-cross-replica"
+    try:
+        os.stat(directory_name, dir_fd=opened.private_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    context_raw = _read_task_context_bytes_from_private(opened)
+    verified, _at = _verified_private_task_context(
+        opened.worktree,
+        context_raw,
+        os.stat("task-context.json", dir_fd=opened.private_fd, follow_symlinks=False),
+    )
+    if verified != context or not _private_context_matches_current_ledger(store, context):
+        raise RuntimeError("prepared validation context binding is invalid")
+    candidate = candidate | {"stage": context["stage"]}
+    managed = ManagedLedger(store.path, ensure_schema=False)
+    anchor = _published_pr_validation_anchor(managed, candidate, context, source)
+    digest = _task_result_digest(source, _serialized_json(source))
+    head = str(source.get("commitSha") or "")
+    receipt = source.get("reproductionReceipt") or source.get("probeReceipt")
+    issue = ISSUE_URL.fullmatch(str(candidate.get("issueUrl") or ""))
+    if (
+        anchor is None
+        or issue is None
+        or source.get("headSha") != head
+        or source.get("resultDigest") != digest
+        or not isinstance(receipt, dict)
+        or not verify_probe_receipt(
+            receipt,
+            repo=issue.group(1),
+            base_sha=str(source.get("selectedBaseSha") or ""),
+            code_paths=source.get("codePaths"),
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=candidate["issueUrl"],
+            task_id=candidate["intentId"],
+            thread_id=candidate["threadId"],
+            head_sha=head,
+            commit_sha=head,
+            result_digest=digest,
+            enforce_freshness=False,
+        )
+        or _merge_parents(opened.worktree, head) != [source.get("previousCommitSha")]
+        or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree) != head
+        or _local_changed_files(opened.worktree)
+        or not _private_context_matches_current_ledger(store, context)
+    ):
+        raise RuntimeError("prepared validation resource source binding is invalid")
+    fd, directory = _open_directory_child(
+        parent_fd=opened.private_fd,
+        parent_path=opened.private_dir,
+        name=directory_name,
+        label="prepared real MCP validation resources",
+    )
+    try:
+        name = Path("local-resources.json")
+        raw = _read_owned_regular_file(
+            name, label="prepared validation resource binding", required_mode=0o600, directory_fd=fd
+        )
+        resources = json.loads(raw)
+        if (
+            resources.get("worktree") != str(opened.worktree)
+            or resources.get("baseSha") != source.get("selectedBaseSha")
+            or resources.get("headSha") not in {source.get("previousCommitSha"), head}
+        ):
+            raise RuntimeError("prepared validation resource identity is invalid")
+        updated = dict(resources, headSha=head)
+        updated_raw = _serialized_json(updated)
+        proof = {
+            **{k: candidate[k] for k in ("intentId", "threadId", "worktreePath")},
+            "resultDigest": digest,
+            "headSha": head,
+            "previousCommitSha": source["previousCommitSha"],
+            "selectedBaseSha": source["selectedBaseSha"],
+            "resourceDigest": hashlib.sha256(updated_raw).hexdigest(),
+        }
+        if resources["headSha"] != head:
+            with store.transaction() as connection:
+                store._event(
+                    connection,
+                    candidate["key"],
+                    "VALIDATION_RESOURCE_HEAD_REFRESH_AUTHORIZED",
+                    sha256_json(proof),
+                    proof | {"previousResourceDigest": hashlib.sha256(raw).hexdigest()},
+                    iso_z(datetime.now(UTC)),
+                )
+            if (
+                _read_owned_regular_file(
+                    name,
+                    label="prepared validation resource binding",
+                    required_mode=0o600,
+                    directory_fd=fd,
+                )
+                != raw
+            ):
+                raise RuntimeError("prepared validation resources changed before refresh")
+            _atomic_private_bytes(directory / name, updated_raw, directory_fd=fd)
+        else:
+            proof["resourceDigest"] = hashlib.sha256(raw).hexdigest()
+        return proof
+    finally:
+        os.close(fd)
+
+
+def _restore_stale_published_validation_input(
+    store: RadarLedger,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Retry an owned completed validation rejected by its old prepared HEAD."""
+    restored: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    managed = ManagedLedger(store.path, ensure_schema=False)
+    for candidate in store.task_context_candidates():
+        if candidate.get("stage") not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}:
+            continue
+        applicable = False
+        try:
+            with opportunity_action_guard(ledger_action_guard_root(store.path), candidate["key"]):
+                if _active_task_turn_for_result(candidate) is not None:
+                    continue
+                with _task_worktree_private_descriptor(candidate) as opened:
+                    raw = _read_task_result_bytes_from_private(opened)
+                    failed = json.loads(raw)
+                    if (
+                        failed.get("stage") != "PR_OPEN"
+                        or failed.get("reason") != "VALIDATION_BINDING_STALE"
+                    ):
+                        continue
+                    applicable = True
+                    with store.connect() as connection:
+                        row = connection.execute(
+                            """SELECT id,payload_json FROM events WHERE opportunity_key=?
+                               AND event_type='VALIDATION_FOLLOWUP_SENT'
+                               AND json_extract(payload_json,'$.intentId')=?
+                               AND json_extract(payload_json,'$.threadId')=?
+                               AND json_extract(payload_json,'$.worktreePath')=? ORDER BY id DESC LIMIT 1""",
+                            (
+                                candidate["key"],
+                                candidate["intentId"],
+                                candidate["threadId"],
+                                candidate["worktreePath"],
+                            ),
+                        ).fetchone()
+                    if row is None:
+                        continue
+                    sent = json.loads(row["payload_json"])
+                    digest = str(sent.get("resultDigest") or "")
+                    reservation = str(sent.get("reservationDigest") or "")
+                    with store.connect() as connection:
+                        reserved = connection.execute(
+                            """SELECT payload_json FROM events WHERE opportunity_key=?
+                               AND event_type='VALIDATION_FOLLOWUP_RESERVED' AND id<?
+                               AND json_extract(payload_json,'$.intentId')=?
+                               AND json_extract(payload_json,'$.threadId')=?
+                               AND json_extract(payload_json,'$.worktreePath')=?
+                               AND json_extract(payload_json,'$.resultDigest')=?
+                               ORDER BY id DESC LIMIT 1""",
+                            (
+                                candidate["key"],
+                                row["id"],
+                                candidate["intentId"],
+                                candidate["threadId"],
+                                candidate["worktreePath"],
+                                digest,
+                            ),
+                        ).fetchone()
+                    if reserved is None:
+                        continue
+                    reserved_binding = json.loads(reserved[0])
+                    if reservation and reservation != reserved_binding.get("reservationDigest"):
+                        continue
+                    reservation = str(reserved_binding.get("reservationDigest") or "")
+                    binding = store.validation_followup_delivery_binding(
+                        thread_id=candidate["threadId"],
+                        result_digest=digest,
+                        reservation_digest=reservation,
+                        **_ledger_binding_kwargs(candidate),
+                    )
+                    if not binding:
+                        continue
+                    source_candidate = candidate | {"resultDigest": digest}
+                    source_raw = _validation_snapshot_bytes(
+                        candidate=source_candidate,
+                        reservation_digest=reservation,
+                        snapshot_id=binding["snapshotId"],
+                        snapshot_path=binding["snapshotPath"],
+                        snapshot_digest=binding["snapshotDigest"],
+                    )
+                    source = json.loads(source_raw)
+                    context_raw = _read_task_context_bytes_from_private(opened)
+                    context = json.loads(context_raw)
+                    if any(
+                        failed.get(k) != source.get(k)
+                        for k in (
+                            "key",
+                            "issueUrl",
+                            "threadId",
+                            "worktreePath",
+                            "taskId",
+                            "contextDigest",
+                            "followupDigest",
+                            "headSha",
+                            "commitSha",
+                            "selectedBaseSha",
+                        )
+                    ) or _local_changed_files(opened.worktree):
+                        continue
+                    completion: dict[str, Any] = {}
+                    if (
+                        _completed_validation_input_task_id(
+                            store,
+                            managed,
+                            candidate=candidate,
+                            context=context,
+                            value=source,
+                            result_access=opened,
+                            context_raw=context_raw,
+                            validation_context_digest=source["contextDigest"],
+                            allow_published_pr_followup=True,
+                            completion_proof=completion,
+                        )
+                        != candidate["intentId"]
+                    ):
+                        continue
+                    receipt = completion["receipt"]
+                    _cwd, rollout = _validated_task_turn_thread(candidate)
+                    terminal = latest_thread_turn_state(rollout)
+                    if (
+                        receipt.get("turnStatus") != "completed"
+                        or receipt.get("turnError")
+                        or receipt.get("error")
+                        or not terminal
+                        or terminal.get("status") != "completed"
+                        or terminal.get("turnId") != receipt.get("turnId")
+                    ):
+                        continue
+                    checks = [
+                        t
+                        for t in failed.get("tests", [])
+                        if isinstance(t, dict)
+                        and (
+                            t.get("phase") in {"before_fix", "after_fix"}
+                            or (
+                                t.get("phase") == "formal"
+                                and "pytest" in str(t.get("command") or "")
+                            )
+                        )
+                    ]
+                    native = _expired_validation_command_proof(
+                        candidate, receipt, failed | {"tests": checks}
+                    )
+                    if native is None:
+                        continue
+                    phases = {
+                        t["phase"]: t
+                        for t in native["tests"]
+                        if t.get("phase") in {"before_fix", "after_fix"}
+                    }
+                    if set(phases) != {"before_fix", "after_fix"} or any(
+                        t.get("exitCode") != 1
+                        or "run_current_real_no_redis_phase.py --phase " + t["phase"]
+                        not in t["command"]
+                        or "STOP: actual HEAD/base differs from the bound real source"
+                        not in str(t.get("result") or "")
+                        for t in phases.values()
+                    ):
+                        continue
+                    proof = _refresh_published_validation_resource_binding(
+                        store,
+                        candidate=candidate,
+                        context=context,
+                        source=source,
+                        opened=opened,
+                    )
+                    if proof is None:
+                        continue
+                    audit = proof | {
+                        "reservationDigest": reservation,
+                        "turnId": receipt["turnId"],
+                        "failedRawDigest": hashlib.sha256(raw).hexdigest(),
+                        "failedResultBytesBase64": base64.b64encode(raw).decode("ascii"),
+                    }
+                    if _read_task_result_bytes_from_private(
+                        opened
+                    ) != raw or _active_task_turn_for_result(candidate):
+                        continue
+                    with store.transaction() as connection:
+                        store._event(
+                            connection,
+                            candidate["key"],
+                            "PUBLISHED_VALIDATION_INPUT_RESTORATION_AUTHORIZED",
+                            sha256_json(audit),
+                            audit,
+                            iso_z(datetime.now(UTC)),
+                        )
+                        store._event(
+                            connection,
+                            candidate["key"],
+                            "VALIDATION_FOLLOWUP_NO_PROGRESS",
+                            digest,
+                            {
+                                **{
+                                    k: candidate[k]
+                                    for k in ("intentId", "threadId", "worktreePath")
+                                },
+                                "resultDigest": digest,
+                                "reason": "PREPARED_VALIDATION_HEAD_BINDING_STALE",
+                                "missing": ["relevant_tests_green", "independent_review_passed"],
+                            },
+                            iso_z(datetime.now(UTC)),
+                        )
+                    _atomic_private_bytes(
+                        opened.private_dir / "result.json",
+                        source_raw,
+                        directory_fd=opened.private_fd,
+                    )
+                    store.rearm_validation_no_progress_for_review(
+                        key=candidate["key"],
+                        result_digest=digest,
+                        review_marker=sha256_json(proof),
+                        reason="PREPARED_VALIDATION_HEAD_BINDING_REFRESHED",
+                        **_ledger_binding_kwargs(candidate),
+                    )
+                    restored.append(
+                        {
+                            "key": candidate["key"],
+                            "commitSha": source["commitSha"],
+                            "resultDigest": digest,
+                        }
+                    )
+        except (OSError, RuntimeError, ValueError, KeyError, sqlite3.Error) as exc:
+            if applicable:
+                errors.append({"key": str(candidate["key"]), "error": str(exc)[:300]})
+    return restored, errors
+
+
 def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     """Recover task state with exact worktree mirrors ahead of the singleton.
 
@@ -4606,7 +4952,10 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     immutable task binding can no longer mask the private context.
     """
 
+    stale_inputs_restored, stale_input_errors = _restore_stale_published_validation_input(store)
     pending_commits_restored, pending_commit_errors = _restore_overwritten_pending_pr_commits(store)
+    pending_commits_restored.extend(stale_inputs_restored)
+    pending_commit_errors.extend(stale_input_errors)
     restored: list[dict[str, Any]] = []
     unavailable: list[dict[str, Any]] = []
     quarantined: list[dict[str, Any]] = []
@@ -5389,14 +5738,12 @@ def recover_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _record_stopped_quarantined_executions(store: RadarLedger) -> list[dict[str, Any]]:
-    """Release execution capacity only after an owned quarantined turn has ended."""
+    """Release execution capacity only after an owned native turn has ended."""
     stopped = []
     for candidate in store.task_context_candidates():
         if candidate.get("intentStatus") != "DISPATCHED":
             continue
         gates = store.active_task_quarantines(candidate["key"])
-        if not gates:
-            continue
         try:
             with opportunity_action_guard(ledger_action_guard_root(store.path), candidate["key"]):
                 _cwd, rollout = _validated_task_turn_thread(candidate)
@@ -5458,7 +5805,7 @@ def _record_stopped_quarantined_executions(store: RadarLedger) -> list[dict[str,
                     store._event(
                         connection,
                         candidate["key"],
-                        "QUARANTINED_EXECUTION_STOPPED",
+                        "QUARANTINED_EXECUTION_STOPPED" if gates else "TASK_EXECUTION_STOPPED",
                         sha256_json(payload),
                         payload,
                         iso_z(datetime.now(UTC)),
@@ -12440,6 +12787,23 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
         ):
             raise RuntimeError("validation task-turn worktree input binding mismatch")
         candidate = candidate | projection
+        with opportunity_action_guard(ledger_action_guard_root(store.path), candidate["key"]):
+            with _task_worktree_private_descriptor(candidate) as opened:
+                context_raw = _read_task_context_bytes_from_private(opened)
+                context = json.loads(context_raw)
+                source_raw = _validation_worktree_input_bytes(
+                    candidate=candidate,
+                    reservation_digest=str(validation_binding["reservationDigest"]),
+                    worktree_input_path=str(validation_binding["worktreeInputPath"]),
+                    worktree_input_digest=str(validation_binding["worktreeInputDigest"]),
+                )
+                _refresh_published_validation_resource_binding(
+                    store,
+                    candidate=candidate,
+                    context=context,
+                    source=json.loads(source_raw),
+                    opened=opened,
+                )
     prompt = _task_turn_prompt(args.delivery_kind, candidate)
     executable = shutil.which("codex")
     if not executable:
