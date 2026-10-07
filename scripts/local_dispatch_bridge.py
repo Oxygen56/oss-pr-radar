@@ -22156,7 +22156,18 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "不得修改预算或忽略实际新增错误。已准备的项目专用环境（例如 `.venv-typecheck`）"
         "可以运行原项目检查入口，但须确认本次执行不会安装依赖、联网或写入 Git 元数据；"
         "无法满足时仍如实保留缺口，不改检查脚本来绕过限制。"
-        "构建只覆盖本轮修复真实回归所需的生成前置和项目正式要求；与本轮改动、真实核心入口"
+        + (
+            "仅对 BerriAI/litellm#37498：原三项 scripts/test_quality_gate.py、type_discipline_gate.py、"
+            "type_check_gate.py --base 会写 Git worktree，由控制器在已准备环境真实执行并独立记录；"
+            "子任务不执行这些 Git 写检查、不安装或联网，未取得控制器证据时 relevant_tests_green 保留 false。"
+            "若 `.oss-pr-radar/validation-real-mcp-oauth-cross-replica/README.md` 已准备，先只读它，"
+            "自行实际执行其分开的 before_fix、after_fix 真实 HTTP/MCP 命令及项目相关 pytest 正式回归，"
+            "把每条本轮原命令、cwd、exitCode 与 phase 如实写入 tests；基线真实红、修复真实绿才可证明回归。"
+            "禁止复制控制器或历史输出；缺少真实三阶段检查或仍有本轮失败时不提升任何质量项。"
+            if candidate.get("key") == "BerriAI/litellm#37498"
+            else ""
+        )
+        + "构建只覆盖本轮修复真实回归所需的生成前置和项目正式要求；与本轮改动、真实核心入口"
         "及正式 CI 要求均无关的其他产品构建，不应扩大为核心检查缺口。"
         "正式必需的构建或检查未运行、未通过时，相应质量项仍必须为 false。"
         "普通离线构建属于 run_tests 的前置步骤：工具和依赖已经安装时，必须按仓库规定的"
@@ -23014,6 +23025,513 @@ def _controller_verified_result_changed_files(value: dict[str, Any]) -> set[str]
     if commit_value is not None or merge_value is not None:
         raise TaskResultEvidenceBlocked("CONTROLLER_CHANGED_FILES_MODE_MISMATCH")
     return set()
+
+
+def _litellm_formal_checks_need_refresh(
+    candidate: dict[str, Any], context: dict[str, Any], context_raw: bytes, value: dict[str, Any]
+) -> bool:
+    """Let original dedupe consume only the same authenticated formal envelope."""
+
+    if (
+        candidate.get("key") != "BerriAI/litellm#37498"
+        or context.get("stage") != "VALIDATION_PENDING"
+        or context.get("prFollowup") is not None
+        or context.get("publicationReceipt") is not None
+        or value.get("stage") != "FIX_READY"
+    ):
+        return False
+    formal = value.get("controllerFormalChecks")
+    receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+    if not isinstance(formal, dict) or not isinstance(receipt, dict):
+        return True
+    expected = {
+        "taskId": candidate.get("intentId"),
+        "key": candidate.get("key"),
+        "threadId": candidate.get("threadId"),
+        "worktreePath": candidate.get("worktreePath"),
+        "contextDigest": context.get("contextDigest"),
+        "contextRawDigest": hashlib.sha256(context_raw).hexdigest(),
+        "headSha": value.get("commitSha"),
+        "selectedBaseSha": context.get("selectedBaseSha"),
+    }
+    if any(formal.get(k) != v for k, v in expected.items()):
+        return True
+    digest = _unsigned_final_task_result_digest(value)
+    if value.get("resultDigest") != digest or not verify_probe_receipt(
+        receipt,
+        repo="BerriAI/litellm",
+        base_sha=str(expected["selectedBaseSha"]),
+        code_paths=value.get("codePaths"),
+        required_level=REPRODUCED_VALIDATED,
+        issue_url=str(candidate["issueUrl"]),
+        task_id=str(candidate["intentId"]),
+        thread_id=str(candidate["threadId"]),
+        head_sha=str(expected["headSha"]),
+        commit_sha=str(expected["headSha"]),
+        result_digest=digest,
+    ):
+        return True
+    if formal.get("status") == "blocked":
+        return value.get("quality", {}).get("relevant_tests_green") is not False
+    proof_id = str(formal.get("proofId") or "")
+    if re.fullmatch(r"[0-9a-f]{64}", proof_id) is None:
+        return True
+    try:
+        proof = json.loads(
+            _read_owned_regular_file(
+                STATE / "litellm_formal_checks" / f"{proof_id}.json",
+                label="controller Litellm formal proof",
+                required_mode=0o600,
+            )
+        )
+    except (OSError, RuntimeError, ValueError):
+        return True
+    return proof.get("receipt") != formal
+
+
+def _litellm_controller_formal_checks(
+    store: RadarLedger,
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    context_raw: bytes,
+    source_raw: bytes,
+    value: dict[str, Any],
+    result_access: _ValidationWorktreeDirectory,
+    deadline: float,
+    validation_context_rebind: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], bytes]:
+    """Run Litellm's Git-writing official gates as the controller, never the child."""
+
+    if (
+        candidate.get("key") != "BerriAI/litellm#37498"
+        or context.get("stage") != "VALIDATION_PENDING"
+        or context.get("prFollowup") is not None
+        or context.get("publicationReceipt") is not None
+    ):
+        return value, (
+            json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        ).encode()
+
+    worktree = result_access.worktree
+    source = json.loads(source_raw)
+    quality = dict(value.get("quality") or {})
+    # Child claims and old parent checks are not authority for these three gates.
+    quality["relevant_tests_green"] = False
+    normalized = dict(value, quality=quality)
+    gates = (
+        "scripts/test_quality_gate.py",
+        "scripts/type_discipline_gate.py",
+        "scripts/type_check_gate.py",
+    )
+    protected = gates + (
+        "scripts/check_test_quality.py",
+        "scripts/check_type_discipline.py",
+        "scripts/prisma_generate_if_needed.py",
+        "test-quality-budget.json",
+        "type-discipline-budget.json",
+        "basedpyright-code-budget.json",
+        "pyrightconfig.json",
+        "pyproject.toml",
+        "uv.lock",
+        "litellm/proxy/schema.prisma",
+    )
+    head = str(value.get("commitSha") or "")
+    base = str(context.get("selectedBaseSha") or "")
+    identity = {
+        "taskId": candidate.get("intentId"),
+        "key": candidate.get("key"),
+        "issueUrl": candidate.get("issueUrl"),
+        "threadId": candidate.get("threadId"),
+        "worktreePath": str(worktree),
+        "contextDigest": context.get("contextDigest"),
+        "contextRawDigest": hashlib.sha256(context_raw).hexdigest(),
+        "headSha": head,
+        "selectedBaseSha": base,
+    }
+
+    def blocked(reason: str) -> tuple[dict[str, Any], bytes]:
+        source_digest = hashlib.sha256(source_raw).hexdigest()
+        proof_id = sha256_json(identity | {"sourceRawDigest": source_digest, "reason": reason})
+        normalized["controllerFormalChecks"] = {
+            "schemaVersion": "litellm-controller-formal-checks-v1",
+            "status": "blocked",
+            "reason": reason,
+            **identity,
+        }
+        _atomic_json(
+            STATE / "litellm_formal_checks" / f"{proof_id}.json",
+            {
+                "receipt": normalized["controllerFormalChecks"],
+                "sourceRawDigest": source_digest,
+                "sourceRawBase64": base64.b64encode(source_raw).decode(),
+                "contextRawBase64": base64.b64encode(context_raw).decode(),
+            },
+        )
+        _clear_stale_final_result_authentication(normalized)
+        return normalized, (
+            json.dumps(normalized, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        ).encode()
+
+    if (
+        value.get("stage") != "FIX_READY"
+        or value.get("handoffMode") != "controller_commit_complete"
+        or re.fullmatch(r"[0-9a-f]{40}", head) is None
+        or re.fullmatch(r"[0-9a-f]{40}", base) is None
+        or value.get("selectedBaseSha") != base
+        or source.get("commitSha") != head
+        or source.get("headSha") != head
+        or any(
+            source.get(k) != identity[k]
+            for k in ("taskId", "key", "issueUrl", "threadId", "worktreePath")
+        )
+        or value.get("tests") != source.get("tests")
+        or unresolved_current_test_failures(value)
+        or not assess_submit_ready(
+            quality | {"relevant_tests_green": True, "independent_review_passed": True},
+            task_result=value,
+        ).ready
+    ):
+        return blocked("FRESH_NATIVE_CORE_VALIDATION_REQUIRED")
+
+    source_context_digest = str(source.get("contextDigest") or "")
+    if source_context_digest != context.get("contextDigest"):
+        # This is the existing ingestion branch's controller-owned authority
+        # proof, never a field supplied by the child. Recheck its exact raw,
+        # identity and source, then prove its original completion below.
+        refresh = validation_context_rebind
+        if (
+            not isinstance(refresh, dict)
+            or refresh.get("intentId") != candidate.get("intentId")
+            or refresh.get("threadId") != candidate.get("threadId")
+            or refresh.get("worktreePath") != str(worktree)
+            or refresh.get("previousContextDigest") != source_context_digest
+            or refresh.get("contextDigest") != context.get("contextDigest")
+            or refresh.get("commitSha") != head
+            or refresh.get("sourceResultBytesBase64")
+            != base64.b64encode(source_raw).decode("ascii")
+            or source.get("selectedBaseSha") != base
+            or value.get("contextDigest") != context.get("contextDigest")
+            or not _private_context_matches_current_ledger(store, context)
+        ):
+            return blocked("VALIDATION_CONTEXT_REFRESH_PROOF_REQUIRED")
+
+    def checkout_binding() -> dict[str, Any]:
+        if (
+            command(["git", "rev-parse", "HEAD"], cwd=worktree) != head
+            or command(["git", "status", "--porcelain", "--untracked-files=no"], cwd=worktree)
+            or _read_task_context_bytes_from_private(result_access) != context_raw
+        ):
+            raise TaskResultEvidenceBlocked("LITELLM_FORMAL_CHECK_SOURCE_CHANGED")
+        fingerprints = {}
+        for name in protected:
+            tracked = command(["git", "rev-parse", f"HEAD:{name}"], cwd=worktree)
+            if tracked != command(["git", "rev-parse", f"{base}:{name}"], cwd=worktree):
+                raise TaskResultEvidenceBlocked("LITELLM_FORMAL_CHECK_PROJECT_GATE_CHANGED")
+            actual = _read_owned_regular_file(
+                worktree / name,
+                label="Litellm original formal gate input",
+                reject_dangerous_writes=True,
+            )
+            committed = subprocess.run(
+                ["git", "show", f"HEAD:{name}"], cwd=worktree, check=True, capture_output=True
+            ).stdout
+            if actual != committed:
+                raise TaskResultEvidenceBlocked("LITELLM_FORMAL_CHECK_PROJECT_GATE_CHANGED")
+            fingerprints[name] = hashlib.sha256(actual).hexdigest()
+        return fingerprints
+
+    fingerprints = checkout_binding()
+    existing = source.get("controllerFormalChecks")
+    if (
+        isinstance(existing, dict)
+        and existing.get("status") in {"passed", "failed"}
+        and re.fullmatch(r"[0-9a-f]{64}", str(existing.get("proofId") or ""))
+    ):
+        proof_path = STATE / "litellm_formal_checks" / f"{existing['proofId']}.json"
+        try:
+            proof = json.loads(
+                _read_owned_regular_file(
+                    proof_path, label="controller Litellm formal proof", required_mode=0o600
+                )
+            )
+            original = base64.b64decode(proof["sourceRawBase64"], validate=True)
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+            proof, original = {}, b""
+        current_receipt = source.get("reproductionReceipt") or source.get("probeReceipt")
+        if (
+            proof.get("receipt") == existing
+            and all(existing.get(k) == v for k, v in identity.items())
+            and proof.get("projectFingerprints") == fingerprints
+            and hashlib.sha256(original).hexdigest() == existing.get("sourceRawDigest")
+            and json.loads(original).get("tests") == source.get("tests")
+            and isinstance(current_receipt, dict)
+            and source.get("resultDigest") == _unsigned_final_task_result_digest(source)
+            and verify_probe_receipt(
+                current_receipt,
+                repo="BerriAI/litellm",
+                base_sha=base,
+                code_paths=source.get("codePaths"),
+                required_level=REPRODUCED_VALIDATED,
+                issue_url=str(candidate["issueUrl"]),
+                task_id=str(candidate["intentId"]),
+                thread_id=str(candidate["threadId"]),
+                head_sha=head,
+                commit_sha=head,
+                result_digest=source["resultDigest"],
+            )
+            and (
+                not existing.get("bodyDigest")
+                or hashlib.sha256(
+                    _read_task_private_regular_file(
+                        result_access,
+                        "pr-body.md",
+                        label="Litellm PR validation description",
+                        reject_dangerous_writes=True,
+                    )
+                ).hexdigest()
+                == existing["bodyDigest"]
+            )
+        ):
+            normalized["controllerFormalChecks"] = existing
+            quality["relevant_tests_green"] = (
+                existing.get("status") == "passed"
+                and len(existing.get("checks") or []) == 3
+                and all(check.get("exitCode") == 0 for check in existing["checks"])
+            )
+            _clear_stale_final_result_authentication(normalized)
+            return normalized, (
+                json.dumps(normalized, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+            ).encode()
+        # An unverified child field supplies no authority. Only fresh native
+        # completion and new actual gates below can produce a controller proof.
+
+    completion: dict[str, Any] = {}
+    if _completed_validation_input_task_id(
+        store,
+        managed_ledger,
+        candidate=candidate,
+        context=context,
+        value=source,
+        result_access=result_access,
+        context_raw=context_raw,
+        completion_proof=completion,
+        validation_context_digest=source_context_digest,
+    ) != candidate.get("intentId"):
+        return blocked("COMPLETED_IMMUTABLE_VALIDATION_INPUT_REQUIRED")
+    if source_context_digest != context.get("contextDigest") and (
+        validation_context_rebind.get("reservationDigest")
+        != completion["receipt"]["reservationDigest"]
+        or validation_context_rebind.get("turnId") != completion["receipt"]["turnId"]
+        or validation_context_rebind.get("validationResultDigest")
+        != completion["receipt"]["deliveryToken"]
+    ):
+        return blocked("VALIDATION_CONTEXT_REFRESH_PROOF_REQUIRED")
+    delivery = store.validation_followup_delivery_binding(
+        thread_id=str(candidate["threadId"]),
+        result_digest=completion["receipt"]["deliveryToken"],
+        reservation_digest=completion["receipt"]["reservationDigest"],
+        **_ledger_binding_kwargs(candidate),
+    )
+    if not isinstance(delivery, dict):
+        return blocked("COMPLETED_IMMUTABLE_VALIDATION_INPUT_REQUIRED")
+    immutable_raw = _validation_snapshot_bytes(
+        candidate=candidate | {"resultDigest": completion["receipt"]["deliveryToken"]},
+        reservation_digest=completion["receipt"]["reservationDigest"],
+        snapshot_id=delivery["snapshotId"],
+        snapshot_path=delivery["snapshotPath"],
+        snapshot_digest=delivery["snapshotDigest"],
+    )
+    native = _expired_validation_command_proof(candidate, completion["receipt"], source)
+    if native is None:
+        return blocked("FRESH_NATIVE_CORE_VALIDATION_REQUIRED")
+    runner = (
+        result_access.private_dir
+        / "validation-real-mcp-oauth-cross-replica"
+        / "run_current_real_no_redis_phase.py"
+    )
+    phase_prefix = f"{worktree / '.venv/bin/python'} {runner} --phase "
+    for phase, exit_code in (("before_fix", 1), ("after_fix", 0)):
+        if not any(
+            test.get("phase") == phase
+            and test.get("exitCode") == exit_code
+            and test.get("cwd") == str(worktree)
+            and test.get("command") == phase_prefix + phase
+            for test in native["tests"]
+        ):
+            return blocked("FRESH_NATIVE_CORE_VALIDATION_REQUIRED")
+    if not any(
+        test.get("phase") == "formal"
+        and test.get("exitCode") == 0
+        and re.search(r"(?:^|\s)(?:\S*/)?pytest\b|\s-m\s+pytest\b", test["command"])
+        for test in native["tests"]
+    ):
+        return blocked("FRESH_NATIVE_FORMAL_CORE_TEST_REQUIRED")
+
+    interpreter = worktree / ".venv-typecheck/bin/python"
+    if not interpreter.is_file() or not os.access(interpreter, os.X_OK):
+        return blocked("PREPARED_PROJECT_TYPECHECK_ENVIRONMENT_REQUIRED")
+    result_before = _read_task_result_bytes_from_private(result_access)
+    binding = identity | {
+        "sourceRawDigest": hashlib.sha256(source_raw).hexdigest(),
+        "reservationDigest": completion["receipt"]["reservationDigest"],
+        "turnId": completion["receipt"]["turnId"],
+        "immutableInputDigest": hashlib.sha256(immutable_raw).hexdigest(),
+        "immutableInputPath": delivery["snapshotPath"],
+        "sourceContextDigest": source_context_digest,
+        "contextRefreshProofDigest": sha256_json(validation_context_rebind)
+        if validation_context_rebind
+        else None,
+    }
+    proof_id = sha256_json(binding)
+    checks = []
+    proof_path = STATE / "litellm_formal_checks" / f"{proof_id}.json"
+    execution_evidence = {
+        "sourceRawBase64": base64.b64encode(source_raw).decode(),
+        "contextRawBase64": base64.b64encode(context_raw).decode(),
+        "immutableInputRawBase64": base64.b64encode(immutable_raw).decode(),
+        "projectFingerprints": fingerprints,
+        "nativeCoreChecks": native["tests"],
+        "completion": completion,
+        "validationContextRefreshProof": validation_context_rebind,
+    }
+    _atomic_json(
+        proof_path,
+        execution_evidence
+        | {"receipt": binding | {"proofId": proof_id, "status": "running", "checks": checks}},
+    )
+    for script in gates:
+        argv = [str(interpreter), script, "--base", base]
+        executed = monotonic() < deadline
+        started_at = iso_z(datetime.now(UTC)) if executed else None
+        try:
+            if not executed:
+                raise TimeoutError("original bridge budget exhausted before execution")
+            result = subprocess.run(
+                argv,
+                cwd=worktree,
+                env=os.environ | {"UV_OFFLINE": "true"},
+                capture_output=True,
+                timeout=max(0.001, deadline - monotonic()),
+                check=False,
+            )
+            stdout, stderr, exit_code = result.stdout, result.stderr, result.returncode
+            failure = None
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            stdout = getattr(exc, "stdout", None) or b""
+            stderr = getattr(exc, "stderr", None) or b""
+            exit_code, failure = None, str(exc)
+        checks.append(
+            {
+                "command": argv,
+                "cwd": str(worktree),
+                "executed": executed,
+                "startedAt": started_at,
+                "finishedAt": iso_z(datetime.now(UTC)),
+                "exitCode": exit_code,
+                "stdout": stdout.decode("utf-8", errors="replace"),
+                "stderr": stderr.decode("utf-8", errors="replace"),
+                "stdoutRawBase64": base64.b64encode(stdout).decode(),
+                "stderrRawBase64": base64.b64encode(stderr).decode(),
+                "error": failure,
+            }
+        )
+        _atomic_json(
+            proof_path,
+            execution_evidence
+            | {"receipt": binding | {"proofId": proof_id, "status": "running", "checks": checks}},
+        )
+        if exit_code != 0:
+            break
+    source_changed = None
+    try:
+        if (
+            checkout_binding() != fingerprints
+            or _read_task_result_bytes_from_private(result_access) != result_before
+            or not _private_context_matches_current_ledger(store, context)
+        ):
+            source_changed = "LITELLM_FORMAL_CHECK_SOURCE_CHANGED"
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        source_changed = f"{type(exc).__name__}:{exc}"
+    passed = (
+        source_changed is None
+        and len(checks) == 3
+        and all(test["exitCode"] == 0 for test in checks)
+    )
+    receipt = {
+        "schemaVersion": "litellm-controller-formal-checks-v1",
+        "proofId": proof_id,
+        **binding,
+        "status": "passed" if passed else "failed",
+        "actor": "controller",
+        "python": str(interpreter),
+        "UV_OFFLINE": "true",
+        "checks": checks,
+        "sourceChanged": source_changed,
+    }
+    proof = execution_evidence | {"receipt": receipt}
+    _atomic_json(proof_path, proof)
+    if source_changed is not None:
+        raise TaskResultEvidenceBlocked(source_changed)
+    body_before = None
+    if passed:
+        publication = value.get("publication") or {}
+        if publication.get("bodyFile") != str(result_access.private_dir / "pr-body.md"):
+            return blocked("LITELLM_VALIDATION_DESCRIPTION_BINDING_REQUIRED")
+        body_before = _read_task_private_regular_file(
+            result_access,
+            "pr-body.md",
+            label="Litellm PR validation description",
+            reject_dangerous_writes=True,
+        )
+        description = (
+            "## Local Validation\n\n"
+            "The issue task independently reran the real HTTP/MCP regression against the baseline "
+            "(failed as expected) and the fixed source (passed), and ran the relevant project pytest checks.\n\n"
+            "The controller ran the project's unchanged test-quality, type-discipline, and type-check "
+            f"gates with `--base {base}` in the prepared offline environment; all three exited 0. "
+            "These controller checks are separate from the issue task's native test results.\n\n"
+        )
+        body, count = re.subn(
+            r"(?ms)^## Local Validation\n.*?(?=^## |\Z)", description, body_before.decode()
+        )
+        if count != 1:
+            return blocked("LITELLM_VALIDATION_DESCRIPTION_SECTION_REQUIRED")
+        temporary = f"pr-body.{proof_id}.tmp"
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=result_access.private_fd,
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(body.encode())
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(
+                temporary,
+                "pr-body.md",
+                src_dir_fd=result_access.private_fd,
+                dst_dir_fd=result_access.private_fd,
+            )
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=result_access.private_fd)
+            except FileNotFoundError:
+                pass
+        receipt["bodyDigest"] = hashlib.sha256(body.encode()).hexdigest()
+    proof["priorBodyRawBase64"] = base64.b64encode(body_before).decode() if body_before else None
+    _atomic_json(proof_path, proof)
+    normalized["controllerFormalChecks"] = receipt
+    quality["relevant_tests_green"] = passed
+    quality["independent_review_passed"] = False
+    normalized.pop("independentReview", None)
+    _clear_stale_final_result_authentication(normalized)
+    return normalized, (
+        json.dumps(normalized, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode()
 
 
 def _bind_final_reproduction_receipt(
@@ -24349,6 +24867,9 @@ def _backfill_authoritative_fix_ready_result(
 
 
 def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
+    # Formal handoff shares the existing run_bridge budget, rather than
+    # extending it for each project command.
+    controller_formal_deadline = monotonic() + 900
     store = ledger(args.ledger)
     managed_adapter = ManagedAdapter(ROOT, args.ledger)
     managed_ledger = managed_adapter.ledger
@@ -24407,6 +24928,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 raw = _read_task_result_bytes_from_private(result_access)
             except MissingValidationResult:
                 continue
+            controller_formal_source_raw = raw
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
@@ -24938,6 +25460,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     **_ledger_binding_kwargs(candidate),
                 )
             )
+            if _litellm_formal_checks_need_refresh(candidate, context, context_raw, value):
+                digest_seen = False
             if (
                 digest_seen
                 and (
@@ -25596,6 +26120,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and candidate["stage"] == "FIX_READY"
                 and controller_policy is not None
             )
+            if _litellm_formal_checks_need_refresh(candidate, context, context_raw, value):
+                digest_seen = False
             if digest_seen and current_wake_digest and candidate["stage"] == "VALIDATION_PENDING":
                 store.record_followup_result(
                     candidate["key"],
@@ -25700,6 +26226,18 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     value=value,
                     result_access=result_access,
                     managed_ledger=managed_ledger,
+                )
+                value, raw = _litellm_controller_formal_checks(
+                    store,
+                    managed_ledger,
+                    candidate=candidate,
+                    context=context,
+                    context_raw=context_raw,
+                    source_raw=controller_formal_source_raw,
+                    value=value,
+                    result_access=result_access,
+                    deadline=controller_formal_deadline,
+                    validation_context_rebind=validation_context_rebind,
                 )
                 reported_review_value = dict(value)
                 value, raw = _bind_final_reproduction_receipt(
