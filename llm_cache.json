@@ -32530,6 +32530,40 @@
     ],
     "why": "Issue describes a concrete EAGLE/MTP startup OOM with a plausible root cause (draft embed_tokens/lm_head copies freed only after pool sizing) and a one-hunk scheduler-side fix, but the supplied evidence contains a materially blocking unknown: open PR #42529 ('Skip loading shared draft embedding and head weights') semantically overlaps the same code path and appears to address the same redundant-weight root cause at the source, yet it is not linked to this issue and its root-cause coverage is marked false. Whether the issue is already covered by that PR determines whether independent code work is actionable, so this must be resolved before proceeding."
   },
+  "3b1e5de0795a2427d72f4e9e382659c250dd52ca6a28b19a5ec23153aeac48ec": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/output_formatter.py: populate resolved size/output_format (and supported quality/background) metadata",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor requested output_format (e.g. JPEG) or reject unsupported formats with a client error",
+      "tests covering generation and edit responses with independently decoded media"
+    ],
+    "risks": [
+      "Backend capability for quality/background is undecided; echoing unsupported values would misrepresent output",
+      "Changing output_format handling could alter existing PNG-default behavior for callers",
+      "Requires GPU/Omni worker environment for full end-to-end validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's curl against a FLUX.2-klein-4B Omni worker and assert size/output_format are non-null",
+      "Decode b64_json with PIL and assert image.format matches the requested output_format (JPEG vs PNG)",
+      "Regression test asserting unsupported output_format returns an explicit client error rather than HTTP 200",
+      "Run targeted unit tests for the vllm omni output formatter package"
+    ],
+    "unknowns": [
+      "Whether maintainers want unsupported output_format rejected vs silently coerced",
+      "Whether quality/background have meaningful backend semantics to report"
+    ],
+    "why": "Issue provides a concrete reproduction (curl + PIL decode), identifies the exact producer path (components/src/dynamo/vllm/omni/output_formatter.py, response built from created+data only, PNG serialization), and gives acceptance criteria. Related PRs #15420/#15605 only add/sync schema fields and do not touch the Omni formatter, so no duplicate coverage. This is a user-visible correctness bug with a clear minimal fix and validation path."
+  },
   "3b25dbdaaf830c49ce1c0fba968ee395f903a719a248afd95e590893533ac364": {
     "confidence": 0.9,
     "contradictions": [],
@@ -71912,6 +71946,35 @@
     ],
     "why": "The issue is a precise, well-verified plumbing gap: AgentHeadless holds loopType but exposes no accessor, ForkedAgentResult lacks the field, and describeAgentTerminateReason already accepts loopType. However, the triage bot and commenters establish a hard dependency: terminate-reason.ts / describeAgentTerminateReason / terminateReasonMessage exist only on the open #13466 branch, not on main, and terminateModeMessage is module-private on main. Steps 2 and 3 are unimplementable until #13466 merges, and #13466 is OPEN with CHANGES_REQUESTED. This unresolved duplicate/merge coverage is a materially blocking unknown for actionability."
   },
+  "7cde22812ca16187bb696169eeaca10860d0466f3bf108b1b23d75945dd756bc": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims high-depth algorithm mechanisms, but the issue body describes only a dependency upgrade and regression tests"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "requirements.txt XGrammar version pin",
+      "regression tests for empty/boolean schemas and XML parameter separators"
+    ],
+    "risks": [
+      "Dependency upgrade may break other XGrammar consumers in the repo",
+      "0.2.7 requires a compatible apache-tvm-ffi version that needs qualification"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the supplied model-free CPU reproducer under XGrammar 0.1.32 and 0.2.7 to confirm compilation/acceptance differences"
+    ],
+    "unknowns": [
+      "Whether the repo maintainers consider XGrammar version bumps in scope for this track"
+    ],
+    "why": "The issue requests upgrading the XGrammar dependency from 0.1.32 to 0.2.7 and adding regression coverage. This is a dependency/version bump plus test coverage, not a concrete LLM algorithm contribution (no training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology). The supplied algorithm_evidence mechanisms (parameter_efficient_finetuning, distributed_training, numerics_quantization, evaluation_method) are keyword matches (adapter, fp8, tensor parallel, pipeline parallel) that do not correspond to the actual requested change. Under track=llm_algorithm, dependency upgrades and ordinary plumbing are out of scope."
+  },
   "7cded3e5b15a9b96dbed28517c2d5aa7ee44aef8db756c090496167067d7332b": {
     "confidence": 0.55,
     "contradictions": [
@@ -73383,6 +73446,41 @@
       "Whether the fix requires changes to the linker script or build system"
     ],
     "why": "Issue provides a concrete regression with known good/bad commits, a 5-line repro, and a detailed root-cause hypothesis confirmed by a contributor comment: PR #53968 enabled gp-relative relaxation on a core where gp is never initialized, corrupting the local handshake address. The fix is actionable: initialize gp in active_erisc-crt0.cc."
+  },
+  "7fe1059573b1d9e1f5b4cb0ab4ff8fe34fb7362e51676bd328a4e783b993a96c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue suggests a concrete fix, but open PR #7446 already implements the same fix with tests, leaving unclear what additional value a new contribution provides"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "A2A executor failure-handling path: replace peer-visible exception text with a fixed summary plus opaque error ID",
+      "Server-side logging of full throwable under the generated error ID",
+      "Optional local-debug opt-in for detailed peer-visible errors"
+    ],
+    "risks": [
+      "Open PR #7446 may already resolve the issue, making a competing contribution redundant",
+      "Changing peer-visible error behavior could break existing clients relying on detailed errors",
+      "Scope creep into broader A2A error-handling changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that triggers a server-side execution failure and asserts the peer-visible failed-task response contains only a generic message and opaque ID, not exception text",
+      "Verify full exception details are logged server-side under the returned ID",
+      "Run the A2A executor package's targeted unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact code location in the Python A2A executor that serializes exception text",
+      "Whether PR #7446 fully addresses the issue or has gaps that a new contribution could fill",
+      "Whether maintainers require assignment before work begins"
+    ],
+    "why": "Issue describes a plausible information-exposure bug in the A2A executor and points to a Java reference implementation, but the supplied evidence lacks code anchors, a confirmed root-cause location, and a concrete validation path. An open PR #7446 already covers the same fix with tests, so the remaining actionable gap is unclear."
   },
   "7feb6f2391f66148daab39f0e52c63a4228243d5bf8b48c494fee9ce19148d75": {
     "confidence": 0.85,
@@ -99736,6 +99834,40 @@
     ],
     "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter all assume string-only or specific key), a concrete reproduction (object command with alias key fails with 'Invalid input' and preview shows '[object Object]'), and a proposed three-seam fix. Existing PR #13438 is open but lacks root-cause coverage, leaving room for a more complete contribution."
   },
+  "b00e9299037398dc49066ddbcb7d2cc676fadb9ea21e3acb84735238aa7634ff": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body/triage treats quarantine as an acceptable resolution, while maintainer comment (neubig) explicitly rejects quarantine as satisfying the issue.",
+      "Triage block attributes the automations step 2 failure to runtime-services context (#16205/#17716), while a later maintainer comment says that failure no longer reproduces on main and attributes the pre-flight issue to #17886."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No standalone code change is actionable from this issue; any work must be scoped to the owning root-cause issues (#17555, #17636, #17876, #17886, #17889, #18121, #18122) rather than this aggregate tracker."
+    ],
+    "risks": [
+      "Landing a duplicate fix while #17555/#17636/#17876/#17889 are open and mutually conflicting in `mock-llm-server.py` (each adds its own `_message_text` helper).",
+      "Quarantine is explicitly rejected by the maintainer, so a skip/fixme-based contribution would be low value.",
+      "Repository AI disclosure policy conflict may block the contribution path entirely."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "If scoped to an owning issue: run `npx playwright test --config=playwright.mock-llm.config.ts` locally against the pinned agent-server and confirm the specific named test transitions from fail to pass.",
+      "Confirm via `gh run view <id> --repo OpenHands/OpenHands --json conclusion` that a post-fix main push yields a green `mock-llm-e2e` job with tests executed, not skipped."
+    ],
+    "unknowns": [
+      "Which of the overlapping open PRs (#17555, #17636, #17876, #17889, #18121, #18122) will actually land and in what order, determining whether any residual code work remains.",
+      "Whether the repository's AI disclosure policy permits the required contribution (policy status: ai_disclosure_conflict).",
+      "Whether this aggregate tracker is intended to receive code changes at all, given the maintainer's statement that root-cause fixes belong to the linked issues."
+    ],
+    "why": "The issue is an aggregate tracking issue for a red main-only E2E suite; maintainer comment explicitly states the individual root causes are owned by other issues/PRs (#17555, #17636, #17876, #17886, #17889, #18121, #18122) and that this issue's scope is the aggregate green signal, not implementing fixes. The supplied evidence also flags unresolved duplicate/overlap with open PRs #17636 and #17889 and a policy_or_disclosure_uncertain / ai_disclosure_conflict gate. Whether any code work is actionable here depends on facts not supplied: which of the overlapping PRs actually land, and whether the repository's AI disclosure policy permits the required contribution. Those are materially blocking unknowns, not normal review uncertainty."
+  },
   "b014f1fd22df152fdc228fc9651e0186d1e658f0543eaf4d11ee88ef02c6c0f2": {
     "confidence": 0.6,
     "contradictions": [
@@ -110643,6 +110775,39 @@
     ],
     "why": "Issue provides a precise root cause and a concrete fix, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, so maintainer review is needed before starting work."
   },
+  "c36eafb45c0235300e3e8b19c8389c5d436f217f0c050442250b6e42cb388521": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/worker/worker.py or model_runner profile_cudagraph_memory() to account for actual graph capture cost and its dependence on KV block count",
+      "KV cache sizing / gpu_memory_utilization budget accounting so graph memory is reserved before cache allocation",
+      "early actionable error when the configuration cannot fit"
+    ],
+    "risks": [
+      "Requires a matching 24 GiB NVIDIA GPU to reproduce; CPU/mock cannot validate the memory accounting",
+      "Changing profile_cudagraph_memory() may alter KV cache sizing for all dtypes and affect throughput",
+      "Repository policy flags an AI disclosure conflict, which may block public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on a 24 GiB GPU: LLM(model='Qwen/Qwen3-0.6B', kv_cache_dtype='fp8') should start without OOM, while default dtype still works",
+      "Regression test asserting measured post-capture memory stays within gpu_memory_utilization budget for fp8 vs default KV cache",
+      "Verify reducing gpu_memory_utilization still avoids OOM and that an infeasible config fails early with an actionable message"
+    ],
+    "unknowns": [
+      "Exact code path/function where KV cache budget is computed relative to profile_cudagraph_memory()",
+      "Whether maintainers have a preferred fix (reserve graph memory vs adjust cache after capture)"
+    ],
+    "why": "Issue reports a concrete, reproducible startup OOM with FP8 KV cache on a 24 GiB GPU: KV cache budget (~19.93 GiB) is computed before CUDA graph capture, and the ~0.80 GiB graph capture cost is omitted, so an accepted config exceeds gpu_memory_utilization. Root cause is anchored to profile_cudagraph_memory() and the KV cache sizing path, with a clear reference-vs-implementation validation (default dtype succeeds, fp8 fails; reducing gpu_memory_utilization avoids it). No duplicate/merged fix found; open PRs are keyword-only overlaps with no code-path or mechanism overlap."
+  },
   "c383c58fb433768a00c27a75055e346590dd747186000a4e58fddfb565cf00bb": {
     "confidence": 0.72,
     "contradictions": [
@@ -110863,6 +111028,42 @@
       "Whether existing open PRs (e.g., #4686) might partially address this issue"
     ],
     "why": "Issue clearly describes a silent truncation bug in RemoteA2aAgent when A2A stream ends before terminal state, with reproduction steps and expected fixes. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy needs assignment, so work should wait for maintainer confirmation."
+  },
+  "c3e471ce21fb541e556581ea21fd55c8038dc40fc386adff67e500c74c2392b2": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims poller omits X-Session-API-Key, but collaborator bot and commenter evidence indicate the shared axios interceptor attaches it and health/v1 use the same path",
+      "health returns 200 while v1 returns 401 in the same page load, which the stated root cause does not explain"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/api/automation-service/automation-service.api.ts (header attachment or poller error handling)"
+    ],
+    "risks": [
+      "Fixing the wrong layer (client header vs proxy vs backend auth) if the stated root cause is incorrect",
+      "Duplicating PR #17746 which already targets the same code path",
+      "Suppressing the toast could mask genuine auth failures"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a local axios test server confirming whether the poller request carries X-Session-API-Key",
+      "Redacted Network-tab capture of the failing GET /api/automation/v1?limit=1&offset=0 showing request headers and 401 body",
+      "Verify reverse proxy forwards X-Session-API-Key on /api/automation/v1 and whether the 401 indicates missing vs invalid key"
+    ],
+    "unknowns": [
+      "Whether the reverse proxy forwards X-Session-API-Key on /api/automation/v1",
+      "Whether the 401 body reports a missing or invalid key",
+      "Whether PR #17746 fully covers the root cause or the issue requires a different fix",
+      "Which of the two proposed fixes (attach header vs suppress toast) is in scope"
+    ],
+    "why": "The issue's own root-cause hypothesis (poller omits X-Session-API-Key) is contradicted by supplied evidence: the collaborator bot notes all automation calls share one axios interceptor that attaches the header, and a commenter reproduced that both poller and health requests send X-Session-API-Key with a configured backend key. The reporter's observation that health returns 200 while v1 returns 401 in the same page load is unexplained by the stated cause, and the proxy-forwarding question is unresolved. Additionally, PR #17746 already implements the exact proposed fix (attach X-Session-API-Key to the automations poller) with tests, so duplicate/coverage status is unresolved."
   },
   "c3ed41dc79cbd0877a2289e2033e3017246f0254496beae50f18903bbf94fa03": {
     "confidence": 0.82,
@@ -112602,6 +112803,39 @@
       "Root cause of the member-set mismatch; maintainer's preferred fix approach; whether the issue is already being addressed internally."
     ],
     "why": "Issue reports a release archive member-set mismatch during installation, with a public repro and confirmation from another user. However, the root cause is not identified, no maintainer has acknowledged or assigned, and the deterministic gate requires HUMAN_REVIEW. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the fix likely involves release packaging or installer logic, which is actionable but needs maintainer confirmation."
+  },
+  "c6cfeb54fe03203403de472a1787ae074deb40243e5e4187e4775a97e9f94ec4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body supplies a detailed root cause and code anchors"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe the watch receiver under the list_state read lock after a lag Resync so the receiver starts at the reconciled snapshot",
+      "Add a regression test in kube.rs using the existing client_with 16-slot channel that flaps 16 workers then adds worker 17 and asserts the next event is Added(17)"
+    ],
+    "risks": [
+      "Resubscribing under the read lock could interact with the daemon's write-lock ordering in daemon.rs:364-376; must avoid lock-order inversion or deadlock",
+      "Behavioral change to watch semantics may affect consumers (addressed_router cancel_instance_streams, DynamicSubscriber ZMQ stream, llm discovery controller reconcile_group) if resubscribe timing differs",
+      "Open PR #15767 already targets the same file; a competing fix must add the missing regression test to be materially distinct"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test on a current-thread runtime: 16 workers flap Removed/Added (32 events) before the watch task runs, then worker 17 joins; assert the first post-Resync event is Added(instance_id 17) and no stale Removed/Added pairs for workers 9-16 are emitted",
+      "Run cargo test -p dynamo-runtime --lib and confirm the new test fails on main (a4adcfe923) and passes with the fix",
+      "Verify no regression in existing discovery/kube tests and that the Resync contract in discovery/mod.rs is preserved"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the resubscribe-under-read-lock approach over an alternative (e.g., draining/discarding buffered events), though this is normal implementation choice rather than a blocker"
+    ],
+    "why": "Issue provides a precise root cause (lagged broadcast receiver replays pre-resync buffered events after list_and_watch reconciles from list_state), concrete code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), and a deterministic unit-test reproduction on a current-thread runtime with the 16-slot channel. The contract violation and the mem.rs resubscribe precedent give a clear reference-vs-implementation validation path. Open PR #15767 covers the same path but lacks tests, so a test-backed fix is still actionable."
   },
   "c6d3416fc0d7e1781d9a29d10acf1d025c680f656d379e3e8d7812e71a240b82": {
     "confidence": 0.8,
@@ -120561,6 +120795,43 @@
       "No explicit maintainer approval or design confirmation, but the issue is clear and the fix is standard practice"
     ],
     "why": "The issue clearly identifies a user-visible bug: process-local OAuth state causes invalid_client errors in multi-replica deployments. The root cause is well-documented with code references and a deterministic reproduction. No competing PR or issue exists, and the fix is actionable: introduce shared storage with expiration and atomic consume semantics."
+  },
+  "d4342fd6be06a8f2a83e32a9210fd8c39308c50b6ddd7c4b3f2396b14f16406d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue author states they are already implementing the V1 fix and regression test, while open PR #60377 appears to target the same V1 rank bug without referencing this issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/logprobs.py: append_logprobs_for_next_position must accept per-entry ranks instead of assuming sorted top-k",
+      "vllm/v1/sample/ops/logprobs.py: Sampler.gather_specific_token_logprobs must compute real vocab ranks for requested ids",
+      "regression test asserting logprob_token_ids ranks match logprobs=-1 on both model runners"
+    ],
+    "risks": [
+      "Tie handling: vLLM's >= rank definition differs from logprobs=-1 ordering for tied tokens, so a naive equality assertion will be flaky",
+      "V2 side may already be fixed by #36746, so a standalone V2 change could conflict or duplicate",
+      "CPU/V2 Triton JIT compile can exceed the default 300s timeout, complicating CI-style validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's minimal repro with Qwen/Qwen3-0.6B and facebook/opt-125m under VLLM_USE_V2_MODEL_RUNNER=0 and =1, asserting each logprob_token_ids rank equals the rank reported by logprobs=-1 (accounting for the documented >= tie convention)",
+      "Add a unit test on the custom-id logprob path that checks ranks for a shuffled logprob_token_ids list, including the sampled token present in the list"
+    ],
+    "unknowns": [
+      "Whether PR #60377 already covers the V1 rank fix and regression test described in the issue",
+      "Whether the intended PR should stack on #36746 or stand alone, which the author explicitly left open",
+      "Whether the repository's AI disclosure policy permits the automated contribution path (policy status ai_disclosure_conflict)"
+    ],
+    "why": "The issue establishes a clear root cause (rank filled from list position in append_logprobs_for_next_position / gather_specific_token_logprobs) and a concrete reference-vs-implementation validation path (compare logprob_token_ids ranks against logprobs=-1). However, the supplied evidence shows an open PR #60377 ('Report vocab ranks for logprob_token_ids on Model Runner V1') with strong semantic overlap on the exact code paths (vllm/logprobs.py, vllm/v1/sample/ops/logprobs.py) and the distinctive term logprob_token_ids, plus the issue author states they are already implementing the V1 fix and regression test. Whether the remaining work is already covered by #60377 is unresolved and materially determines actionability."
   },
   "d435214bc5197a4358e4a5659652f8dbc26f4462a42d89c4f300dc83eddc77c2": {
     "confidence": 0.85,
@@ -130778,6 +131049,41 @@
       "Whether maintainers prefer preserving tri-state vs. failing on unsupported internal-comment requests"
     ],
     "why": "Issue provides a concrete reproduction (public=false yields customer-visible comment on JSM Data Center) and a commenter supplies a specific root cause: the MCP wrapper in src/mcp_atlassian/servers/jira.py coerces public=False to None for projects not in JIRA_INTERNAL_ONLY_PROJECTS, bypassing the ServiceDesk comment path in src/mcp_atlassian/jira/comments.py that would honor the boolean. A concrete validation path exists (boundary regression test asserting explicit public=False survives to the client, plus JSM REST readback). This is a safety-relevant visibility bug with clear code anchors and a probe-ready reproduction."
+  },
+  "e547e172c925919aa527d4d52f7ced81d668e35cb20530daceaa3df202f8652a": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Initial issue body described the main-agent view generally, then was amended to mobile-only scope; the first follow-up comment claimed the subagents overview was completely gone, then was corrected to desktop-shown/mobile-missing."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/app/src/pages/session.tsx: surface running/stuck child sessions in the mobile main-agent view",
+      "packages/app/src/utils/session.ts: derive child/subagent running status from parentID-linked sessions",
+      "packages/core/src/session.ts or packages/schema/src/session.ts: ensure child session status is exposed to the view layer"
+    ],
+    "risks": [
+      "Scope is explicitly mobile-only per the issue update; a desktop change would be out of scope.",
+      "The wedged-subagent case (#50775) may be a separate backend/provider issue; the UI fix only surfaces the signal and does not resolve the wedge.",
+      "Avoid expanding API behavior or changing session schema semantics beyond exposing existing status."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on mobile viewport: start a parent session, launch a long-running subagent, confirm no running/stuck indicator appears in the main-agent view (failing test).",
+      "Regression test: with a child session in `running` state and frozen `tokens.output`, assert the mobile main-agent view renders a running/stuck indicator.",
+      "Verify desktop behavior next to the session title is unchanged after the fix."
+    ],
+    "unknowns": [
+      "Exact component/route responsible for the mobile main-agent view is not pinned in the supplied evidence.",
+      "Whether the fix should be a status indicator, a link, or both is not decided by the issue."
+    ],
+    "why": "Issue reports a concrete, reproducible UI/state-surfacing gap: the mobile main-agent view omits the subagent running/stuck indicator that desktop shows next to the session title, and a commenter confirms a wedged child stayed `running` for 68 min with the signal available via `/api/session/active` and `GET /api/session?parentID=`. Reproduction steps and expected/actual pairs are supplied, and code anchors (`session.child.backToParent`, `subagents`, `parentID`, `running`, `tokens.output`) point to the session view/state path. No duplicate PR/issue coverage was found. This is actionable frontend/state-surfacing work, not a covered or low-value opportunity."
   },
   "e559a233716476565ce6dc3bd132e2fd861becf18770756f633aedbe2a82c08e": {
     "confidence": 0.85,
@@ -143823,6 +144129,40 @@
       "Whether underlying tracing context loss is considered a bug"
     ],
     "why": "The issue identifies a clear crash in released versions due to a missing guard that already exists in main, but the fix is a release backport and requires maintainer triage. The underlying tracing-context loss after OM buffering is unresolved and needs design confirmation."
+  },
+  "fb3a24efd7b58854e2bc207f920615cfef5b1bf3367d1bd6c6df188ecbf3de4d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims qualified=true with mechanisms parameter_efficient_finetuning and numerics_quantization, but the issue body contains no PEFT or quantization mechanism; matched terms are environment/version strings"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add cross-field validation in EngineArgs.create_engine_config() rejecting convert=classify with runner=generate",
+      "Raise descriptive ValueError instead of reaching the bare AssertionError in _init_pooler"
+    ],
+    "risks": [
+      "Low algorithmic value; fix is config plumbing rather than an LLM algorithm contribution",
+      "Existing PR #60441 already covers the same fix, creating duplicate/covered work",
+      "Repository has an AI disclosure conflict policy that blocks automated public submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add a config-validation unit test asserting ValueError for convert=classify + runner=generate",
+      "Regression test that the invalid combination fails at config time, not during model init"
+    ],
+    "unknowns": [
+      "Whether PR #60441 will be merged, which would fully close the opportunity"
+    ],
+    "why": "The issue is a config cross-field validation bug (convert=classify with runner=generate) that crashes with a bare AssertionError in _init_pooler. Root cause and reproduction are clear, but this is ordinary CLI/config plumbing, not an LLM algorithm mechanism. The track=llm_algorithm requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; the matched terms (adapters, bf16, fp16, int8) are incidental environment/version strings, not algorithmic content. Additionally, PR #60441 already directly addresses this issue with a config-level rejection and a regression test, so the opportunity is covered."
   },
   "fb42ac911a51df809ec2c9e6f0f5ea90548f2e11632dc0a1eb79f2a65557dcd9": {
     "confidence": 0.8,
