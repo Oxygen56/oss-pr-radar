@@ -30094,6 +30094,9 @@ def _task_title_display_state(store: RadarLedger, binding: dict[str, Any]) -> st
 def _reconcile_codex_decision_titles() -> dict[str, Any]:
     renamed: list[dict[str, str]] = []
     deferred: list[dict[str, str]] = []
+    candidates: list[tuple[str, dict[str, Any], dict[str, Any], dict[str, Any] | None]] = []
+    live_probe: set[str] = set()
+    pending_prefixes = ("[有价值·待决策] ", "[候选自动评估中] ")
     for event_id, binding in _read_codex_decision_bindings()["events"].items():
         if not isinstance(binding, dict):
             continue
@@ -30112,7 +30115,30 @@ def _reconcile_codex_decision_titles() -> dict[str, Any]:
         ):
             deferred.append({"threadId": thread_id, "reason": "binding_identity_changed"})
             continue
+        if not str(binding.get("desiredTitle") or "").startswith(pending_prefixes):
+            continue
         terminal = persisted_thread_turn_state(thread_id)
+        candidates.append((str(event_id), binding, thread, terminal))
+        if (
+            terminal is None
+            and str(thread["title"]).startswith(pending_prefixes)
+            and _active_task_turn_for_result(binding) is None
+        ):
+            live_probe.add(thread_id)
+    live_states = live_thread_turn_states(live_probe) if live_probe else {}
+    for event_id, binding, thread, terminal in candidates:
+        thread_id = str(binding["threadId"])
+        if terminal is None:
+            live = live_states.get(thread_id)
+            if (live or {}).get("status") != "interrupted" or _active_task_turn_for_result(
+                binding
+            ) is not None:
+                continue
+            current = _codex_decision_thread(thread_id)
+            if current != thread:
+                deferred.append({"threadId": thread_id, "reason": "binding_identity_changed"})
+                continue
+            terminal = live
         status = str((terminal or {}).get("status") or "")
         prefix = {
             "completed": "[候选已评估]",
@@ -30122,8 +30148,6 @@ def _reconcile_codex_decision_titles() -> dict[str, Any]:
         if prefix is None:
             continue
         original = str(binding.get("desiredTitle") or "")
-        if not original.startswith(("[有价值·待决策] ", "[候选自动评估中] ")):
-            continue
         desired = prefix + original[original.index("]") + 1 :]
         if thread["title"] == desired:
             continue

@@ -2833,6 +2833,88 @@ def test_completed_legacy_candidate_title_reconciles_without_current_outbox(monk
     assert result["renamed"][0]["threadId"] == "legacy-thread"
 
 
+@pytest.mark.parametrize(
+    ("live_status", "active_writer", "renamed"),
+    [("interrupted", False, True), ("completed", False, False), ("interrupted", True, False)],
+)
+def test_original_title_reconcile_stops_owned_legacy_candidate_without_journal_marker(
+    monkeypatch, tmp_path, live_status, active_writer, renamed
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    prompt = "这是已绑定的历史候选核查。"
+    original = "[有价值·待决策] 09-01 17:32 a/b#1 Candidate"
+    binding = {
+        "threadId": "legacy-thread",
+        "projectId": "github",
+        "promptDigest": sha256_json(MODULE.canonical_prompt(prompt)),
+        "desiredTitle": original,
+    }
+    bindings = {"events": {"old-event": binding}}
+    monkeypatch.setattr(MODULE, "_read_codex_decision_bindings", lambda: bindings)
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, title TEXT, name TEXT, archived INTEGER, "
+            "first_user_message TEXT, cwd TEXT, project_id TEXT, thread_source TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "legacy-thread",
+                prompt,
+                original,
+                0,
+                prompt,
+                str(MODULE.GITHUB_ROOT),
+                "github",
+                "appServer",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _id: None)
+    monkeypatch.setattr(
+        MODULE,
+        "_active_task_turn_for_result",
+        lambda _binding: {"turnId": "active"} if active_writer else None,
+    )
+    probes = []
+
+    def read_native(thread_ids):
+        assert not active_writer
+        probes.append(thread_ids)
+        return {"legacy-thread": {"status": live_status, "turnId": "stopped"}}
+
+    monkeypatch.setattr(MODULE, "live_thread_turn_states", read_native)
+    applied = []
+
+    def apply_titles(candidates):
+        with sqlite3.connect(thread_db) as connection:
+            for candidate in candidates:
+                applied.append(candidate["desiredTitle"])
+                connection.execute(
+                    "UPDATE threads SET name=? WHERE id=?",
+                    (candidate["desiredTitle"], candidate["threadId"]),
+                )
+        return {str(candidate["threadId"]): None for candidate in candidates}
+
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", apply_titles)
+    with store.connect() as connection:
+        before_events = connection.execute("SELECT count(*) FROM events").fetchone()[0]
+    result = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert applied == (["[候选评估已停止] 09-01 17:32 a/b#1 Candidate"] if renamed else [])
+    assert probes == ([] if active_writer else [{"legacy-thread"}])
+    assert bool(result.get("candidateTitles", {}).get("renamed")) is renamed
+    assert bindings == {"events": {"old-event": binding}}
+    with store.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == before_events
+    assert MODULE._codex_decision_thread("legacy-thread")["title"] == (
+        applied[0] if renamed else original
+    )
+
+
 def test_stopped_reproduction_title_requires_current_exact_block_and_terminal_turn(
     monkeypatch, tmp_path
 ):
