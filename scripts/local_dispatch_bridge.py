@@ -4235,6 +4235,369 @@ def _private_context_newer_live_intent(
     return None
 
 
+def _restore_overwritten_pending_pr_commits(
+    store: RadarLedger,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Recover an owned completed fix overwritten by a no-edit duplicate PR turn."""
+    restored: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    managed = ManagedLedger(store.path, ensure_schema=False)
+    for candidate in store.task_context_candidates():
+        if candidate.get("stage") not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}:
+            continue
+        identity = {k: candidate.get(k) for k in ("intentId", "threadId", "worktreePath")}
+        if not all(identity.values()):
+            continue
+        with store.connect() as connection:
+            row = connection.execute(
+                """SELECT d.payload_json,r.* FROM events d JOIN managed_results r
+                     ON r.task_id=json_extract(d.payload_json,'$.intentId')
+                    AND r.result_digest=json_extract(d.payload_json,'$.resultDigest')
+                   WHERE d.opportunity_key=? AND d.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                     AND json_extract(d.payload_json,'$.intentId')=?
+                     AND json_extract(d.payload_json,'$.threadId')=?
+                     AND json_extract(d.payload_json,'$.worktreePath')=?
+                   ORDER BY d.id DESC LIMIT 1""",
+                (candidate["key"], *identity.values()),
+            ).fetchone()
+        if row is None:
+            continue
+        source = dict(row)
+        provenance = json.loads(source.get("provenance_json") or "{}")
+        validation = json.loads(source.get("validation_json") or "{}")
+        head = str(source.get("head_sha") or "")
+        if (
+            source.get("source") != "dispatch-result"
+            or source.get("worker_state") != "patched"
+            or source.get("result_type") is not None
+            or source.get("commit_sha") != head
+            or re.fullmatch(r"[0-9a-f]{40}", head) is None
+            or provenance.get("stage") != "FIX_READY"
+            or provenance.get("issueUrl") != candidate["issueUrl"]
+            or validation.get("reproductionReceiptAuthenticated") is not True
+        ):
+            continue
+        try:
+            with opportunity_action_guard(ledger_action_guard_root(store.path), candidate["key"]):
+                context = store.task_context(
+                    issue_url=candidate["issueUrl"],
+                    intent_id=identity["intentId"],
+                    thread_id=identity["threadId"],
+                    worktree_path=identity["worktreePath"],
+                )
+                if context is None:
+                    continue
+                with store.connect() as connection:
+                    original_ingestion = connection.execute(
+                        """SELECT dedupe_key FROM events WHERE opportunity_key=?
+                           AND event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                           AND json_extract(payload_json,'$.intentId')=?
+                           AND json_extract(payload_json,'$.threadId')=?
+                           AND json_extract(payload_json,'$.worktreePath')=?
+                           AND json_extract(payload_json,'$.resultDigest')=?
+                           AND json_extract(payload_json,'$.stage')='VALIDATION_PENDING'
+                           ORDER BY id DESC LIMIT 1""",
+                        (candidate["key"], *identity.values(), source["result_digest"]),
+                    ).fetchone()
+                if original_ingestion is None:
+                    continue
+                wake = str(original_ingestion["dedupe_key"])
+                preparation = store.historical_pr_followup_preparation(
+                    key=candidate["key"],
+                    task_id=identity["intentId"],
+                    thread_id=identity["threadId"],
+                    wake_digest=wake,
+                )
+                if (
+                    preparation is None
+                    or preparation.get("worktreePath") != identity["worktreePath"]
+                ):
+                    continue
+                followup = preparation["snapshot"]
+                publication = context.get("publicationReceipt") or {}
+                parent = str(followup.get("preparedHeadSha") or "")
+                authority = managed.published_pr_authority_for_opportunity(
+                    candidate["key"],
+                    pr_url=str(publication.get("prUrl") or ""),
+                    receipt_head_sha=str(publication.get("commitSha") or ""),
+                )
+                if (
+                    authority is None
+                    or authority.get("state") != "OPEN"
+                    or authority.get("pr_key") != source.get("pr_key")
+                    or authority.get("head_sha") != parent
+                    or followup.get("headSha") != parent
+                    or followup.get("prUrl") != authority.get("pr_url")
+                    or head == parent
+                ):
+                    continue
+                with _task_worktree_private_descriptor(candidate) as opened:
+                    raw = _read_task_result_bytes_from_private(opened)
+                    value = json.loads(raw)
+                    if (
+                        value.get("stage") != "PR_OPEN"
+                        or value.get("reason") != "FOLLOWUP_EVIDENCE_INCOMPLETE"
+                        or value.get("commitSha") != parent
+                        or value.get("headSha") != parent
+                        or value.get("taskId") != identity["intentId"]
+                        or any(
+                            value.get(k) != candidate.get(k)
+                            for k in ("key", "issueUrl", "threadId", "worktreePath")
+                        )
+                        or value.get("handoffMode")
+                        or value.get("changedFiles")
+                        or _local_changed_files(opened.worktree)
+                        or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree) != parent
+                        or _active_task_turn_for_result(candidate) is not None
+                    ):
+                        continue
+                    context_raw = _read_task_context_bytes_from_private(opened)
+                    physical, _at = _verified_private_task_context(
+                        opened.worktree,
+                        context_raw,
+                        os.stat(
+                            "task-context.json", dir_fd=opened.private_fd, follow_symlinks=False
+                        ),
+                    )
+                    if not _task_context_has_exact_ledger_binding(store, physical):
+                        continue
+                    current_wake = str(value.get("followupDigest") or "")
+                    if current_wake == wake or re.fullmatch(r"[0-9a-f]{64}", current_wake) is None:
+                        continue
+                    receipt_key = _task_turn_delivery_file_key(
+                        delivery_kind="pr-followup",
+                        thread_id=identity["threadId"],
+                        delivery_token=current_wake,
+                    )
+                    receipt_raw = _read_owned_regular_file(
+                        STATE / "task_turn_receipts" / f"{receipt_key}.json",
+                        label="overwritten PR turn receipt",
+                        reject_dangerous_writes=True,
+                    )
+                    receipt = json.loads(receipt_raw)
+                    _cwd, rollout = _validated_task_turn_thread(candidate)
+                    terminal = latest_thread_turn_state(rollout)
+                    if (
+                        receipt.get("ok") is not True
+                        or receipt.get("turnStatus") != "completed"
+                        or receipt.get("turnError")
+                        or receipt.get("error")
+                        or receipt.get("deliveryKind") != "pr-followup"
+                        or receipt.get("deliveryToken") != current_wake
+                        or receipt.get("threadId") != identity["threadId"]
+                        or not terminal
+                        or terminal.get("status") != "completed"
+                        or terminal.get("turnId") != receipt.get("turnId")
+                    ):
+                        continue
+                    journal_raw = _read_owned_regular_file(
+                        Path(str(rollout)),
+                        label="overwritten PR journal",
+                        reject_dangerous_writes=True,
+                    )
+                    with store.connect() as connection:
+                        rows = connection.execute(
+                            """SELECT id,payload_json FROM events WHERE opportunity_key=?
+                               AND event_type='PR_RESULT_SCHEMA_CORRECTION_AUTHORIZED'
+                               AND json_extract(payload_json,'$.intentId')=?
+                               AND json_extract(payload_json,'$.threadId')=?
+                               AND json_extract(payload_json,'$.worktreePath')=?
+                               AND json_extract(payload_json,'$.wakeDigest')=? ORDER BY id DESC""",
+                            (candidate["key"], *identity.values(), wake),
+                        ).fetchall()
+                        overwritten = connection.execute(
+                            """SELECT 1 FROM events WHERE opportunity_key=?
+                               AND event_type='PR_FOLLOWUP_RESULT_INGESTED' AND dedupe_key=?
+                               AND json_extract(payload_json,'$.intentId')=?
+                               AND json_extract(payload_json,'$.threadId')=?
+                               AND json_extract(payload_json,'$.worktreePath')=?
+                               AND json_extract(payload_json,'$.stage')='PR_OPEN'
+                               AND json_extract(payload_json,'$.resultDigest')=?""",
+                            (
+                                candidate["key"],
+                                current_wake,
+                                *identity.values(),
+                                hashlib.sha256(raw).hexdigest(),
+                            ),
+                        ).fetchone()
+                    if not rows or overwritten is None:
+                        continue
+                    event = rows[0]
+                    proof = json.loads(event["payload_json"])
+                    original_raw = base64.b64decode(proof["sourceResultBytesBase64"], validate=True)
+                    original = json.loads(original_raw)
+                    corrected = dict(original, schemaVersion=TASK_RESULT_SCHEMA)
+                    corrected_raw = _serialized_json(corrected)
+                    if (
+                        hashlib.sha256(original_raw).hexdigest() != proof.get("sourceRawDigest")
+                        or hashlib.sha256(corrected_raw).hexdigest()
+                        != proof.get("correctedRawDigest")
+                        or original.get("schemaVersion") != "workspace-result-v1"
+                        or original.get("stage") != "FIX_READY"
+                        or original.get("handoffMode") != "controller_commit_required"
+                        or original.get("commitSha") is not None
+                        or original.get("taskId") != identity["intentId"]
+                        or original.get("contextDigest") != proof.get("contextDigest")
+                        or original.get("followupDigest") != wake
+                        or original.get("headSha") != parent
+                        or original.get("previousControllerCommitSha") != parent
+                        or any(
+                            original.get(k) != candidate.get(k)
+                            for k in ("key", "issueUrl", "threadId", "worktreePath")
+                        )
+                        or any(
+                            original.get(k)
+                            for k in ("resultDigest", "reproductionReceipt", "probeReceipt")
+                        )
+                        or original.get("quality", {}).get("relevant_tests_green") is not False
+                        or original.get("quality", {}).get("independent_review_passed") is not False
+                    ):
+                        continue
+                    old_key = _task_turn_delivery_file_key(
+                        delivery_kind="pr-followup",
+                        thread_id=identity["threadId"],
+                        delivery_token=wake,
+                    )
+                    old_receipt_raw = _read_owned_regular_file(
+                        STATE / "task_turn_receipts" / f"{old_key}.json",
+                        label="original completed PR receipt",
+                        reject_dangerous_writes=True,
+                    )
+                    old_receipt = json.loads(old_receipt_raw)
+                    if (
+                        hashlib.sha256(old_receipt_raw).hexdigest()
+                        != proof.get("turnReceiptRawDigest")
+                        or old_receipt.get("ok") is not True
+                        or old_receipt.get("turnStatus") != "completed"
+                        or old_receipt.get("threadId") != identity["threadId"]
+                        or old_receipt.get("deliveryKind") != "pr-followup"
+                        or old_receipt.get("deliveryToken") != wake
+                        or old_receipt.get("turnId") != proof.get("turnId")
+                        or old_receipt.get("turnError")
+                        or old_receipt.get("error")
+                    ):
+                        continue
+                    # Later turns append to the same journal. Authenticate the
+                    # exact original byte prefix instead of trusting its latest digest.
+                    digest = hashlib.sha256()
+                    prefix_size = 0
+                    for line in journal_raw.splitlines(keepends=True):
+                        digest.update(line)
+                        prefix_size += len(line)
+                        if digest.hexdigest() == proof.get("journalRawDigest"):
+                            break
+                    else:
+                        continue
+                    records = [json.loads(line) for line in journal_raw[:prefix_size].splitlines()]
+                    if not any(
+                        r.get("type") == "session_meta"
+                        and (r.get("payload") or {}).get("id") == identity["threadId"]
+                        for r in records
+                    ):
+                        continue
+                    terminal_record = next(
+                        (
+                            r
+                            for r in reversed(records)
+                            if r.get("type") == "event_msg"
+                            and (r.get("payload") or {}).get("turn_id") == proof["turnId"]
+                            and (r.get("payload") or {}).get("type") == "task_complete"
+                        ),
+                        None,
+                    )
+                    if terminal_record is None or (terminal_record.get("payload") or {}).get(
+                        "error"
+                    ):
+                        continue
+                    branch = str(original.get("branch") or "")
+                    if (
+                        command(["git", "symbolic-ref", "--short", "HEAD"], cwd=opened.worktree)
+                        != branch
+                        or _merge_parents(opened.worktree, head) != [parent]
+                        or command(["git", "show", "-s", "--format=%s", head], cwd=opened.worktree)
+                        != original.get("commitMessage")
+                        or sorted(
+                            command(
+                                ["git", "show", "--pretty=format:", "--name-only", head],
+                                cwd=opened.worktree,
+                            ).splitlines()
+                        )
+                        != _validated_changed_files(original.get("changedFiles"))
+                    ):
+                        continue
+                    audit = {
+                        **identity,
+                        "sourceAuthorizationEventId": event["id"],
+                        "sourceResultDigest": source["result_digest"],
+                        "commitSha": head,
+                        "previousCommitSha": parent,
+                        "wakeDigest": wake,
+                        "overwrittenWakeDigest": current_wake,
+                        "overwrittenTurnId": receipt["turnId"],
+                        "overwrittenReceiptRawDigest": hashlib.sha256(receipt_raw).hexdigest(),
+                        "overwrittenRawDigest": hashlib.sha256(raw).hexdigest(),
+                        "overwrittenResultBytesBase64": base64.b64encode(raw).decode("ascii"),
+                        "originalJournalPrefixBytes": prefix_size,
+                    }
+                    if _read_task_result_bytes_from_private(
+                        opened
+                    ) != raw or _active_task_turn_for_result(candidate):
+                        continue
+                    projected_followup = context.get("prFollowup") or {}
+                    if (
+                        projected_followup.get("wakeDigest") != wake
+                        or projected_followup.get("preparedHeadSha") != parent
+                    ):
+                        raise RuntimeError("pending PR recovery lost its original preparation")
+                    with store.transaction() as connection:
+                        store._event(
+                            connection,
+                            candidate["key"],
+                            "PENDING_PR_COMMIT_RESTORATION_AUTHORIZED",
+                            sha256_json(audit),
+                            audit,
+                            iso_z(datetime.now(UTC)),
+                        )
+                    # Restore the already-ingested commit; the existing finalizer
+                    # verifies it rather than creating another implementation commit.
+                    command(["git", "switch", "--detach", head], cwd=opened.worktree)
+                    command(["git", "branch", "-f", branch, head], cwd=opened.worktree)
+                    _switch_controller_branch(opened.worktree, branch)
+                    path = write_task_context(
+                        store,
+                        issue_url=candidate["issueUrl"],
+                        thread_id=identity["threadId"],
+                        cwd=opened.worktree,
+                        _opportunity_guard_held=True,
+                    )
+                    current_context = json.loads(path.read_bytes())
+                    corrected["contextDigest"] = current_context["contextDigest"]
+                    finalized, _raw = _finalize_controller_commit(
+                        candidate=candidate,
+                        context=current_context,
+                        value=corrected,
+                        result_access=opened,
+                        managed_ledger=managed,
+                    )
+                    normalized, _raw = _bind_final_reproduction_receipt(
+                        candidate=candidate,
+                        context=current_context,
+                        value=finalized,
+                        result_access=opened,
+                        managed_ledger=managed,
+                    )
+                    restored.append(
+                        {
+                            "key": candidate["key"],
+                            "commitSha": head,
+                            "resultDigest": normalized["resultDigest"],
+                        }
+                    )
+        except (OSError, RuntimeError, ValueError, KeyError, sqlite3.Error) as exc:
+            errors.append({"key": str(candidate["key"]), "error": str(exc)[:300]})
+    return restored, errors
+
+
 def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     """Recover task state with exact worktree mirrors ahead of the singleton.
 
@@ -4243,10 +4606,11 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     immutable task binding can no longer mask the private context.
     """
 
+    pending_commits_restored, pending_commit_errors = _restore_overwritten_pending_pr_commits(store)
     restored: list[dict[str, Any]] = []
     unavailable: list[dict[str, Any]] = []
     quarantined: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = list(pending_commit_errors)
     private_errors: list[dict[str, str]] = []
     collisions: list[dict[str, Any]] = []
     identity_deferred: list[dict[str, Any]] = []
@@ -5006,6 +5370,7 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
         "verified": len(restored),
         "restored": restored,
         "resultReceiptsRestored": result_receipts_restored,
+        "pendingCommitsRestored": pending_commits_restored,
         "unavailable": unavailable,
         "quarantined": quarantined,
         "errors": errors,
@@ -5116,6 +5481,82 @@ def run_reproduction_probes(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True} | result
 
 
+def _preserve_complete_pr_feedback(
+    store: RadarLedger, incoming: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Do not downgrade exact same-head full feedback to an older summary format."""
+    items = []
+    preserved: list[str] = []
+    feedback_fields = (
+        "unresolvedReviewThreads",
+        "unansweredMaintainerComments",
+        "requestedChanges",
+    )
+    for item in incoming.get("items") or []:
+        if not isinstance(item, dict) or str(item.get("prState") or "OPEN").upper() != "OPEN":
+            items.append(item)
+            continue
+        evidence = item.get("evidence") or {}
+        with store.connect() as connection:
+            row = connection.execute(
+                """SELECT f.* FROM pr_followups f JOIN intents i ON i.intent_id=f.intent_id
+                     AND i.opportunity_key=f.opportunity_key AND i.thread_id=f.thread_id
+                     AND i.worktree_path=f.worktree_path
+                   WHERE f.pr_url=? AND f.head_sha=?""",
+                (item.get("url"), item.get("headSha")),
+            ).fetchone()
+        if row is None or not isinstance(evidence, dict):
+            items.append(item)
+            continue
+        current = dict(row)
+        complete = json.loads(current["evidence_json"])
+        if str(complete.get("prState") or "OPEN").upper() != "OPEN":
+            items.append(item)
+            continue
+        old_feedback = {
+            str(node.get("url")): node
+            for field in feedback_fields
+            for node in complete.get(field) or []
+            if isinstance(node, dict)
+            and node.get("url")
+            and isinstance(node.get("body"), str)
+            and node.get("body")
+            and node.get("bodyDigest") == hashlib.sha256(node["body"].encode("utf-8")).hexdigest()
+        }
+        downgraded = any(
+            isinstance(node, dict)
+            and node.get("url") in old_feedback
+            and node.get("summary")
+            and not node.get("body")
+            and not node.get("bodyDigest")
+            for field in feedback_fields
+            for node in evidence.get(field) or []
+        )
+        if not downgraded:
+            items.append(item)
+            continue
+        # Retain the complete observation, including its original time and
+        # digests. Never splice historical text into a newly observed digest.
+        items.append(
+            dict(
+                item,
+                headSha=current["head_sha"],
+                actionDigest=current["action_digest"],
+                taskActionDigest=current["task_action_digest"],
+                taskActions=json.loads(current["actions_json"]),
+                evidence=complete,
+                taskFollowupRequired=bool(current["followup_required"]),
+                checkedAt=current["checked_at"],
+            )
+        )
+        preserved.append(current["opportunity_key"])
+    if not preserved:
+        return incoming, []
+    filtered = dict(incoming, items=items)
+    filtered["digest"] = sha256_json({k: v for k, v in filtered.items() if k != "digest"})
+    return filtered, preserved
+
+
 def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
     queue = fetch_cloud_queue()
     signer = DispatchSigner(signing_key())
@@ -5223,6 +5664,9 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
                     "suspended": suspended,
                 }
             else:
+                followup, preserved_complete_feedback = _preserve_complete_pr_feedback(
+                    store, followup
+                )
                 managed_followup = ManagedAdapter(ROOT, path).record_followup(
                     followup,
                     {"run_id": (f"cloud-pr-followup:{followup.get('digest') or generated_at}")},
@@ -5231,6 +5675,7 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
                     "status": "imported",
                     "generatedAt": generated_at,
                     "ageMinutes": age_minutes,
+                    "preservedCompleteFeedback": preserved_complete_feedback,
                     "managedRecorded": managed_followup.get("recorded", 0),
                     "managedAdded": managed_followup.get("added", []),
                     "managedIgnored": managed_followup.get("ignored", []),

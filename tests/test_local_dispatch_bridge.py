@@ -31788,6 +31788,253 @@ def _ingested_pending_published_commit(tmp_path, monkeypatch):
     return store, worktree, result_path, pr_url
 
 
+@pytest.mark.parametrize("damaged_authority", [False, True])
+def test_original_recovery_restores_owned_pending_commit_after_duplicate_no_edit_turn(
+    tmp_path, monkeypatch, damaged_authority
+):
+    store, worktree, result_path, pr_url = _ingested_pending_published_commit(tmp_path, monkeypatch)
+    pending_raw = result_path.read_bytes()
+    pending = json.loads(pending_raw)
+    head = run_git(worktree, "rev-parse", "HEAD")
+    parent = run_git(worktree, "rev-parse", "HEAD^")
+    context = store.task_context(issue_url=pending["issueUrl"], thread_id="thread-1")
+    original_followup = context["prFollowup"]
+    now = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": parent,
+                    "actionDigest": "summary-only",
+                    "taskActionDigest": "summary-only",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["反馈摘要"],
+                    "evidence": original_followup["evidence"],
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    duplicate = store.pr_followup_candidates()[0]
+    wake = duplicate["wakeDigest"]
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=wake, prepared_head_sha=parent)
+    store.authorize_task_turn_delivery(
+        delivery_kind="pr-followup",
+        thread_id="thread-1",
+        delivery_token=wake,
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=wake)
+    # Reproduce the previous original preparer's destructive reset, in the isolated fixture.
+    run_git(worktree, "reset", "--hard", parent)
+    MODULE.write_task_context(
+        store, issue_url=pending["issueUrl"], thread_id="thread-1", cwd=worktree
+    )
+    overwrite = {
+        "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+        "key": "a/b#1",
+        "issueUrl": pending["issueUrl"],
+        "taskId": "intent-1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree),
+        "stage": "PR_OPEN",
+        "reason": "FOLLOWUP_EVIDENCE_INCOMPLETE",
+        "headSha": parent,
+        "commitSha": parent,
+        "followupDigest": wake,
+        "contextDigest": pending["contextDigest"],
+        "evidence": {"userActionRequired": False},
+    }
+    result_path.write_text(json.dumps(overwrite))
+    overwrite_raw = result_path.read_bytes()
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=wake,
+        result_digest=hashlib.sha256(overwrite_raw).hexdigest(),
+        stage="PR_OPEN",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=str(worktree),
+    )
+    journal = tmp_path / "completed-original-pr.jsonl"
+    with journal.open("a") as stream:
+        for kind in ("task_started", "task_complete"):
+            stream.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": iso_z(datetime.now(UTC)),
+                        "payload": {"type": kind, "turn_id": "duplicate-no-edit"},
+                    }
+                )
+                + "\n"
+            )
+    key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="pr-followup", thread_id="thread-1", delivery_token=wake
+    )
+    MODULE._atomic_private_json(
+        MODULE.STATE / "task_turn_receipts" / f"{key}.json",
+        {
+            "ok": True,
+            "deliveryKind": "pr-followup",
+            "deliveryToken": wake,
+            "threadId": "thread-1",
+            "turnId": "duplicate-no-edit",
+            "turnStatus": "completed",
+        },
+    )
+    if damaged_authority:
+        old_key = MODULE._task_turn_delivery_file_key(
+            delivery_kind="pr-followup",
+            thread_id="thread-1",
+            delivery_token=pending["followupDigest"],
+        )
+        old_receipt = MODULE.STATE / "task_turn_receipts" / f"{old_key}.json"
+        old_receipt.write_bytes(old_receipt.read_bytes() + b" ")
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    if damaged_authority:
+        assert recovered["pendingCommitsRestored"] == [], recovered
+        assert result_path.read_bytes() == overwrite_raw
+        assert run_git(worktree, "rev-parse", "HEAD") == parent
+        return
+    restored = json.loads(result_path.read_bytes())
+    assert recovered["pendingCommitsRestored"], recovered
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    assert restored["commitSha"] == head and restored["previousCommitSha"] == parent
+    assert restored["followupDigest"] == pending["followupDigest"]
+    assert restored["handoffMode"] == "controller_commit_complete"
+    assert restored["quality"]["relevant_tests_green"] is False
+    assert restored["quality"]["independent_review_passed"] is False
+    MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["ok"] and ingested["publicationRequests"] == [], ingested
+    assert store.active_task_quarantine("a/b#1") is None
+    held = MODULE._pending_committed_pr_validation(store, duplicate)
+    assert held and held["commitSha"] == head
+    assert (
+        MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))["pendingCommitsRestored"]
+        == []
+    )
+    with store.connect() as connection:
+        audit = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='PENDING_PR_COMMIT_RESTORATION_AUTHORIZED'"
+            ).fetchone()[0]
+        )
+        assert base64.b64decode(audit["overwrittenResultBytesBase64"]) == overwrite_raw
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("incoming_kind", ["summary", "new-head", "closed", "complete", "resolved"])
+def test_original_sync_keeps_complete_same_head_feedback_without_masking_new_state(
+    tmp_path, monkeypatch, incoming_kind
+):
+    store, worktree, result_path, pr_url = _ingested_pending_published_commit(tmp_path, monkeypatch)
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    old = context["prFollowup"]
+    body = "完整可执行的反馈正文，不是短摘要。"
+    node = {
+        "url": pr_url + "#discussion-r1",
+        "body": body,
+        "bodyDigest": hashlib.sha256(body.encode()).hexdigest(),
+        "summary": body[:4],
+    }
+    evidence = dict(
+        old["evidence"],
+        prState="OPEN",
+        headSha=old["headSha"],
+        unresolvedReviewThreads=[node],
+        unansweredMaintainerComments=[],
+        requestedChanges=[],
+    )
+    checked = iso_z(datetime.now(UTC))
+    full = {
+        "key": "a/b#9",
+        "url": pr_url,
+        "headSha": old["headSha"],
+        "actionDigest": "complete-action",
+        "taskActionDigest": "complete-task",
+        "taskFollowupRequired": True,
+        "taskActions": ["完整反馈"],
+        "evidence": evidence,
+        "prState": "OPEN",
+        "checkedAt": checked,
+    }
+    store.import_pr_followups(
+        {"version": "pr_followup_v3", "generatedAt": checked, "items": [full]}
+    )
+    before = store.pr_followup_candidates()[0]
+    incoming = dict(
+        full,
+        actionDigest="incoming-action",
+        taskActionDigest="incoming-task",
+        checkedAt=iso_z(datetime.now(UTC)),
+        evidence=dict(
+            evidence, unresolvedReviewThreads=[{"url": node["url"], "summary": node["summary"]}]
+        ),
+    )
+    if incoming_kind == "new-head":
+        incoming["headSha"] = "f" * 40
+        incoming["evidence"]["headSha"] = incoming["headSha"]
+    elif incoming_kind == "closed":
+        incoming["prState"] = "CLOSED"
+        incoming["evidence"]["prState"] = "CLOSED"
+    elif incoming_kind == "complete":
+        new_body = body + "有新的修改要求。"
+        incoming["evidence"]["unresolvedReviewThreads"] = [
+            dict(node, body=new_body, bodyDigest=hashlib.sha256(new_body.encode()).hexdigest())
+        ]
+    elif incoming_kind == "resolved":
+        incoming["evidence"]["unresolvedReviewThreads"] = []
+        incoming["taskFollowupRequired"] = False
+        incoming["taskActions"] = []
+    remote = _signed_dispatch_queue(
+        scanner_version=_superseded_scanner_revision(), include_intent=False
+    )
+    monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: remote)
+    monkeypatch.setattr(
+        MODULE,
+        "recover_shared_task_contexts",
+        lambda _store: {"errors": [], "unavailable": [], "quarantined": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "fetch_cloud_pr_followup",
+        lambda: {
+            "version": "pr_followup_v3",
+            "generatedAt": incoming["checkedAt"],
+            "items": [incoming],
+        },
+    )
+    raw = result_path.read_bytes()
+    head = run_git(worktree, "rev-parse", "HEAD")
+    synced = MODULE.sync_queue(store.path)
+    assert synced["ok"], synced
+    with store.connect() as connection:
+        current = dict(
+            connection.execute(
+                "SELECT * FROM pr_followups WHERE opportunity_key='a/b#1'"
+            ).fetchone()
+        )
+    if incoming_kind == "summary":
+        assert synced["prFollowup"]["preservedCompleteFeedback"] == ["a/b#1"]
+        assert current["task_action_digest"] == "complete-task"
+        assert current["wake_digest"] == before["wakeDigest"]
+        assert current["checked_at"] == checked
+        assert json.loads(current["evidence_json"])["unresolvedReviewThreads"] == [node]
+    else:
+        assert synced["prFollowup"]["preservedCompleteFeedback"] == []
+        assert current["task_action_digest"] == "incoming-task"
+        assert current["head_sha"] == incoming["headSha"]
+        assert json.loads(current["evidence_json"]) == incoming["evidence"]
+    assert result_path.read_bytes() == raw
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+
+
 def test_pending_published_commit_keeps_original_validation_when_feedback_changes(
     tmp_path, monkeypatch
 ):
