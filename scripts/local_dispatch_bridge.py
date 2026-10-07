@@ -4713,6 +4713,223 @@ def _refresh_published_validation_resource_binding(
         os.close(fd)
 
 
+def _rearm_refreshed_published_validation_projection(
+    store: RadarLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    opened: _ValidationWorktreeDirectory,
+) -> bool:
+    """Carry an unconsumed prepared-HEAD retry through its exact formal metadata refresh.
+
+    The original caller holds the opportunity guard. No native result, check
+    outcome or quality claim changes; the authorized retry still has to run.
+    """
+    checks = value.get("controllerFormalChecks")
+    if (
+        not isinstance(checks, dict)
+        or checks.get("reason") != "FRESH_NATIVE_CORE_VALIDATION_REQUIRED"
+        or _active_task_turn_for_result(candidate) is not None
+    ):
+        return False
+    with store.connect() as connection:
+        row = connection.execute(
+            """SELECT id,payload_json FROM events WHERE opportunity_key=?
+               AND event_type='PUBLISHED_VALIDATION_INPUT_RESTORATION_AUTHORIZED'
+               AND json_extract(payload_json,'$.intentId')=?
+               AND json_extract(payload_json,'$.threadId')=?
+               AND json_extract(payload_json,'$.worktreePath')=? ORDER BY id DESC LIMIT 1""",
+            (
+                candidate["key"],
+                candidate["intentId"],
+                candidate["threadId"],
+                candidate["worktreePath"],
+            ),
+        ).fetchone()
+        if row is None:
+            return False
+        audit = json.loads(row["payload_json"])
+        sent_after = connection.execute(
+            """SELECT 1 FROM events WHERE opportunity_key=? AND id>?
+               AND event_type IN ('VALIDATION_FOLLOWUP_RESERVED',
+                   'TASK_TURN_DELIVERY_STARTED','VALIDATION_FOLLOWUP_SENT')
+               AND (event_type<>'TASK_TURN_DELIVERY_STARTED'
+                    OR json_extract(payload_json,'$.deliveryKind')='validation-followup')
+               AND json_extract(payload_json,'$.intentId')=?
+               AND json_extract(payload_json,'$.threadId')=?
+               AND json_extract(payload_json,'$.worktreePath')=? LIMIT 1""",
+            (
+                candidate["key"],
+                row["id"],
+                candidate["intentId"],
+                candidate["threadId"],
+                candidate["worktreePath"],
+            ),
+        ).fetchone()
+    if sent_after is not None:
+        return False
+    source_digest = str(audit["resultDigest"])
+    reservation = str(audit["reservationDigest"])
+    binding = store.validation_followup_delivery_binding(
+        thread_id=candidate["threadId"],
+        result_digest=source_digest,
+        reservation_digest=reservation,
+        **_ledger_binding_kwargs(candidate),
+    )
+    if not binding:
+        return False
+    source_raw = _validation_snapshot_bytes(
+        candidate=candidate | {"resultDigest": source_digest},
+        reservation_digest=reservation,
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+    )
+    source = json.loads(source_raw)
+    source_checks = source.get("controllerFormalChecks")
+    if (
+        not isinstance(source_checks, dict)
+        or source_checks.get("reason") != "COMPLETED_IMMUTABLE_VALIDATION_INPUT_REQUIRED"
+        or source.get("resultDigest") != source_digest
+    ):
+        return False
+    original = dict(source)
+    derived = dict(value, controllerFormalChecks=dict(checks, reason=source_checks["reason"]))
+    for item in (original, derived):
+        for name in ("reproductionReceipt", "probeReceipt", "resultDigest"):
+            item.pop(name, None)
+    if original != derived:
+        return False
+    raw = _read_task_result_bytes_from_private(opened)
+    if json.loads(raw) != value:
+        return False
+    digest = _task_result_digest(value, raw)
+    if digest == source_digest or value.get("resultDigest") != digest:
+        return False
+    receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+    issue = ISSUE_URL.fullmatch(candidate["issueUrl"])
+    if (
+        not isinstance(receipt, dict)
+        or issue is None
+        or not verify_probe_receipt(
+            receipt,
+            repo=issue.group(1),
+            base_sha=value.get("selectedBaseSha"),
+            code_paths=value.get("codePaths"),
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=candidate["issueUrl"],
+            task_id=candidate["intentId"],
+            thread_id=candidate["threadId"],
+            head_sha=value.get("headSha"),
+            commit_sha=value.get("commitSha"),
+            result_digest=digest,
+            enforce_freshness=False,
+        )
+    ):
+        return False
+    _cwd, rollout = _validated_task_turn_thread(candidate)
+    terminal = latest_thread_turn_state(rollout)
+    if (
+        not terminal
+        or terminal.get("status") != "completed"
+        or terminal.get("turnId") != audit["turnId"]
+    ):
+        return False
+    proof = _refresh_published_validation_resource_binding(
+        store, candidate=candidate, context=context, source=source, opened=opened
+    )
+    if proof is None or any(audit.get(key) != item for key, item in proof.items()):
+        return False
+    with store.connect() as connection:
+        source_rearm = connection.execute(
+            """SELECT payload_json FROM events WHERE opportunity_key=?
+               AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED' AND id>?
+               AND json_extract(payload_json,'$.intentId')=?
+               AND json_extract(payload_json,'$.threadId')=?
+               AND json_extract(payload_json,'$.worktreePath')=?
+               AND json_extract(payload_json,'$.resultDigest')=?
+               AND json_extract(payload_json,'$.reason')='PREPARED_VALIDATION_HEAD_BINDING_REFRESHED'
+               ORDER BY id DESC LIMIT 1""",
+            (
+                candidate["key"],
+                row["id"],
+                candidate["intentId"],
+                candidate["threadId"],
+                candidate["worktreePath"],
+                source_digest,
+            ),
+        ).fetchone()
+    if source_rearm is None or json.loads(source_rearm[0]).get("reviewMarker") != sha256_json(
+        proof
+    ):
+        return False
+    transfer = {
+        **{key: candidate[key] for key in ("intentId", "threadId", "worktreePath")},
+        "sourceProofMarker": sha256_json(proof),
+        "sourceResultDigest": source_digest,
+        "resultDigest": digest,
+        "sourceRawDigest": binding["snapshotDigest"],
+        "derivedRawDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    marker = sha256_json(transfer)
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            candidate["key"],
+            "PUBLISHED_VALIDATION_PROJECTION_REFRESH_AUTHORIZED",
+            marker,
+            transfer,
+            iso_z(datetime.now(UTC)),
+        )
+    return store.rearm_validation_no_progress_for_review(
+        key=candidate["key"],
+        result_digest=digest,
+        review_marker=marker,
+        reason="PREPARED_VALIDATION_HEAD_BINDING_REFRESHED",
+        **_ledger_binding_kwargs(candidate),
+    )
+
+
+def _recover_refreshed_published_validation_projections(store: RadarLedger) -> list[dict[str, str]]:
+    with store.connect() as connection:
+        rows = connection.execute(
+            "SELECT payload_json FROM events "
+            "WHERE event_type='PUBLISHED_VALIDATION_INPUT_RESTORATION_AUTHORIZED'"
+        ).fetchall()
+    authorized = {
+        (item.get("intentId"), item.get("threadId"), item.get("worktreePath"))
+        for item in (json.loads(row[0]) for row in rows)
+    }
+    errors: list[dict[str, str]] = []
+    for candidate in store.task_context_candidates():
+        if (
+            candidate.get("stage") not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+            or tuple(candidate.get(key) for key in ("intentId", "threadId", "worktreePath"))
+            not in authorized
+        ):
+            continue
+        try:
+            with opportunity_action_guard(ledger_action_guard_root(store.path), candidate["key"]):
+                if _active_task_turn_for_result(candidate) is not None:
+                    continue
+                with _task_worktree_private_descriptor(candidate) as opened:
+                    value = json.loads(_read_task_result_bytes_from_private(opened))
+                    checks = value.get("controllerFormalChecks")
+                    if (
+                        not isinstance(checks, dict)
+                        or checks.get("reason") != "FRESH_NATIVE_CORE_VALIDATION_REQUIRED"
+                    ):
+                        continue
+                    context = json.loads(_read_task_context_bytes_from_private(opened))
+                    _rearm_refreshed_published_validation_projection(
+                        store, candidate=candidate, context=context, value=value, opened=opened
+                    )
+        except (OSError, RuntimeError, ValueError, KeyError, sqlite3.Error) as exc:
+            errors.append({"key": str(candidate["key"]), "error": str(exc)[:300]})
+    return errors
+
+
 def _restore_stale_published_validation_input(
     store: RadarLedger,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
@@ -4953,6 +5170,7 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     """
 
     stale_inputs_restored, stale_input_errors = _restore_stale_published_validation_input(store)
+    stale_input_errors.extend(_recover_refreshed_published_validation_projections(store))
     pending_commits_restored, pending_commit_errors = _restore_overwritten_pending_pr_commits(store)
     pending_commits_restored.extend(stale_inputs_restored)
     pending_commit_errors.extend(stale_input_errors)
@@ -28008,6 +28226,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         missing=missing,
                         progress_marker=_validation_progress_marker(value),
                         **_ledger_binding_kwargs(candidate),
+                    )
+                    _rearm_refreshed_published_validation_projection(
+                        store,
+                        candidate=candidate,
+                        context=context,
+                        value=value,
+                        opened=result_access,
                     )
                     store.record_stage(
                         candidate["key"],

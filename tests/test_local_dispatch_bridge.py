@@ -39990,11 +39990,29 @@ def test_completed_dirty_handoff_keeps_real_completion_and_parent_rejections(
         assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
 
 
-@pytest.mark.parametrize("damaged", [False, True])
+@pytest.mark.parametrize(
+    ("damaged", "recovery_only"), [(False, False), (False, True), (True, False)]
+)
 def test_original_recovery_refreshes_stale_published_validation_resources(
-    tmp_path, monkeypatch, damaged
+    tmp_path, monkeypatch, damaged, recovery_only
 ):
     store, worktree, result_path, _pr = _ingested_pending_published_commit(tmp_path, monkeypatch)
+    candidate = store.task_context_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_bytes())
+    value = json.loads(result_path.read_bytes())
+    value["controllerFormalChecks"] = {
+        "status": "blocked",
+        "reason": "COMPLETED_IMMUTABLE_VALIDATION_INPUT_REQUIRED",
+    }
+    with MODULE._task_worktree_private_descriptor(candidate) as opened:
+        MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=opened,
+            managed_ledger=ManagedLedger(store.path),
+        )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
     pending = store.validation_followup_candidates()[0]
     reserved = MODULE.validation_followup_reserve(
         SimpleNamespace(
@@ -40167,6 +40185,58 @@ def test_original_recovery_refreshes_stale_published_validation_resources(
     assert source["quality"]["relevant_tests_green"] is False
     assert source["quality"]["independent_review_passed"] is False
     assert store.validation_followup_candidates(), recovered
+    # The real controller's formal refresh changed only this blocked reason
+    # after the restored input expired, producing a distinct signed result.
+    derived = dict(
+        source,
+        controllerFormalChecks={
+            **source["controllerFormalChecks"],
+            "reason": "FRESH_NATIVE_CORE_VALIDATION_REQUIRED",
+        },
+    )
+    candidate = store.task_context_candidates()[0]
+    with MODULE._task_worktree_private_descriptor(candidate) as opened:
+        MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=derived,
+            result_access=opened,
+            managed_ledger=ManagedLedger(store.path),
+        )
+    with monkeypatch.context() as old_runtime:
+        if recovery_only:
+            old_runtime.setattr(
+                MODULE, "_rearm_refreshed_published_validation_projection", lambda *_a, **_k: False
+            )
+        ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["ok"], ingested
+    derived_raw = result_path.read_bytes()
+    derived_value = json.loads(derived_raw)
+    assert derived_value["resultDigest"] != pending["resultDigest"]
+    assert derived_value["tests"] == source["tests"]
+    assert derived_value["quality"] == source["quality"]
+    if recovery_only:
+        assert not store.validation_followup_candidates()
+        recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+        assert recovered["ok"], recovered
+    next_pending = store.validation_followup_candidates()[0]
+    assert next_pending["validationResourceBindingRefresh"]
+    assert next_pending["resultDigest"] == derived_value["resultDigest"]
+    # Also exercise an already ingested projection, as in the deployed run.
+    with store.connect() as connection:
+        transferred = connection.execute(
+            "SELECT count(*) FROM events WHERE event_type='PUBLISHED_VALIDATION_PROJECTION_REFRESH_AUTHORIZED'"
+        ).fetchone()[0]
+    MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM events WHERE event_type='PUBLISHED_VALIDATION_PROJECTION_REFRESH_AUTHORIZED'"
+            ).fetchone()[0]
+            == transferred
+            == 1
+        )
+    pending = next_pending
     next_result = MODULE.validation_followup_reserve(
         SimpleNamespace(
             ledger=store.path,
@@ -40257,4 +40327,4 @@ def test_original_recovery_refreshes_stale_published_validation_resources(
         ).fetchone()
     assert base64.b64decode(json.loads(event[0])["failedResultBytesBase64"]) == failed_raw
     MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
-    assert result_path.read_bytes() == source_raw
+    assert result_path.read_bytes() == derived_raw
