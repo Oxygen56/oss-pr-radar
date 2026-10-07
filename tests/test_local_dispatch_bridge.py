@@ -2760,6 +2760,120 @@ def test_codex_decision_prompt_forbids_subtask_fanout():
     assert "不要创建子任务、子 Agent 或委派其他会话" in prompt
 
 
+def test_codex_decision_legacy_binding_is_reused_after_automatic_prompt_change(monkeypatch):
+    event = _codex_decision_outbox()["events"][0]
+    prompt = MODULE._legacy_codex_decision_prompt(event)
+    binding = {
+        "threadId": "legacy-thread",
+        "candidateKey": event["candidateKey"],
+        "notificationDigest": event["notificationDigest"],
+        "projectId": "github",
+        "promptDigest": sha256_json(MODULE.canonical_prompt(prompt)),
+    }
+    monkeypatch.setattr(
+        MODULE, "_read_codex_decision_bindings", lambda: {"events": {event["eventId"]: binding}}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_codex_decision_thread",
+        lambda _id: {
+            "prompt": prompt,
+            "cwd": str(MODULE.GITHUB_ROOT),
+            "threadSource": "appServer",
+            "projectId": "github",
+            "archived": 0,
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_recover_codex_decision_thread",
+        lambda *_a, **_k: pytest.fail("must reuse existing task"),
+    )
+
+    assert MODULE._existing_codex_decision_binding(event, project_id="github") is binding
+
+
+def test_completed_legacy_candidate_title_reconciles_without_current_outbox(monkeypatch):
+    prompt = "这是已绑定的历史候选核查。"
+    binding = {
+        "threadId": "legacy-thread",
+        "projectId": "github",
+        "promptDigest": sha256_json(MODULE.canonical_prompt(prompt)),
+        "desiredTitle": "[有价值·待决策] 10-01 12:00 a/b#1 Candidate",
+    }
+    monkeypatch.setattr(
+        MODULE, "_read_codex_decision_bindings", lambda: {"events": {"old-event": binding}}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_codex_decision_thread",
+        lambda _id: {
+            "prompt": prompt,
+            "cwd": str(MODULE.GITHUB_ROOT),
+            "threadSource": "appServer",
+            "projectId": "github",
+            "archived": 0,
+            "title": binding["desiredTitle"],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "persisted_thread_turn_state",
+        lambda _id: {"status": "completed", "turnId": "finished"},
+    )
+    applied = []
+    monkeypatch.setattr(
+        MODULE, "_ensure_desktop_thread_title", lambda _id, title: applied.append(title)
+    )
+
+    result = MODULE._reconcile_codex_decision_titles()
+
+    assert result["deferred"] == []
+    assert applied == ["[候选已评估] 10-01 12:00 a/b#1 Candidate"]
+    assert result["renamed"][0]["threadId"] == "legacy-thread"
+
+
+def test_stopped_reproduction_title_requires_current_exact_block_and_terminal_turn(
+    monkeypatch, tmp_path
+):
+    store, worktree = registered_store(tmp_path)
+    binding = store.title_bindings()[0]
+    context_path = MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    raw = b'{"reason":"REPRODUCTION_ENVIRONMENT_BLOCKED","reproductionVerified":false}'
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    result_path.write_bytes(raw)
+    result_path.chmod(0o600)
+    block_key = MODULE._task_result_evidence_block_key(binding, raw, context_path.read_bytes())
+    managed = ManagedLedger(store.path)
+    managed.record_event(
+        event_type="TASK_RESULT_EVIDENCE_BLOCKED",
+        idempotency_key=block_key,
+        opportunity_key=binding["key"],
+        task_id=binding["intentId"],
+        state="DISPATCHED",
+        source="result-ingestion",
+        provenance={"threadId": binding["threadId"]},
+        payload={"reason": "REPRODUCTION_ENVIRONMENT_BLOCKED"},
+    )
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _id: {"status": "completed"})
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _binding: None)
+    assert MODULE._task_title_display_state(store, binding) == "REPRODUCTION_BLOCKED"
+
+    monkeypatch.setattr(
+        MODULE, "_active_task_turn_for_result", lambda _binding: {"turnId": "new-turn"}
+    )
+    assert MODULE._task_title_display_state(store, binding) == "GO"
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _binding: None)
+    result_path.write_bytes(b'{"reason":"NEW_RESULT"}')
+    assert MODULE._task_title_display_state(store, binding) == "TURN_COMPLETED"
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _id: {"status": "failed"})
+    assert MODULE._task_title_display_state(store, binding) == "TURN_FAILED"
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _id: None)
+    assert MODULE._task_title_display_state(store, binding) == "GO"
+
+
 def test_codex_decision_dispatch_creates_once_and_reuses_session(monkeypatch, tmp_path):
     outbox = _codex_decision_outbox()
     event = outbox["events"][0]
@@ -3108,7 +3222,8 @@ def test_codex_decision_worker_creates_and_titles_independent_task(monkeypatch, 
     assert app_server_argv[app_server_argv.index("multi_agent") - 1] == "--disable"
     assert app_server_argv[app_server_argv.index("multi_agent_v2") - 1] == "--disable"
     assert desired_titles == [
-        ("thread-1", "[有价值·待决策] 08-23 12:00 owner/repo#1 需要决定是否继续")
+        ("thread-1", "[候选自动评估中] 08-23 12:00 owner/repo#1 需要决定是否继续"),
+        ("thread-1", "[候选已评估] 08-23 12:00 owner/repo#1 需要决定是否继续"),
     ]
     assert result["threadId"] == "thread-1"
     assert result["turnStatus"] == "completed"
@@ -15409,6 +15524,75 @@ def test_context_sync_closes_legacy_reservation_superseded_by_later_result(tmp_p
     ]
     assert store.active_pr_followup_preparation("a/b#1", thread_id="thread-1") is None
     assert (worktree / ".oss-pr-radar" / "task-context.json").is_file()
+
+
+def test_context_sync_isolates_published_git_path_error_and_continues_other_task(
+    monkeypatch, tmp_path
+):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    original_candidates = store.task_context_candidates()
+    blocked = original_candidates[0]
+    other = {**blocked, "key": "a/other#2", "issueUrl": "https://github.com/a/other/issues/2"}
+    monkeypatch.setattr(store, "task_context_candidates", lambda: [blocked, other])
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "_task_live_audit_refresh_due", lambda _context: False)
+    monkeypatch.setattr(
+        MODULE, "_controller_commit_result_pending_ingestion", lambda *_a, **_k: False
+    )
+    context = store.task_context(issue_url=blocked["issueUrl"], thread_id=blocked["threadId"])
+    monkeypatch.setattr(store, "task_context", lambda **_kwargs: context)
+    calls = []
+
+    def write_context(_store, *, issue_url, **_kwargs):
+        calls.append(issue_url)
+        if issue_url == blocked["issueUrl"]:
+            try:
+                raise MODULE.ProbeUnavailable(
+                    "CODE_PATH_NOT_INDEXABLE",
+                    diagnostics={
+                        "operation": "git-add-dry-run",
+                        "exitCode": 128,
+                        "stderr": "index.lock",
+                    },
+                )
+            except MODULE.ProbeUnavailable as exc:
+                raise RuntimeError(f"task code paths are not indexable: {exc}") from exc
+        return worktree / ".oss-pr-radar" / "task-context.json"
+
+    monkeypatch.setattr(MODULE, "write_task_context", write_context)
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] and synced["errors"] == []
+    assert calls == [blocked["issueUrl"], other["issueUrl"]]
+    assert synced["written"][0]["key"] == "a/other#2"
+    assert synced["isolatedFollowups"] == [
+        {
+            "key": blocked["key"],
+            "reason": "CODE_PATH_NOT_INDEXABLE",
+            "diagnostics": {
+                "operation": "git-add-dry-run",
+                "exitCode": 128,
+                "stderr": "index.lock",
+            },
+        }
+    ]
+
+
+def test_context_sync_keeps_non_task_specific_error_as_failure(monkeypatch, tmp_path):
+    store, _worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    monkeypatch.setattr(MODULE, "_task_live_audit_refresh_due", lambda _context: False)
+    monkeypatch.setattr(
+        MODULE, "_controller_commit_result_pending_ingestion", lambda *_a, **_k: False
+    )
+
+    def fail_write(*_args, **_kwargs):
+        raise RuntimeError("controller signing key unavailable")
+
+    monkeypatch.setattr(MODULE, "write_task_context", fail_write)
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert not synced["ok"]
+    assert synced["isolatedFollowups"] == []
+    assert synced["errors"] == [{"key": "a/b#1", "error": "controller signing key unavailable"}]
 
 
 @pytest.mark.parametrize("reason", ["STRONG_EXISTING_PR", "ACTIVE_OR_CONDITIONAL_CLAIM"])

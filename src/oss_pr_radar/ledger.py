@@ -4230,13 +4230,49 @@ class RadarLedger:
                           CASE
                             WHEN o.stage='AUDIT_NO_GO' THEN 'AUDIT_NO_GO'
                             WHEN o.stage='MERGED' THEN 'MERGED'
-                            WHEN o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED','CLOSED')
+                            WHEN o.stage='CLOSED' THEN 'CLOSED'
+                            WHEN o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
                               THEN 'PR_OPEN'
                             WHEN EXISTS (
                               SELECT 1 FROM publication_requests p
                               WHERE p.opportunity_key=o.key
                                 AND p.status IN ('PENDING','GRANTED')
                             ) THEN 'PUBLICATION_REQUEST'
+                            WHEN o.stage='VALIDATION_PENDING' AND EXISTS (
+                              SELECT 1 FROM events stopped
+                              WHERE stopped.opportunity_key=o.key
+                                AND stopped.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                                AND {_intent_event_binding_clause("i", "stopped")}
+                                AND json_extract(stopped.payload_json,'$.intentId')=i.intent_id
+                                AND json_extract(stopped.payload_json,'$.threadId')=i.thread_id
+                                AND json_extract(stopped.payload_json,'$.worktreePath')=
+                                    i.worktree_path
+                                AND json_extract(stopped.payload_json,'$.reason')=
+                                    'UNCHANGED_VALIDATION_GAP'
+                                AND json_extract(stopped.payload_json,'$.resultDigest')=
+                                    stopped.dedupe_key
+                                AND stopped.dedupe_key=(
+                                  SELECT json_extract(deferred.payload_json,'$.resultDigest')
+                                  FROM events deferred
+                                  WHERE deferred.opportunity_key=o.key
+                                    AND deferred.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                                    AND {_intent_event_binding_clause("i", "deferred")}
+                                  ORDER BY deferred.id DESC LIMIT 1
+                                )
+                                AND NOT EXISTS (
+                                  SELECT 1 FROM events continued
+                                  WHERE continued.opportunity_key=o.key
+                                    AND {_intent_event_binding_clause("i", "continued")}
+                                    AND continued.id>stopped.id
+                                    AND continued.event_type IN (
+                                      'TASK_RESULT_VALIDATION_DEFERRED',
+                                      'VALIDATION_FOLLOWUP_NO_PROGRESS',
+                                      'VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED',
+                                      'VALIDATION_FOLLOWUP_RESERVED','VALIDATION_FOLLOWUP_SENT',
+                                      'THREAD_RECOVERY_RESERVED','THREAD_RECOVERY_SENT'
+                                    )
+                                )
+                            ) THEN 'VALIDATION_BLOCKED'
                             WHEN o.stage='VALIDATION_PENDING' THEN 'VALIDATION_PENDING'
                             WHEN o.stage='FIX_READY' THEN 'FIX_READY'
                             ELSE 'GO'

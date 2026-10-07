@@ -297,6 +297,18 @@ def _isolatable_pr_followup_path_error(error: BaseException) -> str | None:
     return None
 
 
+def _task_path_error_diagnostics(error: BaseException) -> dict[str, Any] | None:
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        diagnostics = getattr(current, "diagnostics", None)
+        if isinstance(diagnostics, dict):
+            return diagnostics
+        current = current.__cause__ or current.__context__
+    return None
+
+
 def _task_result_evidence_block_key(
     candidate: dict[str, Any], result_raw: bytes, context_raw: bytes
 ) -> str:
@@ -479,6 +491,14 @@ TITLE_PREFIXES = {
     "PUBLICATION_REQUEST": "[有价值·准备提交]",
     "PR_OPEN": "[有价值·PR已开]",
     "MERGED": "[有价值·已合并]",
+    "CLOSED": "[PR已关闭]",
+    "VALIDATION_BLOCKED": "[验证已停止]",
+    "WORK_BLOCKED": "[处理已停止]",
+    "REPRODUCTION_BLOCKED": "[复现受阻]",
+    "TURN_COMPLETED": "[本轮已结束]",
+    "VALIDATION_RETURNED": "[本轮已结束·待验证]",
+    "TURN_FAILED": "[本轮执行失败]",
+    "TURN_INTERRUPTED": "[本轮已停止]",
 }
 PR_STAGE_PRIORITY = {
     "PR_OPEN": 1,
@@ -10156,7 +10176,7 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
     raise RuntimeError("root task creation result is unknown; orphan reconciliation required")
 
 
-def _codex_decision_prompt(event: dict[str, Any]) -> str:
+def _legacy_codex_decision_prompt(event: dict[str, Any]) -> str:
     issue_url = _issue_url_from_key(str(event.get("candidateKey") or ""))
     return "\n".join(
         (
@@ -10174,6 +10194,38 @@ def _codex_decision_prompt(event: dict[str, Any]) -> str:
     )
 
 
+def _codex_decision_prompt(event: dict[str, Any]) -> str:
+    issue_url = _issue_url_from_key(str(event.get("candidateKey") or ""))
+    return "\n".join(
+        (
+            "这是 OSS PR Radar 创建的候选核查会话，不是代码实施任务。",
+            "",
+            f"候选：{issue_url}",
+            f"事项：{event['title']}",
+            f"当前原因：{event['reason']}",
+            f"建议下一步：{event['nextAction']}",
+            "",
+            "请读取完整 issue、评论、仓库规则和相关 PR，自行查清缺少的技术事实并给出本次核查的最终结论。",
+            "技术路线、复现办法和已有 PR 的覆盖比较由你判断，不要要求用户决定是否继续。",
+            "区分可以自动继续的工作、已有实现覆盖而不再实施的工作，以及等待维护者或前置依赖的工作；明确依据。",
+            "只有即将发生的具体对外发送、法律、身份或 AI 声明才列出缺少的授权；这不能阻止其余只读查证。",
+            "不要创建子任务、子 Agent 或委派其他会话；只在当前会话内完成这次只读判断。",
+            "不要修改代码、公开评论或创建 PR。若涉及公开披露 AI 使用，只准备私下措辞并等待用户确认。",
+        )
+    )
+
+
+def _codex_decision_prompt_matches(
+    thread: dict[str, Any], event: dict[str, Any], *, project_id: str
+) -> bool:
+    return any(
+        _codex_decision_thread_matches(
+            thread, prompt=prompt, project_id=project_id, require_unarchived=False
+        )
+        for prompt in (_codex_decision_prompt(event), _legacy_codex_decision_prompt(event))
+    )
+
+
 def _issue_url_from_key(key: str) -> str:
     match = re.fullmatch(
         rf"({GITHUB_ID_SEGMENT.pattern}/{GITHUB_ID_SEGMENT.pattern})#([1-9][0-9]{{0,9}})",
@@ -10184,9 +10236,16 @@ def _issue_url_from_key(key: str) -> str:
     return f"https://github.com/{match.group(1)}/issues/{match.group(2)}"
 
 
-def _codex_decision_title(event: dict[str, Any], title_time: str) -> str:
+def _codex_decision_title(
+    event: dict[str, Any], title_time: str, *, status: str | None = None
+) -> str:
+    prefix = {
+        "completed": "[候选已评估]",
+        "failed": "[候选评估失败]",
+        "interrupted": "[候选评估已停止]",
+    }.get(str(status), "[候选自动评估中]")
     return compact_title(
-        f"[有价值·待决策] {title_time} {event['candidateKey']} {str(event['title']).strip()}"
+        f"{prefix} {title_time} {event['candidateKey']} {str(event['title']).strip()}"
     )
 
 
@@ -10310,26 +10369,24 @@ def _existing_codex_decision_binding(
 ) -> dict[str, Any] | None:
     event_id = str(event["eventId"])
     prompt = _codex_decision_prompt(event)
-    prompt_digest = sha256_json(canonical_prompt(prompt))
     stored = (_read_codex_decision_bindings().get("events") or {}).get(event_id)
     if isinstance(stored, dict):
         thread_id = str(stored.get("threadId") or "")
         thread = _codex_decision_thread(thread_id)
         if (
             thread is not None
-            and _codex_decision_thread_matches(
-                thread,
-                prompt=prompt,
-                project_id=project_id,
-                require_unarchived=False,
-            )
+            and _codex_decision_prompt_matches(thread, event, project_id=project_id)
             and stored.get("candidateKey") == event.get("candidateKey")
             and stored.get("notificationDigest") == event.get("notificationDigest")
             and stored.get("projectId") == project_id
-            and stored.get("promptDigest") == prompt_digest
+            and stored.get("promptDigest") == sha256_json(canonical_prompt(thread["prompt"]))
         ):
             return stored
     recovered = _recover_codex_decision_thread(prompt, project_id=project_id)
+    if recovered is None:
+        recovered = _recover_codex_decision_thread(
+            _legacy_codex_decision_prompt(event), project_id=project_id
+        )
     if recovered is None:
         return None
     title_time = datetime.now().astimezone().strftime("%m-%d %H:%M")
@@ -10342,7 +10399,9 @@ def _existing_codex_decision_binding(
         "projectId": project_id,
         "titleTime": title_time,
         "desiredTitle": _codex_decision_title(event, title_time),
-        "promptDigest": prompt_digest,
+        "promptDigest": sha256_json(
+            canonical_prompt((_codex_decision_thread(recovered) or {}).get("prompt", prompt))
+        ),
         "createdAt": iso_z(datetime.now(UTC)),
         "recovered": True,
     }
@@ -10515,6 +10574,15 @@ def _codex_decision_worker(args: argparse.Namespace) -> dict[str, Any]:
             status=terminal["status"],
             error=terminal.get("error"),
         )
+        try:
+            _ensure_desktop_thread_title(
+                thread_id,
+                _codex_decision_title(event, title_time, status=terminal["status"]),
+            )
+        except (OSError, RuntimeError, ValueError, sqlite3.Error):
+            # The original title reconciler will retry without changing the
+            # completed assessment receipt into an implementation failure.
+            pass
         return terminal_receipt
     except Exception as exc:
         receipt_path = Path(args.receipt)
@@ -10772,19 +10840,14 @@ def _dispatch_codex_decisions_locked(
             thread = _codex_decision_thread(str(binding["threadId"]))
             if thread is None:
                 raise RuntimeError("bound Codex decision task is missing")
-            if not _codex_decision_thread_matches(
-                thread,
-                prompt=_codex_decision_prompt(event),
-                project_id=args.project_id,
-                require_unarchived=False,
-            ):
+            if not _codex_decision_prompt_matches(thread, event, project_id=args.project_id):
                 raise RuntimeError("bound Codex decision task identity is invalid")
             if thread["archived"] == 0:
+                terminal = persisted_thread_turn_state(str(binding["threadId"]))
                 _ensure_desktop_thread_title(
                     str(binding["threadId"]),
-                    str(
-                        binding.get("desiredTitle")
-                        or _codex_decision_title(event, binding["titleTime"])
+                    _codex_decision_title(
+                        event, binding["titleTime"], status=(terminal or {}).get("status")
                     ),
                 )
             feedback = _codex_decision_feedback(event, binding, source_digest)
@@ -18250,6 +18313,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     pending_result_ingestion: list[dict[str, str]] = []
     revalidation_errors: list[dict[str, str]] = []
     revalidation_deferred: list[dict[str, Any]] = []
+    isolated_followups: list[dict[str, Any]] = []
     superseded = store.reconcile_superseded_pr_followups()
     prepared_recovered, errors = _recover_unbound_pr_followup_preparations(store)
     preparation_error_keys = {item["key"] for item in errors}
@@ -18604,6 +18668,14 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
             )
             written.append({"key": candidate["key"], "path": str(path)})
         except (OSError, RuntimeError, ValueError) as exc:
+            path_reason = _isolatable_pr_followup_path_error(exc)
+            if candidate.get("stage") in PUBLISHED_TASK_STAGES and path_reason is not None:
+                isolated = {"key": candidate["key"], "reason": path_reason}
+                diagnostics = _task_path_error_diagnostics(exc)
+                if diagnostics is not None:
+                    isolated["diagnostics"] = diagnostics
+                isolated_followups.append(isolated)
+                continue
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
     return {
         "ok": not errors,
@@ -18617,6 +18689,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         "pendingResultIngestion": pending_result_ingestion,
         "revalidationErrors": revalidation_errors,
         "revalidationDeferred": revalidation_deferred,
+        "isolatedFollowups": isolated_followups,
         "errors": errors,
     }
 
@@ -19632,6 +19705,12 @@ def _pr_followup_prompt(candidate: dict[str, Any]) -> str:
         f"直接读取并验证 {context_path}，再进入其中记录的 worktreePath 继续；"
         "不要在当前入口目录等待 .oss-pr-radar/task-context.json。"
         "只处理该上下文绑定的最新 PR 快照、审查意见、冲突和检查，完成后按技能协议更新结果。"
+        "完整意见读取 evidence 中的 body，summary 只供展示；逐条核对意见、当前代码和真实检查输出。"
+        "需要补充的技术事实由本任务继续查证，不要笼统要求用户决定是否继续。"
+        "先复现具体问题再修复；审查机器人给出的安全标签本身不等于已经证实的安全问题。"
+        "可以继续已授权的本地查证、修复和测试，只有即将发生的具体对外安全披露、法律、身份或 AI 声明才单独停止该动作；"
+        "若确需停止，必须记录具体动作和缺少的授权，其余可独立处理的意见和失败检查继续完成。"
+        "代码提交和对外更新仍由控制器按原协议完成，不要直接提交、推送、评论或发布。"
         + resolution_scope_instruction
         + END_RESULT_TURN_PROMPT
         + PLAIN_LANGUAGE_STATUS_PROMPT
@@ -28549,6 +28628,90 @@ def cleanup_reconcile(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": not errors, "archived": archived, "errors": errors}
 
 
+def _task_title_display_state(store: RadarLedger, binding: dict[str, Any]) -> str:
+    state = str(binding["titleState"])
+    if state not in {"GO", "VALIDATION_PENDING", "VALIDATION_BLOCKED"}:
+        return state
+    terminal = persisted_thread_turn_state(str(binding["threadId"]))
+    if terminal is None or _active_task_turn_for_result(binding) is not None:
+        return "VALIDATION_PENDING" if state == "VALIDATION_BLOCKED" else state
+    if state == "VALIDATION_BLOCKED":
+        return state
+    if terminal.get("status") == "failed":
+        return "TURN_FAILED"
+    if terminal.get("status") == "interrupted":
+        return "TURN_INTERRUPTED"
+    finished_state = "VALIDATION_RETURNED" if state == "VALIDATION_PENDING" else "TURN_COMPLETED"
+    try:
+        with _task_worktree_private_descriptor(binding) as opened:
+            raw = _read_task_result_bytes_from_private(opened)
+            context_raw = _read_task_context_bytes_from_private(opened)
+        block = ManagedLedger(store.path, ensure_schema=False).event_by_idempotency_key(
+            _task_result_evidence_block_key(binding, raw, context_raw)
+        )
+        if (
+            block is None
+            or block.get("event_type") != "TASK_RESULT_EVIDENCE_BLOCKED"
+            or block.get("task_id") != binding["intentId"]
+            or block.get("opportunity_key") != binding["key"]
+            or json.loads(block.get("provenance_json") or "{}").get("threadId")
+            != binding["threadId"]
+        ):
+            return finished_state
+        reason = json.loads(block.get("payload_json") or "{}").get("reason")
+        return (
+            "REPRODUCTION_BLOCKED"
+            if reason == "REPRODUCTION_ENVIRONMENT_BLOCKED"
+            else "WORK_BLOCKED"
+        )
+    except (OSError, RuntimeError, ValueError, sqlite3.Error):
+        return finished_state
+
+
+def _reconcile_codex_decision_titles() -> dict[str, Any]:
+    renamed: list[dict[str, str]] = []
+    deferred: list[dict[str, str]] = []
+    for event_id, binding in _read_codex_decision_bindings()["events"].items():
+        if not isinstance(binding, dict):
+            continue
+        thread_id = str(binding.get("threadId") or "")
+        thread = _codex_decision_thread(thread_id)
+        if thread is None or thread["archived"] != 0:
+            continue
+        if not (
+            binding.get("promptDigest") == sha256_json(canonical_prompt(thread["prompt"]))
+            and _codex_decision_thread_matches(
+                thread,
+                prompt=thread["prompt"],
+                project_id=str(binding.get("projectId") or ""),
+                require_unarchived=True,
+            )
+        ):
+            deferred.append({"threadId": thread_id, "reason": "binding_identity_changed"})
+            continue
+        terminal = persisted_thread_turn_state(thread_id)
+        status = str((terminal or {}).get("status") or "")
+        prefix = {
+            "completed": "[候选已评估]",
+            "failed": "[候选评估失败]",
+            "interrupted": "[候选评估已停止]",
+        }.get(status)
+        if prefix is None:
+            continue
+        original = str(binding.get("desiredTitle") or "")
+        if not original.startswith(("[有价值·待决策] ", "[候选自动评估中] ")):
+            continue
+        desired = prefix + original[original.index("]") + 1 :]
+        if thread["title"] == desired:
+            continue
+        try:
+            _ensure_desktop_thread_title(thread_id, desired)
+            renamed.append({"eventId": str(event_id), "threadId": thread_id, "title": desired})
+        except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+            deferred.append({"threadId": thread_id, "reason": str(exc)[:160]})
+    return {"renamed": renamed, "deferred": deferred}
+
+
 def title_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     bindings = store.title_bindings()
@@ -28573,7 +28736,7 @@ def title_list(args: argparse.Namespace) -> dict[str, Any]:
         if not title_time or actual is None or actual[1] != 0:
             continue
         desired = lifecycle_title(
-            binding["titleState"], title_time, binding["key"], binding["title"]
+            _task_title_display_state(store, binding), title_time, binding["key"], binding["title"]
         )
         if actual[0] != desired and binding["titleSyncedState"] == binding["titleState"]:
             store.invalidate_title_sync(
@@ -28592,7 +28755,7 @@ def title_list(args: argparse.Namespace) -> dict[str, Any]:
             candidate
             | {
                 "desiredTitle": lifecycle_title(
-                    candidate["titleState"],
+                    _task_title_display_state(store, candidate),
                     candidate["titleTime"],
                     candidate["key"],
                     candidate["title"],
@@ -28729,9 +28892,20 @@ def _reconcile_desktop_thread_title_after_binding(
 
 
 def title_reconcile(args: argparse.Namespace) -> dict[str, Any]:
+    decision_titles = _reconcile_codex_decision_titles()
+    decision_updates = (
+        {"candidateTitles": decision_titles}
+        if decision_titles["renamed"] or decision_titles["deferred"]
+        else {}
+    )
     candidates = title_list(args)["titles"]
     if not candidates:
-        return {"ok": True, "renamed": [], "deferred": [], "errors": []}
+        return {
+            "ok": True,
+            "renamed": [],
+            "deferred": [],
+            "errors": [],
+        } | decision_updates
     apply_results = _set_desktop_thread_titles(candidates)
     batch_error = apply_results.get(DESKTOP_BATCH_ERROR_KEY)
     if batch_error:
@@ -28801,7 +28975,7 @@ def title_reconcile(args: argparse.Namespace) -> dict[str, Any]:
         "renamed": renamed,
         "deferred": deferred,
         "errors": errors,
-    }
+    } | decision_updates
 
 
 def pr_lifecycle_stage(value: dict[str, Any]) -> str:

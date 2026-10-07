@@ -201,6 +201,67 @@ def test_ordinary_user_decision_without_task_is_not_hidden_as_legacy(tmp_path: P
     assert item["actionKind"] == "USER_DECISION"
 
 
+def test_decision_display_distinguishes_automatic_audit_from_maintainer_permission(tmp_path: Path):
+    path = managed_db(tmp_path)
+    ledger = ManagedLedger(path)
+    add_user_decision(ledger, key="owner/repo#9")
+    add_user_decision(ledger, key="owner/repo#10")
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            "SELECT metadata_json FROM managed_opportunities WHERE opportunity_key='owner/repo#10'"
+        ).fetchone()
+        metadata = json.loads(row[0])
+        metadata["preTaskEvidence"] = {
+            "assignmentRequired": True,
+            "policy": {"status": "needs_assignment"},
+        }
+        connection.execute(
+            "UPDATE managed_opportunities SET metadata_json=? WHERE opportunity_key='owner/repo#10'",
+            (json.dumps(metadata),),
+        )
+
+    items = {item["candidateKey"]: item for item in build_projection(path)["items"]}
+
+    assert "自动决定继续、暂缓或放弃" in items["owner/repo#9"]["nextAction"]
+    assert "请确认是否继续" not in items["owner/repo#9"]["nextAction"]
+    assert "维护者分配任务或确认方案" in items["owner/repo#10"]["reason"]
+    assert "等待所需许可" in items["owner/repo#10"]["nextAction"]
+    for item in items.values():
+        assert item["actionKind"] == "USER_DECISION"
+        assert item["taskId"] is None
+        assert item["actionable"] is False
+        assert item["creationGatePassed"] is False
+    validate_projection(build_projection(path))
+
+
+def test_returned_failed_validation_is_not_displayed_as_running(tmp_path: Path):
+    path = managed_db(tmp_path)
+    ledger = ManagedLedger(path)
+    add_opportunity(ledger, "owner/repo#11")
+    ledger.bind_task(
+        task_id="task-11",
+        opportunity_key="owner/repo#11",
+        thread_id="thread-11",
+        worktree_path=None,
+    )
+    ledger.record_result(
+        task_id="task-11",
+        result_digest="failed-validation",
+        worker_state="patched",
+        head_sha="head-11",
+        commit_sha="head-11",
+        validation={"passed": False, "relevant_tests_green": False},
+    )
+
+    item = build_projection(path)["items"][0]
+
+    assert item["reason"] == "本轮修复已返回，验证尚未通过。"
+    assert "检查失败" in item["nextAction"]
+    assert item["bucket"] == "SYSTEM_PROCESSING"
+    assert item["taskId"] == "task-11"
+    assert item["creationGatePassed"] is False
+
+
 @pytest.mark.parametrize(
     ("intent_status", "opportunity_stage", "with_task", "visible"),
     [

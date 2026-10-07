@@ -2091,6 +2091,13 @@ def test_title_state_advances_from_go_to_fix_ready(tmp_path):
     )
     assert store.title_candidates() == []
 
+    store.record_stage("a/b#1", "CLOSED", evidence={})
+    closed = store.title_candidates()[0]
+    assert closed["titleState"] == "CLOSED"
+    assert closed["titleNonce"] != candidate["titleNonce"]
+    store.commit_title(thread_id="thread-1", state="CLOSED", nonce=closed["titleNonce"])
+    assert store.title_candidates() == []
+
 
 def test_synced_title_can_be_invalidated_after_desktop_drift(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
@@ -5921,6 +5928,8 @@ def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
         missing=["relevant_tests_green", "regression_test_verified"],
     )
     store.record_stage("a/b#1", "VALIDATION_PENDING")
+    pending_title = store.title_bindings()[0]
+    assert pending_title["titleState"] == "VALIDATION_PENDING"
     store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
     store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
 
@@ -5941,6 +5950,15 @@ def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
     ]
     assert blocked[0]["reason"] == "UNCHANGED_VALIDATION_GAP"
     assert store.reconcile_validation_no_progress() == 0
+    stopped_title = store.title_bindings()[0]
+    assert stopped_title["titleState"] == "VALIDATION_BLOCKED"
+    assert stopped_title["titleNonce"] != pending_title["titleNonce"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "VALIDATION_PENDING"
+    )
 
     assert (
         store.rearm_validation_no_progress_for_review(
@@ -5953,6 +5971,9 @@ def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
     )
     assert store.validation_no_progress() == []
     assert store.validation_followup_candidates()[0]["resultDigest"] == "result-digest-2"
+    resumed_title = store.title_bindings()[0]
+    assert resumed_title["titleState"] == "VALIDATION_PENDING"
+    assert resumed_title["titleNonce"] == pending_title["titleNonce"]
     assert (
         store.rearm_validation_no_progress_for_review(
             key="a/b#1",
@@ -5962,6 +5983,72 @@ def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
         )
         is False
     )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-2")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest-2")
+    assert store.title_bindings()[0]["titleState"] == "VALIDATION_PENDING"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("intentId", "old-intent"),
+        ("threadId", "old-thread"),
+        ("worktreePath", "/tmp/old-worktree"),
+        ("resultDigest", "old-result"),
+        (None, None),
+    ],
+)
+def test_stopped_validation_title_requires_current_exact_binding_and_result(tmp_path, field, value):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="current-result",
+        missing=["relevant_tests_green"],
+    )
+    binding = {
+        "intentId": "intent-1",
+        "threadId": "thread-1",
+        "worktreePath": "/tmp/worktree",
+    }
+    payload = binding | {
+        "resultDigest": "current-result",
+        "reason": "UNCHANGED_VALIDATION_GAP",
+    }
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_NO_PROGRESS",
+        dedupe_key="current-result",
+        payload=payload | {field: value} if field else payload,
+    )
+    if field:
+        assert store.title_bindings()[0]["titleState"] == "VALIDATION_PENDING"
+        return
+    assert store.title_bindings()[0]["titleState"] == "VALIDATION_BLOCKED"
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_SENT",
+        dedupe_key="foreign-sent",
+        payload=binding | {"threadId": "old-thread", "resultDigest": "current-result"},
+    )
+    assert store.title_bindings()[0]["titleState"] == "VALIDATION_BLOCKED"
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_SENT",
+        dedupe_key="current-result",
+        payload=binding | {"resultDigest": "current-result"},
+    )
+    assert store.title_bindings()[0]["titleState"] == "VALIDATION_PENDING"
 
 
 def test_validation_followup_continues_when_check_evidence_changes(tmp_path):

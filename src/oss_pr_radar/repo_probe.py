@@ -45,6 +45,10 @@ def thread_fingerprint(thread_id: str) -> str:
 class ProbeUnavailable(RuntimeError):
     """The probe cannot be run under the currently available isolation policy."""
 
+    def __init__(self, reason: str, *, diagnostics: dict[str, Any] | None = None) -> None:
+        super().__init__(reason)
+        self.diagnostics = diagnostics
+
 
 def _checkout_root(checkout: Path) -> Path:
     """Return a non-symlink checkout root, rejecting unsafe filesystem objects."""
@@ -186,7 +190,15 @@ def validate_indexable_checkout_paths(checkout: Path, code_paths: list[str]) -> 
     except (OSError, subprocess.SubprocessError) as exc:
         raise ProbeUnavailable("GIT_INDEX_UNAVAILABLE") from exc
     if index_check.returncode != 0:
-        raise ProbeUnavailable("CODE_PATH_NOT_INDEXABLE")
+        raise ProbeUnavailable(
+            "CODE_PATH_NOT_INDEXABLE",
+            diagnostics={
+                "operation": "git-add-dry-run",
+                "exitCode": index_check.returncode,
+                "stdout": index_check.stdout.decode("utf-8", errors="replace")[:4000],
+                "stderr": index_check.stderr.decode("utf-8", errors="replace")[:4000],
+            },
+        )
     return bindings
 
 

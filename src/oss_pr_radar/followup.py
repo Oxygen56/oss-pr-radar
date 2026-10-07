@@ -10,7 +10,7 @@ from time import monotonic
 from typing import Any
 
 from .github_client import GitHubClient, GitHubError
-from .util import iso_z, sha256_json
+from .util import iso_z, sha256_json, sha256_text
 
 FOLLOWUP_VERSION = "pr_followup_v3"
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
@@ -89,17 +89,33 @@ def _informative_annotation_paths(check: dict[str, Any]) -> set[str]:
     return paths
 
 
-def _check_action_basis(check: dict[str, Any], changed_files: set[str]) -> str | None:
+def _check_action_basis(
+    check: dict[str, Any], changed_files: set[str], *, head_sha: str
+) -> str | None:
     conclusion = str(check.get("conclusion") or "").casefold()
     if conclusion not in TASK_FAILURE_CONCLUSIONS or _is_aggregate_check(check):
         return None
-    annotations = check.get("_annotations") or []
-    if any(str(item.get("path") or "") in changed_files for item in annotations):
-        return "changed_file_annotation"
     output = check.get("output") or {}
     summary = "\n".join(
         str(output.get(field) or "") for field in ("title", "summary", "text")
     ).casefold()
+    if str(check.get("name") or "").strip().casefold() == "codecov/patch":
+        coverage = re.search(
+            r"\b(\d+(?:\.\d+)?)%\s+of\s+diff\s+hit\s+\(target\s+(\d+(?:\.\d+)?)%\)",
+            summary,
+        )
+        if (
+            changed_files
+            and head_sha
+            and check.get("head_sha") == head_sha
+            and coverage is not None
+            and 0 <= float(coverage[1]) < float(coverage[2]) <= 100
+        ):
+            return "current_head_patch_coverage"
+        return None
+    annotations = check.get("_annotations") or []
+    if any(str(item.get("path") or "") in changed_files for item in annotations):
+        return "changed_file_annotation"
     if any(path.casefold() in summary for path in changed_files if path):
         return "changed_file_output"
 
@@ -154,6 +170,7 @@ def _actionable_review_threads(
         review_bot = author_type == "Bot" and path in changed_files
         if not trusted_reviewer and not review_bot:
             continue
+        body = str(latest.get("body") or "")
         actionable.append(
             {
                 "path": path,
@@ -162,7 +179,9 @@ def _actionable_review_threads(
                 "authorType": author_type,
                 "createdAt": latest.get("createdAt"),
                 "url": latest.get("url"),
-                "summary": " ".join(str(latest.get("body") or "").split())[:400],
+                "body": body,
+                "bodyDigest": sha256_text(body),
+                "summary": " ".join(body.split())[:400],
             }
         )
     return sorted(
@@ -228,6 +247,7 @@ def _top_level_comment_evidence(
                 "url": url,
             }
         )
+        body = str(comment.get("body") or "")
         normalized.append(
             {
                 "eventId": f"github:top-level-comment:{repo}#{number}:{event_identity}",
@@ -240,7 +260,9 @@ def _top_level_comment_evidence(
                 "opportunityKey": f"{repo}#{number}",
                 "createdAt": created_at,
                 "url": url,
-                "summary": " ".join(str(comment.get("body") or "").split())[:400],
+                "body": body,
+                "bodyDigest": sha256_text(body),
+                "summary": " ".join(body.split())[:400],
             }
         )
 
@@ -473,7 +495,7 @@ def collect_followup(
             )
         actionable_checks = []
         for check in failing_checks:
-            basis = _check_action_basis(check, changed_files)
+            basis = _check_action_basis(check, changed_files, head_sha=head)
             if basis:
                 actionable_checks.append(check | {"_action_basis": basis})
         inferred_check_failure = any(
@@ -554,9 +576,12 @@ def collect_followup(
         failing_check_evidence = sorted(
             (
                 {
+                    "id": item.get("id"),
+                    "headSha": item.get("head_sha") or head,
                     "name": item.get("name"),
                     "conclusion": item.get("conclusion"),
                     "url": item.get("details_url"),
+                    "output": item.get("output") or {},
                     "annotations": [
                         _annotation_evidence(annotation)
                         for annotation in (item.get("_annotations") or [])[:20]
@@ -603,9 +628,12 @@ def collect_followup(
         actionable_check_evidence = sorted(
             (
                 {
+                    "id": item.get("id"),
+                    "headSha": item.get("head_sha") or head,
                     "name": item.get("name"),
                     "url": item.get("details_url"),
                     "basis": item.get("_action_basis"),
+                    "output": item.get("output") or {},
                     "annotations": [
                         _annotation_evidence(annotation)
                         for annotation in (item.get("_annotations") or [])[:20]
@@ -646,7 +674,18 @@ def collect_followup(
             "mergeConflictBaseRefName": base_ref_name if merge_conflict else None,
             "mergeConflictBaseSha": base_sha if merge_conflict else None,
             "requestedChanges": requested_changes,
-            "failingChecks": failing_check_evidence,
+            "failingChecks": [
+                {
+                    "name": item["name"],
+                    "conclusion": item["conclusion"],
+                    "url": item["url"],
+                    "annotations": item["annotations"],
+                    "output": {
+                        field: item["output"].get(field) for field in ("title", "summary", "text")
+                    },
+                }
+                for item in failing_check_evidence
+            ],
             "unresolvedReviewThreads": unresolved_review_threads,
             **({"draft": True} if draft else {}),
             **(
@@ -662,7 +701,18 @@ def collect_followup(
             "mergeConflictBaseSha": base_sha if merge_conflict else None,
             "mergeConflictPreparationVersion": ("conflict_files_v1" if merge_conflict else None),
             "requestedChanges": requested_changes,
-            "actionableChecks": actionable_check_evidence,
+            "actionableChecks": [
+                {
+                    "name": item["name"],
+                    "url": item["url"],
+                    "basis": item["basis"],
+                    "annotations": item["annotations"],
+                    "output": {
+                        field: item["output"].get(field) for field in ("title", "summary", "text")
+                    },
+                }
+                for item in actionable_check_evidence
+            ],
             "baseIntegrationRequired": base_integration_required,
             "baseIntegrationHead": head if base_integration_required else None,
             "baseIntegrationBaseRefName": (base_ref_name if base_integration_required else None),
@@ -675,6 +725,13 @@ def collect_followup(
                 else {}
             ),
         }
+        if "codecov/patch" in actionable_check_names:
+            task_evidence["patchCoverageCommentDigests"] = sorted(
+                str(item.get("bodyDigest") or "")
+                for item in top_level_comment_events
+                if str(item.get("actorLogin") or "").casefold() in {"codecov", "codecov[bot]"}
+                and str(item.get("actorType") or "").casefold() == "bot"
+            )
         task_digest = sha256_json(task_evidence)
         state_item = {
             "key": key,
