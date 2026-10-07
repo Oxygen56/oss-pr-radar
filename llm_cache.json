@@ -54679,6 +54679,40 @@
     ],
     "why": "Issue reports a heap-corruption abort in the idle invariant walk, but the supplied evidence contains no root-cause signal (root_cause_signal=false) and no maintainer confirmation; the crash is only observed via a stack trace, and the actual free/ownership bug is not localized. Open PR #42072 semantically overlaps the same session/streaming_session.py path and is unmerged, so duplicate coverage is unresolved."
   },
+  "61a5d7f282ecddc38510f07b911dcf3dbed2cb8be94d75cee331c40908387fca": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body says the helper is verified on origin/main plus the #13466 branch, while triage bot states terminate-reason.ts and describeAgentTerminateReason are not on main and the helper is module-private there"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agents/runtime/agent-headless.ts: add getLoopType() accessor and narrow private loopType to LoopType | null",
+      "packages/core/src/agents/forkedAgent.ts: add loopType?: LoopType | null to ForkedAgentResult and populate at the getTerminateMode() read site",
+      "terminate-reason.ts terminateReasonMessage: pass loopType through to describeAgentTerminateReason"
+    ],
+    "risks": [
+      "#13466 is unmerged with CHANGES_REQUESTED and a procedural CI-approval blocker; implementing before it lands requires exporting or duplicating the helper, which is exactly the refactor #13466 performs",
+      "Narrowing AgentHeadless.loopType to LoopType | null could break other assignments if any non-LoopType string is written to the field",
+      "Semantic overlap with PR #13466 needs manual comparison to avoid duplicate/conflicting work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting a forked/background agent stopped by loop detection reports the detector name (e.g. consecutive_identical_tool_calls) in its terminate reason message",
+      "Run targeted unit tests for the forked-agent runtime and terminate-reason helper, plus typecheck to confirm the LoopType narrowing compiles"
+    ],
+    "unknowns": [
+      "Whether #13466 will merge and when, which determines if the plumbing is implementable without duplicating the helper",
+      "Whether any code path assigns a non-LoopType string into AgentHeadless.loopType, affecting the proposed narrowing"
+    ],
+    "why": "The issue is precisely diagnosed and independently verified: loopType exists on AgentHeadless but has no accessor, ForkedAgentResult lacks the field, and the shared helper already accepts loopType. However, the triage bot and the issue author both establish a hard dependency: terminate-reason.ts / describeAgentTerminateReason / terminateReasonMessage only exist on the unmerged #13466 branch, and on main the helper is module-private, so steps 2-3 are unimplementable until #13466 lands. #13466 is OPEN with CHANGES_REQUESTED and a procedural CI-approval blocker, and the duplicate assessment flags semantic overlap requiring manual comparison. This unresolved coverage/dependency question materially determines whether code work is actionable now."
+  },
   "61ab5c71fb1c93ac85e497dc8dbaf8842ec2b3aad484cb59c5b6da4182437086": {
     "confidence": 0.6,
     "contradictions": [
@@ -56413,6 +56447,38 @@
       "Whether the fix should be bundled with #4692 or landed standalone (owner recommends standalone)"
     ],
     "why": "Issue pins a concrete root cause: decodeSchtasksOutput in src/service/windows-scheduler.ts probes UTF-16 then falls back to plain UTF-8, mangling GBK schtasks XML on ACP/OEMCP 936 hosts so CJK UserId becomes U+FFFD, windowsTaskRegistrationHealthy() returns false, and repair aborts at the recognition gate. The repo already has decodeWindowsTextBytes (src/lib/windows-text.ts) implementing UTF-16 -> strict UTF-8 -> locale legacy (GBK), used by sibling call sites; the schtasks call site is the remaining unwired one. Owner comment confirms the call site still exists on dev HEAD and endorses a one-line delegation plus a GBK fixture regression."
+  },
+  "64913e2f434468ff4b04c2488a19d1cd8f62fbfbac4627421d7a6ce0087f2cb0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/worker/model_runner.py or cudagraph memory profiling: make profile_cudagraph_memory() account for actual graph capture cost including KV-block dependence",
+      "KV cache sizing / gpu_memory_utilization budget accounting so accepted configs do not exceed budget during graph capture"
+    ],
+    "risks": [
+      "Fix may reduce available KV cache blocks, changing throughput/max-model-len behavior and requiring maintainer design preference on reserve-vs-fail-early",
+      "CUDA graph memory is hardware/driver dependent, so a fixed estimate may not generalize across GPUs",
+      "Repository policy flags an AI disclosure conflict, which is a submission-policy constraint rather than a technical blocker"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on a 24GiB GPU with Qwen/Qwen3-0.6B and kv_cache_dtype='fp8'; confirm OOM before fix and successful generate after fix",
+      "Regression test asserting measured CUDA graph memory is included in the KV cache budget and that actual peak usage stays within gpu_memory_utilization",
+      "Compare startup accounting vs actual usage for fp8 vs default dtype to confirm the ~0.80GiB graph cost is now reserved"
+    ],
+    "unknowns": [
+      "No public reproduction artifact beyond the issue text; exact code anchor for profile_cudagraph_memory() not confirmed in supplied evidence",
+      "Whether maintainers prefer reserving graph memory vs failing early with an actionable error"
+    ],
+    "why": "Issue provides a concrete reproduction (LLM with kv_cache_dtype='fp8' on 24GiB GPU OOMs while default dtype works), a specific root cause (profile_cudagraph_memory() omits actual CUDA graph capture cost, which scales with KV blocks, so KV cache budget is over-allocated), and a concrete validation path (compare startup memory accounting vs actual usage, verify no OOM and correct generation). This is a real numerical/memory-accounting bug in the inference critical path, not plumbing."
   },
   "6496e29b0991603ed9e1f1bebfcc650043aa53e80dc71aa7bc14c87a715a060b": {
     "confidence": 0.8,
@@ -68184,6 +68250,48 @@
       "No minimal model or environment artifact to reproduce outside the reporter's container"
     ],
     "why": "The issue reports a GPU plugin segfault at compile_model() on Gen12 iGPU, but the supplied evidence contains no root-cause signal, no code anchors tied to the crash, and no reproduction beyond a user script. The crash signature is non-deterministic (SIGSEGV vs SIGABRT heap corruption), and the only related PR is an unrelated merged load-time subnormal-flush change. Without a stack trace, failing test, or identified code path, the fix is not actionable."
+  },
+  "781d68f7c1c774cbb50891034cea7c77620cf16344f75a57f0604283b3121322": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #15 and PR #54929 overlapping the issue's code paths and keywords, while related_issue_assessment reports no related open issues",
+      "Issue asks for either kernel extension or documentation, leaving the intended fix scope ambiguous"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/platforms/cuda.py backend candidate list for major==12 MLA",
+      "SM120 sparse-MLA kernel support for rope-free (qk_nope=256/kv_lora=512, query dim 512) shape",
+      "supported_kv_cache_dtypes / fp8_ds_mla pe_dim=64 hardcode in cache_kernels.cu",
+      "documentation of glm5_next SM120 support status if kernel work is not pursued"
+    ],
+    "risks": [
+      "PR #15 may already implement the same rope-free SM12x fix, making this issue covered",
+      "PR #54929 may already provide the SM12x sparse-MLA fallback path",
+      "AI disclosure policy conflict may block public contribution regardless of technical merit",
+      "Kernel work requires SM120 hardware and FlashInfer cubin availability, which may not be reproducible in CI"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Boot GLM-5.3-Flash on SM120 (RTX PRO 6000, TP=4) with default kv_cache_dtype and confirm the pe_dim=64 fp8_ds_mla assertion",
+      "Boot with --kv-cache-dtype bfloat16 and confirm backend selection failure, then verify the widened candidate list selects a working lane",
+      "Numerical regression: compare rope-free sparse-MLA attention output against a CPU/fp32 reference at fixed seed and tolerance",
+      "Verify no regression for DeepSeek-shaped (rope-64/query-576) SM120 sparse-MLA path"
+    ],
+    "unknowns": [
+      "Whether PR #15 or PR #54929 already resolves the rope-free SM120 sparse-MLA gap",
+      "Whether the repository's AI disclosure policy permits this contribution at all",
+      "Whether SM120 hardware and required FlashInfer cubins are available for validation"
+    ],
+    "why": "The issue describes three concrete SM120 sparse-MLA failure modes for rope-free GLM-5.3-Flash (qk_rope_head_dim=0), with code anchors in platforms/cuda.py and cache_kernels.cu, and a plausible kernel/routing root cause. However, supplied evidence shows unresolved duplicate/overlap coverage: PR #15 ('Make the rope-free MLA path work on SM12x', 3 test files, overlapping vllm/platforms/cuda.py) and PR #54929 (SM12x sparse-MLA fallback, overlapping vllm/utils/deep_gemm.py) both semantically overlap the issue without referencing it, and the duplicate status is 'semantic_overlap_requires_review'. Additionally, the submission policy is ai_disclosure_conflict (aiDisclosureConflict=true), which is a repository disclosure requirement that must be resolved before code work is actionable. These are materially blocking unknowns, not normal implementation uncertainty."
   },
   "783857e623476bb314de700d5bc7c1df45e4089da09467b927620b9b81fab5d1": {
     "confidence": 0.8,
@@ -94256,6 +94364,38 @@
     ],
     "why": "Root cause is clearly identified (hardcoded 128B read-side unswizzle vs per-head_dim TMA swizzle atoms in SM120 fp8 MQA-logits), but the issue author themselves states the same bug and an essentially identical fix were already posted as PR #379 (dense + paged, bot-approved), and collaborator lucifer1004 confirms the read side was rewritten in PR #447 with kSwizzleMode = kHeadDim and no hardcoded 128 remaining, with contract tests covering fp8 head_dim 32/64/128. The opportunity is therefore covered by existing open/merged work, leaving no independent implementation space."
   },
+  "a7d182670b56038d4f7752b4751a89b821dd0d709b3f0a72c3c6aeb708268170": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/cron/store/sqlite-cron-store.ts: bind :now/:capacity with prefixed keys or positional parameters in claimDueRuns",
+      "Add a one-line comment above the nextDueRun.get({...}) call explaining the ':' prefix is required for Bun's non-strict driver"
+    ],
+    "risks": [
+      "Bun's non-strict driver behavior may differ across Bun versions; the fix should be validated on the affected Bun version",
+      "The optional CronRunner.tick() logging improvement is out of scope and should be a separate issue",
+      "GitHub permission restriction prevented the contributor from opening the PR; maintainer may need to open it or adjust permissions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `bun test src/cron/store/sqlite-cron-store.test.ts` before the fix to reproduce 15 pass / 4 fail",
+      "Run the same Bun store suite after the fix to confirm 19/19 pass",
+      "Run the Node cron suite (118 tests) to confirm no regression",
+      "Run core build and typecheck including smoke"
+    ],
+    "unknowns": [
+      "Whether the maintainer will open the PR from the contributor's branch or resolve the GitHub permission restriction"
+    ],
+    "why": "Issue provides a precise root cause: CronStore.claimDueRuns binds named parameters as an object under bun:sqlite, causing NULL bindings and zero claimed runs. A maintainer confirmed the diagnosis, reproduced the 4 failing claim/reclaim/requeue tests under bun test, and explicitly asked for a PR with a binding comment and before/after test output. A contributor has a rebased branch with the fix and passing tests; only a GitHub permission error blocked PR creation."
+  },
   "a7d209eed47fcfccc71db7ef76aada4b9e0167248534599713d654294aad1f49": {
     "confidence": 0.85,
     "contradictions": [],
@@ -115143,6 +115283,45 @@
       "Whether PR #12973 will be updated and merged before a new PR."
     ],
     "why": "Issue provides a precise root cause (missing 'max' in UI/CLI whitelists while SDK already supports it), a concrete fix plan, and a clear validation path. Existing PR #12973 overlaps but is draft and incomplete, so the issue remains actionable."
+  },
+  "ce2b634db50ac8f3121c13f4c3b9cd2c234957c96ac0f4bd79a69a632e319cce": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Comments disagree on where the refusal occurs: preflight vs after lineage minted vs at START",
+      "Supported-runtime cause string lists opencode in one observation and omits it after sync in another",
+      "Occurrences span 3.7.0, 4.0.0, and 4.0.1 pseudo-version builds with differing behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/reviewtransaction/status.go",
+      "scripts/crosslane/opencode.go",
+      "scripts/gen-sdd-agent-digests/opencode.go",
+      "internal/components/telemetryruntime/opencode.go"
+    ],
+    "risks": [
+      "Merged PR #5289 may already cover the root cause, making further work duplicative",
+      "Conflicting occurrence reports could lead to fixing the wrong refusal point",
+      "Repository policy ai_disclosure_conflict blocks automated public submission"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce selectorless preflight with --agent opencode on a stable build and assert START transition is returned",
+      "Regression test asserting supported-runtime list is stable across a sync that rewrites the managed transport plugin",
+      "Test that eligibility is evaluated before lineage/authority minting"
+    ],
+    "unknowns": [
+      "Whether merged PR #5289 already resolves this observable class",
+      "Actual root cause of the eligibility refusal",
+      "Whether the issue's empty reproduction steps can be replaced by a concrete minimal repro"
+    ],
+    "why": "Issue is an observation-only bug report explicitly stating 'no root cause asserted'; reproduction steps section is empty placeholders ('1. 2. 3.', expected 'solucion.', actual 'nada.'). Comments are numerous but all self-described as observed evidence without root cause, and they conflict on the refusal point (preflight vs post-lineage capture-result vs START), the supported-runtime list (with/without opencode), and version lines (3.7.0, 4.0.0, 4.0.1 pseudo-version). A merged PR #5289 ('resolve OpenCode review eligibility once per process') exists with semantic overlap but is not linked to this issue, leaving unresolved duplicate/merged-fix coverage."
   },
   "ce2f1d7934773197fae948ede5aa4ca42d3be52f7342950b1a9ef233f6933fce": {
     "confidence": 0.8,
