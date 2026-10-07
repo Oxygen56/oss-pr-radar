@@ -87,6 +87,68 @@ def test_pause_record_write_is_durable_before_it_returns(monkeypatch, tmp_path):
     assert json.loads(path.read_text(encoding="utf-8"))["pauseState"] == "PAUSING"
 
 
+def test_repeated_pause_verifies_existing_gate_without_redundant_patch(monkeypatch, tmp_path):
+    functions = {
+        name: getattr(MODULE, name)
+        for name in (
+            "_repository_variable",
+            "_set_repository_variable",
+            "_delete_repository_variable",
+        )
+    }
+    _release, state, _ledger = _runtime(monkeypatch, tmp_path)
+    for name, function in functions.items():
+        monkeypatch.setattr(MODULE, name, function)
+    variables = MODULE._test_variables
+    writes = []
+
+    def gh(arguments, **_kwargs):
+        if "--method" in arguments:
+            method = arguments[arguments.index("--method") + 1]
+            if method == "PATCH":
+                return MODULE.subprocess.CompletedProcess(
+                    arguments, 1, "", "unexpected end of JSON input"
+                )
+            writes.append(method)
+            if method == "DELETE":
+                variables.pop(MODULE.MAINTENANCE_VARIABLE, None)
+            else:
+                variables[MODULE.MAINTENANCE_VARIABLE] = "true"
+            return MODULE.subprocess.CompletedProcess(arguments, 0, "", "")
+        if MODULE.MAINTENANCE_VARIABLE in variables:
+            return MODULE.subprocess.CompletedProcess(
+                arguments,
+                0,
+                json.dumps(
+                    {
+                        "name": MODULE.MAINTENANCE_VARIABLE,
+                        "value": variables[MODULE.MAINTENANCE_VARIABLE],
+                    }
+                ),
+                "",
+            )
+        return MODULE.subprocess.CompletedProcess(arguments, 1, "", "HTTP 404 Not Found")
+
+    monkeypatch.setattr(MODULE, "_run_gh", gh)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
+    monkeypatch.setattr(MODULE, "_active_workflow_runs", lambda *_args: [])
+    monkeypatch.setattr(
+        MODULE,
+        "active_outbound_pause",
+        lambda _root: json.loads((state / MODULE.FILENAME).read_text()),
+    )
+    for _ in range(2):
+        result = MODULE.pause(tmp_path, minutes=30, reason="REPEATED_PAUSE_REPRODUCTION")
+        assert result["paused"] is True
+        record = json.loads((state / MODULE.FILENAME).read_text())
+        assert record["pauseState"] == "ACTIVE" and record["remotePauseActive"] is True
+        assert variables[MODULE.MAINTENANCE_VARIABLE] == "true"
+    assert MODULE.resume(tmp_path)["removed"] is True
+    assert MODULE.MAINTENANCE_VARIABLE not in variables
+    assert not (state / MODULE.FILENAME).exists()
+    assert writes == ["POST", "DELETE"]
+
+
 def test_remote_workflow_gate_verification_covers_every_business_job(monkeypatch):
     source = (SCRIPT.parents[1] / ".github" / "workflows" / "radar.yml").read_text(encoding="utf-8")
     monkeypatch.setattr(

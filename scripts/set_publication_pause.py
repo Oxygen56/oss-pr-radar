@@ -101,7 +101,9 @@ def _repository_variable(repo: str, name: str) -> tuple[bool, str | None]:
 
 
 def _set_repository_variable(repo: str, name: str, value: str) -> None:
-    exists, _current = _repository_variable(repo, name)
+    exists, current = _repository_variable(repo, name)
+    if exists and current == value:
+        return
     endpoint = f"repos/{repo}/actions/variables"
     arguments = ["api", "--method", "PATCH", f"{endpoint}/{name}", "-f", f"value={value}"]
     if not exists:
