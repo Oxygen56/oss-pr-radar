@@ -23102,8 +23102,23 @@ def _controller_verified_result_changed_files(value: dict[str, Any]) -> set[str]
     return set()
 
 
+def _litellm_formal_checks_unpublished(
+    store: RadarLedger, candidate: dict[str, Any], context: dict[str, Any]
+) -> bool:
+    """Keep the exact retired, unpublished source through new-base validation."""
+
+    if context.get("publicationReceipt") is None:
+        return True
+    retired = store.retired_latest_target_receipt(context, allow_completed_validation=True)
+    return retired is not None and store.publication_target_base_refresh(candidate) == retired
+
+
 def _litellm_formal_checks_need_refresh(
-    candidate: dict[str, Any], context: dict[str, Any], context_raw: bytes, value: dict[str, Any]
+    store: RadarLedger,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    context_raw: bytes,
+    value: dict[str, Any],
 ) -> bool:
     """Let original dedupe consume only the same authenticated formal envelope."""
 
@@ -23111,7 +23126,7 @@ def _litellm_formal_checks_need_refresh(
         candidate.get("key") != "BerriAI/litellm#37498"
         or context.get("stage") != "VALIDATION_PENDING"
         or context.get("prFollowup") is not None
-        or context.get("publicationReceipt") is not None
+        or not _litellm_formal_checks_unpublished(store, candidate, context)
         or value.get("stage") != "FIX_READY"
     ):
         return False
@@ -23183,7 +23198,7 @@ def _litellm_controller_formal_checks(
         candidate.get("key") != "BerriAI/litellm#37498"
         or context.get("stage") != "VALIDATION_PENDING"
         or context.get("prFollowup") is not None
-        or context.get("publicationReceipt") is not None
+        or not _litellm_formal_checks_unpublished(store, candidate, context)
     ):
         return value, (
             json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
@@ -23393,6 +23408,7 @@ def _litellm_controller_formal_checks(
         context_raw=context_raw,
         completion_proof=completion,
         validation_context_digest=source_context_digest,
+        allow_retired_latest_target=context.get("publicationReceipt") is not None,
     ) != candidate.get("intentId"):
         return blocked("COMPLETED_IMMUTABLE_VALIDATION_INPUT_REQUIRED")
     if source_context_digest != context.get("contextDigest") and (
@@ -25535,7 +25551,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     **_ledger_binding_kwargs(candidate),
                 )
             )
-            if _litellm_formal_checks_need_refresh(candidate, context, context_raw, value):
+            if _litellm_formal_checks_need_refresh(store, candidate, context, context_raw, value):
                 digest_seen = False
             if (
                 digest_seen
@@ -26195,7 +26211,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and candidate["stage"] == "FIX_READY"
                 and controller_policy is not None
             )
-            if _litellm_formal_checks_need_refresh(candidate, context, context_raw, value):
+            if _litellm_formal_checks_need_refresh(store, candidate, context, context_raw, value):
                 digest_seen = False
             if digest_seen and current_wake_digest and candidate["stage"] == "VALIDATION_PENDING":
                 store.record_followup_result(

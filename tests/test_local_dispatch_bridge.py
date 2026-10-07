@@ -32048,6 +32048,16 @@ def test_native_completed_validation_normalizes_missing_envelope_with_retired_un
     assert refresh["requestId"] == request_id
     assert store.retired_latest_target_receipt(context) is None
     assert store.retired_latest_target_receipt(context, allow_completed_validation=True) == refresh
+    assert MODULE._litellm_formal_checks_unpublished(store, candidate, context)
+    for publication_change in (
+        {"status": "CONSUMED"},
+        {"prUrl": "https://github.com/a/b/pull/2"},
+    ):
+        changed_context = context | {"publicationReceipt": publication_receipt | publication_change}
+        assert not MODULE._litellm_formal_checks_unpublished(store, candidate, changed_context)
+    assert not MODULE._litellm_formal_checks_unpublished(
+        store, candidate | {"intentId": "foreign-intent"}, context
+    )
     original = result_path.read_bytes()
     original_input = input_path.read_bytes()
     original_receipt = receipt_path.read_bytes()
