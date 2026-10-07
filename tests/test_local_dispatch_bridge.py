@@ -32273,8 +32273,9 @@ def test_original_context_recovery_releases_only_stopped_quarantined_execution(
         assert store.active_task_count() == 1
 
 
+@pytest.mark.parametrize("published_handoff", [False, True])
 def test_published_formal_checks_require_completed_owned_immutable_validation(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, published_handoff
 ):
     store, worktree, result_path, _pr = _ingested_pending_published_commit(tmp_path, monkeypatch)
     pending = store.validation_followup_candidates()[0]
@@ -32351,6 +32352,126 @@ def test_published_formal_checks_require_completed_owned_immutable_validation(
     MODULE._atomic_private_json(receipt_path, receipt)
     managed = ManagedLedger(store.path, ensure_schema=False)
     assert MODULE._published_pr_validation_anchor(managed, candidate, context, value) is not None
+    if published_handoff:
+        original_head = run_git(worktree, "rev-parse", "HEAD")
+        parent = value["previousCommitSha"]
+        fresh = dict(value, stage="PR_OPEN")
+        fresh["evidence"] = {"summary": "Native checks completed; controller checks pending"}
+        if isinstance(value.get("controllerCodePathScope"), dict):
+            fresh["codePaths"] = value["controllerCodePathScope"]["reported"]
+        fresh["quality"] = dict(
+            value["quality"], fresh_state_verified=False, minimal_fix_verified=False
+        )
+        fresh["previousControllerCommitSha"] = original_head
+        for field in (
+            "previousCommitSha",
+            "targetBase",
+            "reproductionReceipt",
+            "probeReceipt",
+            "resultDigest",
+            "controllerFormalChecks",
+            "controllerCodePathScope",
+        ):
+            fresh.pop(field, None)
+        records = [
+            {
+                "type": "event_msg",
+                "timestamp": iso_z(datetime.now(UTC)),
+                "payload": {"type": "task_started", "turn_id": receipt["turnId"]},
+            }
+        ]
+        checks = []
+        for phase, code in (("before_fix", 1), ("after_fix", 0), ("formal", 0)):
+            shell = f"{sys.executable} -c 'raise SystemExit({code})'"
+            executed = subprocess.run(
+                ["/bin/sh", "-c", shell], cwd=worktree, capture_output=True, text=True
+            )
+            checks.append(
+                {
+                    "phase": phase,
+                    "cwd": str(worktree),
+                    "command": shell,
+                    "exitCode": executed.returncode,
+                }
+            )
+            records.append(
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(datetime.now(UTC)),
+                    "payload": {
+                        "type": "item_completed",
+                        "thread_id": "thread-1",
+                        "turn_id": receipt["turnId"],
+                        "item": {
+                            "type": "CommandExecution",
+                            "status": "failed" if executed.returncode else "completed",
+                            "command": ["/bin/sh", "-c", shell],
+                            "cwd": worktree.as_uri(),
+                            "exit_code": executed.returncode,
+                            "stdout": executed.stdout,
+                            "stderr": executed.stderr,
+                            "aggregated_output": executed.stdout,
+                        },
+                    },
+                }
+            )
+        fresh["tests"] = checks
+        result_path.write_text(json.dumps(fresh))
+        raw = result_path.read_bytes()
+        records.append(
+            {
+                "type": "event_msg",
+                "timestamp": iso_z(datetime.now(UTC)),
+                "payload": {"type": "task_complete", "turn_id": receipt["turnId"]},
+            }
+        )
+        journal = tmp_path / "completed-original-pr.jsonl"
+        with journal.open("a") as stream:
+            stream.write("".join(json.dumps(record) + "\n" for record in records))
+        with monkeypatch.context() as previous_runtime:
+            previous_runtime.setattr(
+                MODULE, "_completed_published_validation_handoff", lambda *_a, **_k: None
+            )
+            rejected = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+        assert rejected.get("workBlocked"), json.dumps(rejected)
+        assert rejected["workBlocked"][0]["reason"] == (
+            "PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID"
+        ), rejected
+        assert result_path.read_bytes() == raw
+        accepted = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+        assert accepted["ok"] and not accepted.get("workBlocked"), accepted
+        normalized = json.loads(result_path.read_bytes())
+        assert normalized["stage"] == "FIX_READY"
+        assert normalized["previousCommitSha"] == parent
+        assert normalized["tests"] == checks
+        assert normalized["quality"] == fresh["quality"]
+        assert accepted["publicationRequests"] == []
+        assert context_path.read_bytes() == context_raw
+        assert run_git(worktree, "rev-parse", "HEAD") == original_head
+        assert run_git(worktree, "status", "--porcelain") == ""
+        retry = store.validation_followup_candidates()[0]
+        next_round = MODULE.validation_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-1",
+                result_digest=retry["resultDigest"],
+                intent_id="intent-1",
+                worktree_path=str(worktree),
+            )
+        )
+        assert next_round["ok"] and not next_round.get("blocked"), next_round
+        assert next_round["reservationDigest"] != reservation
+        assert "task-context 的 PR_OPEN 是已有 PR 的业务状态" in next_round["prompt"]
+        with store.connect() as connection:
+            audit = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM events "
+                    "WHERE event_type='COMPLETED_PUBLISHED_VALIDATION_HANDOFF_AUTHORIZED'"
+                ).fetchone()[0]
+            )
+        assert base64.b64decode(audit["nativeRawBase64"]) == raw
+        assert audit["turnId"] == receipt["turnId"]
+        return
     with MODULE._task_worktree_private_descriptor(candidate) as opened:
         arguments = dict(
             candidate=candidate,
