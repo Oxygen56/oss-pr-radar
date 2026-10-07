@@ -6914,6 +6914,46 @@
     ],
     "why": "Issue provides a clear root cause: Triton persistent matmul kernel config exceeds shared memory on SM89, with multiple independent reproductions and local fixes. However, the deterministic gate requires HUMAN_REVIEW, and existing PR #13023 has semantic overlap with the issue's code path and keywords, requiring maintainer comparison before creating a new task."
   },
+  "0ceb3be3d735cf1d7c8fc1ad9030cdd26de4345ae19f73bda3cf0abb72692f77": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment lists PR #15 with overlapping path vllm/platforms/cuda.py and 3 test files but references_issue=false and root_cause_coverage=false, while the issue's failure mode 2 explicitly names platforms/cuda.py::_get_backend_priorities as the routing gap",
+      "preTaskEvidence policy status is ai_disclosure_conflict while actionability_evidence reports maintainer_approved=false and no ownership confirmation"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/platforms/cuda.py: SM120 MLA candidate list must include a rope-free-capable backend",
+      "SM120 sparse-MLA kernel path must accept kv_lora_rank=512, qk_rope_head_dim=0, query dim 512",
+      "supported_kv_cache_dtypes for the rope-free lane (bf16 vs fp8_ds_mla pe_dim=64 constraint)"
+    ],
+    "risks": [
+      "PR #15 and PR #54929 may already cover the same root cause, making a new contribution duplicative",
+      "Repository AI-disclosure policy conflict blocks automated public submission",
+      "SM120 hardware required for validation; no public reproduction evidence supplied",
+      "Distinguishing kernel-shape gap from routing-only gap requires the runtime patch experiment described in failure mode 3"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Boot GLM-5.3-Flash (qk_rope_head_dim=0) on SM120 with kv_cache_dtype=auto and bfloat16; confirm no 'pe_dim must be 64 for fp8_ds_mla' and no 'No valid attention backend' error",
+      "Numerical regression: compare sparse-MLA decode logits/top-k against an fp32 reference for the rope-free shape (qk_nope=256, kv_lora=512, query 512)",
+      "Compare against PR #15 and PR #54929 implementations to confirm the root cause is not already covered"
+    ],
+    "unknowns": [
+      "Whether PR #15 or PR #54929 already fixes the rope-free SM120 sparse-MLA path",
+      "Whether the repository's AI-disclosure requirement permits this contribution at all",
+      "Whether the SM120 kernel shape guard can be relaxed without a new kernel implementation"
+    ],
+    "why": "The issue describes a concrete SM120 sparse-MLA gap for rope-free MLA (qk_rope_head_dim=0) with three failure modes and a precise kernel shape guard, but the supplied evidence shows unresolved duplicate/overlap coverage: PR #15 ('Make the rope-free MLA path work on SM12x', 3 test files, overlapping vllm/platforms/cuda.py) and PR #54929 (portable Triton sparse-MLA fallback for SM12x) both semantically overlap the issue without referencing it, and the duplicate status is 'semantic_overlap_requires_review'. Additionally, the pre-task policy is 'ai_disclosure_conflict' (aiDisclosureConflict=true), a repository disclosure requirement that materially blocks automated public action. These unresolved coverage and disclosure facts determine whether new code work is actionable."
+  },
   "0cf562544f6cff9459473d6e6351fcfbf36590b33b55413469e38e20a9da54ae": {
     "confidence": 0.8,
     "contradictions": [],
@@ -46008,6 +46048,40 @@
     ],
     "why": "Issue reports a Cloud-only regression with a plausible symptom and reproduction, but no root-cause evidence: the reporter only hypothesizes a phantom sys.query injection in mapping_user_inputs_to_variable_pool. The candidate's own actionability evidence marks root_cause_signal=false, and the proposed code paths (api/services/credentials/query.py, web/app/components/plugins/marketplace/query.ts) are unrelated to workflow variable-pool mapping, so the actionable code location is unknown."
   },
+  "533fa0796f97910a62c42f31d6b949ccea4e31a9eb7868a0556bf06f27a70176": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states the helper is on origin/main, but triage verification shows terminate-reason.ts and describeAgentTerminateReason exist only on the #13466 branch"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agents/runtime/agent-headless.ts: add getLoopType() accessor and narrow private loopType to LoopType | null",
+      "packages/core/src/agents/forkedAgent.ts: add loopType?: LoopType | null to ForkedAgentResult and populate at the getTerminateMode() read site",
+      "terminateReasonMessage: pass loopType through to describeAgentTerminateReason"
+    ],
+    "risks": [
+      "Hard dependency on unmerged #13466; implementing now would duplicate or conflict with that refactor",
+      "Type mismatch between string | null field and LoopType | null helper signature must be settled without widening the helper",
+      "terminateReason reaches TUI, telemetry, and tools/agent/agent.ts, so an optional field must remain backwards compatible"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting a forked/background agent stopped by loop detection emits the detector name (e.g. consecutive_identical_tool_calls) in its terminate reason message",
+      "Run targeted unit tests for the memory planner call sites and agent runtime after #13466 lands"
+    ],
+    "unknowns": [
+      "Whether #13466 will merge and when, which gates steps 2-3",
+      "Whether any other assignment writes a non-LoopType string into AgentHeadless.loopType"
+    ],
+    "why": "The issue is a well-diagnosed, concrete plumbing gap (loopType never reaches ForkedAgentResult), but the triage evidence establishes a hard dependency: terminate-reason.ts / describeAgentTerminateReason / terminateReasonMessage only exist on the unmerged #13466 branch, and on main the helper is module-private in agent-interactive.ts. Steps 2-3 are unimplementable until #13466 merges, and #13466 is OPEN with CHANGES_REQUESTED and a procedural CI blocker. This is an unresolved coverage/ordering fact that determines whether code work is actionable now."
+  },
   "5354015a7de32ad802775401785755dd57a4f7a59de2a688324eaf514eb5cda2": {
     "confidence": 0.8,
     "contradictions": [
@@ -53273,6 +53347,40 @@
       "Exact code path responsible for token leakage"
     ],
     "why": "Issue reports a concrete bug with clear reproduction and controls, but root cause is not identified and likely involves model packaging/chat-template specifics. No maintainer confirmation or design direction. Potential duplicate issue #17656 exists, and an open PR #17679 is unrelated. Actionability is limited without maintainer guidance."
+  },
+  "5f4e8e86d1d8c750843a3383be7f9b901bbce4a30a1dff06f049b7ee09ceb95f": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu_worker.py or equivalent profile_cudagraph_memory()/KV cache budget accounting",
+      "CUDA graph capture memory estimation as a function of KV block count",
+      "startup error path for configurations that cannot fit the budget"
+    ],
+    "risks": [
+      "CUDA graph memory depends on hardware/driver and model, so a fixed estimate may not generalize",
+      "Changing KV cache sizing could regress throughput or break existing gpu_memory_utilization semantics",
+      "No maintainer design confirmation on whether to reserve upfront or shrink cache after capture"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on a 24 GiB GPU with Qwen/Qwen3-0.6B and kv_cache_dtype='fp8' to confirm startup OOM",
+      "Add a regression test asserting the KV cache budget reserves measured CUDA graph memory and that startup succeeds or fails early with an actionable error",
+      "Compare default vs fp8 KV cache dtype startup memory accounting to verify the graph-capture term is included"
+    ],
+    "unknowns": [
+      "Exact code location of profile_cudagraph_memory() and current KV cache budget computation in this base SHA",
+      "Whether a maintainer has an existing design preference for reserve-vs-shrink behavior"
+    ],
+    "why": "Issue describes a concrete, reproducible FP8 KV cache startup OOM on a 24 GiB GPU with a specific mechanism: profile_cudagraph_memory() underestimates CUDA graph capture cost, so KV cache sizing (~19.93 GiB) plus graph capture (~0.80 GiB) exceeds the gpu_memory_utilization budget. Suggested fix (account for actual graph capture cost, including KV-block dependence, or re-adjust cache after capture) is actionable. No duplicate/merged fix is established: open PRs #60186, #60367, #60143 are keyword-only overlaps with no direct code-path or semantic overlap. The ai_disclosure_conflict policy is a submission-process constraint, not a technical blocker for private work."
   },
   "5f6d16a9a85fab552d345aecacc994a06baf5c8d3402e0f09237b8cad829ea3f": {
     "confidence": 0.85,
@@ -102951,6 +103059,43 @@
     ],
     "why": "Issue provides a concrete traceback, ordered reproduction, and a specific root cause: OMP's reload-tagged dynamic import of onnxruntime-web creates a second module identity that re-registers the CPU backend, failing with 'cannot register backend \"cpu\" using priority 10'. A candidate fix (import.meta.resolve) is described with before/after verification. This is a real user-visible bug on the agent/RAG embedding path with a clear code anchor (embedding.ts / loadTransformersForLocalEmbedding)."
   },
+  "b84f838cb3c1e0b19b06109f4edef4e2ce7823b58985ff15badbf7f6071d18ee": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body claims opencode shipped as eligible runtime in v2.3.0, while multiple comments report opencode omitted from supported list on 4.0.0",
+      "Comment states #5289 merged to main 2026-10-06 but tested stable 4.0.0 predates it, so fix coverage is unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/reviewtransaction/status.go",
+      "scripts/crosslane/opencode.go",
+      "scripts/gen-sdd-agent-digests/opencode.go",
+      "internal/components/telemetryruntime/opencode.go"
+    ],
+    "risks": [
+      "Merged PR #5289 may already cover the fix, making further work redundant",
+      "Repository policy ai_disclosure_conflict blocks automated public submission",
+      "Occurrence reports are privacy-scrubbed and assert no root cause, so the failing code path is unconfirmed"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce selectorless preflight with --agent opencode on a build containing #5289 to confirm whether the refusal persists",
+      "Add regression test asserting opencode appears in the supported immutable-review runtime list"
+    ],
+    "unknowns": [
+      "Whether the merged #5289 actually resolves this refusal class on a build containing it",
+      "Which specific code path produces the eligibility list and whether it is the same as #5289 touched",
+      "Whether maintainers consider this issue still open for a new PR given the merged fix"
+    ],
+    "why": "Issue is a pile of occurrence reports explicitly asserting no root cause; the only linked fix PR #5289 is already MERGED, and commenters note the merged fix postdates the stable release they tested, leaving unresolved duplicate/merged-fix coverage. Track is agent_ai_infra, not llm_algorithm, so no algorithm-specific requirement applies, but the actionable code work is unclear."
+  },
   "b85c5f8c0794008cc992798ca161d26a55f0784efa624f4f42b6b73382cce48a": {
     "confidence": 0.8,
     "contradictions": [],
@@ -121644,6 +121789,38 @@
       "Exact WorkflowsStorage contract changes required"
     ],
     "why": "Issue clearly describes a race condition in workflow resume with public repro and production evidence, but the proposed fix requires storage-level atomic claim/CAS and maintainer confirmation on the WorkflowsStorage contract. Existing PR #20512 was closed as insufficient, and maintainer input is needed to choose between single-process mitigation and storage-backed solution."
+  },
+  "d8b2faee16b8ed4bbad5ff21a33240f330b196477464699e0c37afaca0345962": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/cron/store/sqlite-cron-store.ts: bind :now/:capacity with prefixed keys or positional ? in claimDueRuns",
+      "Add one-line comment above nextDueRun.get({...}) explaining the ':' prefix requirement under Bun's non-strict driver"
+    ],
+    "risks": [
+      "Bun non-strict driver behavior may differ across Bun versions; verify with Bun 1.4.2",
+      "CI runs vitest under Node and cannot catch this regression, so manual bun test evidence is required in PR description",
+      "Optional CronRunner.tick() logging change is out of scope and should be a separate issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `bun test src/cron/store/sqlite-cron-store.test.ts` before fix: expect 15 pass / 4 fail on claim/reclaim/requeue",
+      "Run same suite after fix: expect 19/19 pass under Bun",
+      "Run Node cron suite (vitest): expect 118 tests pass",
+      "Run SDK build and core typecheck including smoke"
+    ],
+    "unknowns": [
+      "PR creation blocked by contributor permissions; maintainer may need to open PR from contributor branch or grant access"
+    ],
+    "why": "Issue provides a precise root cause (CronStore.claimDueRuns binds named params as an object under bun:sqlite, causing NULL comparison and zero claimed runs), a runtime-independent reproduction, and a maintainer-confirmed regression from #14004 with a concrete fix path. Maintainer explicitly asked for a PR with a binding comment and before/after bun test output."
   },
   "d8bd6aa097c0dc7757564b29a87268ecd5fc0abc5e7c045ec7f7c50aa8734102": {
     "confidence": 0.7,
