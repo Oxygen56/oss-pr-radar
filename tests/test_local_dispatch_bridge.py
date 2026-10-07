@@ -32116,6 +32116,86 @@ def test_native_completed_validation_keeps_missing_envelope_proof_rejections(
         assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
 
 
+def test_completed_unsigned_validation_revision_survives_audit_refresh(tmp_path, monkeypatch):
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path,
+        monkeypatch,
+        target_base_bound=True,
+        complete_normal_validation_audit=True,
+    )
+    context_path = result_path.parent / "task-context.json"
+    old_context = json.loads(context_path.read_text())
+    input_raw = input_path.read_bytes()
+    head = run_git(worktree, "rev-parse", "HEAD")
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text() + "\nassert 'value' in globals()\n")
+    value = json.loads(result_path.read_bytes())
+    value.update(
+        taskId="intent-1",
+        handoffMode="controller_commit_required",
+        commitSha=None,
+        headSha=head,
+        previousControllerCommitSha=head,
+        changedFiles=["runtime.py"],
+        controllerCommitChangedFiles=["runtime.py"],
+        commitMessage="fix: complete the validation revision",
+    )
+    value["quality"].update(relevant_tests_green=False, independent_review_passed=False)
+    result_path.write_text(json.dumps(value))
+    original_raw = result_path.read_bytes()
+    candidate = store.task_result_candidates_for_ingestion()[0]
+    assert MODULE._controller_commit_result_pending_ingestion(store, candidate, worktree=worktree)
+
+    # Replay the actual refresh that happened after completion and before ingestion.
+    live_audit = json.loads(json.dumps(old_context["liveAudit"]))
+    live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+    live_audit["evidence"].update(
+        digest="b" * 64,
+        complete=True,
+        completeness={"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": live_audit,
+            "targetBase": old_context["targetBase"],
+            "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+        },
+        dedupe_key="intent-1:completed-unsigned-validation:current-audit",
+    )
+    MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
+    current = json.loads(context_path.read_text())
+    assert current["contextDigest"] != old_context["contextDigest"]
+    assert current["targetBase"] == old_context["targetBase"]
+    assert result_path.read_bytes() == original_raw and input_path.read_bytes() == input_raw
+
+    proof = MODULE._validation_result_context_refresh_proof
+    monkeypatch.setattr(MODULE, "_validation_result_context_refresh_proof", lambda *a, **kw: None)
+    before = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert before["errors"] == [{"key": "a/b#1", "error": "task result context digest mismatch"}], (
+        before
+    )
+    assert (
+        result_path.read_bytes() == original_raw and run_git(worktree, "rev-parse", "HEAD") == head
+    )
+    monkeypatch.setattr(MODULE, "_validation_result_context_refresh_proof", proof)
+
+    resumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert resumed["ok"] and resumed["errors"] == [], resumed
+    assert resumed["publicationRequests"] == [] and resumed["validationDeferred"], resumed
+    final = json.loads(result_path.read_bytes())
+    assert final["contextDigest"] == current["contextDigest"]
+    assert final["handoffMode"] == "controller_commit_complete"
+    assert final["commitSha"] == run_git(worktree, "rev-parse", "HEAD") != head
+    assert final["quality"]["independent_review_passed"] is False
+    assert run_git(worktree, "status", "--porcelain") == ""
+    assert input_path.read_bytes() == input_raw
+
+
 @pytest.mark.parametrize(
     ("handoff", "omit_previous_parent"),
     [

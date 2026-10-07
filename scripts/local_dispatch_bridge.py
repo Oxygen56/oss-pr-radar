@@ -2451,6 +2451,7 @@ def _validation_result_context_refresh_proof(
     in the ordinary ingestion path after this read-only proof.
     """
     ready = isinstance(value.get("quality"), dict) and assess_submit_ready(value["quality"]).ready
+    commit_required = value.get("handoffMode") == "controller_commit_required"
     retired_latest_target = (
         store.retired_latest_target_receipt(context, allow_completed_validation=True)
         if not ready and isinstance(context.get("publicationReceipt"), dict)
@@ -2470,7 +2471,8 @@ def _validation_result_context_refresh_proof(
         )
         or context.get("codePathTombstoneReceipt") is not None
         or value.get("stage") != "FIX_READY"
-        or value.get("handoffMode") != "controller_commit_complete"
+        or value.get("handoffMode")
+        not in {"controller_commit_complete", "controller_commit_required"}
         or value.get("followupDigest")
         or not isinstance(value.get("quality"), dict)
         or _controller_policy_verification(context) is None
@@ -2498,9 +2500,30 @@ def _validation_result_context_refresh_proof(
         or current_digest != _task_context_digest(context, None)
         or old_digest == current_digest
         or context.get("targetBase") is None
-        or value.get("commitSha") != command(["git", "rev-parse", "HEAD"], cwd=worktree)
-        or _local_changed_files(worktree)
     ):
+        return None
+    head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    if commit_required:
+        try:
+            declared = _validated_changed_files(value.get("changedFiles"))
+            commit_paths = _validated_changed_files(value.get("controllerCommitChangedFiles"))
+        except RuntimeError:
+            return None
+        if (
+            ready
+            or raw is None
+            or value.get("commitSha") is not None
+            or value.get("resultDigest") is not None
+            or value.get("headSha") != head
+            or value.get("previousControllerCommitSha") != head
+            or not declared
+            or declared != commit_paths
+            or _local_changed_files(worktree) != declared
+            or sorted(command(["git", "ls-files", "--", *declared], cwd=worktree).splitlines())
+            != declared
+        ):
+            return None
+    elif value.get("commitSha") != head or _local_changed_files(worktree):
         return None
     validate_target_base(context["targetBase"])
     with store.connect() as connection:
@@ -2648,7 +2671,7 @@ def _validation_result_context_refresh_proof(
         "auditEventId": current_audit[0]["id"],
         "validationFollowupEventId": sent[0]["id"],
         "validationResultDigest": sent[1]["resultDigest"],
-        "commitSha": value["commitSha"],
+        "commitSha": value.get("commitSha"),
     }
     if not ready:
         try:
@@ -2666,6 +2689,7 @@ def _validation_result_context_refresh_proof(
                     result_access=opened,
                     context_raw=context_raw,
                     validation_context_digest=old_digest,
+                    allow_commit_required_context_refresh=commit_required,
                     completion_proof=completion,
                     allow_retired_latest_target=retired_publication_is_unpublished,
                 )
@@ -16012,6 +16036,7 @@ def _completed_validation_input_task_id(
     allow_expired_context_mismatch: bool = False,
     completion_proof: dict[str, Any] | None = None,
     validation_context_digest: str | None = None,
+    allow_commit_required_context_refresh: bool = False,
     allow_retired_latest_target: bool = False,
     receipt_registration_only: bool = False,
 ) -> str | None:
@@ -16027,6 +16052,16 @@ def _completed_validation_input_task_id(
     if validation_context_digest is not None and (
         re.fullmatch(r"[0-9a-f]{64}", validation_context_digest) is None
         or expired_publication is not None
+    ):
+        return None
+    if allow_commit_required_context_refresh and (
+        validation_context_digest is None
+        or value.get("handoffMode") != "controller_commit_required"
+        or value.get("commitSha") is not None
+        or value.get("resultDigest") is not None
+        or value.get("headSha") != value.get("previousControllerCommitSha")
+        or re.fullmatch(r"[0-9a-f]{40}", str(value.get("headSha") or "")) is None
+        or (value.get("quality") or {}).get("independent_review_passed") is not False
     ):
         return None
     expected_context_digest = validation_context_digest or context.get("contextDigest")
@@ -16062,6 +16097,7 @@ def _completed_validation_input_task_id(
         or (
             validation_context_digest is not None
             and value.get("handoffMode") != "controller_commit_complete"
+            and not allow_commit_required_context_refresh
         )
         or (
             value.get("contextDigest") != expected_context_digest
@@ -16105,20 +16141,6 @@ def _completed_validation_input_task_id(
         or (historical is None and validation_context_digest is None)
     ):
         return None
-    if value.get("handoffMode") == "controller_commit_required" and (
-        (
-            value.get("previousControllerCommitSha") != historical["head_sha"]
-            and not (
-                "taskId" not in value
-                and "previousControllerCommitSha" not in value
-                and expired_publication is None
-                and validation_context_digest is None
-            )
-        )
-        or command(["git", "rev-parse", "HEAD"], cwd=result_access.worktree)
-        != historical["head_sha"]
-    ):
-        return None
     with store.connect() as connection:
         if (
             validation_context_digest is not None
@@ -16151,7 +16173,11 @@ def _completed_validation_input_task_id(
     if validation_context_digest is not None:
         # Native reservations outlive the mutable managed projection. Resolve
         # their exact authenticated source, including a superseded result.
-        source_head = str(value.get("commitSha") or "")
+        source_head = str(
+            value.get("previousControllerCommitSha")
+            if allow_commit_required_context_refresh
+            else value.get("commitSha") or ""
+        )
         source_digest = str(sent[1].get("resultDigest") or "")
         historical = managed_ledger.read_result(f"{task_id}||{source_head}|{source_digest}")
         if historical is None:
@@ -16174,6 +16200,20 @@ def _completed_validation_input_task_id(
             or validation.get("reproductionReceiptAuthenticated") is not True
         ):
             return None
+    if value.get("handoffMode") == "controller_commit_required" and (
+        (
+            value.get("previousControllerCommitSha") != historical["head_sha"]
+            and not (
+                "taskId" not in value
+                and "previousControllerCommitSha" not in value
+                and expired_publication is None
+                and validation_context_digest is None
+            )
+        )
+        or command(["git", "rev-parse", "HEAD"], cwd=result_access.worktree)
+        != historical["head_sha"]
+    ):
+        return None
     if sent[1].get("resultDigest") != historical["result_digest"]:
         return None
     if expired_publication is not None:
@@ -16277,6 +16317,10 @@ def _completed_validation_input_task_id(
     ):
         return None
     recovery_proof = None
+    if allow_commit_required_context_refresh and (
+        receipt.get("turnStatus") != "completed" or receipt.get("turnError") or receipt.get("error")
+    ):
+        return None
     if receipt.get("turnStatus") != "completed":
         if validation_context_digest is None or receipt.get("turnStatus") not in {
             "failed",
@@ -18036,14 +18080,34 @@ def _controller_commit_result_pending_ingestion(
                 or not isinstance(context, dict)
                 or not isinstance(value.get("quality"), dict)
                 or assess_submit_ready(value["quality"]).ready
-                or value.get("commitSha") != command(["git", "rev-parse", "HEAD"], cwd=worktree)
-                or _local_changed_files(worktree)
                 or store.task_result_digest_seen(
                     candidate["key"],
                     _task_result_digest(value, raw),
                     **_ledger_binding_kwargs(candidate),
                 )
             ):
+                return False
+            commit_required = value.get("handoffMode") == "controller_commit_required"
+            head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+            if commit_required:
+                declared = _validated_changed_files(value.get("changedFiles"))
+                if (
+                    value.get("commitSha") is not None
+                    or value.get("resultDigest") is not None
+                    or value.get("headSha") != head
+                    or value.get("previousControllerCommitSha") != head
+                    or value["quality"].get("independent_review_passed") is not False
+                    or not declared
+                    or _validated_changed_files(value.get("controllerCommitChangedFiles"))
+                    != declared
+                    or _local_changed_files(worktree) != declared
+                    or sorted(
+                        command(["git", "ls-files", "--", *declared], cwd=worktree).splitlines()
+                    )
+                    != declared
+                ):
+                    return False
+            elif value.get("commitSha") != head or _local_changed_files(worktree):
                 return False
             return _completed_validation_input_task_id(
                 store,
@@ -18053,7 +18117,9 @@ def _controller_commit_result_pending_ingestion(
                 value=value,
                 result_access=opened,
                 context_raw=context_raw,
-                validation_context_digest=str(context.get("contextDigest") or ""),
+                validation_context_digest=(
+                    None if commit_required else str(context.get("contextDigest") or "")
+                ),
             ) == candidate.get("intentId")
     except (OSError, RuntimeError, ValueError, KeyError):
         return False
