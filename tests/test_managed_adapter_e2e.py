@@ -18,6 +18,67 @@ from oss_pr_radar.scanner import Radar
 pytestmark = pytest.mark.usefixtures("current_signing_key")
 
 
+@pytest.mark.parametrize("producer", ["scanner", "dispatch"])
+def test_new_discovery_preserves_a_bound_task_opportunity(tmp_path, producer):
+    database = tmp_path / "state" / "radar_ledger.sqlite3"
+    adapter = ManagedAdapter(tmp_path, database)
+    managed = adapter.ledger
+    original = managed.upsert_opportunity(
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="REPRODUCTION_REQUIRED",
+        source="dispatch",
+        provenance={"intentId": "bound-task"},
+        metadata={"selectedBaseSha": "a" * 40, "codePaths": ["runtime.py"]},
+    )
+    managed.bind_task(
+        task_id="bound-task",
+        opportunity_key="owner/repo#1",
+        thread_id="bound-thread",
+        worktree_path=str(tmp_path / "bound-worktree"),
+        state="REPRODUCTION_REQUIRED",
+    )
+    if producer == "scanner":
+        observed = adapter.record_scan_report(
+            {
+                "run_id": "new-discovery",
+                "candidate_details": [
+                    {
+                        "repo": "owner/repo",
+                        "num": 1,
+                        "url": "https://github.com/owner/repo/issues/1",
+                        "auto_spawn": True,
+                        "preTaskEvidence": {"baseSha": "b" * 40},
+                    }
+                ],
+            }
+        )
+    else:
+        observed = adapter.record_dispatch_queue(
+            {
+                "mode": "shadow",
+                "intents": [
+                    {
+                        "intentId": "f" * 64,
+                        "key": "owner/repo#1",
+                        "issueUrl": "https://github.com/owner/repo/issues/1",
+                        "preTaskEvidence": {"baseSha": "b" * 40},
+                    }
+                ],
+            }
+        )
+    assert observed["recorded"] == 1
+    with managed._connection() as connection:
+        actual = connection.execute(
+            "SELECT * FROM managed_opportunities WHERE opportunity_key='owner/repo#1'"
+        ).fetchone()
+    assert dict(actual) == original
+    assert managed.read_task("bound-task")["thread_id"] == "bound-thread"
+
+
 def test_followup_snapshot_ignores_unmanaged_pr_without_admission(tmp_path):
     database = tmp_path / "state" / "radar_ledger.sqlite3"
     adapter = ManagedAdapter(tmp_path, database)

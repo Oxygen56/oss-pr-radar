@@ -256,6 +256,7 @@ class ManagedAdapter:
                     "scannerVersion": report.get("scanner_version"),
                     "reportDigest": report.get("report_digest") or sha256_json(report),
                 },
+                preserve_task_binding=True,
                 observed_at=str(report.get("now") or "") or None,
                 metadata={
                     "candidateDigest": candidate.get("evidence_digest"),
@@ -549,6 +550,7 @@ class ManagedAdapter:
                 state="PENDING_PREFLIGHT",
                 source="dispatch",
                 provenance={"queueDigest": sha256_json(queue), "intentId": intent.get("intentId")},
+                preserve_task_binding=True,
                 observed_at=str(intent.get("issuedAt") or "") or None,
                 metadata={
                     "decisionDigest": intent.get("decisionDigest"),

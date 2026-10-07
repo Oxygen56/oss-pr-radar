@@ -17401,6 +17401,7 @@ def _controller_commit_result(
     summarized_validation_check: bool = False,
     complete_normal_validation_audit: bool = False,
     omit_commit_message: bool = False,
+    managed_opportunity_source: str = "test-legal-fixture",
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -17741,7 +17742,7 @@ def _controller_commit_result(
         issue_number=1,
         issue_url="https://github.com/a/b/issues/1",
         state="SYSTEM_PROCESSING",
-        source="test-legal-fixture",
+        source=managed_opportunity_source,
         provenance={"fixture": True},
         metadata={"selectedBaseSha": base_sha, "codePaths": receipt_code_paths},
     )
@@ -17859,6 +17860,7 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     expired_history=False,
     foreign_branch=False,
     return_completed_fixture=False,
+    overwritten_discovery=False,
 ):
     from oss_pr_radar import publication
     from oss_pr_radar.evidence import EvidenceBundle
@@ -17870,6 +17872,7 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         worktree=managed_path,
         controller_policy_complete=True,
         target_base_bound=True,
+        managed_opportunity_source="dispatch" if overwritten_discovery else "test-legal-fixture",
     )
     bind_validation_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(MODULE, "THREAD_DB", tmp_path / "absent-thread-db")
@@ -18018,6 +18021,72 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     assert audited.reason == "LATEST_TARGET_REVALIDATION_REQUIRED", audited
     assert run_git(worktree, "rev-parse", "refs/remotes/origin/main") == live_base
 
+    legacy_metadata = None
+    if overwritten_discovery:
+        from oss_pr_radar.managed_adapter import ManagedAdapter
+
+        queue = {
+            "mode": "shadow",
+            "intents": [
+                {
+                    "intentId": "f" * 64,
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "decisionDigest": "d" * 64,
+                    "preTaskGate": {},
+                    "preTaskEvidence": {"baseSha": "b" * 40},
+                }
+            ],
+        }
+        original_upsert = ManagedLedger.upsert_opportunity
+
+        def legacy_upsert(self, **kwargs):
+            kwargs.pop("preserve_task_binding", None)
+            return original_upsert(self, **kwargs)
+
+        adapter = ManagedAdapter(tmp_path, store.path)
+        with monkeypatch.context() as legacy:
+            legacy.setattr(ManagedLedger, "upsert_opportunity", legacy_upsert)
+            assert adapter.record_dispatch_queue(queue)["recorded"] == 1
+        with store.connect() as connection:
+            damaged = connection.execute(
+                "SELECT * FROM managed_opportunities WHERE opportunity_key='a/b#1'"
+            ).fetchone()
+        legacy_metadata = json.loads(damaged["metadata_json"])
+        assert set(legacy_metadata) == {"decisionDigest", "preTaskGate", "preTaskEvidence"}
+        assert damaged["state"] == "PENDING_PREFLIGHT"
+        assert damaged["source"] == "dispatch"
+        # An explicit conflicting base still fails through the original entry;
+        # only the observed missing-field projection is recoverable.
+        original_upsert(
+            adapter.ledger,
+            opportunity_key="a/b#1",
+            owner="a",
+            repo="b",
+            issue_number=1,
+            issue_url="https://github.com/a/b/issues/1",
+            state="PENDING_PREFLIGHT",
+            source="dispatch",
+            provenance=json.loads(damaged["provenance_json"]),
+            metadata=legacy_metadata | {"selectedBaseSha": "0" * 40},
+        )
+        rejected = MODULE.run_publication_queue(SimpleNamespace(ledger=store.path))
+        assert rejected["errors"] == [
+            {"requestId": request_id, "error": "target refresh managed opportunity base changed"}
+        ]
+        assert result_path.read_bytes() == source_bytes
+        assert run_git(worktree, "rev-parse", "HEAD") == old_head
+        with store.connect() as connection:
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type='PUBLICATION_TARGET_BASE_REFRESHED'"
+                ).fetchone()[0]
+                == 0
+            )
+        with monkeypatch.context() as legacy:
+            legacy.setattr(ManagedLedger, "upsert_opportunity", legacy_upsert)
+            assert adapter.record_dispatch_queue(queue)["recorded"] == 1
+
     advanced = MODULE.run_publication_queue(SimpleNamespace(ledger=store.path))
     assert advanced["ok"], advanced["errors"]
     assert advanced["pending"][0]["targetBaseRefresh"]["refreshed"] is True
@@ -18034,6 +18103,17 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     assert current["childMayEditFiles"] is False
     assert current["reproductionReceipt"] is None
     assert managed.read_task("intent-1")["state"] == "REPRODUCTION_REQUIRED"
+    if legacy_metadata is not None:
+        with store.connect() as connection:
+            refreshed = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM events WHERE event_type='PUBLICATION_TARGET_BASE_REFRESHED'"
+                ).fetchone()[0]
+            )
+        assert refreshed["history"]["managedOpportunityMetadata"] == legacy_metadata
+        recovery = refreshed["history"]["managedOpportunityEvidenceRecovery"]
+        assert recovery["authenticatedPreviousBaseSha"] == old_base
+        assert recovery["reason"] == "BOUND_TASK_DISCOVERY_PROJECTION_OVERWRITTEN"
     retained = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
     assert retained["ok"], retained["errors"]
     assert retained["ignored"] == [{"key": "a/b#1", "reason": "LATEST_TARGET_RETAINED_INPUT"}]
@@ -18471,6 +18551,14 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     assert any(row["event_type"] == "IMPLEMENTATION_FOLLOWUP_SENT" for row in events)
     if return_completed_fixture:
         return store, worktree, result_path, request_id
+
+
+def test_latest_target_refresh_recovers_the_bound_task_after_discovery_overwrite(
+    monkeypatch, tmp_path
+):
+    test_latest_target_refresh_runs_native_validation_and_implementation_chain(
+        monkeypatch, tmp_path, False, overwritten_discovery=True
+    )
 
 
 def test_latest_target_expired_history_continues_commit_without_renewing_source(

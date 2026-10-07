@@ -14279,8 +14279,6 @@ class RadarLedger:
                 raise LedgerError("target refresh managed task binding changed")
             metadata = json.loads(opportunity["metadata_json"] or "{}")
             provenance = json.loads(task["provenance_json"] or "{}")
-            if str(metadata.get("selectedBaseSha") or metadata.get("baseSha") or "") != old_base:
-                raise LedgerError("target refresh managed opportunity base changed")
             durable = provenance.get("probeReceipt")
             if (
                 not isinstance(durable, dict)
@@ -14301,11 +14299,42 @@ class RadarLedger:
                 or provenance.get("probeReceiptDigest") != durable.get("receiptDigest")
             ):
                 raise LedgerError("target refresh managed reproduction authority is invalid")
+            opportunity_provenance = json.loads(opportunity["provenance_json"] or "{}")
+            recovered_discovery_projection = (
+                "selectedBaseSha" not in metadata
+                and "baseSha" not in metadata
+                and opportunity["source"] == "dispatch"
+                and opportunity["state"] == "PENDING_PREFLIGHT"
+                and set(metadata) == {"decisionDigest", "preTaskGate", "preTaskEvidence"}
+                and isinstance(metadata.get("preTaskGate"), dict)
+                and isinstance(metadata.get("preTaskEvidence"), dict)
+                and set(opportunity_provenance) == {"queueDigest", "intentId"}
+                and re.fullmatch(r"[0-9a-f]{64}", str(opportunity_provenance.get("queueDigest")))
+                is not None
+                and re.fullmatch(r"[0-9a-f]{64}", str(opportunity_provenance.get("intentId")))
+                is not None
+                and opportunity_provenance["intentId"] != intent_id
+            )
+            if (
+                str(metadata.get("selectedBaseSha") or metadata.get("baseSha") or "") != old_base
+                and not recovered_discovery_projection
+            ):
+                raise LedgerError("target refresh managed opportunity base changed")
             history = {
                 "intentPayload": payload,
                 "managedProvenance": provenance,
                 "managedOpportunityMetadata": metadata,
             }
+            if recovered_discovery_projection:
+                # The original signed task and request above remain the old
+                # source authority. The newer discovery is retained as history,
+                # and the normal refresh still requires entirely new validation.
+                history["managedOpportunityEvidenceRecovery"] = {
+                    "reason": "BOUND_TASK_DISCOVERY_PROJECTION_OVERWRITTEN",
+                    "managedOpportunityProvenance": opportunity_provenance,
+                    "authenticatedPreviousBaseSha": old_base,
+                    "reproductionReceiptDigest": durable["receiptDigest"],
+                }
             refresh = {
                 "requestId": request_id,
                 "intentId": intent_id,

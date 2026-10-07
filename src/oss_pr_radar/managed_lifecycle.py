@@ -1611,6 +1611,7 @@ class ManagedLedger:
         provenance: dict[str, Any],
         observed_at: str | None = None,
         metadata: dict[str, Any] | None = None,
+        preserve_task_binding: bool = False,
     ) -> dict[str, Any]:
         identity = canonical_opportunity_identity(
             opportunity_key=opportunity_key,
@@ -1635,6 +1636,20 @@ class ManagedLedger:
                     issue_number=existing["issue_number"],
                     issue_url=existing["issue_url"],
                 )
+                if (
+                    preserve_task_binding
+                    and connection.execute(
+                        """SELECT 1 FROM managed_tasks WHERE opportunity_key=?
+                       AND state IN ('REPRODUCTION_REQUIRED','IMPLEMENTATION_READY','PORTFOLIO_READY')
+                       AND thread_id IS NOT NULL AND thread_id<>''
+                       AND worktree_path IS NOT NULL AND worktree_path<>'' LIMIT 1""",
+                        (canonical_key,),
+                    ).fetchone()
+                ):
+                    # A new discovery observes this issue; it cannot replace
+                    # the authority or progress of its already bound task.
+                    connection.commit()
+                    return dict(existing)
             connection.execute(
                 """INSERT INTO managed_opportunities
                    (opportunity_key,owner,repo,issue_number,issue_url,state,source,
