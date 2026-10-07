@@ -4094,6 +4094,39 @@
     ],
     "why": "Issue identifies a concrete, reproducible pagination defect in SessionService.listSessions(): mtime-only ordering plus strict `file.mtime < cursor` drops entire tie groups, and the cursor is a non-unique key. Triage evidence confirms exact lines (2570/2575/2681), a deterministic reproduction (200 files, one mtime, size 20 -> 20 of 200), and four live callers. The proposed composite (mtime, sessionId) cursor has a clear validation path (cursor-following test asserting each session id returned once). Open PR #11527 is opt-in SQLite and does not cover the default filesystem path, so it is not a blocking duplicate."
   },
+  "07eaf738485fdc88a9d0f922afd65f514e6726df511e258880e186fadb05c68a": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/api/agent-server-adapter.ts toHooksResponse() carries prompt and system_prompt",
+      "src/api/conversation-service/agent-server-conversation-service.types.ts HookDefinition widened",
+      "src/components/features/conversation-panel/hook-matcher-content.tsx renders prompt/agent hook text",
+      "src/i18n/translation.json new label keys across locales"
+    ],
+    "risks": [
+      "Label choice (Commands vs Prompt/System prompt) is a design decision left to implementer",
+      "Possible companion type change in software-agent-sdk clients/typescript if Canvas should not widen locally",
+      "i18n key additions must cover all 15 locales"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Extend __tests__/components/features/conversation-panel/hooks-modal.test.tsx to assert a prompt hook renders its prompt and an agent hook renders its system_prompt",
+      "Regression: command hook still renders its command under Commands",
+      "Run npm run lint, npm test, and npm run check-translation-completeness after npm run make-i18n"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer widening the local HookDefinition or a companion SDK client change"
+    ],
+    "why": "Issue provides a concrete, reproduced UI defect with exact code anchors: toHooksResponse() in src/api/agent-server-adapter.ts drops prompt/system_prompt, the dialog's HookDefinition lacks those fields, and hook-matcher-content.tsx renders only {hook.command}. Server response evidence confirms the text is available, so the fix is bounded and testable."
+  },
   "07fc20683c4101abcfe30d1f6db34b35da3d0238f0168f766077656f284fa07d": {
     "confidence": 0.8,
     "contradictions": [],
@@ -8147,6 +8180,42 @@
       "Whether PR #2761 fully resolves the issue or has gaps not captured in the assessment."
     ],
     "why": "Issue provides a clear root cause (feishuMarkdownImageRe only matches http(s)://, skipping resource:// handles) and a concrete reproduction path with expected/actual behavior and logs. An open PR #2761 directly addresses the issue with a test file and passing CI, but lacks explicit root-cause coverage evidence; the issue remains actionable for a competing fix that adds a failing test and covers the resource:// path."
+  },
+  "0fb92f86ab686d1b666abfcb1b7ab312b0d0d613cacde6bcf72a318cc0baf63a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue is filed in OpenHands/OpenHands but the actionable fix is scoped to software-agent-sdk and typescript-client"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "software-agent-sdk: add settable max_budget_per_run to conversation-creation request and enforce it before each LLM call",
+      "software-agent-sdk: publish live accumulated_cost while conversation is running",
+      "typescript-client: expose new budget/live-cost fields",
+      "OpenHands/OpenHands: bump client, thread budget through buildStartConversationRequest(), update src/mocks/settings-handlers.ts and BudgetDisplay"
+    ],
+    "risks": [
+      "Fixing in this repo would violate the no-direct-agent-server-calls constraint",
+      "Forwarding max_budget_per_run alone still allows one-step overshoot because enforcement runs after each step",
+      "ai_disclosure_conflict policy blocks automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "In software-agent-sdk, add a regression test that a conversation with a budget below the next call's worst-case cost is refused before the upstream call",
+      "Add a test that accumulated_cost is non-zero while execution_status is running",
+      "In OpenHands/OpenHands, verify src/api/no-direct-agent-server-calls.test.ts still passes after any client wiring change"
+    ],
+    "unknowns": [
+      "Whether the maintainers intend this repo to carry only the client bump and settings wiring",
+      "Whether the ai_disclosure_conflict policy can be resolved for this candidate"
+    ],
+    "why": "The issue describes a real self-hosted V1 gap (no settable per-conversation budget; accumulated cost only published at termination), but the supplied evidence shows the actionable fix belongs in OpenHands/software-agent-sdk (filed as #5561) and OpenHands/typescript-client, not in this repo. The only in-repo work is a client bump plus settings/display wiring, and the repo's own test (src/api/no-direct-agent-server-calls.test.ts) forbids the raw workaround. Additionally, the submission policy is ai_disclosure_conflict, which is a materially blocking repository requirement."
   },
   "0fbc35e10bc347dface165a133e3df627a734ec5e12272d71dbac197adda1781": {
     "confidence": 0.85,
@@ -25376,6 +25445,41 @@
     ],
     "why": "The issue is a CI lint failure caused by an AGENTS.md chain exceeding a byte limit, with a precise byte breakdown and a clear failing job. However, the fix is a documentation/guidance trim or a limit change, not a code contribution, and the issue itself defers the choice to maintainers ('maintainer's call'). The supplied actionability evidence shows no reproduction evidence, no root-cause signal, and an unresolved design confirmation, and the submission policy is an AI disclosure conflict. This is a low-value, non-code opportunity with a materially blocking design decision."
   },
+  "2f12004d5f1c0859fdab142239db65f72f8001049931fe1d219af70939e31823": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims all hook dispatches fail, but comment states CLI hook payloads validate fine on current main",
+      "Open PR #14856 ('name the rejected fields in the session.hook payload error') overlaps the only remaining actionable scope"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/utils/hooks.ts (or the session.hook hub) to include failing field paths/messages from HookEventPayloadSchema in the error",
+      "run-handlers.test.ts to assert the error names the rejected field"
+    ],
+    "risks": [
+      "The 'every dispatch fails' failure may already be resolved, making the original bug report stale",
+      "Improving only the error message may not address the user's actual blocked workflow",
+      "Open PR #14856 appears to target the same error-message change, risking duplicate work"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a deliberately invalid hook payload and assert the error message includes the offending field path",
+      "Run the targeted run-handlers.test.ts suite and static checks"
+    ],
+    "unknowns": [
+      "Whether the original dispatch failure still reproduces on current main",
+      "Whether PR #14856 already covers the error-message improvement",
+      "The actual root cause of the reported dispatch failure"
+    ],
+    "why": "The issue reports that every hook dispatch fails with a generic schema-validation error, but the only substantive comment (Darsh-Nandu) states that on current main the CLI's own hook payloads validate fine, so the 'every dispatch fails' claim may already be fixed. The remaining actionable scope is only improving the error message to name the offending field. This is a contradiction between the issue's core failure claim and the supplied comment, and the root cause of the original failure is not established."
+  },
   "2f3b571d447210a06fd3cdb0ed0b91fe3d54954d08e65103475550b3ea755542": {
     "confidence": 0.9,
     "contradictions": [
@@ -29555,6 +29659,39 @@
       "Maintainer preference on whether completion should be injected as a turn or just a message"
     ],
     "why": "Issue describes a reproducible bug in subagent completion event routing, but lacks a clear root cause and requires maintainer design confirmation for the intended session injection behavior."
+  },
+  "37795d4dd563794790b970ea63e8d0b6abeb7ce54ae73a003be2b58a1ad7f79f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/shared/src/nodeSqliteClient.ts: use BEGIN IMMEDIATE (or retry) for event-write transactions so busy_timeout applies",
+      "RunExecutionService.startRootRun: on ingest failure, interrupt/close the live provider session via ClaudeAdapterV2.interruptTurn",
+      "Ensure failed runs remain interruptible so Stop can reach the provider process"
+    ],
+    "risks": [
+      "BEGIN IMMEDIATE increases lock contention and may surface new SQLITE_BUSY paths under high concurrency",
+      "Interrupting the provider on ingest failure could abort work that would otherwise complete, and must not double-interrupt on normal completion",
+      "Overlap with #14856 (lost failed terminal) and #15447 (Cursor orphan) may require coordinated fix direction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test with node:sqlite and PRAGMA busy_timeout=5000: assert deferred read-then-write upgrade fails immediately while BEGIN IMMEDIATE waits ~5s",
+      "Integration test: hold a write lock from a second connection during orchestrationV2.EventSink.write and assert the write retries/waits instead of failing the run",
+      "Regression test: force ingest failure mid-turn and assert the provider session is interrupted/closed and no claude process remains"
+    ],
+    "unknowns": [
+      "Maintainer has not chosen between BEGIN IMMEDIATE and write retry, but both are reasonable and do not block code work",
+      "Whether the fix should be scoped to cover #15447's Cursor path in the same change"
+    ],
+    "why": "Maintainer triage confirms two concrete root causes on main: deferred BEGIN in packages/shared/src/nodeSqliteClient.ts causing immediate SQLITE_BUSY on read-to-write upgrade (busy_timeout bypassed), and RunExecutionService.startRootRun failing the run without calling ClaudeAdapterV2.interruptTurn, leaving the claude process orphaned. Independent reproduction with node:sqlite and a second occurrence report corroborate both mechanisms and the fast-fail timing."
   },
   "377d6bce9f487d97ba744b5592aacec867b5a1ec259575a7bd1baddf274e1603": {
     "confidence": 0.9,
@@ -36898,6 +37035,41 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a reproducible CUDA graph capture crash in custom_all_reduce on Hopper TP=4, with a clear regression window and code-path anchors. However, the supplied gate is HUMAN_REVIEW and the open PR #46515 has semantic overlap with the same code path, requiring maintainer comparison before any new work. The root cause is not yet confirmed; a commenter suggests the fault may be deferred from an earlier async kernel, so the exact mechanism remains uncertain."
+  },
+  "453c43b2a6a7086487ffef07033c7faac260493541433e1bd17b0344b79bd145": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/components/features/settings/agent-profiles/agent-profile-actions-menu.tsx: focus first enabled item once portaled menu renders",
+      "arrow navigation skips natively disabled items and wraps among enabled items",
+      "Escape and Tab return focus to the row trigger instead of dropping to body",
+      "new regression test file __tests__/components/settings/agent-profiles/agent-profile-actions-menu.test.tsx"
+    ],
+    "risks": [
+      "Open PRs #17666/#17745 change the Set as active label on the same file; acceptance criteria use test ids to avoid conflict",
+      "Possible overlap with #18044's useCloseOnEscape hook if maintainers prefer that approach for Escape handling",
+      "Same defect pattern exists in meta-llm-profiles and provider-connection menus; scope must stay limited to agent-profiles per triage non-goals"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing tests mirroring #18019's anchored-menu harness: mouse open, Enter open, active-row arrow skip, non-active-row cycle, Escape focus return, Tab focus return",
+      "Run existing __tests__/components/settings/agent-profiles suite (4 files, 35 tests) to confirm no regressions",
+      "Run eslint, prettier --check, tsc",
+      "Live verify on patched build: click/Enter opens on agent-profile-edit; active-row ArrowDown reaches Delete; Escape returns to trigger; Tab moves to next row's trigger"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the #18019-style port or the #18044 useCloseOnEscape hook for Escape handling",
+      "Whether the ai_disclosure_conflict policy blocks automated public submission (affects process, not technical value)"
+    ],
+    "why": "Issue provides a concrete, reproducible keyboard-accessibility defect in agent-profile-actions-menu.tsx with file:line root causes (mount-only focus effect behind portal, arrow navigation not skipping disabled items, Escape/Tab not restoring focus), a merged sibling fix (#18019) as reference, and a validated local patch with 6 new tests (5 failing pre-patch). This is a well-scoped, actionable UI fix."
   },
   "453c9f5fcf99ce19a845f5f988421e860040d201e0af8ef01974ce2fc853ab41": {
     "confidence": 0.85,
@@ -46176,6 +46348,38 @@
       "Whether PR #14845 will be merged, making further work redundant"
     ],
     "why": "Issue #14762 describes a model-card ownership defect in ThunderAgent proxy registration, but the supplied evidence shows an open PR #14845 that explicitly references this issue, is technically complete, includes 3 test files, and has passing CI. The issue's own proposed direction (remove public model registration, route via pluggable router) is a large architectural refactor, while the concrete minimal fix (inherit backend runtime_config) is already covered by #14845. No distinctive gap remains for a competing contribution."
+  },
+  "54a4adaa3bd12391180eb230ee6c9abf4942de0351acbf3312e10ab8ae5f2a64": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment lists #50543 as OPEN with direct code overlap while preTaskEvidence duplicate status is human_review_required"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugin resolver: resolve scoped @opencode/* imports for loose local plugin files",
+      "regression test covering local plugin with bare @opencode/plugin import"
+    ],
+    "risks": [
+      "Overlap with open PR #50543 and #49097 may make this redundant",
+      "Resolver change could alter module resolution for unrelated plugin imports"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create .opencode/plugins/probe.js importing @opencode/plugin and Plugin.define, run opencode run --print-logs, assert plugin loads with source: local and status: active",
+      "Add unit test for the resolver handling scoped/subpath imports from plugin directory"
+    ],
+    "unknowns": [
+      "Whether #50543 or #49097 already covers the same fix and will merge",
+      "Maintainer-preferred resolution approach for scoped imports in loose plugin files"
+    ],
+    "why": "Issue is a plugin module-resolution defect with strong reproduction evidence, but the supplied duplicate assessment marks an open PR (#50543) with direct code overlap and identical title as human_review_required, and the issue's own comments point to PR #49097 as the upstream fix. Whether an independent implementation space exists is unresolved, which materially determines actionability."
   },
   "54ab015c5a0b76f0fa3257ade3415af45e8301e82ed51fb68e18275a8f61ff90": {
     "confidence": 0.85,
@@ -74631,6 +74835,33 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset/delete_col, with root cause and reproduction. However, multiple PRs (#6996, #7013, #7023) already exist and are closed pending issue acceptance; maintainer BCathcart is actively involved. The issue is not yet accepted, and the correct next step is to review existing PRs rather than start new work."
   },
+  "86843310e70ce9e47667b67c59caa595d8ee282029ebaeb6b95b74ee728bd404": {
+    "confidence": 0.9,
+    "contradictions": [
+      "algorithm_evidence claims distributed_training/numerics_quantization mechanisms, but the traceback and comments describe only Harmony parser error handling."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Any new fix would duplicate merged #59254 and the four open guard PRs, creating conflicting parser error-handling semantics."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Retest the supplied minimal non-streaming repro on a build containing #59254 to confirm the 500 is gone; no new code work is warranted."
+    ],
+    "unknowns": [
+      "Whether maintainers intend to close the redundant open PRs rather than accept a new implementation."
+    ],
+    "why": "Supplied evidence shows the root cause (unguarded self._harmony_parser.process(token_id) in vllm/parser/harmony.py process_chunk) is already fixed on main by merged PR #59254, and four open PRs (#52055, #47350, #43408, #56216) target the same guard. The issue is a parser error-handling bug, not an LLM algorithm mechanism; the algorithm_evidence matched terms (bf16/fp16/int8/tensor parallel) are incidental environment text, not a training objective, kernel, quantization method, or evaluation methodology."
+  },
   "86976bd4484163f48ba922d4a6f0fd71ead5e4a7215ae952d38df109c0de8382": {
     "confidence": 0.85,
     "contradictions": [
@@ -78556,6 +78787,41 @@
       "Exact code location where model-card publication is triggered relative to endpoint health"
     ],
     "why": "Issue provides a concrete, reproducible readiness-contract bug in dynamo.mocker disaggregated mode: model card is published at engine creation before the decode worker's startup simulation completes, so /v1/models advertises a model that cannot serve. Root cause is identified (publication not gated on the existing NotReady->Ready endpoint health transition), with a clear repro timeline and suggested fix. This is runtime/discovery plumbing in an inference infra repo, not an llm_algorithm track, so the algorithm gate does not apply."
+  },
+  "8d5a5ddd070b7a7d0fe505e254aef5c98627b2edba6be021d70a6686467dd737": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate score 9 and category WAIT_MAINTAINER imply high actionability, but actionability_evidence reports root_cause_signal=false and reproduction_evidence=[]"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/router.py: async_function_with_fallbacks exception routing",
+      "litellm/types/router.py: possible new no-fallback exception-type setting",
+      "litellm/models/model.py: UnsupportedParamsError propagation"
+    ],
+    "risks": [
+      "Changing default fallback behavior for UnsupportedParamsError could break users relying on fallback for misconfigured-but-recoverable deployments",
+      "The issue proposes two alternative designs (change default vs. add setting), so implementation may diverge from maintainer preference",
+      "Base SHA has changed, so code anchors may be stale"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's YAML config and a request using reasoning_effort on a zai model with a fallback configured; assert current 200-from-fallback behavior",
+      "Add a regression test asserting UnsupportedParamsError returns 400 and does not invoke the fallback group",
+      "Run targeted router fallback unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers want a behavior change or an opt-in setting",
+      "Whether a current failing test or reproduction exists in the repo",
+      "Whether the cited code path still matches the current base SHA"
+    ],
+    "why": "The issue describes a plausible routing behavior (UnsupportedParamsError triggering fallbacks) and names async_function_with_fallbacks in router.py, but supplies no reproduction evidence, no failing test, and no confirmed code anchor beyond the reporter's reading. The candidate's own actionability evidence shows public_repro_signals=0, reproduction_evidence=[], root_cause_signal=false, probe_ready=false, and the pre-review gate failed on base_sha_changed and reproduction_or_validation_missing. The requested change is also a design decision (default behavior vs. new router setting) that the reporter explicitly defers to maintainers, so the concrete code work is not yet determined."
   },
   "8d6278bcb344d2de57d6e92f9371c26fe144cd0320aeb25c0281c2379c684761": {
     "confidence": 0.55,
@@ -113462,6 +113728,37 @@
     ],
     "why": "The issue claims the server fails to forward User-Agent to the zen API, but supplied comments directly contradict this: l7feng measured that the direct client path does forward User-Agent and that passing vs failing requests carried byte-identical user-agent/x-opencode-client/x-opencode-project headers, pointing instead to request body (system prompt + tool definitions) as the differentiator. iagorobo24-hub's bisection also shows the 403 correlates with agent permission footprint, not headers. The stated root cause is therefore not established, and the fix target is ambiguous."
   },
+  "ce64bc4a30b372a36f1ff5e0ecc0d75432646fd915abdd695ca142b11988ac13": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks status human_review_required while candidate category is WAIT_MAINTAINER"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sgl-model-gateway/src/routers/header_utils.rs allowlist to forward x-override-priority",
+      "chat body priority preservation through openai_protocol::ChatCompletionRequest re-serialization"
+    ],
+    "risks": [
+      "Overlap with open PR #42740 may make this redundant",
+      "Broadening header allowlist could forward other x-override-* headers that should stay blocked"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting x-override-priority reaches worker via gateway in regular and PD mode",
+      "Add test asserting chat body priority is preserved end-to-end"
+    ],
+    "unknowns": [
+      "Whether PR #42740 fully covers the body-priority drop or only the header forwarding",
+      "Whether maintainers consider the existing PR sufficient coverage"
+    ],
+    "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps and code anchors, but an open PR #42740 already targets the same code path (header_utils.rs) with direct code overlap on x-override-priority, and the duplicate/coverage status is unresolved (human_review_required). Whether independent implementation space remains is a materially blocking unknown."
+  },
   "ce6a312b0dda3c23554f08ac6e861949196b56eafe9f10313e80c121df32f37c": {
     "confidence": 0.6,
     "contradictions": [
@@ -122613,6 +122910,37 @@
     "test_plan": [],
     "unknowns": [],
     "why": "Issue is a user-facing bug in Dify agent composer, but the root cause is already fixed by merged PR #38446, which is referenced by the Dosu bot comment. The issue is effectively resolved and no new actionable code contribution remains."
+  },
+  "de65887bc37bc0c583d4d3684096dce3df919f0f46739312bdbbfa7c30fd4980": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe the watch receiver under the list_state read lock after a lag Resync so the receiver starts at the reconciled snapshot",
+      "Add a regression unit test in kube.rs using the existing client_with 16-slot channel helper"
+    ],
+    "risks": [
+      "Resubscribing under the read lock could interact with the daemon's write-lock ordering; verify no deadlock or lock-order inversion",
+      "Behavior change in watch semantics may affect other Discovery consumers (push router, DynamicSubscriber, llm controller)",
+      "Existing PR #15767 may be preferred by maintainers; coordinate to avoid duplicate implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test on a current-thread runtime: 16 workers flap Removed->Added (32 events) before the watch task runs, then worker 17 joins; assert the first event after the lag Resync is Added(worker 17), not stale Removed/Added pairs for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib and confirm the new test fails on main (a4adcfe923) and passes with the fix"
+    ],
+    "unknowns": [
+      "Whether maintainers have a stated design preference for the resubscribe approach vs. an alternative fix",
+      "Whether PR #15767 will be extended with tests, which would reduce the remaining gap"
+    ],
+    "why": "Issue provides a precise root cause (lagged broadcast receiver replays buffered pre-resync events after list_and_watch reconciles from list_state), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a concrete reproduction (16-slot channel, 16 workers flapping Removed/Added, then worker 17 joins), and an expected-vs-actual pair. A concrete validation path exists via a unit test in kube.rs on a current-thread runtime. The open PR #15767 covers the same path but lacks regression tests, leaving a clear gap for a test-backed fix."
   },
   "de6fa0ca75c8567a85583f908e83570b57ca51708ac54f8240eb935a0d41a8d2": {
     "confidence": 0.8,
