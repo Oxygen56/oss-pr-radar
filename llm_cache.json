@@ -2630,6 +2630,42 @@
     ],
     "why": "Issue provides a clear root cause (substring check for 'gpt-5' misses 'gpt-6' family), concrete failing examples, and a suggested fix. A recent comment indicates a fix may already be merged (#40209), but the issue remains open and the fix's completeness is unverified. The code paths are well-anchored, making the contribution actionable."
   },
+  "060952c2f9d38678c458f47b60e2a075137f75021fc46afcfe6d75310065944d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue reports root cause not reduced, while open PR #42700 claims to fix SWA over-admission crashing the scheduler with overlapping alloc_token_slots/scheduler semantics"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/allocation.py (alloc_token_slots / reclaim_plan eviction)",
+      "python/sglang/srt/managers/schedule_batch.py (prepare_for_extend)",
+      "python/sglang/srt/managers/scheduler.py (_get_new_batch_prefill_raw)"
+    ],
+    "risks": [
+      "PR #42700 may already fix the same SWA over-admission root cause, making a new fix duplicative",
+      "Fix could alter unified-memory eviction semantics and regress non-SWA paths",
+      "Reproduction depends on specific GPU memory profile (24GB/40GB) and gpt-oss-20b hybrid SWA"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay request_stream.jsonl with repro_wire_log_replay.py under --enable-unified-memory and confirm scheduler OOM at alloc_token_slots",
+      "Add a regression test that exercises /flush_cache + /reset_prefix_cache interleaved with mixed completions/chat/cancelled requests on a hybrid-SWA model and asserts no OOM and /health 200",
+      "Run the same replay without --enable-unified-memory as the control"
+    ],
+    "unknowns": [
+      "Whether PR #42700 actually addresses this issue's root cause or only a related SWA over-admission path",
+      "Exact mechanism by which /flush_cache and /reset_prefix_cache leave pages allocated at both ends of the shared buffer",
+      "Whether maintainers have a preferred fix direction for unified-memory eviction"
+    ],
+    "why": "Issue provides a strong reproduction (1437-request replay, A100/4090, with/without --enable-unified-memory) and a concrete failing code path (alloc_token_slots -> reclaim_plan evicts nothing), but the root cause is explicitly not reduced ('This has not been reduced further'), and open PR #42700 semantically overlaps on alloc_token_slots/scheduler for the same SWA over-admission crash without referencing the issue. Whether that PR already covers this root cause is a materially blocking unknown for deciding whether new code work is actionable."
+  },
   "060c6680f71fe9945371233edfe4602c08d057611b45d953c5ac6bb225a94b20": {
     "confidence": 0.8,
     "contradictions": [
@@ -14232,6 +14268,41 @@
     ],
     "why": "The issue provides a clear root cause (unchecked entries[0] access on empty list), a concrete design with exact code change, and a detailed verification plan including baseline red and fixed green tests. The evidence includes a reproducible command and code anchors, satisfying actionability."
   },
+  "1b6514e1cfcc1331d58b849128224a60abaaa17e15cb0164653d51e5cfd3b61d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate score 9 / category WAIT_MAINTAINER vs pre-review failure reproduction_or_validation_missing and base_sha_changed"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/router.py: async_function_with_fallbacks exception classification",
+      "litellm/types/router.py: optional router setting for non-fallback exception types",
+      "logging of fallback success with original model group and error"
+    ],
+    "risks": [
+      "Changing default fallback behavior is a breaking change for users relying on current semantics",
+      "Maintainer may prefer a configurable setting over a default behavior change",
+      "Base SHA changed, so the referenced code paths may have moved"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that configures a fallback and asserts UnsupportedParamsError is returned as 400 rather than served by the fallback model",
+      "Regression test that provider outages/timeouts/rate limits still fall back",
+      "Verify x-litellm-attempted-fallbacks and response model fields under the new behavior"
+    ],
+    "unknowns": [
+      "No reproduction or validation path established",
+      "No maintainer decision on default behavior vs configurable setting",
+      "Current base SHA code state of async_function_with_fallbacks unverified"
+    ],
+    "why": "The issue describes a plausible routing behavior (UnsupportedParamsError triggering fallbacks) and cites router.py's async_function_with_fallbacks, but the supplied evidence contains no reproduction evidence, no confirmed root-cause signal, and no validation path plan (reproductionPathPlan=false, probe_ready=false). The candidate's own pre-review failed on base_sha_changed and reproduction_or_validation_missing. The issue author explicitly states they have not written a patch and that the shape of the setting is a maintainer decision, so the concrete code change is not yet determined."
+  },
   "1b71b2be6d3ddd083e31141091598306b8da8aa41abaed06589927ce5d96532b": {
     "confidence": 0.8,
     "contradictions": [
@@ -19726,6 +19797,42 @@
       "Status of PR #33458's failing CI and whether it will be updated."
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but an existing PR #33458 directly addresses it with failing CI, and a maintainer has not yet approved or assigned. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "2590c67c3bc2cc41045900190ed3ed00e3c7ea454feba21fad31c94967df03fa": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue is filed in OpenHands/OpenHands but commenters and the reporter's own analysis place the enforceable fix in software-agent-sdk/typescript-client"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "software-agent-sdk: settable max_budget_per_run on conversation creation + pre-LLM-call enforcement",
+      "software-agent-sdk: publish live accumulated_cost during run",
+      "typescript-client: expose new budget/cost fields",
+      "OpenHands/OpenHands: bump client, thread budget through buildStartConversationRequest(), settings UI/mocks"
+    ],
+    "risks": [
+      "Fix is cross-repo; changes in this repo alone cannot enforce the budget",
+      "Existing SDK enforcement runs only after each step, so forwarding max_budget_per_run alone will not give a hard ceiling",
+      "AI-disclosure policy conflict blocks public submission actions"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "In software-agent-sdk, add a failing test that a conversation with a small budget is refused before the next LLM call, not only after a step completes",
+      "Add a regression test that accumulated_cost is non-zero while execution_status is running",
+      "In OpenHands/OpenHands, verify no direct agent-server calls are introduced (src/api/no-direct-agent-server-calls.test.ts)"
+    ],
+    "unknowns": [
+      "Whether OpenHands/OpenHands has any independently actionable code change beyond client bump and settings UI",
+      "Whether the $0.0-while-running symptom is a serialization/publish bug or missing accounting"
+    ],
+    "why": "The issue describes a real self-hosted V1 gap (no settable per-conversation budget; accumulated cost only published at termination), but the supplied evidence shows the actionable fix belongs in OpenHands/software-agent-sdk (filed as #5561) and OpenHands/typescript-client, not in this repo. The only in-repo work is client bump/threading/settings UI, which is ordinary API plumbing and explicitly out of scope for track=agent_ai_infra. The candidate's own preTaskEvidence flags reproduction_or_validation_missing and duplicate_changed, and the AI-disclosure policy conflict blocks public action."
   },
   "259f6ac5df515da499124f808b9c0bf82f564ce0fa78ad877ff51468f3684ef1": {
     "confidence": 0.8,
@@ -63998,6 +64105,39 @@
     ],
     "why": "The issue is a startup hang with multiple mutually inconsistent root-cause hypotheses in the comments (NCCL_P2P_DISABLE/custom all-reduce vs. flashinfer sampler warmup vs. model download). The py-spy trace points at flashinfer sampling during warmup, while other reporters say disabling custom all-reduce fixed it and one says neither helped. No single confirmed root cause or reproducible minimal case is established, so the actionable code change is undetermined."
   },
+  "71eeb1e6bbf6296606a5452bccfdd842a9fe278a1f2b02fb45d48b1b5eeb16f6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/mcp_atlassian/servers/jira.py: stop coercing explicit public=False to None for non-internal-only projects",
+      "src/mcp_atlassian/jira/comments.py: ensure ServiceDesk comment path is used when public is explicitly False",
+      "tests/unit/servers/test_jira_server.py: add boundary regression test for explicit public=False on a JSM project not in JIRA_INTERNAL_ONLY_PROJECTS"
+    ],
+    "risks": [
+      "Changing the coercion may break MCP clients that auto-populate omitted optional booleans with false, altering existing compatibility behavior",
+      "Existing test test_add_comment_drops_client_default_false_on_ordinary_project encodes the current behavior and must be updated deliberately",
+      "Open PR #1665 proposes an internal-by-default mode that may overlap in intent and require maintainer design alignment"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test asserting jira.add_comment is called with public=False when the caller supplies public=False on a project not in JIRA_INTERNAL_ONLY_PROJECTS",
+      "Run tests/unit/servers/test_jira_server.py and tests/unit/jira/test_comments.py to confirm no regression in existing default-false compatibility behavior",
+      "Optionally verify against a JSM Data Center instance that the created comment readback shows public=false"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer preserving tri-state public or the internal-by-default approach in PR #1665",
+      "Whether the fix should fail loudly on unsupported internal-comment requests rather than silently defaulting"
+    ],
+    "why": "Issue provides a concrete reproduction (public=false yields customer-visible comment on JSM Data Center) and a commenter pinpoints the root cause in src/mcp_atlassian/servers/jira.py where public=False is coerced to None unless the project is in JIRA_INTERNAL_ONLY_PROJECTS, bypassing the ServiceDesk comment path in src/mcp_atlassian/jira/comments.py. A concrete fix (preserve tri-state public) and a boundary regression test are identified. Open PRs #1665/#1302/#1724 have only semantic overlap, no direct code overlap or root-cause coverage, so they do not block a targeted fix."
+  },
   "720dafaa2fe122d41285b9e71ac03cafc7d7259e9d3dedd42a481bc0bf35dbd3": {
     "confidence": 0.7,
     "contradictions": [],
@@ -70385,6 +70525,43 @@
     ],
     "why": "Issue provides a precise root cause (arity/shape mismatch between _on_deferred_stream_complete callbacks and _deferred_stream_complete_args producers) and a concrete fix, but a recent comment states the bug is already fixed on main by PR #40869, and the duplicate assessment flags three open PRs (#40986, #41220, #41218) with semantic overlap on post_call/v1_messages. Whether the fix is already merged on main or covered by an open PR materially determines whether new code work is actionable."
   },
+  "7d96e61c8f17e970fac0043a24033c66776bdc9acd3dd7dd7d7c08bb5972a89b": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Comments report the same refusal on 4.0.0/4.0.1 builds that postdate the v2.3.0 fix, while the issue expects OpenCode to be eligible since v2.3.0",
+      "One comment reports the cause string listing opencode as supported while refusing an opencode request, then omitting it after sync"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/reviewtransaction/status.go",
+      "scripts/crosslane/opencode.go",
+      "scripts/gen-sdd-agent-digests/opencode.go",
+      "internal/components/telemetryruntime/opencode.go"
+    ],
+    "risks": [
+      "Merged PR #5289 may already cover this refusal class, making further work redundant",
+      "Repository requires public AI-usage disclosure, conflicting with automated public action",
+      "base_sha_changed and duplicate_changed pre-review failures indicate the candidate snapshot is stale"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce selectorless preflight with --agent opencode on a stable build and assert START is returned instead of immutable_review_transport_unsupported",
+      "Regression test that the supported-runtime list is stable across a sync that rewrites the managed transport plugin"
+    ],
+    "unknowns": [
+      "Whether merged PR #5289 actually resolves this refusal class or only a related eligibility path",
+      "Whether the ai_disclosure_conflict policy permits any public contribution here",
+      "Which specific code path produces the supported-runtime list"
+    ],
+    "why": "Issue is a pile of occurrence reports explicitly stating 'no root cause asserted'; the only linked PR #5289 is already MERGED and its own assessment shows semantic_overlap=false and root_cause_coverage=false, so duplicate/merged-fix coverage of this exact refusal class is unresolved. The candidate also carries a hard policy conflict (ai_disclosure_conflict) and pre-review failures (base_sha_changed, duplicate_changed)."
+  },
   "7da710c03e0503eb6a1f9390b7d2c46358997aa32942488f4c90e0676ac41b6d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -76021,6 +76198,38 @@
       "Whether maintainers consider this a duplicate of #33026 or #37015"
     ],
     "why": "Issue reports a concrete, reproducible proxy bug: failed /v1/audio/speech calls write no LiteLLM_SpendLogs failure row while success rows and other routes' failure rows are written. The reporter supplies an executable curl repro, SQL verification, and code anchors (audio_speech, post_call_failure_hook, DBSpendUpdateWriter.update_database). However, the supplied evidence explicitly marks root_cause_signal=false and the reporter states they could not find the cause; the open-PR assessment also flags semantic overlap with PR #41515 (Amazon Transcribe pass-through, litellm_spendlogs, proxy_server.py) that requires human comparison. The missing root-cause determination and unresolved duplicate/overlap coverage are materially blocking unknowns for deciding whether new code work is actionable."
+  },
+  "887c9097583b5c9a747f94f247d3bab27957045eb54defa33fd49b69e989f9f7": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Actionability evidence reports root_cause_signal=false while issue body provides specific code anchors and root-cause explanation"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sgl-model-gateway/src/routers/header_utils.rs allowlist to forward x-override-priority",
+      "chat body priority preservation through openai_protocol::ChatCompletionRequest re-serialization"
+    ],
+    "risks": [
+      "Overlapping open PR #42740 may already cover the fix, making a new contribution redundant",
+      "Broadening header allowlist could unintentionally forward other x-override-* headers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting x-override-priority reaches worker through gateway in regular and PD mode",
+      "Add test asserting chat body priority is preserved end-to-end"
+    ],
+    "unknowns": [
+      "Whether PR #42740 fully resolves the issue or leaves independent implementation space",
+      "Whether maintainers consider the duplicate coverage sufficient"
+    ],
+    "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps and code anchors, but the supplied evidence shows an open PR #42740 that directly overlaps the same code path and distinctive identifier (x_override_priority), and the duplicate assessment is unresolved (human_review_required). Whether independent implementation space exists is a materially blocking unknown."
   },
   "8884cb4d331a16d38ae9ce7c984924aad75c4c3aa65bd9780deac1178878074d": {
     "confidence": 0.8,
@@ -84186,6 +84395,39 @@
       "Maintainer approval or design preference is not yet confirmed, but this is not a blocker for actionability"
     ],
     "why": "The issue clearly identifies a root cause: capability hooks that touch external state run outside the durable unit, causing duplicate side effects on replay. It proposes a concrete new hook with invocation points and references existing code paths and precedents. The comment adds a valid refinement about effect identity but does not block the core proposal."
+  },
+  "9729c9cea9d2bd950999cb45d15227ab5d3a96fd0b6f92b8cf9491614e219d8d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu_worker.py or equivalent profile_cudagraph_memory() to account for actual graph capture cost and KV-block dependence",
+      "KV cache sizing / gpu_memory_utilization budget accounting to reserve measured CUDA graph memory",
+      "early actionable error when configuration cannot fit"
+    ],
+    "risks": [
+      "Repository policy flags ai_disclosure_conflict, which may block automated public submission",
+      "Fix may require GPU hardware to validate graph capture memory measurement",
+      "Changing KV cache sizing could alter throughput/memory behavior for existing configs"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with Qwen/Qwen3-0.6B, kv_cache_dtype='fp8' on a 24GiB GPU and confirm startup succeeds without OOM",
+      "Regression test asserting profile_cudagraph_memory() estimate >= measured graph capture memory across KV block counts",
+      "Compare default vs fp8 KV cache dtype startup memory accounting to confirm budget invariant"
+    ],
+    "unknowns": [
+      "Exact code location of profile_cudagraph_memory() and current estimate formula not supplied",
+      "Whether maintainers have a preferred fix direction (estimate vs post-capture adjustment)"
+    ],
+    "why": "Issue provides a concrete reproduction (LLM with kv_cache_dtype='fp8' on 24GiB GPU), observed OOM trace, and a specific root cause: profile_cudagraph_memory() underestimates CUDA graph capture cost (~0.80 GiB) so KV cache budget (~19.93 GiB) exceeds gpu_memory_utilization. Suggested fix is concrete and testable. No duplicate/merged coverage found; open PRs are keyword-only overlaps with no code-path or mechanism overlap."
   },
   "9733ca503af540de49bc1bb64d584926ed6e4fc7f41b8c6b5101360ecede099f": {
     "confidence": 0.7,
@@ -95313,6 +95555,42 @@
       "Exact block size used in original reproduction"
     ],
     "why": "Issue reports prefix caching ineffective for Mamba-2/GDN hybrid due to missing recurrent state caching. Maintainer comment suggests PR #46384 (merged) may address it, but open PR lookup timed out and related issue audit failed. Need to verify if merged PR resolves the issue and confirm current behavior on main."
+  },
+  "ac7becb4a412584b4e9c7cac2bf30621242ce1cdb8ed68e766a0b63c5076f37b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "PR #50466 (CLOSED) and PR #50543 (OPEN) share identical title and change scope, suggesting one superseded the other",
+      "open_pr_assessment marks duplicate status human_review_required while also listing direct code overlap with an open PR"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugin module resolver / Bun virtual module shim for @opencode/* specifiers in loose plugin files",
+      "regression test covering scoped bare import resolution from project and global config plugin dirs"
+    ],
+    "risks": [
+      "Overlapping open PR #50543 may already cover the fix, making a new contribution redundant",
+      "Resolver change could alter module resolution semantics for node_modules-hosted plugins",
+      "No maintainer design confirmation on preferred resolution strategy"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create .opencode/plugins/probe.js with `import { Plugin } from \"@opencode/plugin\"` and `export default Plugin.define({id, setup})`, run `opencode run --print-logs \"hi\"`, assert no ResolveMessage and plugin appears active via /api/plugin",
+      "Repeat with global config dir ~/.config/opencode/plugins/_probe.ts to cover auto-discovery path",
+      "Add a unit/integration test asserting scoped @opencode/* resolution from the plugin file's project directory"
+    ],
+    "unknowns": [
+      "Whether PR #50543 already implements the same fix and would make an independent contribution redundant",
+      "Whether maintainers have a preferred resolution approach (virtual module shim vs project-directory resolution)",
+      "Whether the closed PR #50466 was closed as duplicate/superseded or for another reason"
+    ],
+    "why": "Issue has strong reproduction evidence (expected/actual pair, ordered steps, multiple independent confirmations across versions/platforms) and a plausible root cause (Bun server plugin resolver mishandling scoped @opencode/* imports for loose plugin files). However, the supplied duplicate assessment is unresolved: PR #50543 is OPEN, directly references this issue, and has direct code overlap on the same @opencode/plugin resolution path, while PR #50466 (same title/change) is CLOSED. Whether an independent implementation space remains is a materially blocking unknown that determines actionability."
   },
   "ac7ea0fb927cc7ea14769ba8e111079bdb90853bc011ee70062fda0fe4e49b07": {
     "confidence": 0.8,
@@ -107211,6 +107489,42 @@
     ],
     "why": "The issue provides a precise root cause: DSV4's compressed KV cache geometry (num_states=2) violates the paged MQA kernel's compile-time block_kv template constraint (32/64), causing an assert or silent memory corruption. It includes code anchors, reproduction environment, and a concrete validation path (test on GB10 hardware). The track is llm_algorithm and the issue qualifies as a kernel algorithm bug with numerical/quantization aspects."
   },
+  "c26da81409d963327c185efe0ee1c370a67331d164a35484e532721c6e780e16": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate labels category PR_COMPETITION_OPPORTUNITY and gate HUMAN_REVIEW while actionability_evidence.root_cause_signal=false and open_pr_assessment.status=semantic_overlap_requires_review."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/linear.py (fused packed-module loading / shard mapping)",
+      "compressed-tensors W4A16 symmetric group-128 dequant/kernel path",
+      "python/sglang/srt/models/llama.py (Qwen3.5 packed_modules_mapping / ignore handling)"
+    ],
+    "risks": [
+      "Root cause not isolated; fix could target the wrong path (fused shard mapping vs kernel).",
+      "PR #31555 may already implement the relevant fallback, making a new contribution duplicative.",
+      "Only tested on sm_120; kernel-path issues may be hardware-specific and hard to validate elsewhere."
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's docker command and wikitext-2 PPL harness; confirm PPL ~9.98 vs vLLM ~6.05 on the same checkpoint.",
+      "Add a focused regression test that loads the compressed-tensors W4A16 checkpoint and asserts per-layer dequantized weights match the checkpoint's packed int4 values (especially fused in_proj_qkvz shards).",
+      "Compare SGLang vs vLLM logits on a fixed prompt to localize divergence to a specific layer/module."
+    ],
+    "unknowns": [
+      "Whether PR #31555's dense-dequant fallback already fixes this issue's root cause.",
+      "Which of the two suspects (fused in_proj_qkvz shard mapping vs symmetric group-128 WNA16 kernel) actually causes the degradation.",
+      "Whether the maintainers consider this a kernel bug or a loader bug, which determines the correct fix location."
+    ],
+    "why": "Issue reports a concrete, reproducible quality regression for compressed-tensors W4A16 int4 symmetric group-128 checkpoints, with PPL/KLD/top-1 evidence and a runnable docker repro. However, the root cause is explicitly unverified: the reporter lists two remaining suspects (packed int4 in_proj_qkv sharding into fused in_proj_qkvz, and the symmetric group-128 WNA16 kernel path) and has not isolated either. The candidate's own actionability evidence marks root_cause_signal=false. Additionally, open PR #31555 ('Add W4A16Sparse24 dense-dequant fallback for compressed-tensors int4') has semantic overlap on checkpoint/compressed_tensors/int4/w4a16 and touches the same code area, but its relation to this issue is unresolved (references_issue=false, direct_code_overlap=false, technical_complete=false, root_cause_coverage=false). Whether that PR already covers the root cause materially determines whether new code work is actionable."
+  },
   "c2b13fbc60fa161c8d130ddadabf0d09a3d9b33c1c2118bb81d7ab35332029b1": {
     "confidence": 0.85,
     "contradictions": [],
@@ -109903,6 +110217,40 @@
       "Exact age-guard threshold, if adopted, is not specified"
     ],
     "why": "Issue identifies a concrete root cause: cleanupOrphanedWorkflows in tests/integration/n8n-api/utils/cleanup-helpers.ts:25 performs an instance-wide sweep of workflows matching the cleanup tag/name prefix, and 18 test files call it from afterAll while Vitest runs files in parallel, so the first finisher deletes in-flight workflows of other files. Observed failures are 404/N8nNotFoundError on just-created workflows, and each file passes in isolation. Suggested fix (move sweep to globalSetup, optional age guard) is concrete and testable."
+  },
+  "c720bd54c6c5be7a2b3599f1e2762122786ba3bf3340c9700303506f2fc9c0a8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "fs/gguf/gguf.go tensor size/offset calculation for Q2_0 block quantization",
+      "internal/testutil/gguf/gguf.go test fixtures for Q2_0 tensors",
+      "mlxrunner/model/llama/llama.go tensor loading path"
+    ],
+    "risks": [
+      "Overflow may stem from int32 arithmetic rather than block-size handling, requiring broader audit",
+      "Custom GSQ-RCO quantization may need additional enum support beyond Q2_0",
+      "Merged split GGUF may introduce separate parsing issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a GGUF fixture with a Q2_0 blk.1.ffn_down_exps.weight tensor (640x2560) and assert parsing succeeds without overflow",
+      "Run ollama create against the merged Swift-full.gguf and confirm model creation completes",
+      "Regression test comparing parsed tensor byte size against expected 838860800 bytes"
+    ],
+    "unknowns": [
+      "Whether PR #18443 fully resolves the overflow or only adds Q2_0 enum support",
+      "Whether the merged Swift-full.gguf is reproducible from the HF repo"
+    ],
+    "why": "Maintainer rick-github reproduced the failing tensor (blk.1.ffn_down_exps.weight, Q2_0, 640x2560) and pointed to PR #18443 which adds Q2_0 GGUF tensor support; the issue is a concrete GGUF parser/quantization gap with a clear reference-vs-implementation validation path."
   },
   "c72257b7c87494da16baba2be32ec0ca794aa72c5b5aaa13a60fcbee659f51ca": {
     "confidence": 0.85,
