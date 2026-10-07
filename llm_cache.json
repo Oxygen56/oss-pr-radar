@@ -24938,6 +24938,43 @@
     ],
     "why": "Issue identifies a concrete Windows stdio bug: get_windows_executable_command() can resolve a .ps1 via shutil.which, but the spawn path passes it directly to CreateProcess/anyio.open_process, which cannot execute .ps1 and fails with WinError 193. A commenter independently reproduced the Win32 spawn failure and confirmed the expected fix shape (launch via pwsh/powershell with -NoProfile -NonInteractive -ExecutionPolicy Bypass -File and forward args). Code anchors and codePathsPlan point to src/mcp/client/stdio.py and src/mcp/server/stdio.py, giving a clear minimal-fix location."
   },
+  "2cab084865e3dd127d7eecabaa038c56d06ad81874c7e12f8e9084ffa41c4ca0": {
+    "confidence": 0.55,
+    "contradictions": [
+      "duplicateStatus is 'none' in preTaskEvidence but related_issue_assessment reports 'potential_overlap' with issue #60489 sharing memory/oom/cache signals"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/worker/worker.py or profile_cudagraph_memory() to account for actual graph capture cost",
+      "KV cache sizing logic to reserve CUDA graph memory before allocation",
+      "possibly vllm/config.py gpu_memory_utilization handling"
+    ],
+    "risks": [
+      "Potential duplicate issue #60489 may already cover the same root cause, making this fix redundant",
+      "AI disclosure policy conflict may block automated contribution",
+      "Changing CUDA graph memory accounting could affect other configurations and require broad regression testing"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on a 24 GiB GPU with Qwen/Qwen3-0.6B and kv_cache_dtype='fp8' to confirm OOM during startup",
+      "Compare memory accounting with default KV cache dtype to isolate the FP8-specific graph capture overhead",
+      "Add a regression test asserting that measured CUDA graph memory is included in the KV cache budget calculation"
+    ],
+    "unknowns": [
+      "Whether issue #60489 is a true duplicate covering the same root cause",
+      "Whether the repository's AI disclosure conflict can be resolved to permit contribution",
+      "Whether a maintainer has already investigated or assigned this issue"
+    ],
+    "why": "Issue describes a plausible FP8 KV cache OOM caused by CUDA graph memory being omitted from the cache budget, with a suggested fix in profile_cudagraph_memory(). However, the supplied evidence contains a materially blocking unknown: a potential duplicate issue #60489 shares the same memory/OOM/cache behavior signature, and the duplicate assessment status is only 'potential_overlap' rather than resolved. Additionally, the repository policy status is 'ai_disclosure_conflict', which is an unresolved disclosure requirement that affects whether code work is actionable. These unresolved facts prevent a confident NO_OBJECTION."
+  },
   "2cab8693b5095842fea8a8af94d1ef5e7ccb999d415e26898425211f2656d162": {
     "confidence": 0.85,
     "contradictions": [],
@@ -25469,6 +25506,41 @@
       "Exact implementation details of the fix (e.g., where to check budget state) are not specified, but this is normal implementation uncertainty."
     ],
     "why": "Issue provides a clear root cause (scheduler fails to check budget after resuming chunked request) and a deterministic reproduction path at the scheduler level. The expected behavior is well-defined, and the fix is localized to scheduler control flow. Existing PR #35645 addresses the same issue but lacks tests, leaving room for a more complete contribution."
+  },
+  "2dc4a76c7dbd919bad7fb387f3e7761acf2424c64272e3d78eef6e88dfdff602": {
+    "confidence": 0.72,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body supplies a detailed root cause and code anchors"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe/reconcile receiver under list_state read lock so post-Resync events start at the snapshot",
+      "lib/runtime/src/discovery/kube/daemon.rs: verify list_state update and event send ordering under the write lock",
+      "Add regression test in kube.rs using the 16-slot client_with helper on a current-thread runtime"
+    ],
+    "risks": [
+      "Resubscribing under the read lock may interact with daemon write-lock ordering and could deadlock if lock acquisition order is not preserved",
+      "Existing PR #15767 may be revised to add tests, reducing independent value",
+      "Behavior change in watch semantics could affect other Discovery consumers beyond kube"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit test in lib/runtime/src/discovery/kube.rs: 16 workers flap Removed/Added (32 events) before watch task runs, then worker 17 joins; assert next event after Resync is Added(instance_id 17), not stale Removed/Added pairs for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib",
+      "Run cargo clippy/check on dynamo-runtime"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the resubscribe-under-lock approach or an alternative fix",
+      "Whether PR #15767 will be updated with tests before independent work lands"
+    ],
+    "why": "Issue provides a concrete root cause (lagged broadcast receiver replays buffered pre-Resync events because daemon updates list_state and sends events under the same write lock), a specific code anchor (lib/runtime/src/discovery/kube.rs:552), a contract violation reference (discovery/mod.rs:1684-1687), and a comparison to mem.rs resubscribe-under-lock behavior. A deterministic unit-test reproduction is described with exact steps and expected/actual events. The open PR #15767 covers the same path but lacks tests and root-cause coverage, leaving a clear gap for a test-backed fix."
   },
   "2dcce8d6a0c9a61b631a497605ac494c1223924d8dc07c5121f5345f57d091c6": {
     "confidence": 0.85,
@@ -67594,6 +67666,38 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue provides a clear bug report with a minimal reproduction and a specific root cause (unconditional indexing of an empty list in Memory.delete_all). However, the candidate is gated as HUMAN_REVIEW and lacks maintainer approval or active investigation, and there is a potential duplicate issue #5509 that needs triage. The implementation is straightforward but requires maintainer confirmation to avoid duplicate work and ensure alignment."
   },
+  "7493c74d66c6089788c37a751680a33d357919d2f013db3527811f8797838c75": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Freeze prompt-learning adapter parameters (prompt_encoder / prompt tuning, P-Tuning, Prefix Tuning, Multitask Prompt Tuning) when loading with is_trainable=False",
+      "Fix Adaption Prompt _freeze_adapter parameter-name matching so inference-only adapters are frozen",
+      "Add parameter-level regression tests asserting requires_grad=False and no adapter gradients after inference-only load"
+    ],
+    "risks": [
+      "Over-freezing could break legitimate is_trainable=True loading or default training behavior",
+      "Adaption Prompt parameter names lack an adapter-name slot, so a naive _freeze_adapter fix may miss or wrongly match parameters",
+      "Must not alter forward math or checkpoint layout"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal GPT-2 PromptTuning example and assert loaded.prompt_encoder parameters have requires_grad=False and backward yields no nonzero adapter gradients",
+      "Repeat for P-Tuning, Prefix Tuning, Multitask Prompt Tuning and Adaption Prompt on CPU with fixed seed",
+      "Keep the LoRA inference-mode control test to confirm no regression in existing freezing behavior"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a minimal CPU reproduction showing prompt-learning adapters loaded with is_trainable=False keep requires_grad=True and produce nonzero gradients, while LoRA control freezes correctly; maintainer reproduced and approved a focused fix. This is a concrete PEFT parameter-freezing/training-semantics bug with a clear reference-vs-implementation validation path."
+  },
   "74a8a26407ef30b040b3634ef05002f739f37d28bfeee8b8db227f3197227142": {
     "confidence": 0.55,
     "contradictions": [
@@ -84035,6 +84139,38 @@
     ],
     "why": "The issue presents a clear, well-evidenced root cause and a concrete reproduction path, but the repository policy requires assignment (needs_assignment) and the issue has no assignee. This is a materially blocking unknown: without assignment, code work is not actionable under the repo's contribution policy. Additionally, the issue explicitly leaves the fix choice to the owner among three materially different designs, so the implementation direction is not yet determined."
   },
+  "91a49613067d9eca83fc90a48fce0e8fdc3ef5b5741af1887cf02f1b73ed154a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and mechanism matches (parameter_efficient_finetuning, numerics_quantization) conflict with the actual issue being config validation, not an algorithm mechanism"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add cross-field validation in EngineArgs.create_engine_config rejecting convert=classify with runner=generate",
+      "Raise descriptive ValueError instead of reaching _init_pooler assertion"
+    ],
+    "risks": [
+      "Fix is config plumbing, not algorithm work, so it falls outside the llm_algorithm track",
+      "Existing PR #60441 already covers the same config-stage rejection, making duplicate work low value"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Unit test constructing EngineArgs(convert='classify', runner='generate') and asserting ValueError at config creation",
+      "Regression test that valid convert/runner combinations still initialize"
+    ],
+    "unknowns": [
+      "Whether PR #60441 will be merged or superseded, which would determine if any residual work remains"
+    ],
+    "why": "Issue is a config cross-field validation bug (convert=classify + runner=generate) that crashes with a bare AssertionError; the fix is ordinary CLI/config plumbing, not an LLM algorithm mechanism. Track=llm_algorithm requires a concrete training objective, model mechanism, distributed invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; the matched terms (adapters, bf16/fp16/int8) are incidental and the code path is config validation. Additionally, PR #60441 already directly references the issue and implements the same config-stage rejection with a regression test, so the opportunity is covered."
+  },
   "91a6ecc87a3aa2efd0b9757b3c58154ea901c6244dec817ce568a3dfed9c9583": {
     "confidence": 0.55,
     "contradictions": [
@@ -86204,6 +86340,36 @@
       "Whether the missing-argument fix alone is sufficient or additional kernel-signature changes are needed."
     ],
     "why": "The issue describes a concrete TypeError from a missing-argument call site in ep_scatter_from_psum, but the supplied evidence shows an open PR #39399 that directly covers the same code path and root cause, and the duplicate status is human_review_required. Until that coverage is resolved, independent implementation space is uncertain."
+  },
+  "95a9ea93461bd4027395d2ee1082398c05998a5f4a1f368f849bc55fdbb65cd4": {
+    "confidence": 0.82,
+    "contradictions": [
+      "algorithm_evidence claims PEFT/distributed/quantization mechanisms, but the issue body describes only an XGrammar dependency upgrade and grammar-compilation failures"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "requirements.txt XGrammar pin bump",
+      "regression tests for empty-object/boolean schemas and XML parameter separators"
+    ],
+    "risks": [
+      "Upstream XGrammar behavior change may alter other grammar paths",
+      "TVM FFI dependency compatibility must be qualified",
+      "ai_disclosure_conflict policy blocks public automated action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the supplied model-free CPU reproducer under both XGrammar versions to confirm compile/accept differences"
+    ],
+    "unknowns": [
+      "Whether the repository treats dependency bumps as in-scope for this track"
+    ],
+    "why": "The issue requests a dependency version bump (XGrammar 0.1.32 -> 0.2.7) plus regression coverage for empty/boolean schemas and XML parameter separators. This is dependency/version plumbing and grammar-compiler integration, not a training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The supplied algorithm_evidence mechanisms (PEFT, distributed_training, numerics_quantization, evaluation_method) are keyword matches (adapter, fp8, tensor parallel, pipeline parallel) that do not correspond to the actual requested change, which is a third-party compiler upgrade. Under track=llm_algorithm this is out of scope."
   },
   "95d7915553b8f1cfdf44ddfa9111869582100e3f09ed66a40a1c2e252c969b2b": {
     "confidence": 0.9,
@@ -107614,6 +107780,41 @@
       "Whether maintainers accept the proposed scope of preserving empty-axis shapes in both remote transfer directions"
     ],
     "why": "Issue provides a concrete, reproducible shape-loss bug in SafeSerializer: ndarray encoder records tolist() and dtype without shape metadata, so empty-axis shapes like (0,768) round-trip as (0,). Root cause is anchored to serialization.py lines 150-158 and remote_executors.py transfer paths, with a minimal offline reproduction and expected/actual pair."
+  },
+  "bce4b31ab72f52601dee348079dad8b935cea27421b609ff6de8b43277df2c02": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/output_formatter.py: populate resolved size/output_format (and supported quality/background) from actual generated output",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor requested output_format (e.g. jpeg) or reject unsupported formats with a clear client error",
+      "Documentation of vLLM-Omni-specific supported/unsupported image controls"
+    ],
+    "risks": [
+      "Expanding API behavior (rejecting previously-accepted formats) could break existing callers; scope should be limited to the Omni formatter",
+      "quality/background semantics are not implemented by the backend; echoing request values would misrepresent output, so capability decisions are needed",
+      "A contributor has already commented claiming the issue, so coordination may be needed to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a CPU-side regression test that decodes returned b64_json bytes and asserts image.format matches the requested output_format and image.size matches the resolved size",
+      "Test multiple outputs (n>1) to verify per-image metadata is accurate",
+      "Test unsupported output_format returns an explicit client error rather than silently returning PNG",
+      "Reproduce with the issue's curl command against a FLUX.2-klein-4B Omni worker and compare metadata against native Omni output"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer rejecting unsupported formats vs. silently coercing to PNG",
+      "Whether quality/background should be populated at all given backend lacks semantics"
+    ],
+    "why": "Issue provides a concrete reproduction (curl + decode script), a specific code anchor (components/src/dynamo/vllm/omni/output_formatter.py, response construction and PNG serialization paths), and a native-vs-Dynamo control comparison establishing the expected behavior. Root cause is localized to the Omni image formatter not populating resolved metadata and hardcoding PNG. No duplicate/merged fix covers this producer/encoding behavior; related PRs #15420/#15605 only touch schema fields, and upstream Omni #3092 is already fixed natively, making this a Dynamo integration follow-up."
   },
   "bcf0d4ef02f9eb67158084dfbcd41b9e34ae48e141ae70372fa131095001a026": {
     "confidence": 0.8,
