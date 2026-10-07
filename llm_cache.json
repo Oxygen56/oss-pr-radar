@@ -12779,6 +12779,38 @@
     ],
     "why": "Issue provides a plausible root cause (ds_grads_remaining reset in PostBackwardFunctionModule with AC+zero3+multi-branch), but open PR #8482 already directly references the issue and overlaps the same code path (deepspeed/runtime/zero/parameter_offload.py) with a 3-line fix. Duplicate/coverage status is human_review_required, so independent implementation space is unresolved."
   },
+  "182152e9d851d304f4d6d00ca8ddfca94a117d2e3ae067bcb8967986e2049be3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body supplies a detailed root cause and code anchors"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe the watch receiver under the list_state read lock after a lag Resync so the receiver starts at the reconciled snapshot",
+      "Add a regression unit test in kube.rs using the existing client_with 16-slot channel helper"
+    ],
+    "risks": [
+      "Open PR #15767 already targets the same file with a similar fix but lacks tests; competing work must add the missing regression test and root-cause coverage to be valuable",
+      "Resubscribing under the read lock must avoid deadlock with the daemon's write-lock update path",
+      "Behavioral change to watch semantics could affect other Discovery consumers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a current-thread-runtime unit test in kube.rs: 16 workers flap Removed->Added (32 events) before the watch task runs, then worker 17 joins; assert the first event after Resync is Added(instance_id 17), not stale Removed/Added pairs for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib"
+    ],
+    "unknowns": [
+      "Whether PR #15767 will be merged as-is, which would make a competing fix redundant"
+    ],
+    "why": "Issue provides a precise root cause (lagged broadcast receiver resumes at oldest buffered event after Resync, replaying pre-snapshot events), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a concrete unit-test reproduction with expected/actual output, and a proposed fix direction (resubscribe under the list_state read lock). This is a concrete runtime correctness bug with a clear validation path."
+  },
   "18219dc3ad2e1d0f504c001fb7f70911dff35e46a8fa56958ee5e1ff77fb55be": {
     "confidence": 0.8,
     "contradictions": [],
@@ -45999,6 +46031,43 @@
     ],
     "why": "Issue precisely identifies a concrete capability gap: DockerSandboxOptions exposes volumes mapped to HostConfig.Binds, which cannot express VolumeOptions.Subpath; subpath exists only in HostConfig.Mounts. The proposed change is a scoped, additive option in @mastra/docker with clear mapping to dockerode's HostConfig.Mounts, explicit backward-compatibility promise, and a concrete validation path (inspect the createContainer payload / docker inspect against requested mounts)."
   },
+  "5234b475478ce30d70685ebaa94f79d24bd97d5c3eb146a5387b72afcf530dc3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no existing report was found, but open PR #60490 directly references and covers this issue",
+      "Candidate category is WAIT_MAINTAINER with gate HUMAN_REVIEW while actionability evidence reports no wait_reasons and needs_confirmation=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/models/qwen4_exp/nvidia/ops/qsa_indexer.py: reserve the QSA prefill logits/top-k workspace in the non-dict metadata profiling branch of Qwen4ExpQSA.forward",
+      "Add a regression test asserting the profiler accounts for the workspace (available KV memory drops by ~the workspace size, or startup raises the actionable max-seq-len error instead of OOMing)"
+    ],
+    "risks": [
+      "PR #60490 already implements the same fix on the same file; independent work may be redundant",
+      "Reserving the workspace reduces usable KV cache and could regress configurations that previously fit",
+      "AI disclosure policy conflict may block automated public submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's flags (TP=4, --max-model-len 262144, --gpu-memory-utilization 0.96, --max-num-batched-tokens 2048) and confirm the first long prefill OOMs in qsa_select_paged_prefill",
+      "Apply the workspace reservation and confirm reported available KV memory per GPU decreases by roughly the workspace size and the engine fails fast at startup with the max-seq-len ValueError rather than OOMing",
+      "Run targeted unit tests for the Qwen4Exp QSA path and the sparse indexer memory-profiling path"
+    ],
+    "unknowns": [
+      "Whether PR #60490 will be merged or superseded, i.e. whether independent implementation space exists",
+      "Resolution of the ai_disclosure_conflict policy for this repository",
+      "Whether the potential duplicate issue #54426 shares the same root cause or only surface behavior signals (cache, memory)"
+    ],
+    "why": "The issue itself is technically strong: it names the exact code path (qsa_select_paged_prefill in vllm/models/qwen4_exp/nvidia/ops/qsa_indexer.py), explains why the profiler misses the workspace (Qwen4ExpQSA.forward returns early when metadata is not a dict, so the indexer never runs during the dummy profiling pass), and contrasts it with the generic sparse_attn_indexer which already reserves the same VLLM_SPARSE_INDEXER_MAX_LOGITS_MB peak. However, the supplied evidence shows an open PR #60490 that directly references this issue, touches the same file, and implements the exact proposed fix, with no regression test. The duplicate/coverage status is explicitly 'human_review_required' and the pre-task policy is 'ai_disclosure_conflict'. Whether independent code work is actionable depends on the unresolved comparison with #60490 and the disclosure policy, which are materially blocking unknowns rather than normal review uncertainty."
+  },
   "523ab1981c3cec0236094c59273a10c8408b4f1c88bf14a8cd53d4dcbac27240": {
     "confidence": 0.8,
     "contradictions": [
@@ -62693,6 +62762,44 @@
     ],
     "why": "Issue identifies two concrete, independently reproduced defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the base, so the effective linear map changes (MSE 142.12 vs control 8.77e-13) and the learned contribution is discarded rather than restarted; (B) strict `abs(t) > threshold` masking zeroes both factors on ties (0 kept where 4 requested), leaving zero gradients and a dead branch. Both are algorithm-level correctness issues with code anchors in src/soup_cli/utils/relora.py and a clear reference-vs-implementation validation path."
   },
+  "6cd565c2614d84ca2891cd29f1acb0ea110e178acc45e834a32215cfcecb5c20": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/output_formatter.py: populate resolved size/output_format from actual generated bytes",
+      "Honor requested output_format (e.g. jpeg) or reject unsupported formats with a clear client error",
+      "Populate quality/background only with meaningful supported values; document unsupported controls",
+      "Apply same metadata/encoding behavior to edit responses"
+    ],
+    "risks": [
+      "Backend capability for quality/background is undecided; echoing unsupported values would misrepresent output",
+      "Changing output_format handling could alter existing API behavior for callers relying on PNG default",
+      "Overlap with schema-field PRs #15420/#15605 requires reusing their types rather than duplicating",
+      "Reproduction requires GPU/Omni worker; CPU-side tests must mock or isolate the formatter"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "CPU-side test: send generation request with output_format=jpeg, decode b64_json with PIL, assert image.format == 'JPEG' and response size/output_format match decoded dimensions",
+      "Regression test: output_format=png returns correct metadata and PNG bytes",
+      "Test unsupported output_format returns explicit client error rather than HTTP 200 with mismatched bytes",
+      "Test edit endpoint returns non-null size/output_format consistent with decoded media",
+      "Multi-output (n>1) test asserting each decoded image's format/size matches reported metadata"
+    ],
+    "unknowns": [
+      "Whether maintainers want unsupported quality/background rejected vs omitted",
+      "Whether the JPEG encoding path is available in the Dynamo formatter's current dependency set without additional plumbing"
+    ],
+    "why": "Issue provides a concrete reproduction (curl + decode script), a specific code anchor (components/src/dynamo/vllm/omni/output_formatter.py lines ~251/270) where the response is built from created+data only and PNG is hardcoded, and a native control showing the backend can emit JPEG and report size/format. Acceptance criteria are testable against independently decoded media. Duplicate search found only keyword-overlap PRs (#15605, #15420) that add/sync schema fields without changing the Omni formatter's producer/encoding behavior, so no covered fix."
+  },
   "6cd9ea858abf879b4280e46cb35487498cb5f9d63f90caaa0717424bf7c9fa83": {
     "confidence": 0.85,
     "contradictions": [],
@@ -76217,6 +76324,42 @@
       "Whether maintainers consider the two defects one issue or separate workstreams"
     ],
     "why": "Issue reports two defects: (A) missing response_format propagation in omni_handler.py with a concrete one-line fix and code anchor, and (B) an FFmpeg/swscale MMXEXT color corruption that is a bundled-binary/build-configuration defect, not a Dynamo source bug. Defect A is actionable, but open PR #13707 touches the same omni_handler.py/output_formatter.py paths with semantic overlap on 'base64' and is unmerged, so duplicate/coverage status is unresolved. Defect B's fix lives in FFmpeg packaging, outside this repo's code, and the issue itself only offers a diagnostic workaround."
+  },
+  "84f9857b295669437b5a53e347434003916583ed2be3c0eea9ce4dbc9f78bdb9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "related_issue_assessment reports potential_overlap with #60489 while preTaskEvidence.duplicate.status is 'none'",
+      "preTaskEvidence.policy.status is 'ai_disclosure_conflict' with aiDisclosureConflict=true"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu_worker.py or equivalent profile_cudagraph_memory() accounting",
+      "KV cache sizing / gpu_memory_utilization budget logic"
+    ],
+    "risks": [
+      "Potential overlap with issue #60489 could mean the same root cause is already tracked",
+      "Disclosure/policy conflict may block automated contribution",
+      "Hardware-specific (24 GiB GPU) reproduction may not be available"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on a 24 GiB GPU with Qwen/Qwen3-0.6B and kv_cache_dtype='fp8' to confirm startup OOM",
+      "Add a regression test asserting measured CUDA graph memory is reserved before KV cache sizing"
+    ],
+    "unknowns": [
+      "Whether #60489 and this issue share the same root cause or are distinct",
+      "Whether the disclosure/policy conflict permits an automated contribution",
+      "Whether a 24 GiB GPU reproduction environment is available"
+    ],
+    "why": "Issue describes a plausible FP8 KV cache startup OOM with a concrete suggested fix (profile_cudagraph_memory undercounting graph capture cost), but the supplied evidence contains a materially blocking contradiction: the candidate is flagged as a potential duplicate of issue #60489 (shared cache/memory/oom signals) while duplicateStatus is 'none', and the pre-task evidence also reports a policy/disclosure conflict (ai_disclosure_conflict=true) plus failed pre-checks (base_sha_changed, duplicate_changed, policy_or_disclosure_uncertain). No public reproduction evidence is supplied (public_repro_signals=0), and the only comment is an unassigned 'i'll look into this'."
   },
   "850293f798eec4b12258ada35827b9055b0250671ff2516aed2e8c27fbe8532f": {
     "confidence": 0.8,
@@ -107410,6 +107553,36 @@
     ],
     "why": "Issue describes a concrete, reproducible SLACK_FIND_USERS bug where queries starting with U or W are misclassified as Slack user IDs, plus a secondary name-matching gap. However, the candidate's own pre-task evidence marks policy status 'needs_assignment' with assignmentRequired=true, and the actionability evidence has root_cause_signal=false and no code anchors beyond the 'support' label. The submission policy requires assignment before code work, which is a materially blocking unknown for actionability."
   },
+  "bcbe80210dbb337f92a8567edf71d32a004697fb1f2ac2730bffb33aa8b601fd": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims qualified algorithm mechanisms while the issue body describes only a dependency/compiler upgrade"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "requirements.txt XGrammar pin bump",
+      "regression tests for empty/boolean schemas and parameter separators"
+    ],
+    "risks": [
+      "Dependency upgrade may break other pinned dependencies (apache-tvm-ffi)",
+      "Upstream XGrammar behavior may change again",
+      "ai_disclosure_conflict policy blocks public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the supplied model-free CPU reproducer under both XGrammar versions to confirm compilation differences"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the XGrammar bump in scope for this repo versus upstream"
+    ],
+    "why": "The issue requests a dependency upgrade of XGrammar from 0.1.32 to 0.2.7 plus regression coverage. This is dependency/version plumbing and configuration work, not a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The supplied algorithm_evidence mechanisms (PEFT, distributed_training, numerics_quantization, evaluation_method) are keyword matches (adapter, fp8, tensor parallel, pipeline parallel) that do not correspond to the actual requested change, which is a compiler/dependency bump. The CPU reproducer is a compiler-version comparison, not an algorithm correctness test."
+  },
   "bcdcb38cffd29d49c365bfa8c22d1a571fc4a79799a05023be58cefe261dff07": {
     "confidence": 0.85,
     "contradictions": [],
@@ -122569,6 +122742,38 @@
     ],
     "why": "Issue describes a plausible capability-key-dropping behavior with a minimal repro, but the supplied evidence leaves the actionable code surface unresolved: the candidate's own pre-task evidence flags no_code_surface and reproduction_or_validation_missing, and the only related PR (#3642) is a closed draft with no confirmed root-cause coverage. The fork patch in comments is not an upstream PR and explicitly does not implement Events. The AI-disclosure policy conflict also blocks automated public action."
   },
+  "d639fd702e6581acaf292990219f109e2cda8a571d1b9e2f3fd3a66acfa68341": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims qualified=true with PEFT/quantization mechanisms, but the issue is purely config validation with no training/quantization/kernel content"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/config.py or EngineArgs validation rejecting convert=classify with runner=generate"
+    ],
+    "risks": [
+      "Fix is trivial config plumbing with low algorithmic value",
+      "Existing PR #60441 already covers the same fix, creating duplicate work",
+      "AI disclosure policy conflict flagged in pre-task evidence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add a config-validation unit test asserting ValueError for convert=classify + runner=generate",
+      "Reproduce with LLM(model='Qwen/Qwen2.5-0.5B-Instruct', convert='classify', runner='generate') and confirm descriptive ValueError instead of AssertionError"
+    ],
+    "unknowns": [
+      "Whether PR #60441 will be merged or needs replacement"
+    ],
+    "why": "Issue is a config cross-field validation bug (convert=classify + runner=generate) that crashes with a bare AssertionError; the fix is ordinary config/CLI plumbing, not an LLM algorithm mechanism. Track=llm_algorithm requires a concrete training objective, model mechanism, distributed invariant, quantization/numerical method, kernel algorithm, or evaluation methodology, none of which apply. Additionally, PR #60441 already directly references the issue and implements the config-stage rejection with a regression test, so the opportunity is covered."
+  },
   "d63c3ada5b3033a668819011b2a777546fb7ed32a1ddc1b70d96fe9596ec08aa": {
     "confidence": 0.8,
     "contradictions": [
@@ -135298,6 +135503,36 @@
       "Whether the 120s wait is a timeout fallback or the primary completion path"
     ],
     "why": "Issue provides a concrete user-visible performance bug with ordered reproduction steps, expected/actual behavior, isolation tests ruling out config and MCP servers, and static code anchors pointing to 120000 ms waits in runAndWait()/streamOutput() and completion-event handling. Root cause is suspected rather than confirmed, but the evidence supports a reference-vs-implementation timing test and a targeted fix in the run/session lifecycle."
+  },
+  "eb5af63f985660763859184c3fadd24079ab22b5100c70a3e47f2852019cf1c8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add a notifications/tools/list_changed handler in the SDK core MCP manager (sdk/packages/core/src/extensions/mcp/) that re-lists tools and rebuilds the session tool set",
+      "Wire the CLI (apps/cli/src/main.ts) to apply the refreshed tool list at the next turn, mirroring the extension's SdkMcpCoordinator behavior from #12619"
+    ],
+    "risks": [
+      "Debounce/refresh timing could race with in-flight turns; need to define whether refresh applies mid-turn or next turn",
+      "Rebuilding session tools may invalidate tool-call IDs or cached schemas; ensure no duplicate/regressed tool registration",
+      "Maintainer may prefer a specific approach (issue author explicitly asks for go-ahead on approach), but this is normal review uncertainty, not a blocker"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Stand up a stateful streamable-HTTP MCP server exposing alpha that registers beta and emits notifications/tools/list_changed on alpha call",
+      "Point CLI at it via CLINE_MCP_SETTINGS_PATH, call probe__alpha, then issue a second prompt and assert the recorded model request includes probe__beta without restart",
+      "Regression test that tools/list is re-invoked after the notification and that the session tool set is rebuilt"
+    ],
+    "unknowns": [
+      "Exact desired refresh semantics (immediate vs next-turn) is not fixed by the issue, but the issue states next-turn is acceptable, so it does not block actionability"
+    ],
+    "why": "Issue provides a concrete reproduction (stateful streamable-HTTP MCP server emitting notifications/tools/list_changed), observed behavior (tools/list called once at startup, never re-listed; new tool only appears after restart), and a specific root-cause anchor (no list_changed handler in sdk/packages/core/src/extensions/mcp/, createMcpTools builds session tools once), plus a precedent fix (#12619) for the extension. This is a concrete, actionable CLI runtime bug with a clear validation path."
   },
   "eb62fd032d10c5b01d5a3258a45fdbcb7bcf19d12227c3b5133f123d0d4f5310": {
     "confidence": 0.85,
