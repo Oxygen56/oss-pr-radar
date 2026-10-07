@@ -1571,6 +1571,37 @@
     ],
     "why": "The issue precisely identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative-token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The evidence includes code anchors and a clear validation path via recompilation and shape assertion checks."
   },
+  "0388dd812e70ff8c7b75074c954445c657eff2126fac7df5ac7f832ba2f16a7f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels the issue as llm_algorithm with PEFT/quantization mechanisms, but the actual bug is config validation with no algorithmic content"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add cross-field validation in EngineArgs.create_engine_config() rejecting convert=classify with runner=generate",
+      "Raise descriptive ValueError instead of reaching _init_pooler assertion"
+    ],
+    "risks": [
+      "Fix is config plumbing, not algorithm work, so it does not satisfy the llm_algorithm track requirement",
+      "PR #60441 already implements this fix, so duplicate effort"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Regression test constructing LLM(convert='classify', runner='generate') and asserting ValueError at config validation",
+      "Verify convert='classify' with runner='pooling' or unset still works"
+    ],
+    "unknowns": [
+      "Whether PR #60441 will be merged or requires changes"
+    ],
+    "why": "Issue is a config cross-field validation bug (convert=classify + runner=generate) that crashes with a bare AssertionError; the fix is ordinary CLI/config plumbing, not an LLM algorithm mechanism. Track=llm_algorithm requires a concrete training objective, model mechanism, distributed invariant, quantization/numerical method, kernel algorithm, or evaluation methodology, none of which apply. Additionally, open PR #60441 already directly covers this issue with a test file and is technically complete, making this a covered low-value opportunity."
+  },
   "03a86bd3e6dad1d074df9db75e7c3f304f9fcbd94b0b4d81bde2c362673465b4": {
     "confidence": 0.6,
     "contradictions": [
@@ -17818,6 +17849,40 @@
       "Whether the install-side conflict should be fixed in the same change or tracked separately"
     ],
     "why": "Issue documents a concrete, reproducible state-machine bug: uninstallExtension() resolves names only via getLoadedExtensions() (on-disk manifests), so a store entry whose directory was removed is unreachable by name, while install refuses the same name via the store snapshot. Triage statically confirms every named code path on main @ f024b376, identifies the existing predicate extensionArtifactExists() and the snapshot-based uninstallExtensionById() as the fix shape, and enumerates the three real design questions (link path, stored credentials, declarationOnly). This is actionable core extension-manager work with a clear failing-test path."
+  },
+  "21b40dcb85bfa7c600c9de7ebccbbead7e71abd3ee237216974472d7481ea29b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/output_formatter.py: populate resolved size and actual output_format metadata on generation and edit responses",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor requested output_format (e.g. jpeg) or reject unsupported formats with a clear client error",
+      "quality/background handling: only populate with meaningful supported backend values and document unsupported controls"
+    ],
+    "risks": [
+      "Changing output_format handling may alter existing API behavior for callers relying on PNG-only output",
+      "quality/background semantics depend on backend capability; echoing unsupported values would misrepresent output",
+      "Overlap with schema-field PRs #15420/#15605 could cause merge conflicts if not coordinated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that decodes returned b64_json bytes with PIL and asserts image.format matches the requested output_format and image.size matches the requested size",
+      "Test that response metadata fields (size, output_format) are non-null and consistent with independently decoded media for both generation and edit paths",
+      "Test unsupported output_format requests fail explicitly rather than returning 200 with mismatched bytes",
+      "Cover multiple outputs (n>1) to ensure per-image metadata is correct"
+    ],
+    "unknowns": [
+      "Whether maintainers want unsupported output_format requests rejected vs silently coerced",
+      "Whether quality/background are supported by the Omni backend at all"
+    ],
+    "why": "Issue provides a concrete, reproducible user-visible defect: the Omni output_formatter constructs image responses from only created/data and hardcodes PNG serialization, so size/background/quality/output_format are null and JPEG requests return PNG bytes. Code anchors (output_formatter.py L251/L270) and a native control (same container returns correct size/format and JPEG) establish the root cause and a reference-vs-implementation validation path. Related PRs #15420/#15605 only add/synchronize schema fields and do not touch the Omni formatter producer/encoding behavior, so they do not cover this fix."
   },
   "21b5cce9181d0fc9bb69f2556f1f1508fd2aec79a380357b8c9726c6400437b7": {
     "confidence": 0.6,
@@ -51247,6 +51312,45 @@
     ],
     "why": "Issue provides a deterministic reproduction (specific WAV file) with clear steps, expected vs actual behavior, and logs pointing to the zero-embedding fallback in voxtral_realtime.py:305. The root cause is identified as the fallback causing a permanent hang. An open PR (#45022) overlaps in code path but does not directly address this issue, so a new fix is actionable."
   },
+  "5ab28731a27f59f9291639a9d1dee89e406284fc6666ffbd68ddd6cd4fbe1e92": {
+    "confidence": 0.55,
+    "contradictions": [
+      "code_pathsPlan targets collect_env.py/metrics.py/loggers.py while the reported failure is in EPLB/SharedExperts MoE code",
+      "related_issue_assessment marks potential_overlap with #60391 but match basis is only generic stack signatures with zero title semantic overlap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/distributed/eplb/eplb_state.py async rearrangement path",
+      "fused MoE SharedExperts.forward assertion guard",
+      "EPLB async buffer allocation / memory accounting"
+    ],
+    "risks": [
+      "Assertion may be a downstream symptom of allocator OOM rather than the root cause",
+      "Potential duplicate #60391 may already cover the same failure signature",
+      "ai_disclosure_conflict policy may block automated public submission"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with GLM-5.3-Flash TP8/EP8 + --enable-eplb + MTP on 8xH200 and capture the full AssertionError traceback",
+      "Add a regression test that triggers a runtime async expert rearrangement and asserts no assertion failure and that 'Rearranged experts' completes",
+      "Compare memory high-water mark during async rearrangement vs. init-time dummy rearrangement"
+    ],
+    "unknowns": [
+      "Full AssertionError traceback and assertion condition",
+      "Whether the crash is caused by EPLB async rearrangement logic or by allocator OOM during rearrangement",
+      "Whether #60391 or another issue/PR already covers this exact failure",
+      "Resolution of the ai_disclosure_conflict submission policy"
+    ],
+    "why": "Issue reports an EPLB async rearrangement crash with AssertionError in fused MoE SharedExperts, but the supplied evidence is truncated: the log block is cut off mid-line and no traceback frames, assertion text, or SharedExperts code path are provided. The candidate's own code_pathsPlan lists collect_env.py, metrics.py, loggers.py, jit_monitor.py, and CUDACachingAllocator.cpp rather than the MoE/EPLB modules (eplb_state.py, fused_moe, shared_experts), so the root cause is not localized. A potential duplicate (#60391) shares only generic stack signatures (failure:clang, failure:gcc, path:collect_env.py) with no semantic overlap, and the submission policy is flagged ai_disclosure_conflict, which is a materially blocking disclosure requirement."
+  },
   "5ab857fcfe5b35fe95cdce7aeab523908ce5a5d0e849b2467b7f9130cf81baa0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -80582,6 +80686,51 @@
     ],
     "why": "Issue describes a concrete multi-file product change (surface update-check failure reason) with code anchors, but supplied evidence shows no public reproduction, no root-cause signal flag, and an unresolved semantic-overlap PR #12183 touching extensionManager.ts; the issue itself is a follow-up whose parent PR #13454 is unmerged, so the actionable baseline is uncertain."
   },
+  "8d341d144d7f30986438899c4928e7016d4404f348233d1feb4421f1f0211a7b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.algorithm_evidence claims qualified LLM-algorithm mechanisms (post_training_objective, PEFT, distributed_training) while the issue body and code anchors describe temp-dir/thread/container cleanup only",
+      "candidate.open_pr_assessment lists PR #1640 as MERGED with technical_failed_checks, yet the maintainer comment states it merged as 49c6c2ff and fixed the sweep site"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/export.py: move .soup_merge_tmp_<name> creation inside the guarded try/finally for gguf, bitnet, gguf-ud, onnx, tensorrt, awq, gptq",
+      "src/soup_cli/cans/run.py: clean up the owned mkdtemp extraction on env-capture and deploy failures",
+      "src/soup_cli/trainer/sft.py + trainer/stream_setup.py: close the streaming runtime when setup() raises",
+      "src/soup_cli/commands/eval.py + eval/aider_polyglot.py: name/cidfile the container and stop it on timeout",
+      "src/soup_cli/utils/best_of_n_stream.py: close fds before unlink so the real error surfaces on Windows",
+      "src/soup_cli/ui/app.py: delete the per-run temp config after the child exits"
+    ],
+    "risks": [
+      "Track mismatch: issue is CLI/resource-lifecycle plumbing, not an LLM algorithm mechanism, so llm_algorithm scoring criteria do not apply",
+      "Seven sites must be split into small standalone PRs per maintainer instruction; a single combined PR risks rejection",
+      "Windows-specific behavior cannot be validated on non-Windows CI",
+      "Cleanup must not mask the original error (e.g. WinError 32 replacing the real failure)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce each site with the issue's snippets on main and confirm the leftover/state before fixing",
+      "Add regression tests that fail on main and pass after the fix, one per site",
+      "For aider, use a fake docker on PATH rather than a real daemon",
+      "Reproduce the Windows [WinError 32] case on Windows before declaring that fix done",
+      "Include a mutation table: break each fix and confirm a test turns red"
+    ],
+    "unknowns": [
+      "Which of the six remaining sites the contributor intends to open first (maintainer asked for this)",
+      "Whether the Windows best-of-n fix can be validated in the available environment"
+    ],
+    "why": "Issue #1464 documents seven concrete resource-leak sites with executed reproductions, file:line anchors, and observed leftovers; maintainer confirmed the sweep site was fixed by merged PR #1640 and explicitly released the remaining six sites as unclaimed, each independently actionable. The candidate's algorithm_evidence (post_training_objective, PEFT, distributed_training, etc.) is misapplied: this is CLI/resource-lifecycle plumbing, not an LLM algorithm mechanism, so the llm_algorithm track framing is not supported by the evidence."
+  },
   "8d3b49f070eda3a23a52ec812c433cd22c6ca59a51d9f9f86aa156f5d304165a": {
     "confidence": 0.8,
     "contradictions": [
@@ -102715,6 +102864,40 @@
     ],
     "why": "Issue provides a clear root cause: torch.split drops modality attribute on embeddings, causing get_mm_embedding_modalities to fail. Reproduction steps and traceback are supplied, and the code path is identified. The fix is localized and testable."
   },
+  "b5e10f88e0e6557e35bd1d07ca7f592834c6dce7766a70287d3aa5d88bad8eb0": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/worker/model_runner.py or vllm/v1/worker/gpu_model_runner.py: profile_cudagraph_memory() to measure actual graph capture cost and its dependence on KV block count",
+      "KV cache sizing / gpu_memory_utilization budget accounting to reserve measured CUDA graph memory before final cache allocation",
+      "Optional early actionable error when the accepted configuration cannot fit the budget"
+    ],
+    "risks": [
+      "CUDA graph memory depends on hardware/driver and model, so a fixed constant may not generalize; measurement must be dynamic",
+      "Changing KV cache sizing could regress throughput or break existing gpu_memory_utilization semantics for non-FP8 configs",
+      "Repository requires public AI-usage disclosure, which conflicts with automated public submission; this is a policy constraint, not a technical blocker"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on a 24 GiB GPU with Qwen/Qwen3-0.6B and kv_cache_dtype='fp8' at default gpu_memory_utilization; confirm startup OOM",
+      "Run the same config with default KV cache dtype and confirm success, isolating the FP8-specific graph memory delta",
+      "After fix, verify startup succeeds and that measured peak memory stays within gpu_memory_utilization; add a regression test asserting the reserved graph memory is included in the cache budget"
+    ],
+    "unknowns": [
+      "Exact code location of profile_cudagraph_memory() and current KV cache budget computation is not quoted in the supplied evidence",
+      "Whether a maintainer has an existing design preference for measuring vs. post-capture adjustment"
+    ],
+    "why": "Issue reports a concrete, reproducible startup OOM with FP8 KV cache on a 24 GiB GPU: KV cache budget (~19.93 GiB) is computed before CUDA graph capture, and profile_cudagraph_memory() underestimates the ~0.80 GiB graph capture cost, so actual usage exceeds gpu_memory_utilization. The suggested fix (account for graph capture cost including KV-block dependence, or re-adjust cache after capture) is a concrete code path in the memory-profiling/KV-cache sizing logic, and a controlled reproduction (same model, fp8 vs default dtype, fixed gpu_memory_utilization) gives a clear validation path. No duplicate/merged fix is identified; the only overlapping PRs are keyword-only and unrelated. The ai_disclosure_conflict policy is a submission-policy constraint, not a technical blocker, and no maintainer pre-approval is required for the fix to be actionable."
+  },
   "b5ed67155492c7961340f767b812bf672905b7b08fde1e5243901cd75a70b44d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -102925,6 +103108,41 @@
       "Resolution of aiDisclosureConflict and assignment requirement"
     ],
     "why": "The issue is a planning-only Proposal that explicitly forbids implementation until maintainer approval and a subsequent Design Issue. Supplied evidence shows no reproduction, no root-cause confirmation, no maintainer approval, and unresolved policy conflicts (aiDisclosureConflict, assignmentRequired). The concrete code path and fix mechanism are deliberately left to Design review, so code work is not yet actionable."
+  },
+  "b65f7cbf11ca093d4d1593128cdcc68e27b21f1c016daf4eff98a759c4b16969": {
+    "confidence": 0.8,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body supplies a specific file/line root cause and lock-ordering explanation",
+      "open_pr_assessment marks root_cause_coverage false and no test files, yet PR #15767 is described as a direct fix for the same lag-resync behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe the watch receiver under the list_state read lock after a lag Resync so the receiver starts at the reconciled snapshot instead of replaying buffered pre-resync events",
+      "Add a regression unit test in kube.rs using the existing client_with 16-slot channel and a current-thread runtime"
+    ],
+    "risks": [
+      "Open PR #15767 already targets the same file with a similar fix but lacks tests; a competing change must add the regression test and root-cause coverage to be materially distinct",
+      "Resubscribing under the list_state read lock must not introduce lock-ordering deadlock with the daemon's write-lock path (daemon.rs:364-376)",
+      "Behavior change in watch event ordering could affect downstream consumers (addressed_router cancel_instance_streams, DynamicSubscriber ZMQ, llm discovery controller reconcile_group) if the fix is broader than the lag path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's unit test: 16 workers flap Removed/Added (32 events) before the watch task runs, then worker 17 joins; assert the first event after Resync is Added(instance_id 17), not stale Removed/Added pairs for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib and confirm the new test fails on main (a4adcfe923) and passes with the fix",
+      "Run cargo clippy/static checks on the dynamo-runtime package"
+    ],
+    "unknowns": [
+      "Whether PR #15767 will be revised to add the missing regression test before a competing PR lands",
+      "Whether maintainers have a preferred fix shape (resubscribe-under-lock vs. dropping pre-resync events) for this watch path"
+    ],
+    "why": "Issue pinpoints the lag-resync replay bug at lib/runtime/src/discovery/kube.rs:552, explains the daemon's lock ordering (daemon.rs:364-376) that makes buffered events predate the reconciled snapshot, and cites the Discovery::list_and_watch contract (mod.rs:1684-1687) plus the mem.rs:245-252 resubscribe-under-lock precedent. A concrete unit-test reproduction on a current-thread runtime with the 16-slot client_with channel is given, with expected vs actual events. This is a concrete runtime/concurrency fix with a clear validation path, not plumbing."
   },
   "b67113900b65d7e541f3126fe751b0b35834e936c4b263e882ed98d4c4daac16": {
     "confidence": 0.55,
@@ -128427,6 +128645,42 @@
       "Whether maintainers prefer self-contained retract release or separate flush; exact test environment for reproduction."
     ],
     "why": "The issue provides a detailed root cause analysis with code-level anchors and measured impact, making it actionable. Although there are existing PRs, they lack tests or are drafts, leaving room for a complete fix with regression tests."
+  },
+  "e2895b039e2782abe84d2a197fca0937929b5bed8d8a0307068c1fdd4f1fa1d1": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims no separate Dynamo issue or PR implements the multipart edit contract, while open PR #15390 (score 44) semantically overlaps on input_reference and PR #15605 overlaps the same code paths"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/openai.rs edits route: accept multipart/form-data and translate image/image[]/mask into the canonical worker request",
+      "lib/llm/src/protocols/openai.rs request model for edit inputs",
+      "field-specific error responses for missing/malformed/oversized images"
+    ],
+    "risks": [
+      "Existing PR #15390 may already cover the reference-conditioning portion, risking duplicate work",
+      "PR #15605 touches the same openai.rs/protocols paths and is a large draft, so merge conflicts or overlapping redesign are plausible",
+      "Expanding the edits route to multipart could unintentionally change existing JSON API behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's curl multipart upload against a running frontend and assert HTTP 200 plus backend input assertion",
+      "Regression test that JSON input_reference clients still return 200",
+      "Negative tests for missing, malformed, and oversized images returning appropriate 4xx"
+    ],
+    "unknowns": [
+      "Whether PR #15390 or #15605 already implements multipart extraction for the edits route",
+      "Exact location of field loss in frontend serialization (root cause not established)",
+      "Whether maintainers have a preferred design for multipart vs JSON input_reference coexistence"
+    ],
+    "why": "Issue describes a concrete user-visible bug (multipart /v1/images/edits rejected with 415, JSON image without input_reference rejected with 400) and points at the release edits handler in lib/llm/src/http/service/openai.rs, but the supplied evidence explicitly states the 400 'does not by itself locate all field loss inside frontend serialization' and root_cause_signal is false. Open PR #15390 (score 44) semantically overlaps on input_reference and is open, and PR #15605 overlaps the same code paths; duplicate status is semantic_overlap_requires_review, so unresolved coverage by existing PRs materially affects whether new code work is actionable."
   },
   "e28eb4acadd153aae7b5f66ad5f6d56f7ed740dd11325da256e86b77e7ddd10b": {
     "confidence": 0.6,
