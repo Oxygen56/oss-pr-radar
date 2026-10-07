@@ -5991,7 +5991,7 @@ class RadarLedger:
             validation_rows = connection.execute(
                 f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
                           i.worktree_path,s.created_at AS dispatched_at,
-                          CASE WHEN (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(s.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1') THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END AS followup_digest,
+                          CASE WHEN (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(s.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(s.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL) THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END AS followup_digest,
                           (SELECT MAX(abandoned.created_at) FROM events abandoned
                            WHERE abandoned.opportunity_key=o.key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
@@ -6010,20 +6010,20 @@ class RadarLedger:
                          SELECT 1 FROM events build_reserved
                          WHERE build_reserved.opportunity_key=s.opportunity_key
                            AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
-                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(build_reserved.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(build_reserved.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(build_reserved.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                            AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
                            AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
                            AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
                            AND json_extract(build_reserved.payload_json,'$.resultDigest')=d.dedupe_key
                            AND build_reserved.id>s.id))
-                     OR ((json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(s.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                     OR ((json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(s.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(s.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                        AND json_extract(s.payload_json,'$.resultDigest')=d.dedupe_key
                        AND EXISTS (
                          SELECT 1 FROM events build_reserved
                          WHERE build_reserved.opportunity_key=s.opportunity_key
                            AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
                            AND build_reserved.dedupe_key=s.dedupe_key
-                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(build_reserved.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(build_reserved.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(build_reserved.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                            AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
                            AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
                            AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
@@ -6057,7 +6057,7 @@ class RadarLedger:
                          AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'VALIDATION_FOLLOWUP_RESULT'
-                         AND json_extract(recovery.payload_json,'$.followupDigest')=CASE WHEN (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(s.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1') THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=CASE WHEN (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(s.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(s.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL) THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
@@ -9170,6 +9170,14 @@ class RadarLedger:
                         and build_payload.get("reason") == GENERATED_BUILD_REARM_REASON
                     ):
                         candidates[-1]["generatedBuildContract"] = GENERATED_BUILD_CONTRACT
+                    if build_payload.get(
+                        "reason"
+                    ) == "PREPARED_VALIDATION_HEAD_BINDING_REFRESHED" and re.fullmatch(
+                        r"[0-9a-f]{64}", str(build_payload.get("reviewMarker") or "")
+                    ):
+                        candidates[-1]["validationResourceBindingRefresh"] = build_payload[
+                            "reviewMarker"
+                        ]
             if candidates[-1].get("expiredPublication"):
                 correction = self._expired_validation_correction(candidates[-1])
                 if correction is not None:
@@ -9422,6 +9430,15 @@ class RadarLedger:
                     "reservationDigest": reservation_digest,
                     **(
                         {
+                            "validationResourceBindingRefresh": candidate[
+                                "validationResourceBindingRefresh"
+                            ]
+                        }
+                        if candidate.get("validationResourceBindingRefresh")
+                        else {}
+                    ),
+                    **(
+                        {
                             "dirtyHandoffContract": DIRTY_HANDOFF_CONTRACT,
                             "dirtyHandoffCompletion": candidate["dirtyHandoffCompletion"],
                         }
@@ -9491,10 +9508,10 @@ class RadarLedger:
                          AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {_intent_event_binding_clause("i", "s")}
                          AND s.dedupe_key=CASE
-                           WHEN (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(r.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                           WHEN (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(r.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(r.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                            THEN json_extract(r.payload_json,'$.reservationDigest')
                            WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
-                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(r.payload_json,'$.dirtyHandoffContract') IS NULL) OR (
+                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(r.payload_json,'$.dirtyHandoffContract') IS NULL AND json_extract(r.payload_json,'$.validationResourceBindingRefresh') IS NULL) OR (
                            s.id>r.id AND json_extract(s.payload_json,'$.reservationDigest')=
                                json_extract(r.payload_json,'$.reservationDigest')
                            AND json_extract(s.payload_json,'$.resultDigest')=
@@ -9550,10 +9567,10 @@ class RadarLedger:
                         AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                         AND {_intent_event_binding_clause("i", "s")}
                         AND s.dedupe_key=CASE
-                           WHEN (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(r.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                           WHEN (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(r.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(r.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                            THEN json_extract(r.payload_json,'$.reservationDigest')
                            WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
-                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(r.payload_json,'$.dirtyHandoffContract') IS NULL) OR (
+                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(r.payload_json,'$.dirtyHandoffContract') IS NULL AND json_extract(r.payload_json,'$.validationResourceBindingRefresh') IS NULL) OR (
                            s.id>r.id AND json_extract(s.payload_json,'$.reservationDigest')=
                                json_extract(r.payload_json,'$.reservationDigest')
                            AND json_extract(s.payload_json,'$.resultDigest')=
@@ -9604,12 +9621,22 @@ class RadarLedger:
                     or reservation_payload.get("dirtyHandoffContract") == DIRTY_HANDOFF_CONTRACT
                 )
                 or reservation_payload.get("expiryPromptRevision")
+                or reservation_payload.get("validationResourceBindingRefresh")
                 else result_digest,
                 {
                     "intentId": reservation_payload.get("intentId"),
                     "threadId": thread_id,
                     "worktreePath": reservation_payload.get("worktreePath"),
                     "resultDigest": result_digest,
+                    **(
+                        {
+                            "validationResourceBindingRefresh": reservation_payload[
+                                "validationResourceBindingRefresh"
+                            ]
+                        }
+                        if reservation_payload.get("validationResourceBindingRefresh")
+                        else {}
+                    ),
                     **(
                         {"dirtyHandoffContract": DIRTY_HANDOFF_CONTRACT}
                         if reservation_payload.get("dirtyHandoffContract") == DIRTY_HANDOFF_CONTRACT
@@ -9638,6 +9665,7 @@ class RadarLedger:
                         == REVIEW_FEEDBACK_CONTRACT
                         or reservation_payload.get("dirtyHandoffContract") == DIRTY_HANDOFF_CONTRACT
                         or reservation_payload.get("expiryPromptRevision")
+                        or reservation_payload.get("validationResourceBindingRefresh")
                         else {}
                     ),
                 },
@@ -9660,10 +9688,10 @@ class RadarLedger:
                        AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                        AND {_intent_event_binding_clause("i", "s")}
                        AND s.dedupe_key=CASE
-                           WHEN (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(r.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                           WHEN (json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(r.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(r.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                            THEN json_extract(r.payload_json,'$.reservationDigest')
                            WHEN json_extract(r.payload_json,'$.expiryPromptRevision') IS NOT NULL THEN json_extract(r.payload_json,'$.reservationDigest') ELSE json_extract(r.payload_json,'$.resultDigest') END
-                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(r.payload_json,'$.dirtyHandoffContract') IS NULL) OR (
+                         AND ((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(r.payload_json,'$.dirtyHandoffContract') IS NULL AND json_extract(r.payload_json,'$.validationResourceBindingRefresh') IS NULL) OR (
                            s.id>r.id AND json_extract(s.payload_json,'$.reservationDigest')=
                                json_extract(r.payload_json,'$.reservationDigest')
                            AND json_extract(s.payload_json,'$.resultDigest')=
@@ -9781,9 +9809,9 @@ class RadarLedger:
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {_intent_event_binding_clause("i", "sent")}
-                         AND (((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(r.payload_json,'$.dirtyHandoffContract') IS NULL)
+                         AND (((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(r.payload_json,'$.dirtyHandoffContract') IS NULL AND json_extract(r.payload_json,'$.validationResourceBindingRefresh') IS NULL)
                               AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest'))
-                           OR ((json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(r.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                           OR ((json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(r.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(r.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                               AND sent.dedupe_key=json_extract(r.payload_json,'$.reservationDigest')
                               AND sent.id>r.id
                               AND json_extract(sent.payload_json,'$.reservationDigest')=r.dedupe_key
@@ -9875,9 +9903,9 @@ class RadarLedger:
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {_intent_event_binding_clause("i", "sent")}
-                         AND (((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(r.payload_json,'$.dirtyHandoffContract') IS NULL)
+                         AND (((json_extract(r.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(r.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(r.payload_json,'$.dirtyHandoffContract') IS NULL AND json_extract(r.payload_json,'$.validationResourceBindingRefresh') IS NULL)
                               AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest'))
-                           OR ((json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(r.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                           OR ((json_extract(r.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(r.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(r.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(r.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                               AND sent.dedupe_key=json_extract(r.payload_json,'$.reservationDigest')
                               AND sent.id>r.id
                               AND json_extract(sent.payload_json,'$.reservationDigest')=r.dedupe_key
@@ -9971,20 +9999,20 @@ class RadarLedger:
                          SELECT 1 FROM events build_reserved
                          WHERE build_reserved.opportunity_key=s.opportunity_key
                            AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
-                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(build_reserved.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(build_reserved.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(build_reserved.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                            AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
                            AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
                            AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
                            AND json_extract(build_reserved.payload_json,'$.resultDigest')=json_extract(d.payload_json,'$.resultDigest')
                            AND build_reserved.id>s.id))
-                     OR ((json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(s.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                     OR ((json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(s.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(s.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                        AND json_extract(s.payload_json,'$.resultDigest')=json_extract(d.payload_json,'$.resultDigest')
                        AND EXISTS (
                          SELECT 1 FROM events build_reserved
                          WHERE build_reserved.opportunity_key=s.opportunity_key
                            AND build_reserved.event_type='VALIDATION_FOLLOWUP_RESERVED'
                            AND build_reserved.dedupe_key=s.dedupe_key
-                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(build_reserved.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                           AND (json_extract(build_reserved.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(build_reserved.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(build_reserved.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(build_reserved.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                            AND json_extract(build_reserved.payload_json,'$.intentId')=json_extract(s.payload_json,'$.intentId')
                            AND json_extract(build_reserved.payload_json,'$.threadId')=json_extract(s.payload_json,'$.threadId')
                            AND json_extract(build_reserved.payload_json,'$.worktreePath')=json_extract(s.payload_json,'$.worktreePath')
@@ -10024,7 +10052,7 @@ class RadarLedger:
                          AND {_intent_event_binding_clause("i", "recovery")}
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'VALIDATION_FOLLOWUP_RESULT'
-                         AND json_extract(recovery.payload_json,'$.followupDigest')=CASE WHEN (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(s.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1') THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=CASE WHEN (json_extract(s.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(s.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(s.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(s.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL) THEN json_extract(s.payload_json,'$.resultDigest') ELSE s.dedupe_key END
                      )
                    ORDER BY s.created_at""",
                 (cutoff,),
@@ -18745,10 +18773,10 @@ class RadarLedger:
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND {sent_binding}
                          AND sent.dedupe_key=CASE
-                           WHEN (json_extract(marker.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(marker.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(marker.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1')
+                           WHEN (json_extract(marker.payload_json,'$.generatedBuildContract')='ordinary_offline_generated_build_v1' OR json_extract(marker.payload_json,'$.reviewFeedbackContract')='controller_review_feedback_handoff_v1' OR json_extract(marker.payload_json,'$.dirtyHandoffContract')='dirty_controller_commit_handoff_v1' OR json_extract(marker.payload_json,'$.validationResourceBindingRefresh') IS NOT NULL)
                            THEN json_extract(marker.payload_json,'$.reservationDigest')
                            ELSE json_extract(marker.payload_json,'$.resultDigest') END
-                         AND ((json_extract(marker.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(marker.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(marker.payload_json,'$.dirtyHandoffContract') IS NULL) OR (
+                         AND ((json_extract(marker.payload_json,'$.generatedBuildContract') IS NULL AND json_extract(marker.payload_json,'$.reviewFeedbackContract') IS NULL AND json_extract(marker.payload_json,'$.dirtyHandoffContract') IS NULL AND json_extract(marker.payload_json,'$.validationResourceBindingRefresh') IS NULL) OR (
                            json_extract(sent.payload_json,'$.reservationDigest')=
                                json_extract(marker.payload_json,'$.reservationDigest')
                            AND json_extract(sent.payload_json,'$.resultDigest')=
@@ -21697,6 +21725,9 @@ class RadarLedger:
                                         "dirtyHandoffContract"
                                     )
                                     == DIRTY_HANDOFF_CONTRACT
+                                    or json.loads(candidate_row["payload_json"]).get(
+                                        "validationResourceBindingRefresh"
+                                    )
                                 )
                                 or json.loads(candidate_row["payload_json"]).get(
                                     "expiryPromptRevision"
@@ -21717,6 +21748,9 @@ class RadarLedger:
                                     "dirtyHandoffContract"
                                 )
                                 == DIRTY_HANDOFF_CONTRACT
+                                or json.loads(candidate_row["payload_json"]).get(
+                                    "validationResourceBindingRefresh"
+                                )
                             )
                             else None,
                             payload_field="reservationDigest"
@@ -21733,6 +21767,9 @@ class RadarLedger:
                                     "dirtyHandoffContract"
                                 )
                                 == DIRTY_HANDOFF_CONTRACT
+                                or json.loads(candidate_row["payload_json"]).get(
+                                    "validationResourceBindingRefresh"
+                                )
                             )
                             else None,
                             payload_value=reservation_digest
@@ -21749,6 +21786,9 @@ class RadarLedger:
                                     "dirtyHandoffContract"
                                 )
                                 == DIRTY_HANDOFF_CONTRACT
+                                or json.loads(candidate_row["payload_json"]).get(
+                                    "validationResourceBindingRefresh"
+                                )
                             )
                             else None,
                         )

@@ -40085,6 +40085,90 @@ def test_original_recovery_refreshes_stale_published_validation_resources(
     assert source["quality"]["relevant_tests_green"] is False
     assert source["quality"]["independent_review_passed"] is False
     assert store.validation_followup_candidates(), recovered
+    next_result = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=pending["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert next_result["ok"] and not next_result.get("blocked"), next_result
+    next_candidate = store.unresolved_validation_followups()[0]
+    next_reservation = next_candidate["reservationDigest"]
+    assert next_reservation != reservation
+    next_snapshot = MODULE._ensure_validation_snapshot(
+        next_candidate, reservation_digest=next_reservation
+    )
+    next_binding = {
+        "reservation_digest": next_reservation,
+        "snapshot_id": next_snapshot["snapshotId"],
+        "snapshot_path": next_snapshot["snapshotPath"],
+        "snapshot_digest": next_snapshot["snapshotDigest"],
+        "worktree_input_path": MODULE._validation_worktree_input_binding(
+            candidate=next_candidate,
+            reservation_digest=next_reservation,
+            snapshot_digest=next_snapshot["snapshotDigest"],
+        )["worktreeInputPath"],
+        "worktree_input_digest": next_snapshot["snapshotDigest"],
+    }
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=pending["resultDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        **next_binding,
+    )
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        assert json.loads(resource_path.read_bytes())["headSha"] == source["commitSha"]
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": "thread-1"}}}
+        return buffer, {"result": {"turn": {"id": "resource-refreshed-validation"}}}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(
+        MODULE,
+        "_wait_for_app_server_terminal_turn",
+        lambda *_a, **_k: {"turnId": "resource-refreshed-validation", "status": "completed"},
+    )
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+    worker = MODULE._app_server_task_turn_worker(
+        SimpleNamespace(
+            ledger=store.path,
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=pending["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+            receipt=str(MODULE.STATE / "task_turn_receipts" / "next-resource-validation.json"),
+            **next_binding,
+        )
+    )
+    assert worker["ok"], worker
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest=pending["resultDigest"],
+        reservation_digest=next_reservation,
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    assert not store.unresolved_validation_followups()
+    with store.connect() as connection:
+        sent = connection.execute(
+            "SELECT dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert sent[0] == next_reservation
+    assert json.loads(sent[1])["reservationDigest"] == next_reservation
     with store.connect() as connection:
         event = connection.execute(
             "SELECT payload_json FROM events WHERE event_type='PUBLISHED_VALIDATION_INPUT_RESTORATION_AUTHORIZED'"
