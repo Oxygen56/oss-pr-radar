@@ -18481,6 +18481,44 @@
     ],
     "why": "The issue itself is a strong, concrete kernel-numerics bug: C3x callers rebuild packed strides via make_cute_packed_stride and discard real leading strides, with a reproducible 8.1% mismatch matrix and a proposed stride fix. However, the supplied evidence shows the issue is already fully covered by open PRs: #55537 (common caller + SM90 tensorwise), #56248 (SM90 blockwise), #56480 (SM100), and #56659 (SM120 blockwise, validated on RTX 5090). The issue's own coverage checklist now has every caller claimed, and the last unclaimed caller is covered by #56659. This is unresolved duplicate/merged-fix coverage, which is a materially blocking unknown for whether new code work is actionable."
   },
+  "231da67553b800a90a9cba9f81e0c68c58606909cadccd9c35ea2d896686691e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue title/why claims a clear user-visible bug with a reproducible fix, but the body states there is no minimal deterministic reproducer and root cause is unknown",
+      "actionability_evidence.root_cause_signal is false while the candidate 'why' asserts a concrete fix path"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Streaming response classification in the Codex provider path",
+      "Terminal metadata propagation (finish_reason, status, incomplete_details.reason, reasoning-token counts)",
+      "Error classification for empty/incomplete upstream responses"
+    ],
+    "risks": [
+      "Fixing without root cause may mask a legitimate truncated/reasoning-only result or alter API error semantics",
+      "The intermittent nature and lack of captured upstream metadata make a targeted fix hard to validate",
+      "Related reports #3572 and #3587 are explicitly not established as the cause"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture sanitized upstream terminal diagnostics for a failing long-session request to distinguish truncated/reasoning-only vs genuinely empty vs conversion loss",
+      "Build a deterministic or high-fidelity reproduction of the 100+ message / 258 tool-definition / ~116k input-token streaming request",
+      "Add a regression test asserting that an unfinished empty response is not converted into a successful answer and that a truthful bounded retryable error is returned"
+    ],
+    "unknowns": [
+      "Whether the upstream returned a valid truncated/reasoning-only result, a genuinely empty result, or lost terminal metadata during conversion",
+      "The upstream HTTP status, finish_reason, Responses API status/incomplete_details.reason, and reasoning-token count for a failing request",
+      "Whether the 4 output tokens with 0 reasoning tokens indicate budget exhaustion or a conversion defect"
+    ],
+    "why": "The issue reports an intermittent 502 'Provider returned empty content' for Codex streaming in long OpenCode sessions, but explicitly states it is 'an observed scenario, not yet a minimal deterministic reproducer' and that upstream status, finish_reason, Responses API status/incomplete_details.reason, and reasoning-token counts were not captured. The reporter cannot determine whether the upstream returned a valid truncated/reasoning-only result, a genuinely empty result, or whether terminal metadata was lost during conversion. The comment adds aggregate counters (4 output tokens, 0 reasoning tokens) but explicitly says these are not proof of budget exhaustion or a specific conversion defect. No root cause is established, so the code change is not yet actionable."
+  },
   "232183e7cf0303e8d278582cb512bc23985b05d71f12ff4a49790a397de39ba3": {
     "confidence": 0.55,
     "contradictions": [
@@ -25566,6 +25604,37 @@
       "Assignment status: policy is needs_assignment and the issue has no assignee"
     ],
     "why": "The writer mechanism is confirmed (agent.py emits top-level permissions; kiro-cli 2.10.0 rejects it, 2.21.x tolerates it), but the issue's causal chain to the MCP OAuth banner is explicitly unverified, and every candidate fix reverses a deliberate, test-pinned design decision (#4614, test_kas_permissions.py) that keeps KAS profiles loadable. The remedy choice is an owner decision, not a mechanical bug fix, and the repo policy requires assignment (needs_assignment) with no assignee."
+  },
+  "2ea57e7135d9d0db21a3c7f44517c432752e695d5e3aabb9b5dd03337e7cb655": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/cron/store/sqlite-cron-store.ts: bind :now/:capacity with prefixed keys or positional parameters in claimDueRuns",
+      "Add a comment above the nextDueRun.get({...}) call explaining the ':' prefix requirement under Bun's non-strict driver"
+    ],
+    "risks": [
+      "Bun's non-strict driver behavior may differ across Bun versions; the fix should be verified on the affected Bun version",
+      "The optional CronRunner.tick() logging improvement is out of scope and should be a separate issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `bun test src/cron/store/sqlite-cron-store.test.ts` before the fix to confirm 15 pass / 4 fail",
+      "Run the same suite after the fix to confirm 19/19 pass",
+      "Run the Node cron suite (118 tests) to confirm no regression",
+      "Run core build and typecheck including smoke"
+    ],
+    "unknowns": [
+      "Whether the contributor can open the PR directly given the reported GitHub permission error; maintainer offered to open it from the branch if needed"
+    ],
+    "why": "Issue provides a precise root cause (CronStore.claimDueRuns binds named params as an object under bun:sqlite, causing NULL bindings and zero claimed runs), a runtime-independent reproduction, and a concrete fix. A contributor reproduced it and a maintainer confirmed locally that the 4 claim/reclaim/requeue tests fail on main under bun test and pass with the fix, and explicitly asked for a PR against main. This is a clear, actionable bug fix."
   },
   "2eaf22eecdf4803f2fd0af4b88765c7e81e4c80fd591ab1986907f25da7121a0": {
     "confidence": 0.6,
@@ -67737,6 +67806,40 @@
     ],
     "why": "Issue #13249 has a clear root cause (unbounded synchronous walkDirs + MiniSearch.addAll in FileSearch.initializeFileSearchState) and a concrete validation path, but open PR #13271 already directly covers the same code path with the same fix direction, and the duplicate assessment is explicitly 'human_review_required'. Whether independent implementation space remains is unresolved, which materially determines actionability."
   },
+  "770f9e0de7cad828240f24d382f7faa9ae4768b5bbf7885ce87a56164761dc80": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states the helper is verified on origin/main plus the #13466 branch, but triage confirms terminate-reason.ts and describeAgentTerminateReason are not on main; on main the helper is module-private terminateModeMessage in agent-interactive.ts"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agents/runtime/agent-headless.ts: add getLoopType() accessor and narrow private loopType to LoopType | null",
+      "packages/core/src/agents/forkedAgent.ts: add loopType?: LoopType | null to ForkedAgentResult and populate at the getTerminateMode() read site",
+      "terminateReasonMessage: pass loopType through to describeAgentTerminateReason"
+    ],
+    "risks": [
+      "Implementing before #13466 merges requires exporting or duplicating the module-private terminateModeMessage helper, which is exactly the refactor #13466 performs",
+      "Type mismatch between string | null on AgentHeadless and LoopType | null in the helper must be settled without widening the helper",
+      "terminateReason reaches TUI, telemetry, and tools/agent/agent.ts, so an optional loopType must remain backwards compatible"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting a forked/background agent stopped by loop detection emits the detector name (e.g. consecutive_identical_tool_calls) in its terminate reason message",
+      "Run targeted unit tests for the memory planner call sites and agent runtime after #13466 merges"
+    ],
+    "unknowns": [
+      "Whether and when #13466 will merge, since its CI has never run and it has CHANGES_REQUESTED",
+      "Whether maintainers want this follow-up implemented before or after #13466 lands"
+    ],
+    "why": "The issue is precisely diagnosed and verified by triage: loopType exists on AgentHeadless but has no accessor, ForkedAgentResult lacks the field, and the shared helper is loopType-aware. However, the triage comment establishes a hard dependency: terminate-reason.ts/describeAgentTerminateReason only exist on the unmerged #13466 branch, which is OPEN with CHANGES_REQUESTED and blocked on a maintainer approving a queued CI run. Steps 2 and 3 are unimplementable on main until #13466 lands, so the code work is not currently actionable."
+  },
   "7742ff2070fa9f24e295eecfb158fbf6c65915f4fa9e507c26bf3f11b6e7c9b8": {
     "confidence": 0.82,
     "contradictions": [],
@@ -86661,6 +86764,38 @@
     ],
     "why": "Issue provides a concrete root cause (missing .cs in DEFAULT_INCLUDE_EXTENSIONS), a clear reproduction path, and a specific code anchor in search.ts. The proposed fix is a straightforward extension list update with a validation path via existing search tests."
   },
+  "99b661136cd8d62ccc679282023e90881d12bca8b57a11c7c98d424f536aa2c5": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/secret_redaction.py: add a size cap/truncation before _SECRET_RE.sub()",
+      "litellm/litellm_core_utils/exception_mapping_utils.py: avoid two full redaction passes on unbounded exception text",
+      "litellm/router.py: bound redaction in async_function_with_fallbacks exception handler"
+    ],
+    "risks": [
+      "Truncation could drop secret patterns near the cut boundary if head/tail strategy is not careful",
+      "Overly aggressive capping may remove context needed by downstream error-classification keyword checks",
+      "Centralizing the cap in redact_string may affect other callers relying on full-string redaction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test feeding a multi-MB provider error string through exception_type() and assert redaction completes under a small time bound",
+      "Add a unit test for _python_redact_string with oversized input verifying truncation preserves head/tail context and still redacts secrets",
+      "Run targeted litellm_core_utils and router unit tests plus static checks"
+    ],
+    "unknowns": [
+      "No maintainer design preference on where to centralize the cap",
+      "No open PR or duplicate coverage confirmed beyond the cited orthogonal issues"
+    ],
+    "why": "Issue identifies a concrete unbounded regex scan in secret_redaction._SECRET_RE called synchronously from exception_type() and Router fallback paths, with a runnable reproduction and a bounded-truncation fix proposal. This is a real performance/event-loop blocking defect, not a duplicate of the cited ReDoS or proxy-ingestion issues."
+  },
   "99ca1b760656ce00b59c6825a5dc38fce74d6bb95d15003cb3a2c61801a236cc": {
     "confidence": 0.82,
     "contradictions": [],
@@ -87003,6 +87138,42 @@
       "Exact root cause of the write no-op; whether the scheduler issue is related."
     ],
     "why": "Issue provides a clear, reproducible bug with ordered steps and evidence that Edit/Write tools return success without writing to disk. Root cause is not identified but the reproduction is concrete and actionable for a fix."
+  },
+  "9a307b0b3bfb4c3d3e7dd849732fbad23c1a5f5223dd317056d2cc8a57536d80": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asks to extend SM100 no-rope lane to SM120, while open PR #15 claims to make the rope-free MLA path work on SM12x without referencing the issue"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/platforms/cuda.py backend candidate list for major==12 MLA",
+      "SM120 sparse-MLA kernel support for qk_rope_head_dim=0 / query dim 512",
+      "supported_kv_cache_dtypes for the rope-free sparse-MLA lane"
+    ],
+    "risks": [
+      "Duplicate work if PR #15 already fixes the rope-free SM12x path",
+      "Kernel-level SM120 support may require unavailable hardware/cubin work beyond routing changes",
+      "AI disclosure policy conflict may block public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Compare PR #15 and PR #54929 diffs against the issue's three failure modes to determine coverage",
+      "Boot-verify GLM-5.3-Flash on SM120 with qk_rope_head_dim=0 and confirm which failure modes remain",
+      "Add a regression test asserting backend selection and KV-cache dtype support for the rope-free sparse-MLA shape"
+    ],
+    "unknowns": [
+      "Whether PR #15 or PR #54929 already resolves the rope-free SM120 sparse-MLA gap",
+      "Whether the repository's AI disclosure policy permits the intended contribution",
+      "Whether a concrete public reproduction/validation path exists for the SM120 kernel gap"
+    ],
+    "why": "The issue describes a concrete SM120 sparse-MLA gap for rope-free GLM-5.3-Flash (qk_rope_head_dim=0), but the supplied evidence shows unresolved duplicate/overlap coverage: open PR #15 ('Make the rope-free MLA path work on SM12x', 3 test files, overlapping vllm/platforms/cuda.py) and PR #54929 (Triton sparse-MLA fallback for SM12x) both semantically overlap the issue without referencing it, and the duplicate status is 'semantic_overlap_requires_review'. Additionally, the pre-task evidence flags policy_or_disclosure_uncertain / ai_disclosure_conflict and reproduction_or_validation_missing, and the issue itself offers no public reproduction artifacts (public_repro_signals=0, reproduction_evidence=[]). These are materially blocking unknowns for deciding whether new code work is actionable versus already covered."
   },
   "9a30c991e3396c252cb9d6e6ef9ea03c785bb87775fe070d40855c3dfaca44a5": {
     "confidence": 0.8,
@@ -114375,6 +114546,38 @@
     "wait_reason": null,
     "why": "Issue provides a clear root cause, minimal repro, and a concrete fix location in bash.ts. No competing PR or maintainer assignment blocks work."
   },
+  "cb34e79b825e889318676a3aeb6f5ebc14ee6079968a1166a64ca2e552157225": {
+    "confidence": 0.55,
+    "contradictions": [
+      "preTaskEvidence duplicate status weak_pr_competition_possible vs pre-review flags duplicate_changed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/namespace.rs: unify resolver",
+      "lib/rl/src/lib.rs: consume frontend-resolved NamespaceFilter",
+      "lib/llm/src/http/service/openai.rs: pass filter into RL mount"
+    ],
+    "risks": [
+      "Changing frontend literal-prefix rule is a behavior change needing explicit decision",
+      "Overlap with open PR #15748 may make independent work redundant"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting /v1/rl/workers matches frontend routing for DYN_NAMESPACE_PREFIX=myns with worker in myns2",
+      "Test empty-prefix and DYN_NAMESPACE-only cases against both resolvers"
+    ],
+    "unknowns": [
+      "Whether PR #15748 will be merged or superseded",
+      "Whether maintainers want the hyphen-boundary rule adopted for the frontend"
+    ],
+    "why": "Issue describes a concrete namespace-resolver divergence with a reproduction and code anchors, but the supplied evidence shows an open PR #15748 that already targets the same fix and the candidate's own pre-review flags base_sha_changed and duplicate_changed. The duplicate/coverage status is unresolved, which materially determines whether independent code work is actionable."
+  },
   "cb3a5572adc31f37a9f82b4ac6f567a37d3719b936ebec03f0f5767a9cbadc0c": {
     "confidence": 0.85,
     "contradictions": [
@@ -115195,6 +115398,38 @@
       "Whether the issue is specific to self-hosted SIP deployments or affects other scenarios."
     ],
     "why": "The issue provides a detailed bug report with multiple configurations isolating the problem to the shared audio routing infrastructure. Maintainer guidance and user-provided recordings confirm that audio stops reaching the session, narrowing the root cause to the track subscription or RoomIO audio delivery. The evidence includes concrete code anchors and a clear validation path via session recording and DEBUG logs."
+  },
+  "cd9c09439e7ee14ff4c646b2c9503a13293be7661224d2cdf30f5e49e0c1caec": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vLLM KV cache profiling / profile_cudagraph_memory() memory accounting",
+      "startup memory budget enforcement for kv_cache_dtype=fp8"
+    ],
+    "risks": [
+      "Exact CUDA graph memory depends on KV block count and hardware, so a fixed estimate may be inaccurate",
+      "Changing budget accounting could regress default-dtype startup or reduce usable KV cache",
+      "Repository AI-disclosure policy conflict may block public submission even if the fix is valid"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce LLM(model='Qwen/Qwen3-0.6B', kv_cache_dtype='fp8') startup OOM on a 24 GiB GPU and confirm default dtype succeeds",
+      "Add regression asserting CUDA graph memory is included in the KV cache budget so accepted configs do not exceed gpu_memory_utilization during capture/first sampling"
+    ],
+    "unknowns": [
+      "No maintainer confirmation of preferred fix location (profile_cudagraph_memory vs post-capture adjustment)",
+      "No public reproduction artifact beyond the issue report"
+    ],
+    "why": "Issue describes a concrete, reproducible startup OOM: FP8 KV cache sizing omits CUDA graph capture memory (~0.80 GiB) from the budget, and the suggested fix targets profile_cudagraph_memory()/post-capture KV cache adjustment. This is a real inference-infra memory-accounting bug with a clear validation path (reproduce OOM on 24 GiB GPU, verify budget accounting and successful startup). No duplicate/merged fix is established; open PRs are keyword-overlap only with no code-path or mechanism overlap."
   },
   "cd9c3edc5317427ee0add5fe32e6e25807de3873b9262621bee43435eaa819e3": {
     "confidence": 0.85,
