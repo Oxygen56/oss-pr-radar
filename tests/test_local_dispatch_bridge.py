@@ -31608,6 +31608,97 @@ def test_validation_scope_rebuild_is_retryable_if_receipt_rebind_crashes(monkeyp
     assert finalized["reproductionReceipt"]["commitSha"] == corrected_head
 
 
+def test_pr_followup_ingestion_uses_common_base_after_upstream_advances(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        target_base_bound=True,
+        additional_changed_files=("test_runtime.py",),
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+    )
+    _managed, _value, pr_url = _bind_published_pr_authority_fixture(
+        store, worktree, result_path, explicit_pr_followup=True, degrade_stage=False
+    )
+    published_head = run_git(worktree, "rev-parse", "HEAD")
+    branch = run_git(worktree, "symbolic-ref", "--short", "HEAD")
+    original = json.loads(result_path.read_text(encoding="utf-8"))
+    selected_base = original["selectedBaseSha"]
+    run_git(worktree, "switch", "main")
+    (worktree / "upstream_only.py").write_text("upstream = True\n", encoding="utf-8")
+    run_git(worktree, "add", "upstream_only.py")
+    run_git(worktree, "commit", "-m", "chore: unrelated upstream change")
+    upstream_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "update-ref", "refs/remotes/origin/main", upstream_head)
+    run_git(worktree, "switch", branch)
+    now = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": published_head,
+                    "actionDigest": "advanced-upstream-review",
+                    "taskActionDigest": "advanced-upstream-review",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["Correct the existing PR runtime"],
+                    "evidence": {
+                        "actionableCheckNames": ["Regression"],
+                        "baseRefName": "main",
+                        "baseSha": upstream_head,
+                    },
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=candidate["wakeDigest"],
+        prepared_head_sha=published_head,
+    )
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+            prepared_followup_head=published_head,
+        ).read_text(encoding="utf-8")
+    )
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n", encoding="utf-8")
+    original.update(
+        contextDigest=context["contextDigest"],
+        followupDigest=candidate["wakeDigest"],
+        handoffMode="controller_commit_required",
+        commitSha=None,
+        headSha=published_head,
+        changedFiles=["runtime.py", "test_runtime.py"],
+    )
+    result_path.write_text(json.dumps(original), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["handoffMode"] == "controller_commit_complete", json.dumps(result)
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py", "test_runtime.py"]
+    assert finalized["targetBase"]["sha"] == selected_base
+    assert finalized["previousCommitSha"] == published_head
+    assert run_git(worktree, "rev-parse", "HEAD^") == published_head
+    assert run_git(worktree, "status", "--porcelain") == ""
+    assert finalized["followupDigest"] == candidate["wakeDigest"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "prFollowup"
+        ]["wakeDigest"]
+        == candidate["wakeDigest"]
+    )
+    assert result["publicationRequests"] == []
+
+
 def test_validation_followup_accepts_cumulative_files_with_local_correction(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,

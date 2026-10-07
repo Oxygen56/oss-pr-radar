@@ -17061,8 +17061,10 @@ def _validation_publication_changed_files(
         if not re.fullmatch(r"[0-9a-f]{40}", publication_base):
             raise RuntimeError("PR follow-up lacks the signed publication base")
         command(["git", "cat-file", "-e", f"{publication_base}^{{commit}}"], cwd=worktree)
-        command(
-            ["git", "merge-base", "--is-ancestor", publication_base, "HEAD"],
+        # Upstream may advance independently of the published PR branch. Audit
+        # the PR's own changes from their common base, excluding upstream edits.
+        publication_base = command(
+            ["git", "merge-base", publication_base, "HEAD"],
             cwd=worktree,
         )
         cumulative = _validated_changed_files(
@@ -17124,7 +17126,7 @@ def _prospective_validation_changed_files(*, worktree: Path, context: dict[str, 
         if not re.fullmatch(r"[0-9a-f]{40}", base):
             raise RuntimeError("PR follow-up lacks the signed publication base")
         command(["git", "cat-file", "-e", f"{base}^{{commit}}"], cwd=worktree)
-        command(["git", "merge-base", "--is-ancestor", base, "HEAD"], cwd=worktree)
+        base = command(["git", "merge-base", base, "HEAD"], cwd=worktree)
     else:
         if context.get("stage") != "VALIDATION_PENDING":
             raise RuntimeError("prospective validation diff requires a validation continuation")
