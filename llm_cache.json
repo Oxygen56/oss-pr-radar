@@ -27316,6 +27316,40 @@
     ],
     "why": "Issue provides a clear root cause: CMake logic fails to set AARCH64_BUILD on native Jetson builds, leading to XQA kernels for wrong SM architectures and runtime GQA kernel failure. Concrete reproduction steps and a validated workaround are supplied, making the fix actionable."
   },
+  "32edb455ecf8fbea9bac4684f25daac3891904479bfff763a7858c96791e4ae6": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/worker/model_runner.py or equivalent: profile_cudagraph_memory() accounting for actual graph capture cost and KV-block dependence",
+      "KV cache sizing / gpu_memory_utilization budget path so reserved memory includes graph capture",
+      "early actionable error when the configuration cannot fit"
+    ],
+    "risks": [
+      "Exact CUDA graph memory depends on hardware/driver and number of KV blocks, making a deterministic unit test hard",
+      "Changing the budget may reduce available KV cache and affect throughput for existing users",
+      "Repository AI-disclosure policy conflict (ai_disclosure_conflict) blocks automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with Qwen/Qwen3-0.6B, kv_cache_dtype='fp8' on a 24 GiB GPU and confirm startup OOM",
+      "After fix, verify startup succeeds and measured peak memory stays within gpu_memory_utilization",
+      "Regression test asserting the CUDA graph memory estimate is included in the KV cache budget (mock/CPU where possible, real GPU otherwise)"
+    ],
+    "unknowns": [
+      "No maintainer confirmation of preferred fix location (profile_cudagraph_memory vs post-capture KV cache adjustment)",
+      "No public reproduction log beyond the issue text; exact GPU/driver not specified"
+    ],
+    "why": "Issue reports a concrete, reproducible startup OOM with FP8 KV cache on a 24 GiB GPU: KV cache budget omits CUDA graph capture memory (~0.80 GiB), so an accepted config exceeds gpu_memory_utilization. Root cause is plausibly localized to profile_cudagraph_memory()/KV cache sizing, and the issue supplies a minimal repro plus a suggested fix direction. No duplicate or merged-fix coverage found; open PRs are keyword-only overlaps with no code-path or mechanism overlap."
+  },
   "32f5fc06678f82b383376a3f90234880a031f6abdebc29e6c04dd5698d01dc15": {
     "confidence": 0.7,
     "contradictions": [],
@@ -35279,6 +35313,47 @@
       "Whether the sketch commit is acceptable as a basis"
     ],
     "why": "The issue is a UX/rendering design proposal with explicitly open design questions (collapse-by-default vs setting, compact form contents, thinking blocks, density of intermediate replies). The repository policy requires assignment before implementation, and the issue itself says not to begin implementation until it reaches Ready on the project board. No reproduction or validation path is established, and the only implementation sketch is an unmerged third-party commit, not a maintainer-approved design."
+  },
+  "413c28a7dd743688f8b2552fadfd542f51c83192f33308734548e7985efd5570": {
+    "confidence": 0.8,
+    "contradictions": [
+      "related_issue_assessment flags potential duplicate #57720 (Mamba-hybrid CUDA-graph garbled output) but shared signals are only generic stack signatures (failure:clang, failure:gcc, path:collect_env.py) with no semantic overlap to the logprob rank bug"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/logprobs.py: append_logprobs_for_next_position must accept per-entry ranks instead of assuming sorted top-k",
+      "V1 sampler: Sampler.gather_specific_token_logprobs must compute real vocab rank per requested token id",
+      "V2 path: _fill_logprob_token_ids_kernel rank handling (may depend on #36746)",
+      "Rust engine-core client: PositionLogprobs::from_decoded_row rank decoding for non-sampled entries",
+      "Regression test asserting logprob_token_ids ranks equal logprobs=-1 ranks on both runners"
+    ],
+    "risks": [
+      "Fix may need to stack on #36746 for the V2 side; standalone V2 fix could conflict",
+      "Distinguishing genuine rank semantics from ordering assumptions in top-k path",
+      "CPU backend behavior unverified (only GPU tested by reporter)",
+      "Repo AI-disclosure policy conflict flagged in preTaskEvidence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal repro with Qwen/Qwen3-0.6B and facebook/opt-125m, comparing logprob_token_ids ranks to logprobs=-1 ranks",
+      "Repeat with VLLM_USE_V2_MODEL_RUNNER=0 and =1 to cover both model runners",
+      "Add a unit/regression test on append_logprobs_for_next_position and gather_specific_token_logprobs with a fixed synthetic batch and seed",
+      "Verify HTTP /inference/v1/generate path returns rank matching logprobs=20 for the sampled token"
+    ],
+    "unknowns": [
+      "Whether the fix should stack on #36746 or land standalone (reporter explicitly asks maintainer preference)",
+      "Whether CPU backend path needs additional changes beyond the GPU-verified fix"
+    ],
+    "why": "Issue provides a concrete, reproducible algorithm-level defect: `rank` for `logprob_token_ids` entries is the request-list position rather than the vocab rank. Root cause is anchored to specific code (`append_logprobs_for_next_position` in vllm/logprobs.py, `Sampler.gather_specific_token_logprobs` on V1, `_fill_logprob_token_ids_kernel` on V2, Rust `PositionLogprobs::from_decoded_row`), with a minimal repro comparing `logprob_token_ids` ranks against `logprobs=-1` on both model runners. This is a numerical/logprob correctness invariant with a clear reference-vs-implementation validation path, not mere plumbing."
   },
   "4151e2ff7fcb22c4d9ecf2e37cc6f8cf901907eefa6e66d76c6ee9df9d9382db": {
     "confidence": 0.85,
@@ -63201,6 +63276,43 @@
     ],
     "why": "Issue provides a concrete, reproducible 1.4.2 failure: frontend folds the speech stream and selects response.data.first(), so only the initial 0.08s silent WAV chunk reaches the HTTP caller while the worker emits three chunks. Root cause is anchored to lib/llm/src/http/service/openai.rs and the audio aggregator, with byte-level evidence (3884 bytes, RMS 0, matching SHA-256) and a direct-to-worker comparison proving later non-silent audio exists. The issue itself scopes this as a 1.4.2 qualification/backport/support-boundary report and explicitly notes PR #12100 is not an ancestor of tag v1.4.2, so the actionable work is a backport/versioned fix plus regression coverage, not a novel main-branch fix."
   },
+  "6fa13a7bc8f8188c66a56e01e97d8432a3a933931f96bedbf719d6353edb75ca": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body expects opencode eligible since v2.3.0, while comments report refusal on 4.0.0/4.0.1 and note #5289 merged after those releases",
+      "One comment reports cause listing 'claude-code, opencode, codex' while refusing an opencode request, then omitting opencode after sync"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/reviewtransaction/status.go",
+      "scripts/crosslane/opencode.go",
+      "scripts/gen-sdd-agent-digests/opencode.go",
+      "internal/components/telemetryruntime/opencode.go"
+    ],
+    "risks": [
+      "Merged PR #5289 may already cover the reported class, making further work redundant",
+      "Reported occurrences are on releases predating the merge, so no post-fix reproduction is supplied",
+      "ai_disclosure_conflict policy blocks automated public submission"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce selectorless preflight with --agent opencode on a build containing #5289 and confirm whether immutable_review_transport_unsupported still occurs",
+      "Add regression test asserting opencode appears in the supported immutable-review runtime list and that STATUS/START/capture-result agree on eligibility"
+    ],
+    "unknowns": [
+      "Whether the merged #5289 actually resolves the reported refusal on a build containing it",
+      "Whether any open PR or issue already tracks the remaining post-#5289 behavior",
+      "Which specific code path produces the eligibility list divergence"
+    ],
+    "why": "Issue is a pile of occurrence reports explicitly asserting no root cause; the only concrete fix candidate (#5289, 'resolve OpenCode review eligibility once per process') is already MERGED, and comments note it postdates the reported stable releases, so the remaining actionable work is unclear. Track is agent_ai_infra, not llm_algorithm, so no algorithm-specific requirement applies, but the duplicate/merged-fix coverage is unresolved."
+  },
   "6fc90dd0c99a85c5d9ae5d437320df076eee0f561f4d7853c355a1906e5c1eb8": {
     "confidence": 0.6,
     "contradictions": [
@@ -89156,6 +89268,37 @@
     ],
     "why": "Issue clearly identifies a bug in BedrockEmbedding where additional_kwargs are ignored for Cohere models, with a concrete repro and root cause in _get_request_body. However, the deterministic gate requires HUMAN_REVIEW and design confirmation is needed, so work should wait for maintainer guidance."
   },
+  "9ef3aac92748e8c8ccdaf7ce26489ca46de357638cbb830448e72d4438116081": {
+    "confidence": 0.6,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal=false while issue body provides specific code anchors and root cause"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sgl-model-gateway/src/routers/header_utils.rs allowlist for x-override-priority",
+      "chat body priority preservation in gateway re-serialization path"
+    ],
+    "risks": [
+      "Overlapping open PR #42740 may already implement the same fix",
+      "Changing header allowlist could unintentionally forward other x-override-* headers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with worker stand-in recording headers/body behind gateway in regular and PD mode",
+      "Add regression test asserting x-override-priority reaches worker and body priority is preserved"
+    ],
+    "unknowns": [
+      "Whether PR #42740 fully resolves the issue or leaves independent implementation space",
+      "Whether maintainers have a preferred design for body priority forwarding"
+    ],
+    "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps and code anchors, but the supplied duplicate assessment shows an open PR #42740 that directly overlaps the same code path (sgl-model-gateway/src/routers/header_utils.rs) and distinctive identifier x-override-priority, with duplicateStatus human_review_required. Whether that PR already covers the fix is a materially blocking unknown for independent code work."
+  },
   "9f0cdf04137a0537eb9cd4d1f24114e7636651298badf9f451c3dd78593a9199": {
     "confidence": 0.9,
     "contradictions": [
@@ -111762,6 +111905,37 @@
     ],
     "why": "Issue provides a clear, reproducible bug with exact traceback and root cause analysis, confirmed by maintainer bot. The fix is a minimal, well-understood change in a critical MCP path, with existing PRs showing the pattern but lacking tests."
   },
+  "c94c791b264a545635f919c9b4321145c17379088f9519e3811028051432a367": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe under list_state read lock after lag Resync so receiver starts at snapshot",
+      "regression unit test in kube.rs using client_with 16-slot channel"
+    ],
+    "risks": [
+      "Resubscribe-under-lock may interact with daemon write-lock ordering and risk deadlock if lock scope is wrong",
+      "Existing PR #15767 may be revised to add tests, reducing competition space",
+      "Behavioral change to watch semantics needs to preserve the Discovery::list_and_watch contract for non-lag paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit test on current-thread runtime: 16 workers flap Removed/Added (32 events) before watch task runs, then worker 17 joins; assert next event after Resync is Added(instance_id 17)",
+      "Run cargo test -p dynamo-runtime --lib"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the resubscribe approach vs. filtering buffered events by snapshot generation",
+      "Whether PR #15767 will be updated with tests before a competing PR lands"
+    ],
+    "why": "Issue provides a precise root cause (lagged broadcast receiver resumes at oldest buffered event after Resync, replaying pre-snapshot events), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a concrete reproduction (16-slot channel, 16 workers flapping, worker 17 joins), and an expected-vs-actual event assertion. A concrete validation path exists via a unit test in kube.rs. Open PR #15767 covers the same path but lacks tests, leaving a clear gap for a test-backed fix."
+  },
   "c951e753f9c341e1925f5543375b399c19eeff82e50ff413b56f2d2b39a6d563": {
     "confidence": 0.82,
     "contradictions": [
@@ -128982,6 +129156,41 @@
       "Exact implementation details of compute_hash() in the current codebase; whether num_speculative_tokens_per_batch_size is always present or only when dynamic speculative decoding is enabled."
     ],
     "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm and the issue involves a concrete mechanism (model_architecture, distributed_training) with a clear validation path via numerical regression or controlled experiment."
+  },
+  "e6dada140fe6d55254d43227ff82a30a883e774e8ac8f977ccdeeebc468a6d4d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.score=9 and category=WAIT_MAINTAINER vs. gate_decision=HUMAN_REVIEW and pre-review failure on reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/router.py async_function_with_fallbacks exception classification",
+      "router fallback configuration/types for non-fallbackable exception types",
+      "warning log on successful fallback naming original group, error, and answering group"
+    ],
+    "risks": [
+      "Changing default fallback behavior for UnsupportedParamsError could break users relying on current fallback semantics",
+      "A new router setting may conflict with existing content_policy_fallbacks/context_window_fallbacks design",
+      "Base SHA changed, so code anchors may be stale"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that configures a fallback and triggers UnsupportedParamsError, asserting no fallback is attempted and the error surfaces",
+      "Regression test that provider outages/timeouts/rate limits still fall back",
+      "Test the optional warning log on successful fallback"
+    ],
+    "unknowns": [
+      "Whether maintainers want a default behavior change or an opt-in setting",
+      "Exact current exception handling in async_function_with_fallbacks at the current base SHA",
+      "Whether a concrete reproduction/validation path can be established without maintainer design input"
+    ],
+    "why": "The issue describes a plausible behavior gap in async_function_with_fallbacks, but the supplied evidence lacks a concrete reproduction/validation path (reproductionPathPlan=false, probe_ready=false, no public repro signals) and the pre-review gate explicitly failed on base_sha_changed and reproduction_or_validation_missing. The desired behavior is also a maintainer design decision (new setting vs. default change), and the candidate itself is marked WAIT_MAINTAINER/HUMAN_REVIEW."
   },
   "e6de3bdd9aa9756cd953d938089cc21eebf1c96e58f8742a366e831a88f29985": {
     "confidence": 0.85,
