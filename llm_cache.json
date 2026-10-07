@@ -6295,6 +6295,39 @@
     ],
     "why": "Issue clearly identifies a root cause (gpuDetection.js checks only compute capability, not CUDA runtime major version, so a CUDA-12-linked pack is offered on CUDA 13 hosts) and a concrete reproduction. However, the supplied evidence contains a materially blocking unknown: an open PR #1982 ('verify GPU backends and add Vulkan fallback') semantically overlaps on the CUDA/whisperCudaManager path with status 'semantic_overlap_requires_review', and the maintainer comment explicitly asks for policy confirmation on preferring an existing bundled/distro whisper-server and the minimum compatibility check. Whether the existing PR already covers the root cause determines if new code work is actionable."
   },
+  "0c48e0486760dcf84aeb26f4927f4231affd86a90b270a664d4e5155da579488": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims TP8/EP8 is 'the only layout that starts', but a later author update states the live deployment is TP4/EP4 and starts without rejection.",
+      "Issue body quotes 1040K in 74.5 s (13,962 tok/s); a later author update retracts this as a prefix-cache hit, true cold rate ~3,242 tok/s.",
+      "Issue body reports a ~500K SIGKILL (Exited 137); a later author update says it could not be reproduced and the Triton-JIT hypothesis is explicitly unproven."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Field-report content may be mistaken for an actionable code fix; no code path or invariant is identified for modification.",
+      "Self-contradicting throughput claims (retracted 13,962 tok/s, superseded TP8-only claim) make any derived benchmark target unreliable.",
+      "Unreproduced Exited 137 / watchdog hypothesis could misdirect effort toward a non-existent kernel bug."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [],
+    "unknowns": [
+      "No identified code defect, invariant, or algorithm change to implement.",
+      "No reproduction path plan (reproductionPathPlan=false) and no probe-ready signal (probe_ready=false).",
+      "Whether any maintainer has requested a code change from this report (maintainer_approved=false, maintainer_active_investigation=false).",
+      "Whether the SM120 gaps mentioned (MSCCL++ crash, FlashInfer all-reduce fusion, flashmla_sparse_q8, prefill CUDA-graph crash) are already tracked or fixed elsewhere."
+    ],
+    "why": "The candidate is a field report / production configuration write-up for DeepSeek-V4.1-Flash on SM120, not a code contribution. It contains no root-cause signal (root_cause_signal=false), no reproduction path plan (reproductionPathPlan=false), and the only 'reproduction evidence' is an executable docker command that starts a server. The issue itself repeatedly states what is 'Not established' and the author's own updates contradict earlier claims (TP8/EP8 'only layout that starts' is superseded by TP4/EP4; the 13,962 tok/s figure is retracted as a prefix-cache artifact; the Exited 137 crash is unreproduced with an unproven hypothesis). No concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is proposed for change. The pre-review gate already failed on base_sha_changed, duplicate_changed, and reproduction_or_validation_missing."
+  },
   "0c4f0b2de15d2116505fb050cc35db70311810f38fe2e12c49a3b33a194ba76f": {
     "confidence": 0.7,
     "contradictions": [
@@ -33204,6 +33237,37 @@
       "Whether maintainers consider this issue already covered by an existing PR"
     ],
     "why": "Issue reports a concrete, reproducible scheduler OOM with --enable-unified-memory on hybrid-SWA models, with traceback, ordered repro steps, and a replay client. However, the supplied evidence shows an open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') with semantic overlap on alloc_token_slots and scheduler, and the duplicate status is 'semantic_overlap_requires_review'. Whether that PR already covers the root cause is unresolved, which materially determines whether new code work is actionable."
+  },
+  "3e103d139db95987c1c218472f922f07351f7a6a0acf15006ac72effd25cd92b": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment reports direct code overlap and semantic overlap with PR #42740 while duplicate status remains human_review_required"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sgl-model-gateway/src/routers/header_utils.rs allowlist to forward x-override-priority",
+      "chat body priority preservation through openai_protocol::ChatCompletionRequest re-serialization"
+    ],
+    "risks": [
+      "Overlapping open PR #42740 may already cover the header fix, leaving only body-priority work",
+      "Changing header allowlist could unintentionally expose other x-override-* headers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting x-override-priority reaches worker through gateway in regular and PD mode",
+      "Add test asserting chat body priority is not dropped by gateway re-serialization"
+    ],
+    "unknowns": [
+      "Whether PR #42740 fully resolves the issue or only the header portion",
+      "Whether maintainers consider the body-priority drop in scope for the same fix"
+    ],
+    "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps, but an open PR #42740 already targets the same code anchor (sgl-model-gateway/src/routers/header_utils.rs) with direct code overlap on x-override-priority. Duplicate/coverage status is human_review_required, which materially determines whether independent code work is actionable."
   },
   "3e1b69711c414eed6db93a50ab1f51c40ccd8f8d5c2420885d1dd85d4a351dd1": {
     "confidence": 0.85,
@@ -65524,6 +65588,41 @@
     ],
     "why": "The issue reports a reproducible symptom (config-defined shell/`*` deny on a free-model agent surfaces a misleading free-tier error) with a clean bisect table, but the supplied evidence contains no root-cause signal and no code anchor tying the permission path to the free-tier validation path. The reporter's own hypothesis ('an internal free-tier validation path depends on shell availability') is unverified, and the corroborating comment broadens the trigger to `action: \"*\"` deny, which conflicts with the original narrow `shell: deny` framing. Without a located code path, the fix is speculative."
   },
+  "7539d17cbd63618cf7af9f1ed8c565c6cb3b7b3174937fd5ddb55c31ba6dc978": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate score is 9 and category WAIT_MAINTAINER, but actionability evidence shows public_repro_signals=0, root_cause_signal=false, probe_ready=false, and preTaskEvidence reports reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/router.py: exclude UnsupportedParamsError (or a configurable exception list) from fallback routing",
+      "litellm/types/router.py: add router setting for non-fallback exception types if maintainer prefers configurability",
+      "logging: emit a WARNING when a fallback succeeds, naming original group, error, and answering group"
+    ],
+    "risks": [
+      "Changing fallback semantics for UnsupportedParamsError could break users who rely on fallbacks for misconfigured deployments",
+      "Maintainer may prefer a configurable exception list over a hard-coded exclusion, changing the implementation shape",
+      "The issue references related issues #40954 and #37720 but their status/coverage is not supplied"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that configures a fallback and a deployment with an unsupported param, then asserts the request returns 400 with UnsupportedParamsError instead of a 200 from the fallback model",
+      "Add a test that provider outages/timeouts/rate limits still fall back as before",
+      "Run targeted router unit tests and static checks for the changed package"
+    ],
+    "unknowns": [
+      "No concrete reproduction or failing test is supplied",
+      "Whether related issues #40954/#37720 already cover or fix this behavior",
+      "Whether maintainers want a hard-coded exclusion or a configurable setting"
+    ],
+    "why": "The issue describes a plausible routing behavior (UnsupportedParamsError triggering fallbacks) and points at async_function_with_fallbacks, but the supplied evidence contains no reproduction evidence, no confirmed root-cause signal, and no validation path; the pre-task evidence explicitly marks reproduction_or_validation_missing and probe_ready=false, so whether code work is actionable is not established."
+  },
   "7547e9e9920839d3bf508acf88bc9a917182fe26d4a987ed3c83308332af7243": {
     "confidence": 0.8,
     "contradictions": [],
@@ -65826,6 +65925,39 @@
     ],
     "wait_reason": null,
     "why": "Issue identifies two concrete, well-scoped bugs in CLI/core rule handling: stale cwd propagation and missing paths frontmatter gating. Both have clear code anchors and expected behavior, with a reference implementation in VS Code for the paths gating. No competing PR or issue found, and the gate allows work."
+  },
+  "75e523d2967571de0960594ba119d128ed9c04bf4c5eaa92b596d74c64104f81": {
+    "confidence": 0.8,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body supplies a detailed root cause and code anchors",
+      "open_pr_assessment marks root_cause_coverage false and technical_complete false for PR #15767, yet the PR title and overlapping path indicate it targets the same fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe the watch receiver under the list_state read lock after a lag Resync so buffered pre-resync events are not replayed",
+      "Add a regression unit test in kube.rs using the existing client_with 16-slot channel helper"
+    ],
+    "risks": [
+      "Resubscribing under the read lock could interact with the daemon's write-lock ordering (daemon.rs:364-376) and risk lock contention or deadlock if lock ordering is not preserved",
+      "Behavior change in watch semantics may affect downstream consumers (addressed_router cancel_instance_streams, DynamicSubscriber ZMQ stream, llm discovery controller reconcile_group) if resubscribe timing differs from the current replay path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a current-thread-runtime unit test in kube.rs: 16 workers flap Removed->Added (32 events) before the watch task runs, then worker 17 joins; assert the first event after the lag Resync is Added(instance_id 17), not a stale Removed/Added pair for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib and confirm the new test fails on main (a4adcfe923) and passes with the fix"
+    ],
+    "unknowns": [
+      "Whether PR #15767 will be revised to add the missing regression test before a competing PR lands",
+      "Whether maintainers have a preferred fix shape (resubscribe-under-lock vs. filtering pre-resync events) that would make an alternative implementation redundant"
+    ],
+    "why": "Issue provides a concrete root cause (lagged broadcast receiver replays pre-resync buffered events after list_and_watch reconciles from list_state), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a deterministic unit-test reproduction on a current-thread runtime with a 16-slot channel, and an expected-vs-actual event ordering. The proposed fix (resubscribe under the list_state read lock, matching mem.rs) is concrete and testable. Open PR #15767 covers the same path but lacks regression tests, leaving a clear gap for a test-backed contribution."
   },
   "75fe853124018b0e842d52d9ba9df42f41a9a1cb3a0585088cf014f11ab0ccf5": {
     "confidence": 0.7,
@@ -75387,6 +75519,37 @@
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command, isolated variables (DFLASH, reasoning parser, tools), and a known working version. Root cause is localized to generation/sampling/logits path for Qwen3.5-arch models, with code anchors in qwen3 model files. No duplicate or overlapping PR found. Actionable fix with a clear test path."
   },
+  "87f0624192169e1b5dd2f87f6c50cbfffa9343d0c94d3ddc43d43152c33011b6": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue claims every dispatch fails, but commenter reports payloads validate fine on current main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/utils/hooks.ts: include rejected field paths/messages from HookEventPayloadSchema in the session.hook validation error",
+      "run-handlers.test.ts: regression test asserting the error names the offending field"
+    ],
+    "risks": [
+      "The 'all hooks fail' symptom may already be fixed on main, so the remaining scope is only the diagnostic error message",
+      "Changing the error string could affect callers/tests asserting the current message"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build agent_start and tool_call payloads as hooks.ts does, feed an invalid payload through the session.hook handler, assert the error names the failing field path",
+      "Run the CLI package's targeted unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether the underlying dispatch failure still reproduces on current main or only the error-message gap remains"
+    ],
+    "why": "Issue reports a concrete CLI hook-dispatch failure with verbatim error and three reproduction variants; a commenter supplies code anchors (apps/cli/src/utils/hooks.ts, HookEventPayloadSchema, session.hook) and a concrete plan to surface failing field paths with a test in run-handlers.test.ts. The error-message improvement is actionable and testable even though the 'every dispatch fails' claim may already be fixed on main."
+  },
   "88306db1867555542276642382f52aded724336fd11ac879745f43ca10f2efa1": {
     "confidence": 0.85,
     "contradictions": [
@@ -83881,6 +84044,35 @@
       "Whether the reported HTML-instead-of-JSON response is the same defect or a separate one"
     ],
     "why": "The issue's stated root cause (User-Agent not forwarded by the server proxy) is directly contradicted by supplied comment evidence: l7feng measured that the direct client path does forward User-Agent and that passing vs failing requests carried byte-identical user-agent/x-opencode-client/x-opencode-project headers, concluding the differentiator is the request body (system prompt + tool definitions), not UA. iagorobo24-hub's bisection instead attributes the 403 to the agent's permission/tool footprint. These are mutually incompatible root causes, so the actionable code change is undetermined."
+  },
+  "9787820a69c294862b98b2be8983a5e1334718006fe2faecd63fb04e856959ca": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.why claims distributed_training/numerics_quantization mechanisms, but the traceback and comments show a single-process parser exception with no distributed or numerical component.",
+      "candidate.related_issue_assessment flags #47982 as a duplicate via generic stack signatures (clang/gcc/nvcc/collect_env.py), which are environment boilerplate, not a shared failure signature."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Duplicate work: merged #59254 plus four open PRs already implement the same HarmonyError guard in process_chunk.",
+      "Residual behavior noted in evidence: after a HarmonyError the parser stays in 'expecting <|start|>' state and silently drops later tokens with no warning; this is a separate, smaller follow-up, not the reported crash."
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Retest the supplied non-streaming repro (Chinese system prompt, temperature 0.1, top_p 0.1) on a build containing #59254 and confirm no HTTP 500 'could not decode header'."
+    ],
+    "unknowns": [
+      "Whether maintainers want a follow-up for the silent token-drop state after a HarmonyError, which is not covered by the existing guard PRs."
+    ],
+    "why": "The issue is a parser/streaming robustness bug in vllm/parser/harmony.py (unguarded self._harmony_parser.process(token_id) in process_chunk), not an LLM algorithm contribution. Supplied evidence shows the root cause is already fixed on main by merged PR #59254, and four open PRs (#52055, #47350, #43408, #56216) cover the same guard, so a new code contribution is redundant. Track=llm_algorithm requires a training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; this is ordinary serving/parser plumbing."
   },
   "978838c99ab75044954755a3086d641126f43ee1d6076743bdcccf333a2fdf07": {
     "confidence": 0.6,
@@ -93538,6 +93730,42 @@
     ],
     "why": "Issue provides a concrete reproduction matrix, root-cause hypothesis, and code anchors. Recent comments confirm the bug persists after applying a known fix, narrowing the root cause to connector presence under speculative decoding. Actionable for a maintainer to investigate and fix."
   },
+  "a9946eca7211c40887bb99ad36c2eb4c8ba1dee5cbed391b421b6203ec7bc1f3": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "SubagentBatchRepository.retry_item must preserve paused batch status while resetting only the selected failed item",
+      "claim_items scheduling must not claim items from a paused batch until explicit resume_batch"
+    ],
+    "risks": [
+      "Scope creep into cancellation/lease policy redesign",
+      "Accidental API behavior change for non-paused retry path",
+      "Repository AI disclosure policy may restrict public submission actions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create three items with max_attempts=1 and capacity=3 in production SQLite repository; claim one, finalize failed, pause batch, assert zero claims",
+      "Retry only the failed item without resume; assert batch stays paused, selected item pending, unrelated siblings unchanged, scheduler claims nothing",
+      "Call resume_batch and assert retried and other eligible items become schedulable",
+      "Reopen database and confirm pause persists",
+      "Cover owner/thread authorization via existing retry route, invalid item state, and non-paused retry compatibility"
+    ],
+    "unknowns": [
+      "Exact repository AI disclosure requirements and whether they block a public PR",
+      "Whether maintainers have a preferred implementation for preserving pause state"
+    ],
+    "why": "Issue provides a concrete root cause (SubagentBatchRepository.retry_item unconditionally sets batch.status = queued, releasing the pause barrier for unrelated items), a production-SQLite reproduction with expected/actual pairs, and a narrow state-transition fix with clear acceptance criteria. No duplicate open PR/issue found. The ai_disclosure_conflict is a submission-policy constraint, not a technical blocker for private code work."
+  },
   "a9ca14586ead48ef66816bbbb484afb85685c721b6d1f5fcc5325d828b9a1cd2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -94983,6 +95211,42 @@
       "Maintainer ruling on DEBUG-vs-session-notice behavior"
     ],
     "why": "Root cause is source-confirmed (hooks/toolsSettings/slashCommand in UNSUPPORTED_SPEC_KEYS at acp/kas_agents.py), but the actionable fix is materially blocked: the proposed on-disk KAS agent profile delivery path depends on a KAS bundle that honors disk-profile hooks, and the report verifies bundled KAS 0.63.3 ignores them. The stopgap warning reverses an explicit in-tree DEBUG-vs-WARNING decision, and whether KAS merges an on-disk profile with a wire-injected agent of the same name is unresolved. These are design/dependency rulings, not normal implementation uncertainty."
+  },
+  "ad52b12d7a85a214680bbbc73d968f8c297c543e53212fe8c8e04bce5976f0ff": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/api/agent-server-adapter.ts toHooksResponse() must carry prompt and system_prompt",
+      "src/api/conversation-service/agent-server-conversation-service.types.ts HookDefinition must include prompt/system_prompt",
+      "src/components/features/conversation-panel/hook-matcher-content.tsx must render prompt/agent hook text instead of an empty Commands box",
+      "i18n keys in src/i18n/translation.json for any new field label"
+    ],
+    "risks": [
+      "Scope creep into software-agent-sdk typed client if HookDefinition is widened locally instead of upstream",
+      "i18n completeness across 15 locales if new labels are added",
+      "Cosmetic-only impact (priority:low) may reduce maintainer urgency"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Extend __tests__/components/features/conversation-panel/hooks-modal.test.tsx to assert a prompt hook renders its prompt and an agent hook renders its system_prompt",
+      "Regression: command hook still renders its command under Commands",
+      "Edge case: agent hook omitting system_prompt shows no empty box",
+      "Run npm run lint, npm test, and npm run check-translation-completeness"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer widening the local HookDefinition or a companion change in software-agent-sdk clients/typescript",
+      "Whether the label should remain 'Commands' or introduce a field-naming label"
+    ],
+    "why": "Issue provides a concrete, reproduced UI defect with exact code anchors: toHooksResponse() in src/api/agent-server-adapter.ts drops prompt/system_prompt, the dialog's HookDefinition lacks those fields, and hook-matcher-content.tsx renders only {hook.command}. Server response evidence (POST /api/hooks returning prompt/system_prompt with command:\"\") confirms the data is available client-side, so the fix is bounded and testable. No duplicate or merged fix covers this; the only related PR (#18085) is a docs/feature-map change with no code overlap."
   },
   "ad5a0f00910adbe7b83a93614eef3a4e33155ce2cf36dfcc89da481b27c94b82": {
     "confidence": 0.8,
@@ -138637,6 +138901,38 @@
       "Whether per-agent routing (#683) is in scope"
     ],
     "why": "Issue describes a real session-breaking bug, but maintainer comment indicates the serializer fix is already in place and the remaining root cause is a capability-default policy decision for unknown models. User comments confirm a workaround exists via per-model input config. No open PR or related issue, but design confirmation is required before implementation."
+  },
+  "f9db1063c42c66ccf791262b10326850594d4487e2669fd82753a5a416f1ea95": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/components/features/settings/agent-profiles/agent-profile-actions-menu.tsx: focus first enabled item after portal render, skip disabled items in arrow navigation, restore focus to anchor on Escape/Tab",
+      "new __tests__/components/settings/agent-profiles/agent-profile-actions-menu.test.tsx mirroring #18019's anchored-menu harness"
+    ],
+    "risks": [
+      "Open PRs #17666/#17745 rename 'Set as active' to 'Set as default' on the same file; tests should key on test id to avoid conflict",
+      "Scope creep into shared hook refactor for meta-llm-profiles and provider-connection menus should be deferred",
+      "Escape handling could alternatively use #18044's useCloseOnEscape; only the #18019-style port was verified"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for mouse-open focus, Enter-open focus, active-row ArrowDown/ArrowUp skipping disabled set-active, non-active-row cycle, Escape focus return, Tab focus to next control",
+      "Run existing __tests__/components/settings/agent-profiles suite plus eslint, prettier --check, tsc",
+      "Live check on built stack: open menu, arrow navigation on active/non-active rows, Escape/Tab focus behavior"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the #18019-style port vs. #18044 useCloseOnEscape for Escape handling",
+      "Whether the shared-hook refactor across the other two row menus is in scope for this issue"
+    ],
+    "why": "Issue provides a concrete, reproduced keyboard-accessibility defect in agent-profile-actions-menu.tsx with file:line root cause (mount-only focus effect behind portal, arrow handler not skipping disabled items, Escape/Tab not restoring focus), a merged sibling fix (#18019) establishing the reference implementation, and a validated local patch with 6 new tests (5 failing pre-patch) plus live before/after evidence. Track is agent_ai_infra (UI plumbing), so the llm_algorithm rejection rule does not apply."
   },
   "f9e05840ed1a155c549de69776338b67af7fd36e130e97f66a9280b6f51adfe0": {
     "confidence": 0.85,
