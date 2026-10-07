@@ -6227,6 +6227,37 @@
     ],
     "why": "Issue #5035 is a follow-up tracking issue whose two main items (JSONC-preserving merge in trigger-rule cleanup/routing injection, and pipeline-level OpenCode preflight before mutations) are already covered by merged PRs #5052 ('preserve JSONC in settings writers') and #5053 ('preflight settings before mutations'), as the maintainer comment confirms. Remaining scope is residual writer coverage plus an explicitly out-of-scope upstream Engram dependency, so the actionable opportunity is largely covered."
   },
+  "0c276e18bbe11df0c4ea8ed6a83856311275597f45e7cd359cd44c9e0629c1d6": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue claims every hook dispatch fails, but commenter reports payloads validate fine on current main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "apps/cli/src/utils/hooks.ts: include failing field paths/messages from HookEventPayloadSchema in the session.hook validation error",
+      "run-handlers.test.ts: add regression test asserting the error names the offending field"
+    ],
+    "risks": [
+      "Root cause of the full dispatch failure may already be fixed on main, leaving only the diagnostics improvement",
+      "Error-message change could affect downstream consumers parsing the current message"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a malformed hook payload and assert the error message includes the rejected field path",
+      "Run the targeted CLI hook unit tests (run-handlers.test.ts) and static checks"
+    ],
+    "unknowns": [
+      "Whether the dispatch failure still reproduces on current main or only the unhelpful error message remains"
+    ],
+    "why": "Issue reports a concrete CLI hook-dispatch failure with verbatim stderr and three reproduction variants; a commenter confirms the schema path (apps/cli/src/utils/hooks.ts, HookEventPayloadSchema) and proposes a concrete, testable improvement: surface failing field paths in the session.hook validation error. This is actionable code work with a clear validation path (run-handlers.test.ts). However, the commenter also states current main validates their payloads fine, so the 'every dispatch fails' root cause is uncertain and the actionable scope may be narrowed to error diagnostics rather than the dispatch failure itself."
+  },
   "0c2ed3cc29763256534c2feca0328f7c8ba665cf2f33b9d9b486563e6d00d700": {
     "confidence": 0.7,
     "contradictions": [
@@ -6505,6 +6536,40 @@
       "Exact code path where compaction trigger is skipped; whether enableAgentTeams bypasses prepareTurn compaction."
     ],
     "why": "Issue provides detailed reproduction steps, environment, and evidence that auto-compaction fails on native Ollama despite configured contextWindow and overflow warnings. Root cause is likely a mismatch between overflow diagnostic and compaction trigger estimators or provider-specific handling. Actionable with clear validation path."
+  },
+  "0ca5f93276f359ab5d0daac532f6b4c85214bf89a4dab78703086139b51165ba": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body states 'TP8/EP8 is the only layout that starts', but a later comment reports the live deployment running TP4/EP4 successfully.",
+      "Issue body reports 1.04M-token prefill at 13,962 tok/s; a later comment retracts this as a prefix-cache hit with true cold rate ~3,242 tok/s.",
+      "Issue body reports a ~500K request SIGKILL (Exited 137); a later comment says it could not be reproduced and cold 1M passed twice."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Treating an operational field report as an algorithm contribution would produce no reviewable diff.",
+      "The unproven Triton-JIT/watchdog hypothesis could be mistaken for a root cause and lead to speculative code changes.",
+      "Reported throughput numbers are self-corrected as prefix-cache artifacts, so any derived performance claim is unreliable."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "No actionable code test: the only falsifiable experiment proposed (cold >=500K request as the very first request after restart to reproduce Exited 137) is a hardware/operational reproduction, not a code regression test."
+    ],
+    "unknowns": [
+      "Whether any maintainer has accepted this report as a basis for a code change.",
+      "Whether the Exited 137 / Triton JIT stall is a real SGLang defect or an environment artifact.",
+      "Which SGLang commit the reported behavior corresponds to (image build commit reported as 'unknown')."
+    ],
+    "why": "The candidate is a field report / production configuration write-up for DeepSeek-V4.1-Flash on SM120 hardware, not a code contribution. It contains no root-cause diagnosis of a code defect, no proposed code change, and no reference-vs-implementation or numerical regression path. The only concrete failure hypothesis (Exited 137 from Triton JIT compile stalling the watchdog) is explicitly marked unproven and unreproduced, and the author's own updates retract earlier throughput numbers as prefix-cache artifacts. The pre-task gate already flagged reproduction_or_validation_missing and base_sha_changed."
   },
   "0cb924446706b1d811c308f13f72a0944c24f5b1a247fa479d361bb6ad4618ae": {
     "confidence": 0.85,
@@ -8115,6 +8180,32 @@
       "Final design decisions on collapse-by-default, compact form contents, thinking blocks, and reply density"
     ],
     "why": "The issue is a UX/rendering design request with explicitly open design questions (collapse-by-default vs setting, compact form contents, thinking blocks, reply density). The collaborator comment only agrees the change is probably time; it does not settle the design. The issue itself states implementation must not begin until it reaches Ready on the Goose Issues board, and the pre-task policy is needs_assignment with assignmentRequired=true. A sketch commit exists but is not a PR and does not resolve the design or assignment blockers."
+  },
+  "100566fa383c244f54070c20ad69feb40f8effb4799d4f1cc3e1c74ab72b4d32": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels this as llm_algorithm with distributed_training/numerics_quantization mechanisms, but the actual failure is a parser exception in vllm/parser/harmony.py with no training, quantization, or kernel component."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Residual behavior noted: after the first HarmonyError the parser stays in 'expecting <|start|>' state and silently drops later tokens with no warning, unlike flush(); a follow-up could address this but it is a minor logging/state issue, not the reported crash."
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Retest the minimal non-streaming repro (Chinese system prompt, temperature 0.1, top_p 0.1) on a build including #59254 and confirm no 500 'could not decode header'."
+    ],
+    "unknowns": [
+      "Whether the silent token-drop state after a recovered HarmonyError warrants a separate low-priority issue."
+    ],
+    "why": "Issue is a Harmony parser streaming crash (openai_harmony.HarmonyError: could not decode header) in vllm/parser/harmony.py process_chunk. Comment evidence states this is already fixed on main by merged PR #59254, which wraps the unguarded self._harmony_parser.process(token_id) call in try/except HarmonyError, covering both streaming (parse_delta) and non-streaming (parse) paths. Multiple earlier PRs (#52055, #47350, #43408, #56216) target the same guard and are now redundant. This is parser/API plumbing, not an LLM algorithm contribution, and the root cause is already covered by a merged fix."
   },
   "101eaf6b17f2b8eed1889fed67867c9962941316bf4d6470cd189ec24d86d750": {
     "confidence": 0.7,
@@ -12796,6 +12887,40 @@
     ],
     "wait_reason": null,
     "why": "Issue identifies a concrete bug in MCP auto-execute logic that breaks client-side tools for agentic clients. Root cause is clearly traced to specific code lines and functions, with a clear expected behavior and a minimal fix path. No competing PR or related issue found."
+  },
+  "1930bf90b5386e15eccff7a0f3fbbbbd0a13a15e46b65d98bc62eacd3578f8d3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Prune non-existent paths from the persisted recent-workspaces list (cline.code.workspace-selection.v2) at launch or dropdown open",
+      "Reset lastWorkspace when its path no longer exists",
+      "Optionally add a 'Remove from list' control in the workspace switcher UI"
+    ],
+    "risks": [
+      "Filesystem existence checks may behave differently across platforms (Windows drive-letter casing, UNC paths, network drives)",
+      "Pruning at launch could remove temporarily unavailable paths (e.g., unmounted drives) and lose user history",
+      "UI removal control may conflict with existing workspace switcher interaction patterns"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test in workspace-paths.test.ts that seeds a workspace list containing a deleted path and asserts it is pruned",
+      "Assert lastWorkspace is reset to a live entry (or null) when its path is missing",
+      "Run the desktop workspace package's targeted unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer automatic pruning versus an explicit UI removal control",
+      "Exact module/file owning the workspace-selection persistence in the desktop app"
+    ],
+    "why": "Issue provides ordered reproduction steps, a concrete root cause (workspace list persisted under cline.code.workspace-selection.v2 is never validated against the filesystem), and code anchors (workspaces, lastWorkspace). A commenter supplied a concrete pruning approach and a second commenter proposed a UI removal control, giving a clear validation path. No duplicate/merged fix is established; PR #14855 is keyword-overlap only with no code-path or semantic overlap."
   },
   "1950e854387fed2e1360c14a5835f5d3727f63867f1b1426f8547cdc4eafda3f": {
     "confidence": 0.85,
@@ -21122,6 +21247,39 @@
     ],
     "why": "Issue provides a concrete distributed-training invariant violation: AllGatherHandle/NoGatherHandle wait() is not idempotent, so a second wait can set AVAILABLE over freed (0-element) storage, causing empty-weight matmul. Root cause is anchored to specific code paths and a step-by-step sequence, with two handle-level reproductions on 2 GPUs and explicit controls. This is a concrete mechanism-level fix with a clear reference-vs-implementation validation path."
   },
+  "2842dd84795e596d2ed38becd5003b6a95fd842ab333530f9bfa875152f801f0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/api/agent-server-adapter.ts toHooksResponse() carries prompt and system_prompt",
+      "src/api/conversation-service/agent-server-conversation-service.types.ts HookDefinition widened",
+      "src/components/features/conversation-panel/hook-matcher-content.tsx renders prompt/agent text instead of empty box",
+      "src/i18n/translation.json new label keys across locales"
+    ],
+    "risks": [
+      "Label choice (Commands vs Prompt/System prompt) may need maintainer preference",
+      "Typed client in software-agent-sdk lags wire contract; local widening may be needed",
+      "i18n key additions across 15 locales must stay complete"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Extend __tests__/components/features/conversation-panel/hooks-modal.test.tsx to assert a prompt hook renders its prompt and an agent hook renders its system_prompt",
+      "Regression: command hook still renders its command under Commands",
+      "Mixed-matcher case renders each hook's own text in hooks.json order",
+      "Run npm run lint, npm test, and npm run check-translation-completeness"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer widening Canvas-local types or a companion software-agent-sdk client change"
+    ],
+    "why": "Issue provides a concrete, reproduced UI defect with exact code anchors: toHooksResponse() in src/api/agent-server-adapter.ts drops prompt/system_prompt, HookDefinition lacks those fields, and hook-matcher-content.tsx renders only {hook.command}. Server response evidence confirms the data is present on the wire, so the fix is bounded to Canvas rendering/type plumbing with a clear validation path."
+  },
   "2842f8b1594e5f4d6967aa044c447ebff71c2e5c10357c3af9b4e46687db1ed1": {
     "confidence": 0.55,
     "contradictions": [
@@ -26224,6 +26382,39 @@
     ],
     "why": "The issue describes a plausible production failure (Flux stream stays open but stops sending events, leaving an open user turn), and it points at concrete code anchors (flux/stt_base.py watchdog, flux/stt.py reconnect_on_error=False, user_turn_controller.py stop-timeout gating). However, the supplied evidence explicitly records reproduction_or_validation_missing: no public repro, no reproduction evidence, root_cause_signal=false, probe_ready=false. The failure is not reproducible on demand and depends on Deepgram going quiet, so the root cause (server-side silence vs. client-side state handling) is not established. Without a deterministic reproduction or a concrete validation path, it is not yet clear whether a code change is actionable or what behavior to assert in a regression test."
   },
+  "31c9785ecb3c17dab99ec9af58e0f7d467a54c399a11802c8b0ee2125d521957": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/management_endpoints/mcp_management_endpoints.py: call invalidate_user_oauth_token_cache unconditionally on DELETE",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/per_user_oauth_store.py: make per-user Authorization Code token cache coherent across replicas",
+      "litellm/proxy/common_utils/auth_cache_invalidation_pubsub.py: publish/consume invalidation for the (user_id, server_id) token key on connect, refresh, and disconnect"
+    ],
+    "risks": [
+      "Choosing between Redis-only backend and pub/sub invalidation is a design decision that may need maintainer input",
+      "Broadening invalidation to connect/refresh paths could add pub/sub traffic or latency on hot paths",
+      "Behavior change to DELETE semantics (unconditional invalidation) must not break single-replica deployments"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: two proxy replicas sharing DB/Redis, warm both replicas' local cache via tools/list, DELETE via replica A, assert tools/list and tools/call on replica B no longer use the credential",
+      "Unit test: repeated DELETE on a replica where the credential row is already absent still invokes invalidate_user_oauth_token_cache",
+      "Unit test: connect/refresh/disconnect publish an invalidation for the exact (user_id, server_id) key and a peer replica consumes it"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the Redis-only backend or the pub/sub invalidation approach",
+      "Whether the pub/sub invalidation utility is available in all supported deployment topologies (e.g. no-Redis setups)"
+    ],
+    "why": "Issue provides a concrete multi-replica cache-coherence root cause: per-user OAuth token backend wraps user_api_key_cache (process-local in front of Redis), disconnect only invalidates locally, and auth_cache_invalidation_pubsub has no MCP OAuth path. A confirming comment reproduces it on v1.103.1 with ordered steps and identifies a second concrete defect (DELETE skips invalidation when the row is already gone). Code anchors and a validation path (two replicas, shared DB/Redis, connect then disconnect then tools/list on the other replica) are supplied."
+  },
   "31d180277ddc999f6a2cb35de32f3346e23a7fdc9679ddbf6d189120978b67c1": {
     "confidence": 0.82,
     "contradictions": [
@@ -26474,6 +26665,36 @@
       "Whether maintainers consider the CUDA WNA16 path still reachable/important given the v0.27.0 migration to TritonWNA16Experts"
     ],
     "why": "The issue presents a concrete kernel-level root cause (16-bit atomicAdd combining split-K partials in moe_wna16.cu) and a probe-based reproduction path, which is algorithmically substantive. However, the supplied evidence contains a materially blocking contradiction: the pre-task policy status is 'ai_disclosure_conflict' with aiDisclosureConflict=true, and the candidate's own risk notes state the repository requires public AI-usage disclosure while automated public actions are hard-disabled. This unresolved disclosure/authorization requirement determines whether code work can be submitted at all, so it is not mere implementation uncertainty. Additionally, the related-issue assessment flags potential overlap with #57016 (batch-invariance for fused-MoE experts) sharing stack/failure signatures, and the open-PR assessment lists PR #54706 ('Fix W4A16 split-K accuracy and determinism') with distinctive 'split_k' overlap; neither is confirmed as covering this exact kernel, but the duplicate/coverage status is unresolved."
+  },
+  "3227b7340bf4522a5a60dbec92ad25e6ce4951a61fb87c0dba531216bccef553": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe/receiver handling after lag Resync so buffered pre-snapshot events are not replayed",
+      "lib/runtime/src/discovery/kube/daemon.rs: ensure list_state update and event send ordering is respected by the watch"
+    ],
+    "risks": [
+      "Open PR #15767 already targets the same file with a similar fix but lacks regression tests; competing work must add tests and root-cause coverage to be valuable",
+      "Behavior change in watch resubscription could affect other discovery consumers if not scoped to the lag path",
+      "Issue author has not reproduced against a cluster; cluster-level impact on push router/ZMQ/controller paths is inferred from code reading"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test in kube.rs on a current-thread runtime using the 16-slot client_with helper: 16 workers flap Removed/Added (32 events), then worker 17 joins; assert the first event after Resync is Added(instance_id 17), not stale Removed/Added pairs for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib and targeted discovery tests"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the resubscribe-under-lock approach or an alternative (e.g., draining/discarding buffered events) is not stated, but this is normal implementation choice, not a blocker"
+    ],
+    "why": "Issue provides a precise root cause (lagged broadcast receiver replays buffered pre-resync events after Resync), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a concrete reproduction recipe with expected/actual event ordering, and a proposed fix direction consistent with the existing mem.rs pattern. This is a concrete runtime correctness bug with a clear validation path."
   },
   "322fd1a1e6d2977702f6f1a28c2f41572edb0886b26be2b00a283b63f0302add": {
     "confidence": 0.7,
@@ -44816,6 +45037,41 @@
     ],
     "why": "Issue clearly describes a root cause (non-deterministic provisioning selector and missing fail-closed Shared-tier boundaries) with concrete acceptance criteria and a validation path (focused tests at each boundary). The candidate is actionable and technically valuable."
   },
+  "52d5a52f3ea57110fbb07a188a78beeceb46d9ce5838b8c542be3a50ae566d51": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/gpu/intel/gemm/jit/selector/db/kernel.db (cap m at 65536 in the two dot entries' accept and allowed sizes)",
+      "possibly the dot kernel generator if a 16-bit offset/index is the true root cause",
+      "add regression test for 1-row int4 FC with N > 65536"
+    ],
+    "risks": [
+      "Capping m may only mask a deeper 16-bit offset/index bug in the dot kernel generator",
+      "Other XeHPG XMX GPUs (Arc A-series) may be affected but untested",
+      "Performance regression if wider problems are routed to a slower systolic kernel",
+      "Repository AI disclosure policy conflict may block automated public submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's standalone reproducer on an XMX GPU (Arc 140T) comparing rows=1 vs rows=2 for N=65536, 65537, 128256, 151936, 248320",
+      "Verify max err drops to ~1e-4 and wrong-output fraction to 0% for 1 row after the fix",
+      "Add a unit/regression test covering 1-row int4 FC with N > 65536, both sym i4 and asym u4, K=2048/4096/8192"
+    ],
+    "unknowns": [
+      "Whether the true root cause is a 16-bit offset/index in the dot kernel generator rather than the selector size range",
+      "Whether the fix should be in the selector db or the kernel generator",
+      "Whether Arc A-series XMX GPUs are also affected"
+    ],
+    "why": "Issue provides a concrete, reproducible int4 FC numerical bug on GPU with a sharp 2^16 boundary, a numpy reference, and a specific code anchor in the oneDNN gemm selector kernel.db where m has no upper bound; the reporter validated a candidate fix (capping m at 65536) restoring correct values. This is a kernel/numerics algorithm issue with a clear reference-vs-implementation validation path."
+  },
   "52d78111c08f090705537e5d962c3063816ee8415d104e7d20f61a61684da72d": {
     "confidence": 0.7,
     "contradictions": [
@@ -47275,6 +47531,42 @@
       "Whether a 1+K synthetic verifier window is allowed to cross a Mamba align boundary; this determines the correct fix direction."
     ],
     "why": "The issue provides a precise root cause: the waiting-request path latches pad_spec_decode before later limiters (Mamba align split) shorten the physical span, leaving stale speculative placeholders. A concrete reproduction with exact token counts and a proposed phase guard plus defensive invariant are given. The comment adds a scheduler-only repro and identifies overlapping PRs, but the core bug is well-defined and actionable."
+  },
+  "568b9adf0e3800284a6d61df6f93b611a3b6d55decf7d7dff18a6fa968af47f4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER and gate HUMAN_REVIEW conflict with score 9 and 'no objection' framing",
+      "preTaskEvidence validationPathPlan=true but reproductionPathPlan=false and probeRequired=true"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/router.py async_function_with_fallbacks exception classification",
+      "router fallback configuration/types for non-fallback exception types",
+      "logging of successful fallback with original model group and error"
+    ],
+    "risks": [
+      "Changing default fallback behavior for UnsupportedParamsError could break users relying on fallback for config errors",
+      "Design choice between hard-coded exception and configurable list is a maintainer decision",
+      "Rust router paths may need parallel changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that configures a fallback and sends a request with an unsupported param, asserting no fallback attempt and a 400 UnsupportedParamsError",
+      "Regression test that provider outages/timeouts/rate limits still fall back",
+      "Test that a successful fallback emits a WARNING naming original group, error, and answering group"
+    ],
+    "unknowns": [
+      "No confirmed reproduction or failing test exists",
+      "Maintainer preference among the three proposed behaviors is unknown",
+      "Whether existing settings already cover this is unverified beyond the reporter's search"
+    ],
+    "why": "Issue describes a plausible routing behavior (UnsupportedParamsError triggering fallbacks) with code anchors, but the supplied evidence contains no reproduction evidence, no root-cause confirmation, and the candidate's own pre-task evidence marks reproduction_or_validation_missing and probe_ready=false. The requested change also has an unresolved design fork (hard 400 vs. configurable exception list vs. warning-only), which the issue itself defers to maintainers."
   },
   "569e65446e89cbfaa88771dc79db293614f1887aadeb5475d905f563cc48e1fb": {
     "confidence": 0.85,
@@ -55777,6 +56069,37 @@
       "Whether PR #17286 or #17405 actually covers this root cause (semantic overlap only, no direct code overlap or issue link)"
     ],
     "why": "Issue reports a deterministic 500 on POST /api/conversations/{id}/events for prompt-preset automations on agent-canvas 1.17.0, with a concrete A/B (preset template with finish-tool wiring vs. without) and executable repro. However, supplied comments materially contradict the stated root cause: the finish-tool/1.46.0-vs-1.47.0 skew is refuted by byte-identical wheels, and the leading hypothesis (FinishTool not registered in the agent-server process) is explicitly conditional on two host probes whose results are not supplied. The actual traceback was never recovered. Without either the traceback or the probe output, the actionable code change is undetermined."
+  },
+  "657bfe8c3018bb46cdb45cf4983313f04098d3ce5f31dcdf6e7fd5932b2a5098": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment reports direct code overlap and semantic overlap with PR #42740 while duplicate status is human_review_required"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sgl-model-gateway/src/routers/header_utils.rs allowlist to forward x-override-priority",
+      "chat body priority preservation through openai_protocol::ChatCompletionRequest re-serialization"
+    ],
+    "risks": [
+      "Overlapping open PR #42740 may already implement the same fix, making a duplicate contribution low value",
+      "Changing the header allowlist could unintentionally forward other x-override-* headers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting the gateway forwards x-override-priority to the worker",
+      "Add a test asserting chat body priority survives gateway re-serialization"
+    ],
+    "unknowns": [
+      "Whether PR #42740 fully resolves the header and body priority drop or only the header portion",
+      "Whether maintainers consider the overlapping PR the canonical fix"
+    ],
+    "why": "The issue describes a concrete gateway header/body priority drop with a reproduction, but the supplied evidence shows an open PR #42740 that directly overlaps the same code path (sgl-model-gateway/src/routers/header_utils.rs) and distinctive identifier x-override-priority, with duplicate status human_review_required. Whether that PR already covers the fix is unresolved, which materially determines whether independent code work is actionable."
   },
   "657f6f200a23ff62361783649c6b8c31799f8614d27e7dd989d6423fa8dd83ed": {
     "confidence": 0.8,
@@ -97659,6 +97982,40 @@
       "Maintainer's chosen direction (rename vs. allowlist) is not yet decided."
     ],
     "why": "Issue clearly identifies root cause: Codex filters env vars matching *KEY*, *SECRET*, *TOKEN* before MCP startup, and the plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request a design decision between renaming the variable or documenting a narrow allowlist, and no PR has been accepted. Existing PR #6792 lacks tests and has failing CI, so a better PR is possible but requires maintainer direction."
+  },
+  "b3631a8f61fde3d90dc80b416d8d2cfd3334dd32ab3838357aaf4a3358fcaeea": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/components/features/settings/agent-profiles/agent-profile-actions-menu.tsx: focus first enabled item once portaled menu renders",
+      "arrow navigation skips natively disabled items and wraps among enabled items",
+      "Escape and Tab return focus to the row's anchor trigger before closing",
+      "new __tests__/components/settings/agent-profiles/agent-profile-actions-menu.test.tsx mirroring #18019's anchored-menu harness"
+    ],
+    "risks": [
+      "Open PRs #17666 and #17745 change the Set as active label on the same file; tests should key on test ids to avoid conflicts",
+      "Scope creep into shared hook extraction or the meta-llm-profiles/provider-connection menus is explicitly out of scope for this fix",
+      "Repository policy flags an AI disclosure conflict, which may affect submission handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for mouse-open focus, Enter-open focus, active-row ArrowDown/ArrowUp skipping disabled set-active, non-active-row full cycle, Escape focus return, and Tab/Shift+Tab focus placement",
+      "Run existing __tests__/components/settings/agent-profiles suite to confirm no regressions",
+      "Run eslint, prettier --check, and tsc on the changed files",
+      "Manually verify on a built stack that the LLM profile menu behavior from #18019 is unchanged"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the #18019-style port or the #18044 useCloseOnEscape integration for Escape handling"
+    ],
+    "why": "Issue provides a concrete, reproducible keyboard-accessibility defect in agent-profile-actions-menu.tsx with file:line root causes (mount-only focus effect behind portal, arrow navigation not skipping disabled items, Escape/Tab not restoring focus), a merged sibling fix (#18019) as a reference implementation, and a validated local patch with 6 new tests (5 failing pre-patch). This is a well-scoped, actionable UI fix with a clear reference-vs-implementation validation path."
   },
   "b39866e1686fdbd0138d607052280c14ff3adb45c53daeac4985aaf75c74221b": {
     "confidence": 0.8,
@@ -140632,6 +140989,35 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a silent correctness failure in LMCache P/D disaggregation with a concrete reproduction and a contributor's root-cause hypothesis (token-count mismatch in the adapter). However, the supplied evidence flags a potential duplicate issue #52620 sharing stack/failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not confirmed, and the proposed fix path depends on maintainer confirmation of the adapter behavior."
+  },
+  "fde6177e1aa63d546aebaf071e070daa4d40ca0f5eeafc30a752105527f5ebcb": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims high-depth algorithm mechanisms (PEFT, distributed training, quantization) but the issue body contains no such mechanism; matched terms are incidental"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "requirements.txt XGrammar pin bump",
+      "regression tests for empty/boolean schemas and parameter separators"
+    ],
+    "risks": [
+      "Upgrade may break other TRT-LLM grammar paths or require TVM FFI compatibility work",
+      "Issue explicitly notes the override is not a qualified release and does not fix all schema limitations"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the supplied model-free CPU reproducer under both XGrammar versions to confirm compilation/acceptance differences"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the dependency bump in scope for this repo versus upstream XGrammar"
+    ],
+    "why": "The issue is a dependency-version upgrade request (XGrammar 0.1.32 -> 0.2.7) plus regression coverage, not an algorithm/mechanism contribution. The supplied algorithm_evidence matched generic terms (adapter, fp8, tensor parallel) that are incidental to the issue body; the actual work is a requirements pin bump and test additions. For track=llm_algorithm this is ordinary dependency/plumbing work, which the rubric says to reject even in algorithm repositories."
   },
   "fe03e70285881ab171367804e0f8e92aa004601a652039f8398459840869bf8e": {
     "confidence": 0.55,
