@@ -12077,6 +12077,38 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a wake_up crash in init_fp8_kv_scales; comments confirm it is a duplicate of #41564, fixed by #41602 and released in 0.27.0. The separate v0.25.1 startup failure is a distinct issue but lacks a dedicated report and reproduction. Existing PR #52132 has semantic overlap but is not directly linked and may be redundant."
   },
+  "178753ea90e7d89e71bddcc9687a8a5dd4191ca0c91f54d7721b07c008cdea37": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "claude-acp provider session lifecycle / process termination on session close or idle timeout",
+      "possibly session reuse of a single ACP agent process"
+    ],
+    "risks": [
+      "No confirmed root cause or code anchor; fix location unknown",
+      "Assignment required by repo policy",
+      "Large open PR #12745 touches provider routing and may overlap"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on Windows: open/resume multiple claude-acp sessions, observe process tree count and RAM growth, then verify termination on session close or idle timeout"
+    ],
+    "unknowns": [
+      "Which code path spawns and owns the ACP agent process tree",
+      "Whether session close/idle hooks exist and where termination should be added",
+      "Whether maintainers require assignment before work",
+      "Whether PR #12745 already addresses provider lifecycle"
+    ],
+    "why": "Issue reports a real Windows process-tree leak for claude-acp sessions, but supplied evidence contains no reproduction steps, no root-cause signal, and no code anchors beyond the goose.exe binary name. The pre-task policy is needs_assignment and the actionability evidence flags reproduction_or_validation_missing, so the concrete code path and validation path are not established."
+  },
   "178beb142a7ded8d283979807c3ae6643ee82f8f7489521e8537f997234e6751": {
     "confidence": 0.8,
     "contradictions": [
@@ -24583,6 +24615,42 @@
     ],
     "why": "Issue describes a concrete stdio client failure with reproduction steps and logs, but the supplied evidence lacks a code anchor in the target repository and the pre-task policy flags unresolved assignment and AI-disclosure requirements, which materially block whether code work is actionable."
   },
+  "2c4056e82a6f64846bfc76ae236d0f122ace89945db60925c155d19abd2cb863": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states the helper is verified on origin/main plus the #13466 branch, while triage verification shows terminate-reason.ts and describeAgentTerminateReason exist only on the #13466 branch, not main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agents/runtime/agent-headless.ts: add getLoopType() accessor and narrow private loopType to LoopType | null",
+      "packages/core/src/agents/forkedAgent.ts: add loopType?: LoopType | null to ForkedAgentResult and populate at the getTerminateMode() read site",
+      "terminateReasonMessage: pass loopType through to describeAgentTerminateReason"
+    ],
+    "risks": [
+      "Hard dependency on unmerged #13466: the shared helper is module-private on main, so the plumbing cannot land first",
+      "Possible overlap with open PRs #13466 and #13601 (maintainer-owned) could make this redundant",
+      "Narrowing the private field could break if any other assignment supplies a non-LoopType string"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test asserting a forked/background agent stopped by loop detection produces a message naming the detector (e.g. consecutive_identical_tool_calls), matching the interactive path",
+      "Regression test that non-loop terminate reasons still render the generic sentence unchanged",
+      "Type-level check that the accessor returns LoopType | null and no narrowing/widening is needed at the helper call site"
+    ],
+    "unknowns": [
+      "Whether #13466 will merge (its helper is a prerequisite for steps 2-3)",
+      "Whether #13466 or #13601 already covers this exact plumbing, making the issue redundant",
+      "Which type the accessor should return, pending confirmation of all assignments to the private field"
+    ],
+    "why": "The issue is precisely diagnosed and independently verified: AgentHeadless holds loopType but exposes no accessor, ForkedAgentResult lacks the field, and describeAgentTerminateReason already accepts loopType. However, the triage bot and commenters establish a hard dependency: terminate-reason.ts / describeAgentTerminateReason / terminateReasonMessage exist only on the unmerged #13466 branch (CHANGES_REQUESTED, CI never run on that fork), so steps 2-3 are unimplementable on main. The duplicate/coverage question is unresolved (semantic_overlap_requires_review against #13466 and #13601), and the type decision (string|null vs LoopType|null) is still open, though that alone would not block."
+  },
   "2c4adea5959b6500ea1796f91e6a49b2e666a7b7ad58696e26cd53fcb1b811d7": {
     "confidence": 0.8,
     "contradictions": [],
@@ -26343,6 +26411,45 @@
       "Whether status/cancel must still be answerable for released Sessions and for how long"
     ],
     "why": "The issue provides a concrete, code-anchored root cause (append-only `entries` Map in ManagedToolExecutor, no delete/clear, payload-proportional retention) and independent verification at the cited commit. However, the triage bot explicitly flags a materially blocking design unknown: the reporter's proposed eviction point (`closeSessionAdmission`) is provider-route-only, and the raw path never signals a Session release to the executor at all. The correct eviction point/mechanism is therefore undetermined, and the issue is labeled `need-discussion`. This is not ordinary implementation preference — the fix location itself is unresolved, which determines whether the code work is actionable."
+  },
+  "307fc18fc44fd6250e04b1fd3120b86dce8a4d02e59036fac9bb0331b011b398": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no working SM120 rope-free path, while comments report working out-of-tree/community SM120 deployments",
+      "Open PR #54929 is described as a portable Triton sparse-MLA fallback yet also as failing with head_size 512 vs [576]"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/platforms/cuda.py SM120 MLA backend candidate list",
+      "SM120 sparse-MLA kernel shape guard for qk_rope_head_dim=0",
+      "supported_kv_cache_dtypes for rope-free MLA"
+    ],
+    "risks": [
+      "Overlapping open PRs may already cover the root cause",
+      "Kernel work may require SM120 hardware unavailable to the contributor",
+      "Repository AI-disclosure policy conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Boot GLM-5.3-Flash (qk_rope_head_dim=0) on SM120 with bf16 KV and confirm backend selection no longer fails",
+      "Numerical parity check of sparse-MLA output vs a reference path on the rope-free shape",
+      "Regression test that SM120 candidate list includes a rope-free-capable backend"
+    ],
+    "unknowns": [
+      "Whether PR #54929 or ZJY0516/vllm#15 already fixes the rope-free SM120 path",
+      "Whether the required SM120 hardware and kernel expertise are available for an upstream fix",
+      "Whether maintainers consider the out-of-tree kernel sufficient or want upstream support"
+    ],
+    "why": "The issue describes three concrete SM120 rope-free MLA failure modes with code anchors, but the supplied evidence shows unresolved duplicate/overlap coverage: open PRs #54929 and ZJY0516/vllm#15 semantically overlap the same SM120 sparse-MLA/rope-free path, and comments report out-of-tree kernels and community images already making GLM-5.3-Flash run on SM120. Whether upstream code work is still actionable depends on comparing those implementations, which the evidence explicitly flags as requiring human review."
   },
   "3084b594e8ef2e7a3cbf830b5b2346ca5dbbc2d549ec2c41f7cd4b094914875d": {
     "confidence": 0.8,
@@ -48896,6 +49003,38 @@
     ],
     "why": "Issue provides a clear root cause (shared mutable metadata tags with conflicting types), a concrete reproduction (curl command and unit test), and a suggested fix (parse header tags into list and type-guard router branches). The code paths are identified, and the bug is user-visible with high impact. The existing PR #38818 has semantic overlap but does not directly reference the issue and lacks root-cause coverage, so the opportunity remains actionable."
   },
+  "56fd57ddb4aed422fd0ac0ffb55636882851215df14a6d4978fd4aefdc3a220b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asks for contribution while maintainer already opened PR #12726"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ui/desktop/src/components/GooseMessage.tsx copy-button render condition"
+    ],
+    "risks": [
+      "Duplicating maintainer-owned draft PR #12726",
+      "Submitting without required assignment",
+      "Changing copy-button visibility for non-text content blocks"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test rendering an assistant message with a thinking block plus text and assert the copy button appears"
+    ],
+    "unknowns": [
+      "Whether PR #12726 will be merged or superseded",
+      "Whether assignment will be granted",
+      "Whether maintainer wants an independent fix or verification only"
+    ],
+    "why": "Issue has a clear root cause and reproduction, but a maintainer-owned draft PR #12726 already directly covers the same fix in the same file, and the issue requires assignment before contribution. The unresolved duplicate/coverage and assignment requirement are materially blocking unknowns for independent code work."
+  },
   "570e14babbf15b3ece718238008c48da11c0d609dfdeb482ffe448f67d478790": {
     "confidence": 0.85,
     "contradictions": [],
@@ -62575,6 +62714,39 @@
     ],
     "why": "Issue clearly describes a real bug with root cause and reproduction, but an existing PR (#25387) directly targets the same code paths and is closed without merge, requiring maintainer review to determine whether to revive, supersede, or merge it. The PR lacks tests and has CI failures, but the issue itself is actionable."
   },
+  "6d737dcca048a7116356c8d89abf15f4a3d54f7356f53f6f14f8f560c64ed26d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body supplies a detailed root cause and code anchors"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe the watch receiver under the list_state read lock after a lag Resync so buffered pre-snapshot events are dropped",
+      "Add regression test in kube.rs using the 16-slot client_with helper to assert the first post-Resync event is worker 17's Added"
+    ],
+    "risks": [
+      "Resubscribing under the read lock could interact with the daemon's write-lock ordering; verify no deadlock or missed-event window",
+      "Existing PR #15767 may be extended with tests, reducing independent value",
+      "Behavior change in watch semantics could affect other Discovery consumers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit test in lib/runtime/src/discovery/kube.rs on a current-thread runtime: 16 workers flap Removed/Added (32 events) before the watch task runs, then worker 17 joins; assert next event after Resync is Added(instance_id 17), not stale Removed/Added pairs for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib and targeted discovery tests"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the resubscribe-under-lock approach or an alternative fix",
+      "Whether PR #15767 will be updated with regression tests before independent work lands"
+    ],
+    "why": "Issue provides a concrete root cause (lagged broadcast receiver replays buffered pre-Resync events because daemon updates list_state and sends under the same write lock), exact code anchors, a deterministic unit-test reproduction on a current-thread runtime, and a proposed fix matching mem.rs resubscribe-under-lock semantics. Open PR #15767 covers the same path but lacks regression tests, leaving a clear gap for a test-backed fix."
+  },
   "6d79f37125651ebefd54341d2a16724f6b47ef7b763c0d3450f7fa400210e3c4": {
     "confidence": 0.85,
     "contradictions": [],
@@ -64816,6 +64988,43 @@
       "Exact source module/file in the desktop app that owns workspace-selection persistence is not identified in the supplied evidence"
     ],
     "why": "Issue provides ordered reproduction steps, a concrete persisted-state root cause (workspace list under cline.code.workspace-selection.v2 never validated against disk), and a clear expected behavior (prune dead paths and/or allow removal). No duplicate open PR/issue found. The suggested Python pruner is only a diagnostic sketch, not the actual fix, so it does not cover the opportunity."
+  },
+  "71602a676c93dcc9d091b579500efe5b637d1476f2ccc70eaeb6a6d92d921d04": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER/HUMAN_REVIEW while actionability_evidence lists needs_confirmation and design_confirmation false",
+      "Open PR #15748 is described as directly related but with root_cause_coverage false and no tests, leaving coverage ambiguous"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/namespace.rs: unify namespace/prefix/worker-suffix resolver",
+      "lib/rl/src/lib.rs: consume frontend-resolved NamespaceFilter instead of re-reading env",
+      "lib/llm/src/http/service/openai.rs: thread resolved filter into RL mount"
+    ],
+    "risks": [
+      "Changing the frontend literal-prefix rule is a behavior change requiring explicit maintainer decision",
+      "Overlapping open PR #15748 may already cover the fix, making duplicate work low value",
+      "Dependency on #15561 NamespacePrefixMode may shift the intended interface"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting /v1/rl/workers and frontend routing agree for DYN_NAMESPACE_PREFIX=myns with worker in myns2",
+      "Add test for empty DYN_NAMESPACE_PREFIX and for --namespace-prefix flag with no env",
+      "Run targeted runtime and rl package unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether PR #15748 will merge and thereby cover this issue",
+      "Maintainer decision on which literal-prefix rule to standardize",
+      "Final interface from PR #15561 for NamespacePrefixMode"
+    ],
+    "why": "Issue describes a concrete namespace-resolver divergence with a reproduction and code anchors, but the supplied evidence shows an open PR #15748 that already targets the same fix and the candidate's own duplicate assessment is 'weak_pr_competition_possible'. The issue also depends on unresolved design decisions (which literal-prefix rule to adopt, whether to change frontend behavior) and on PR #15561, so the actionable code work is not yet clearly independent or unblocked."
   },
   "716b4ed009f5f59d738d75e6825706c4fb5cc2c28f23c92c6a421c0dc52f2fab": {
     "confidence": 0.6,
@@ -113819,6 +114028,40 @@
     ],
     "why": "The issue clearly identifies a race condition in the response-cache Wasm plugin where header-key requests are forwarded before asynchronous Redis lookup completes. The design provides a concrete fix (return HeaderStopAllIterationAndWatermark after successful dispatch) with a detailed verification plan including unit tests and real Envoy red-green testing. Maintainer approval is present, and the implementation task is well-defined."
   },
+  "c9fd75c543e636589c0993d731f455f394541261ec6d8ae248aed7bb2f3aba60": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Duplicate assessment reports semantic overlap with open PRs but no direct code overlap, leaving coverage unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Docker/build dependency pinning for torchcodec in cu129 images",
+      "Dependency-family validation to fail fast on CUDA-version mismatch"
+    ],
+    "risks": [
+      "Fix may belong in image build scripts rather than vLLM source, limiting code contribution value",
+      "Existing open PRs may already cover the dependency-family validation",
+      "AI disclosure policy conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the documented docker import reproduction against the cu129 image and confirm torchcodec loads",
+      "Add a build-time dependency-family check that rejects torchcodec built against a mismatched CUDA runtime"
+    ],
+    "unknowns": [
+      "Whether an existing open PR already fixes the torchcodec/CUDA mismatch",
+      "Whether the repository requires a specific disclosure or ownership step before code work",
+      "Whether the intended fix is in vLLM source or only in image build configuration"
+    ],
+    "why": "The issue is a packaging/dependency mismatch (torchcodec 0.17.0 built against CUDA 13 shipped in a cu129 image), not an algorithm or kernel defect. The supplied evidence shows a clear reproduction and a plausible root cause, but the actionable fix is a build/dependency-pinning change whose ownership and disclosure status are unresolved: policy status is ai_disclosure_conflict, and the duplicate assessment flags semantic overlap with open PRs (#51018, #59912, #56967) without direct code overlap, so it is unclear whether an existing PR already covers the root cause."
+  },
   "ca0113f6d10061c494634bd1be3b5ad52f7b67dfa810a387acebee3c54d98679": {
     "confidence": 0.7,
     "contradictions": [
@@ -116003,6 +116246,37 @@
       "Maintainer approval for the specific implementation approach"
     ],
     "why": "Issue identifies a concrete bug: fast mode silently excludes scripts/ via hardcoded FAST_SKIP_DIRS in discover.c, with reproduction and maintainer acknowledgment. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks explicit maintainer approval or design confirmation for the fix approach. The competing PRs do not address this specific bug, so a new PR is plausible, but maintainer direction is needed."
+  },
+  "ce4b8b489736de6f3d5f25911d4758cd2b8f83ae4fba024641cb45399ca94560": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/worker/worker.py or model_runner.py: profile_cudagraph_memory() must account for actual graph capture cost including KV-block dependence",
+      "KV cache sizing / gpu_memory_utilization budget logic to reserve measured CUDA graph memory or fail early with actionable error"
+    ],
+    "risks": [
+      "CUDA graph memory estimate is hardware/driver dependent; a fixed constant may not generalize",
+      "Changing KV cache sizing could regress throughput for configurations that currently fit",
+      "Repository policy flags an AI-disclosure conflict, which may block public submission independent of technical merit"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on a 24GiB GPU: LLM(model='Qwen/Qwen3-0.6B', kv_cache_dtype='fp8') should start without OOM",
+      "Regression: assert measured post-capture memory stays within gpu_memory_utilization budget for both fp8 and default KV dtype",
+      "Unit test for profile_cudagraph_memory returning a non-trivial estimate that scales with num KV blocks"
+    ],
+    "unknowns": [
+      "No maintainer confirmation of preferred fix approach (estimate vs post-capture adjustment), but this is normal implementation choice, not a blocker",
+      "Exact code path for profile_cudagraph_memory not confirmed in supplied evidence"
+    ],
+    "why": "Issue provides a concrete reproduction (LLM with kv_cache_dtype='fp8' on 24GiB GPU OOMs while default dtype succeeds), a quantified root cause (KV cache budget ~19.93GiB after near-zero CUDA graph estimate; graph capture later consumes ~0.80GiB), and a specific code anchor (profile_cudagraph_memory). This is a real memory-accounting bug in the inference critical path with a clear validation path."
   },
   "ce4f03e3dde3d313ea8989013c1f451309d6bb5bfdf965100756e3b1b640e7fa": {
     "confidence": 0.8,
@@ -138476,6 +138750,35 @@
       "Whether any of the related issues (#56605, #54928, #54740) already cover this failure mode"
     ],
     "why": "The issue attributes a decode-throughput flake to #56512's async prefetch, but the only supplied maintainer comment (ZJY0516, MEMBER) states #56512 should only affect deepseek v4.1f, directly contradicting the claimed causal link to a Qwen4Exp PLE CPU-offload path. The reproduction also requires a private/uncertain checkpoint (dicksondickson/Qwen3.8-Flash-Next-NVFP4-reshard-mtp-fix), a local kv_cache_utils.py overlay, and a full ~14-minute sweep sequence; the isolated 7-run repro of the sick cell was clean, so the failure is not deterministically reproducible. The related-issue overlap (#56605, #54928, #54740) is based only on generic stack signatures (clang/gcc/nvcc, collect_env.py) and does not establish duplicate coverage, but the causal mechanism remains unresolved."
+  },
+  "f461632ad330e3e63b211afa0fe18b893c916ff861e0fe89f29eebeb28a81f22": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels this as an open competition opportunity, but maintainer mkondratek opened PR #14906 from the contributor's branch, so the fix is effectively claimed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code work: fix already landed in PR #14906 (bind :now/:capacity with prefix or positional params in CronStore.claimDueRuns)"
+    ],
+    "risks": [
+      "Duplicating an open maintainer-assisted PR (#14906) that already contains the accepted fix",
+      "Optional CronRunner.tick() logging was explicitly deferred to a separate issue by the maintainer"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursuing anything, add a bun:sqlite regression test in src/cron/store/sqlite-cron-store.test.ts asserting claim/reclaim/requeue return rows under bun test"
+    ],
+    "unknowns": [
+      "Whether PR #14906 will add the requested bun test before merge"
+    ],
+    "why": "Root cause is fully established (bare-named bindings under bun:sqlite bind as NULL) and a maintainer confirmed it, requested a specific fix, and opened PR #14906 from the contributor's branch with the exact commits. The remaining work is already covered by an open maintainer-assisted PR; only a regression test is missing, which is a normal review ask rather than an independent contribution opportunity."
   },
   "f47ae49362ce330d0f9c79e1bc0ba45dff6b9d9b876af3b7d12747b8997b6aaf": {
     "confidence": 0.7,
