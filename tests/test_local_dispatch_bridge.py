@@ -835,7 +835,7 @@ def _finalize_controller_commit_for_test(
     return finalized, raw
 
 
-def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monkeypatch):
+def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monkeypatch, tmp_path):
     monkeypatch.setattr(
         MODULE,
         "orphan_list",
@@ -876,7 +876,9 @@ def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monk
     )
 
     result = MODULE.orphan_reconcile(
-        SimpleNamespace(ledger=Path("/tmp/ledger"), min_age_minutes=70, project_id="github")
+        SimpleNamespace(
+            ledger=tmp_path / "state" / "ledger.sqlite3", min_age_minutes=70, project_id="github"
+        )
     )
 
     assert result["ok"] is True

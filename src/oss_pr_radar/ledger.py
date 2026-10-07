@@ -4049,6 +4049,107 @@ class RadarLedger:
                 },
                 now,
             )
+            self._release_abandoned_creation_task_binding(connection, row, now)
+
+    def _release_abandoned_creation_task_binding(
+        self, connection: sqlite3.Connection, intent: sqlite3.Row, now: str
+    ) -> dict[str, Any] | None:
+        """Roll back only an abandoned pre-turn binding, retaining its history."""
+
+        if (
+            intent["thread_id"]
+            or not connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='managed_tasks'"
+            ).fetchone()
+        ):
+            return None
+        task = connection.execute(
+            "SELECT * FROM managed_tasks WHERE task_id=?", (intent["intent_id"],)
+        ).fetchone()
+        if (
+            task is None
+            or not task["thread_id"]
+            or task["opportunity_key"] != intent["opportunity_key"]
+            or task["state"] != "REPRODUCTION_REQUIRED"
+            or task["source"] != "dispatch-thread-bind"
+        ):
+            return None
+        provenance = json.loads(task["provenance_json"] or "{}")
+        if (
+            provenance.get("intentId") != intent["intent_id"]
+            or provenance.get("threadBind") is not True
+            or provenance.get("probeReceipt")
+        ):
+            return None
+        abandoned = connection.execute(
+            """SELECT * FROM events WHERE opportunity_key=?
+               AND event_type='CREATION_ABANDONED'
+               AND json_extract(payload_json,'$.intentId')=?
+               AND json_extract(payload_json,'$.clientThreadId')=?
+               ORDER BY id DESC LIMIT 1""",
+            (intent["opportunity_key"], intent["intent_id"], task["thread_id"]),
+        ).fetchone()
+        if (
+            abandoned is None
+            or connection.execute(
+                """SELECT 1 FROM events WHERE opportunity_key=?
+               AND event_type IN ('DISPATCHED','ORPHAN_DISPATCH_COMMITTED')
+               AND json_extract(payload_json,'$.intentId')=? LIMIT 1""",
+                (intent["opportunity_key"], intent["intent_id"]),
+            ).fetchone()
+        ):
+            return None
+        for table in ("managed_results", "managed_reproduction_probes"):
+            if connection.execute(
+                f"SELECT 1 FROM {table} WHERE task_id=? LIMIT 1", (intent["intent_id"],)
+            ).fetchone():
+                return None
+        if connection.execute(
+            "SELECT 1 FROM publication_requests WHERE opportunity_key=? LIMIT 1",
+            (intent["opportunity_key"],),
+        ).fetchone():
+            return None
+        connection.execute(
+            "UPDATE managed_tasks SET thread_id=NULL WHERE task_id=? AND thread_id=?",
+            (intent["intent_id"], task["thread_id"]),
+        )
+        proof = {
+            "intentId": intent["intent_id"],
+            "previousThreadId": task["thread_id"],
+            "worktreePath": task["worktree_path"],
+            "abandonedCreationEventId": abandoned["id"],
+            "abandonedCreationToken": abandoned["dedupe_key"],
+        }
+        self._event(
+            connection,
+            intent["opportunity_key"],
+            "ABANDONED_CREATION_TASK_BINDING_RELEASED",
+            f"abandoned-task-binding:{intent['intent_id']}:{task['thread_id']}",
+            proof,
+            now,
+        )
+        return proof
+
+    def reconcile_abandoned_creation_task_bindings(self) -> list[dict[str, Any]]:
+        """Complete previously recorded creation abandonment in its managed projection."""
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            if not connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='managed_tasks'"
+            ).fetchone():
+                return []
+            intents = connection.execute(
+                """SELECT i.* FROM intents i JOIN managed_tasks t ON t.task_id=i.intent_id
+                   WHERE i.thread_id IS NULL AND t.thread_id IS NOT NULL
+                     AND t.state='REPRODUCTION_REQUIRED' AND t.source='dispatch-thread-bind'"""
+            ).fetchall()
+            return [
+                proof
+                for intent in intents
+                if (proof := self._release_abandoned_creation_task_binding(connection, intent, now))
+                is not None
+            ]
 
     def commit_dispatch(
         self,

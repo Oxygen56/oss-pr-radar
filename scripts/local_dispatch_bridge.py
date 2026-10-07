@@ -15252,6 +15252,9 @@ def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
 def orphan_reconcile(args: argparse.Namespace) -> dict[str, Any]:
     """Finish or safely abandon interrupted task creation without model judgment."""
 
+    store = ledger(args.ledger)
+    reconcile_bindings = getattr(store, "reconcile_abandoned_creation_task_bindings", None)
+    released_bindings = reconcile_bindings() if reconcile_bindings is not None else []
     state = orphan_list(args)
     reconciled: list[dict[str, Any]] = []
     abandoned: list[dict[str, Any]] = []
@@ -15312,6 +15315,7 @@ def orphan_reconcile(args: argparse.Namespace) -> dict[str, Any]:
         "ok": not errors,
         "reconciled": reconciled,
         "abandoned": abandoned,
+        "releasedAbandonedCreationBindings": released_bindings,
         "pending": [item for item in state.get("unmatched") or [] if not item.get("abandonable")],
         "errors": errors,
     }
