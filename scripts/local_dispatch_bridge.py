@@ -2587,6 +2587,13 @@ def _validation_result_context_refresh_proof(
             (row, p)
             for row, p in reversed(bound_events)
             if row["event_type"] == "TASK_RESULT_VALIDATION_DEFERRED"
+            # An incomplete completed turn may already have a newly signed
+            # controller result. Its input authority is the deferred record
+            # for the latest SENT token; the completed-input proof below is
+            # still mandatory before any audit-only rebind.
+            and (
+                ready or (sent is not None and p.get("resultDigest") == sent[1].get("resultDigest"))
+            )
         ),
         None,
     )

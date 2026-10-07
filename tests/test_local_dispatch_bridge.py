@@ -32138,6 +32138,94 @@ def test_native_completed_validation_normalizes_missing_envelope_with_retired_un
             ] == prior_events
 
 
+def test_completed_validation_controller_result_survives_retired_source_audit_refresh(
+    tmp_path, monkeypatch
+):
+    completed = test_latest_target_refresh_runs_native_validation_and_implementation_chain(
+        monkeypatch, tmp_path, False, return_completed_fixture=True
+    )
+    store, worktree, result_path, request_id = completed
+    old_request = dict(store.publication_request(request_id))
+    store, worktree, result_path, input_path, receipt_path, _started_at = (
+        _completed_validation_result_with_omitted_envelope(
+            tmp_path, monkeypatch, completed_fixture=completed[:3]
+        )
+    )
+    normalized = _assert_completed_validation_envelope_original_queue_and_ingest(
+        store, worktree, result_path, input_path
+    )
+    original = result_path.read_bytes()
+    original_input = input_path.read_bytes()
+    original_receipt = receipt_path.read_bytes()
+    context_path = result_path.parent / "task-context.json"
+    context = json.loads(context_path.read_bytes())
+    with store.connect() as connection:
+        events = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id,event_type,payload_json,created_at FROM events ORDER BY id"
+            ).fetchall()
+        ]
+    sent = next(
+        json.loads(row[2]) for row in reversed(events) if row[1] == "VALIDATION_FOLLOWUP_SENT"
+    )
+    deferred = next(
+        json.loads(row[2])
+        for row in reversed(events)
+        if row[1] == "TASK_RESULT_VALIDATION_DEFERRED"
+    )
+    assert deferred["resultDigest"] == normalized["resultDigest"] != sent["resultDigest"]
+    live_audit = json.loads(json.dumps(context["liveAudit"]))
+    live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+    live_audit["evidence"]["digest"] = "b" * 64
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": live_audit,
+            "targetBase": context["targetBase"],
+            "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+        },
+        dedupe_key="intent-1:completed-controller-result:audit-refresh",
+    )
+    MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
+    current = json.loads(context_path.read_bytes())
+    assert current["contextDigest"] != context["contextDigest"]
+    assert result_path.read_bytes() == original
+    # The real LiteLLM formal receipt needs refresh after this audit change.
+    # Keep this generic native/retired fixture on that original intake route.
+    with monkeypatch.context() as formal_refresh:
+        formal_refresh.setattr(MODULE, "_litellm_formal_checks_need_refresh", lambda *_args: True)
+        resumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert resumed["ok"] and resumed["errors"] == [], resumed
+    assert resumed["validationDeferred"] and not resumed["publicationRequests"], resumed
+    assert len(resumed["validationContextRebindings"]) == 1
+    rebound = resumed["validationContextRebindings"][0]
+    assert rebound["previousContextDigest"] == normalized["contextDigest"]
+    assert rebound["contextDigest"] == current["contextDigest"]
+    value = json.loads(result_path.read_bytes())
+    assert value["tests"] == normalized["tests"]
+    assert value["commitSha"] == normalized["commitSha"]
+    assert value["contextDigest"] == current["contextDigest"]
+    assert value["quality"]["relevant_tests_green"] is False
+    assert value["quality"]["independent_review_passed"] is False
+    assert input_path.read_bytes() == original_input
+    assert receipt_path.read_bytes() == original_receipt
+    assert store.publication_request(request_id) == old_request
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id,event_type,payload_json,created_at FROM events WHERE id<=? ORDER BY id",
+                (events[-1][0],),
+            ).fetchall()
+        ] == events
+
+
 @pytest.mark.parametrize(
     "mismatch",
     [
