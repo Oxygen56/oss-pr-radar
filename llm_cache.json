@@ -4695,6 +4695,38 @@
     ],
     "why": "Issue describes a concrete race in DynamicSubscriber::start_zmq cleanup, but an open PR #15768 already directly overlaps the same file and code identifiers with a fix, and the supplied evidence marks duplicate status as human_review_required. Whether independent implementation space remains is unresolved, which materially affects actionability."
   },
+  "08f8b7524ea516cc25e70a6be92e7d4dc8998e15d1ad0a3ee4625c5cee7bee70": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/worker/worker.py or model_runner.py: profile_cudagraph_memory() accounting for actual graph capture cost and KV-block dependence",
+      "KV cache sizing / gpu_memory_utilization budget enforcement after graph capture"
+    ],
+    "risks": [
+      "Fix may need to be conservative to avoid reducing usable KV cache for non-FP8 configurations",
+      "CUDA graph memory depends on batch size and number of KV blocks, so a static estimate may still be inaccurate",
+      "Requires GPU hardware matching the reported 24GiB profile to validate"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with Qwen/Qwen3-0.6B, kv_cache_dtype='fp8', gpu_memory_utilization default on a 24GiB-class GPU and confirm startup succeeds without OOM",
+      "Regression test asserting measured CUDA graph memory is included in the KV cache budget calculation",
+      "Compare default vs fp8 KV cache dtype startup memory accounting to verify the delta is reserved"
+    ],
+    "unknowns": [
+      "Exact code location of profile_cudagraph_memory() and current accounting formula not supplied",
+      "Whether maintainers prefer adjusting the estimate vs post-capture KV cache re-sizing"
+    ],
+    "why": "Issue provides a concrete reproduction (LLM with kv_cache_dtype='fp8' on 24GiB GPU), observed OOM trace, and a specific root cause: profile_cudagraph_memory() underestimates CUDA graph capture cost (~0.80 GiB) so KV cache budget is over-allocated. Suggested fix targets a concrete mechanism (graph memory accounting / post-capture cache adjustment). No duplicate or merged fix found; open PRs are keyword-only overlaps with no code-path or mechanism overlap."
+  },
   "09265ed4cd2a0419314ddd9bc53c769a71f23e858ad8cde231f0de6300f8eb77": {
     "confidence": 0.85,
     "contradictions": [],
@@ -30762,6 +30794,37 @@
     ],
     "why": "The issue provides a clear frontend-only bug with a concrete reproduction command, expected vs actual behavior, and a specific root cause (sidebar reads from null metrics field instead of populated stats.usage_to_metrics). Acceptance criteria include a regression test, making the fix actionable."
   },
+  "395b8f8eaac9befc112c743ea7c8c00836a6417d690904bb09b2481a413c2d61": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks duplicate as human_review_required while candidate category is WAIT_MAINTAINER"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sgl-model-gateway/src/routers/header_utils.rs allowlist to forward x-override-priority",
+      "chat body priority preservation through openai_protocol::ChatCompletionRequest re-serialization"
+    ],
+    "risks": [
+      "Overlapping open PR #42740 may already implement the same fix",
+      "Body priority field may require openai-protocol schema change rather than gateway-only fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test asserting x-override-priority reaches worker through gateway in regular and PD mode",
+      "Add test asserting chat body priority is preserved end-to-end"
+    ],
+    "unknowns": [
+      "Whether PR #42740 fully resolves the issue or leaves independent implementation space",
+      "Whether body priority drop is in scope of the same fix or a separate openai-protocol change"
+    ],
+    "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps, but the supplied evidence shows an open PR #42740 that directly overlaps the same code path (sgl-model-gateway/src/routers/header_utils.rs) and distinctive identifier x-override-priority, with duplicate status human_review_required. Whether that PR already covers the fix is unresolved, which materially determines whether independent code work is actionable."
+  },
   "39623a7055c96323e82179963412ddbdbb4fd4b4f02bb095b83c432253f14e51": {
     "confidence": 0.9,
     "contradictions": [],
@@ -31015,6 +31078,41 @@
       "Maintainer preference on approach (prefix broadening vs explicit flag)"
     ],
     "why": "Issue provides a clear root cause and repro for a real resource leak, but existing PRs #5416 and #5417 overlap semantically and may already address the fix. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. No maintainer approval or active investigation is present, so starting new work risks duplication."
+  },
+  "39c0f5bf90ed98902246a331808cb9ca8fa7dbdcf2b63097788282e9d3f2734b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body supplies a specific root cause and code anchor",
+      "open_pr_assessment marks root_cause_coverage false and technical_complete false for PR #15767, yet the PR title claims the same fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe/recreate the watch receiver under the list_state read lock after a lag Resync so the receiver starts at the reconciled snapshot",
+      "lib/runtime/src/discovery/kube/daemon.rs: ensure list_state update and event send remain atomic under the same write lock (already the case) so the resubscribe ordering is sound"
+    ],
+    "risks": [
+      "Resubscribing under the read lock could deadlock or contend with the daemon's write lock if lock ordering is not preserved",
+      "Existing open PR #15767 covers the same path but lacks tests; a competing fix must add regression coverage to be materially distinct",
+      "Behavioral change in event delivery ordering could affect downstream consumers (addressed_router cancel_instance_streams, DynamicSubscriber ZMQ, llm discovery controller reconcile_group)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test in kube.rs on a current-thread runtime using the 16-slot client_with channel: flap 16 workers Removed->Added (32 events) before the watch task runs, then add worker 17; assert the first event after Resync is Added(instance_id 17), not stale Removed/Added pairs for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib and confirm the new test fails on main (a4adcfe923) and passes with the fix",
+      "Regression: verify normal (non-lag) watch event ordering is unchanged"
+    ],
+    "unknowns": [
+      "Whether PR #15767 will be merged before a competing fix lands",
+      "Whether maintainers prefer the resubscribe-under-lock approach or an alternative (e.g., draining/discarding buffered events)"
+    ],
+    "why": "Issue provides a concrete root cause (lagged broadcast receiver replays pre-resync buffered events after list_and_watch reconciles from list_state), a specific code anchor (lib/runtime/src/discovery/kube.rs:552), a contract violation reference (discovery/mod.rs:1684-1687), a comparison implementation (mem.rs:245-252), and a deterministic unit-test reproduction using the existing 16-slot client_with helper. This is a concrete runtime correctness bug with a clear validation path, not plumbing."
   },
   "39cc01bf81bf4e83840ea0cbd0c40977f34f5a5e982edb281b87f6a47ba97c3a": {
     "confidence": 0.8,
@@ -34297,6 +34395,45 @@
       "Exact code path causing memory leak not yet identified; maintainer design preference unknown."
     ],
     "why": "Issue provides detailed reproduction steps, log evidence, and a suspected root cause (automatic agent-team initialization) with a workaround flag. The leak occurs during startup with no user input, making it a clear performance bug in the CLI initialization path."
+  },
+  "400539f260ff10d32615eaf9633694d8187983ced83725ae0b644ff3c9af2759": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Comments report the supported-runtime list both including and omitting 'opencode' within a single session",
+      "Some occurrences show STATUS admitting OpenCode and issuing START while START/capture-result then refuses the same runtime",
+      "PR #5289 is marked MERGED with root_cause_coverage false and no issue link, so coverage of this class is unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/reviewtransaction/status.go",
+      "scripts/crosslane/opencode.go",
+      "scripts/gen-sdd-agent-digests/opencode.go",
+      "internal/components/telemetryruntime/opencode.go"
+    ],
+    "risks": [
+      "Root cause is not asserted anywhere in the supplied evidence; the eligibility gate location is inferred only from a file-path plan",
+      "Merged PR #5289 may already cover the same eligibility-resolution defect, making the work duplicative",
+      "Repository policy ai_disclosure_conflict and precheck base_sha_changed block a public contribution path"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce selectorless preflight with --agent opencode on a stable build and assert the typed failure envelope",
+      "Add a regression test that the supported-runtime list is consistent across review status, review start, and review capture-result for the same runtime identity"
+    ],
+    "unknowns": [
+      "Whether merged PR #5289 already resolves the reported eligibility refusal",
+      "The actual code location of the runtime eligibility gate",
+      "Whether the repository's AI disclosure policy permits an automated public contribution",
+      "Whether the base_sha_changed precheck failure invalidates the planned code paths"
+    ],
+    "why": "The issue is a pile of privacy-scrubbed occurrence reports that explicitly assert no root cause, with empty reproduction steps ('1. 2. 3.') and placeholder expected/actual ('solucion.'/'nada.'). The only concrete code anchor is a merged PR #5289 ('fix(review): resolve OpenCode review eligibility once per process') that is not linked to this issue and whose root-cause coverage is marked false, so it is unclear whether the reported class is already covered. The preTaskEvidence also flags an ai_disclosure_conflict policy and a base_sha_changed precheck failure, which are materially blocking for public contribution."
   },
   "400849ec12b3bc77fc825d9c88b0f450803e27849adbf0912bf7b2baed48b622": {
     "confidence": 0.82,
@@ -48453,6 +48590,41 @@
       "Exact scope of API defects (1-3) and whether they are separate issues"
     ],
     "why": "Issue provides a clear root cause (wiki eligibility requires compilation template resolution, absent for Built-in datasets) and a concrete reproduction path. The candidate is actionable: improve error messaging and pre-validation. Existing PR #18691 partially addresses the misleading message but does not cover the root cause, leaving room for a more complete fix."
+  },
+  "57466fd1cad8010fe21905f78431672aeef1b831f9cd59cfe792b9312da3b8b1": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue author hypothesizes int32 overflow, but maintainer evidence points to missing Q2_0 tensor type support"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "fs/ggml/ggml.go: add Q2_0 tensor type size/block handling",
+      "fs/gguf/gguf.go: parse Q2_0 tensor dimensions without overflow",
+      "internal/testutil/gguf: add Q2_0 fixture coverage"
+    ],
+    "risks": [
+      "The referenced PR #18443 may already cover this fix, making the work redundant",
+      "The user's merged GGUF may differ from the original split files, complicating reproduction",
+      "Q2_0 block-size assumptions could break other quantizations if applied too broadly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Import the GSQ-RCO Qwen3.8-Flash-Next GGUF via ollama create and confirm no 'size overflows' error",
+      "Unit test parsing a Q2_0 tensor with ne0=640 and verify computed byte size matches 838860800",
+      "Cross-check tensor size against llama.cpp dumpgguf output for the same file"
+    ],
+    "unknowns": [
+      "Whether PR #18443 fully resolves this specific tensor case or is still incomplete"
+    ],
+    "why": "Maintainer rick-github supplied concrete evidence: dumpgguf shows blk.1.ffn_down_exps.weight is Q2_0 with ne0=640, and points to PR #18443 (support Q2_0 GGUF tensors). This establishes the root cause as Ollama's GGUF parser lacking Q2_0 tensor support, not an int32 overflow. The fix is a concrete parser/quantization-type addition with a clear validation path (import the GSQ-RCO GGUF and compare against llama.cpp)."
   },
   "574d2dcbf5af024701a0b3fd41047fc8de091e0a5bb886a36d10894a65dda25c": {
     "confidence": 0.82,
@@ -111590,6 +111762,45 @@
     ],
     "why": "Issue provides a clear, reproducible bug with exact traceback and root cause analysis, confirmed by maintainer bot. The fix is a minimal, well-understood change in a critical MCP path, with existing PRs showing the pattern but lacking tests."
   },
+  "c951e753f9c341e1925f5543375b399c19eeff82e50ff413b56f2d2b39a6d563": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue is filed in OpenHands/OpenHands but commenters and the reporter's own analysis place the core fix in software-agent-sdk and typescript-client"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "software-agent-sdk: add settable max_budget_per_task to conversation-creation request and enforce pre-LLM-call",
+      "software-agent-sdk: publish live accumulated_cost during run",
+      "typescript-client: expose new budget/live-cost fields",
+      "OpenHands/OpenHands: bump client, thread budget through buildStartConversationRequest(), update settings UI and mocks"
+    ],
+    "risks": [
+      "Fix is primarily out-of-repo; in-repo change is thin plumbing",
+      "Existing SDK enforcement runs only after each step, so forwarding max_budget_per_run alone does not give a hard ceiling",
+      "Repository AI-disclosure policy conflict blocks automated public action",
+      "No public reproduction or validation evidence supplied for this repo"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "In software-agent-sdk, add a failing test that a conversation with a small budget is refused before the next LLM call, not only after a step completes",
+      "Add a regression test that accumulated_cost is non-zero while execution_status is running",
+      "In OpenHands/OpenHands, verify no direct agent-server calls are introduced (src/api/no-direct-agent-server-calls.test.ts) and settings-handlers mock reflects the new field"
+    ],
+    "unknowns": [
+      "Whether OpenHands/OpenHands maintainers want this issue kept as a cross-repo tracker versus closed in favor of software-agent-sdk#5561",
+      "Whether any in-repo change is actionable before the SDK and client changes land",
+      "Resolution of the ai_disclosure_conflict submission policy"
+    ],
+    "why": "The issue describes a real self-hosted V1 gap (no per-conversation budget; accumulated cost only published at termination), but the supplied evidence shows the actionable fix belongs in OpenHands/software-agent-sdk (filed as #5561) and OpenHands/typescript-client, not in this repo. The only in-repo work is client bump/threading/UI, and the candidate's own pre-task evidence flags reproduction_or_validation_missing and an ai_disclosure_conflict policy. This is a cross-repo tracker, not a directly actionable code contribution here."
+  },
   "c96b3c964bf5e042240833e1dee65e4de94c1aa0e60b5caf0e9fa24e85be943f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -122556,6 +122767,38 @@
     ],
     "why": "Issue provides a concrete reproduction (open folder, delete from disk, switcher still lists it, click yields error toast), a specific persisted key `cline.code.workspace-selection.v2`, and a clear root cause: the `workspaces` array is never validated against the filesystem and has no removal UI. A commenter independently confirms the mechanism and proposes pruning non-existent paths. This is actionable desktop-app code work with a concrete validation path."
   },
+  "dc7a69cd3fbff6da4c541f9f0ddbb2564749578d8283bb4e773dde071fe7f006": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/shared/src/toolOutput.ts: htmlRenderFromToolItem should accept an htmlRender reference from a completed execute item, preserving parseThreadSegmentFromAttachmentId thread-ownership check",
+      "apps/server/src/attachmentStore.ts: threadHtmlRenderAttachmentIds must clean up pages published via execute",
+      "apps/server/src/orchestration-v2/Adapters/OpenCodeToolItems.ts: execute projection must retain the htmlRender output reference"
+    ],
+    "risks": [
+      "Accepting htmlRender from arbitrary execute output could allow cross-thread attachment references if the ownership check is dropped",
+      "Maintainer's preferred long-term fix (server-side recording of published pages) differs from the interim client-side fix, so implementation choice may need alignment",
+      "Open PR #16555 touches html_render server crash handling and may overlap in changed files"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test for htmlRenderFromToolItem with a completed dynamic_tool item whose toolName is execute and output contains a valid htmlRender reference",
+      "Add a regression test that thread deletion removes attachment ids for pages published through execute",
+      "Add a negative test that an execute output referencing another thread's attachmentId is rejected"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers the server-side recording approach over the interim htmlRenderFromToolItem change for the first PR"
+    ],
+    "why": "Issue provides a concrete reproduction, exact code anchors, and a maintainer-confirmed root cause: htmlRenderFromToolItem only matches toolName html_render, so OpenCode 2 Code Mode's execute-wrapped calls never render and thread deletion orphans pages. Maintainer proposed two concrete fixes, so the work is actionable without further design confirmation."
+  },
   "dca92afcd10f65f457760e08be844c2746a9346437c1deb50b81e4496f114e3c": {
     "confidence": 0.8,
     "contradictions": [
@@ -127712,6 +127955,42 @@
     ],
     "why": "The issue is a well-documented MCP client SDK1/SDK2 attribute-name incompatibility (camelCase vs snake_case) in vllm_mlx/mcp/client.py, but this is ordinary provider/SDK integration plumbing, not an LLM algorithm mechanism. The candidate's algorithm_evidence claims parameter_efficient_finetuning and numerics_quantization based only on incidental term matches ('adapter', 'quantization') that do not appear in the issue at all; the issue explicitly states it is not model-dependent and loads no model. Under track=llm_algorithm this must be rejected."
   },
+  "e5410475a5c6754060afe710575982d2dcbbcd7d4594b52982bdd0b5068d07b4": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Existing test explicitly expects public=False to be forwarded as None, contradicting the documented parameter contract the issue relies on"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/mcp_atlassian/servers/jira.py: preserve tri-state public argument instead of coercing False to None",
+      "src/mcp_atlassian/jira/comments.py: ensure ServiceDesk path is selected for explicit public=False",
+      "tests/unit/servers/test_jira_server.py: update/replace test_add_comment_drops_client_default_false_on_ordinary_project with a boundary regression test"
+    ],
+    "risks": [
+      "Changing the coercion may break compatibility handling for MCP clients that auto-populate omitted optional booleans with false",
+      "Existing test test_add_comment_drops_client_default_false_on_ordinary_project encodes the current behavior and must be intentionally revised",
+      "Open PR #1665 (internal-by-default mode for guarded JSM comments) overlaps the same code paths and may already address or conflict with the fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test asserting explicit public=False reaches the client as False for a JSM request whose project is not in JIRA_INTERNAL_ONLY_PROJECTS",
+      "Run targeted pytest on tests/unit/servers/test_jira_server.py and comment-related unit tests",
+      "Reproduce via jira_add_comment with public=false and verify JSM REST readback returns public:false"
+    ],
+    "unknowns": [
+      "Whether PR #1665 already covers this root cause or conflicts with the minimal fix",
+      "Whether maintainers prefer preserving tri-state vs. failing on unsupported internal-comment requests"
+    ],
+    "why": "Issue provides a concrete reproduction (public=false yields customer-visible comment on JSM Data Center) and a commenter supplies a specific root cause: the MCP wrapper in src/mcp_atlassian/servers/jira.py coerces public=False to None for projects not in JIRA_INTERNAL_ONLY_PROJECTS, bypassing the ServiceDesk comment path in src/mcp_atlassian/jira/comments.py that would honor the boolean. A concrete validation path exists (boundary regression test asserting explicit public=False survives to the client, plus JSM REST readback). This is a safety-relevant visibility bug with clear code anchors and a probe-ready reproduction."
+  },
   "e559a233716476565ce6dc3bd132e2fd861becf18770756f633aedbe2a82c08e": {
     "confidence": 0.85,
     "contradictions": [
@@ -128106,6 +128385,39 @@
       "Whether maintainers prefer a generic solution or provider-specific extension"
     ],
     "why": "Issue clearly identifies a missing feature: LiteLLM proxy does not support vLLM-Omni's videos API, causing 400 errors when using the standard /v1/videos endpoint. The user provides a working transparent path and a failing path, establishing a concrete reproduction. A related PR #38148 exists but lacks root-cause coverage, leaving room for a more complete fix."
+  },
+  "e622cac2fdc962e192e044decc0349b8efb1e46e5d1ca53f94dc7be8dfd9b169": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER and gate HUMAN_REVIEW conflict with the issue's own statement that no patch exists and the setting shape is a maintainer decision"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/router.py fallback exception handling",
+      "router config/types for a no-fallback exception list",
+      "warning log on successful fallback"
+    ],
+    "risks": [
+      "Changing default fallback behavior could break existing users relying on fallback for all errors",
+      "Maintainer design preference for a config setting vs. default change is unresolved"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that configures a fallback and asserts UnsupportedParamsError is returned as 400 rather than served by the fallback model",
+      "Regression test that provider outages/timeouts/rate limits still fall back"
+    ],
+    "unknowns": [
+      "No concrete reproduction or failing test exists",
+      "No confirmed root-cause trace through async_function_with_fallbacks",
+      "No maintainer design decision on default behavior vs. opt-in setting"
+    ],
+    "why": "The issue describes a plausible routing behavior (UnsupportedParamsError triggering fallbacks) and cites router.py, but the supplied evidence contains no reproduction evidence, no root-cause confirmation, and no validation path; the pre-task evidence explicitly marks reproduction_or_validation_missing and probe_ready=false, so the code work is not yet actionable."
   },
   "e62939cb43b2f03ff7bf3b790ecd4e75a1329b3ee7a5a1cd535c5a5f5d12782b": {
     "confidence": 0.85,
