@@ -5411,6 +5411,38 @@ class RadarLedger:
                        AND (i.status IN ('CREATING','DISPATCHED') OR i.lease_until>?)
                        {intent_filter}
                        AND NOT ({_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE})
+                       AND NOT (i.status='DISPATCHED' AND EXISTS (
+                         SELECT 1 FROM events stopped
+                         WHERE stopped.opportunity_key=i.opportunity_key
+                           AND stopped.event_type='QUARANTINED_EXECUTION_STOPPED'
+                           AND json_extract(stopped.payload_json,'$.intentId')=i.intent_id
+                           AND json_extract(stopped.payload_json,'$.threadId')=i.thread_id
+                           AND json_extract(stopped.payload_json,'$.worktreePath')=i.worktree_path
+                           AND EXISTS (
+                             SELECT 1 FROM task_quarantines q
+                             WHERE q.opportunity_key=i.opportunity_key AND q.status='ACTIVE'
+                           )
+                           AND NOT EXISTS (
+                             SELECT 1 FROM task_quarantines q
+                             WHERE q.opportunity_key=i.opportunity_key AND q.status='ACTIVE'
+                               AND NOT EXISTS (
+                                 SELECT 1 FROM json_each(stopped.payload_json,'$.quarantines') proof
+                                 WHERE json_extract(proof.value,'$.reason')=q.reason
+                                   AND json_extract(proof.value,'$.dedupeKey')=q.dedupe_key
+                                   AND json_extract(proof.value,'$.createdAt')=q.created_at
+                               )
+                           )
+                           AND NOT EXISTS (
+                             SELECT 1 FROM events newer
+                             WHERE newer.opportunity_key=i.opportunity_key AND newer.id>stopped.id
+                               AND newer.event_type IN (
+                                 'TASK_TURN_DELIVERY_STARTED','THREAD_RECOVERY_RESERVED',
+                                 'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED','PR_FOLLOWUP_RESERVED',
+                                 'VALIDATION_FOLLOWUP_RESERVED','IMPLEMENTATION_FOLLOWUP_RESERVED'
+                               )
+                               AND {_intent_event_binding_clause("i", "newer")}
+                           )
+                       ))
                      UNION
                      SELECT r.opportunity_key FROM events r
                      JOIN opportunities o ON o.key=r.opportunity_key
@@ -10381,6 +10413,67 @@ class RadarLedger:
                 if row is not None
                 else None
             )
+            # An ingested PR fix is not yet published. Keep its original
+            # preparation through validation and publication, while newer
+            # feedback stays queued in its own live row.
+            if (
+                preparation_row is None
+                and row is not None
+                and row["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+                and connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='managed_results'"
+                ).fetchone()
+                is not None
+            ):
+                preparation_row = connection.execute(
+                    f"""WITH ci AS (SELECT * FROM intents WHERE intent_id=?),
+                         deferred AS (
+                           SELECT d.* FROM events d CROSS JOIN ci
+                           WHERE d.opportunity_key=ci.opportunity_key
+                             AND d.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                             AND {_intent_event_binding_clause("ci", "d")}
+                           ORDER BY d.id DESC LIMIT 1
+                         )
+                         SELECT preparation.payload_json FROM deferred d
+                         CROSS JOIN ci
+                         JOIN events result ON result.opportunity_key=d.opportunity_key
+                           AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                           AND {_intent_event_binding_clause("ci", "result")}
+                           AND json_extract(result.payload_json,'$.stage')='VALIDATION_PENDING'
+                         JOIN events preparation
+                           ON preparation.opportunity_key=result.opportunity_key
+                           AND preparation.event_type='PR_FOLLOWUP_PREPARATION_BOUND'
+                           AND preparation.dedupe_key=result.dedupe_key
+                           AND {_intent_event_binding_clause("ci", "preparation")}
+                         JOIN managed_results source ON source.task_id=ci.intent_id
+                           AND source.result_digest=json_extract(d.payload_json,'$.resultDigest')
+                           AND source.source='dispatch-result'
+                           AND source.worker_state='patched' AND source.result_type IS NULL
+                           AND json_extract(source.provenance_json,'$.stage')='FIX_READY'
+                           AND json_extract(source.validation_json,'$.reproductionReceiptAuthenticated')=1
+                         JOIN managed_results original ON original.task_id=ci.intent_id
+                           AND original.result_digest=json_extract(result.payload_json,'$.resultDigest')
+                           AND original.head_sha=source.head_sha AND original.pr_key=source.pr_key
+                           AND original.source='dispatch-result'
+                           AND json_extract(original.validation_json,'$.reproductionReceiptAuthenticated')=1
+                         JOIN managed_prs pr ON pr.pr_key=source.pr_key
+                           AND pr.state='OPEN' AND source.head_sha<>pr.head_sha
+                           AND pr.pr_url=json_extract(preparation.payload_json,'$.snapshot.prUrl')
+                           AND pr.head_sha=json_extract(preparation.payload_json,'$.snapshot.headSha')
+                         WHERE preparation.id>=? AND NOT EXISTS (
+                           SELECT 1 FROM events revoked
+                           WHERE revoked.opportunity_key=ci.opportunity_key
+                             AND revoked.id>preparation.id
+                             AND {_intent_event_binding_clause("ci", "revoked")}
+                             AND revoked.event_type IN (
+                               'PR_FOLLOWUP_DELIVERY_ABANDONED',
+                               'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND',
+                               'TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'
+                             )
+                         )
+                         ORDER BY preparation.id DESC LIMIT 1""",
+                    (row["intent_id"], active_context_authority_origin_id),
+                ).fetchone()
             latest_task_result_row = (
                 connection.execute(
                     f"""WITH current_intent AS (

@@ -5017,8 +5017,92 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
 
 
 def recover_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
-    result = recover_shared_task_contexts(ledger(args.ledger))
+    store = ledger(args.ledger)
+    result = recover_shared_task_contexts(store)
+    result["stoppedQuarantinedExecutions"] = _record_stopped_quarantined_executions(store)
     return {"ok": not result["errors"]} | result
+
+
+def _record_stopped_quarantined_executions(store: RadarLedger) -> list[dict[str, Any]]:
+    """Release execution capacity only after an owned quarantined turn has ended."""
+    stopped = []
+    for candidate in store.task_context_candidates():
+        if candidate.get("intentStatus") != "DISPATCHED":
+            continue
+        gates = store.active_task_quarantines(candidate["key"])
+        if not gates:
+            continue
+        try:
+            with opportunity_action_guard(ledger_action_guard_root(store.path), candidate["key"]):
+                _cwd, rollout = _validated_task_turn_thread(candidate)
+                if not rollout or _active_task_turn_for_result(candidate) is not None:
+                    continue
+                raw = _read_owned_regular_file(
+                    Path(rollout),
+                    label="stopped quarantined execution journal",
+                    reject_dangerous_writes=True,
+                )
+                records = [json.loads(line) for line in raw.splitlines() if line.strip()]
+                if not any(
+                    record.get("type") == "session_meta"
+                    and (record.get("payload") or {}).get("id") == candidate["threadId"]
+                    for record in records
+                ):
+                    continue
+                terminal = latest_thread_turn_state(rollout)
+                if not terminal or not terminal.get("turnId"):
+                    continue
+                end = next(
+                    (
+                        record
+                        for record in reversed(records)
+                        if record.get("type") == "event_msg"
+                        and (record.get("payload") or {}).get("turn_id") == terminal["turnId"]
+                        and (record.get("payload") or {}).get("type")
+                        in {"task_complete", "turn_aborted"}
+                    ),
+                    None,
+                )
+                if end is None:
+                    continue
+                payload = {
+                    "intentId": candidate["intentId"],
+                    "threadId": candidate["threadId"],
+                    "worktreePath": candidate["worktreePath"],
+                    "turnId": terminal["turnId"],
+                    "turnStatus": terminal["status"],
+                    "completedAt": end["timestamp"],
+                    "journalSha256": hashlib.sha256(raw).hexdigest(),
+                    "quarantines": gates,
+                }
+                with store.transaction() as connection:
+                    pending_delivery = connection.execute(
+                        """SELECT 1 FROM events WHERE opportunity_key=?
+                           AND event_type='TASK_TURN_DELIVERY_STARTED'
+                           AND json_extract(payload_json,'$.threadId')=?
+                           AND julianday(created_at)>julianday(?) LIMIT 1""",
+                        (candidate["key"], candidate["threadId"], end["timestamp"]),
+                    ).fetchone()
+                    if (
+                        pending_delivery is not None
+                        or gates != store.active_task_quarantines(candidate["key"])
+                        or latest_thread_turn_state(rollout) != terminal
+                        or _active_task_turn_for_result(candidate) is not None
+                    ):
+                        continue
+                    store._event(
+                        connection,
+                        candidate["key"],
+                        "QUARANTINED_EXECUTION_STOPPED",
+                        sha256_json(payload),
+                        payload,
+                        iso_z(datetime.now(UTC)),
+                    )
+                stopped.append({"key": candidate["key"], "turnStatus": terminal["status"]})
+        except (OSError, RuntimeError, ValueError, KeyError, sqlite3.Error):
+            # Missing or conflicting native proof retains the existing slot.
+            continue
+    return stopped
 
 
 def run_reproduction_probes(args: argparse.Namespace) -> dict[str, Any]:
@@ -16438,6 +16522,7 @@ def _completed_validation_input_task_id(
     allow_commit_required_context_refresh: bool = False,
     allow_retired_latest_target: bool = False,
     receipt_registration_only: bool = False,
+    allow_published_pr_followup: bool = False,
 ) -> str | None:
     """Prove a completed validation against its controller-owned immutable input.
 
@@ -16481,14 +16566,21 @@ def _completed_validation_input_task_id(
         and store.publication_target_base_refresh(candidate) == retired_latest_target
     )
 
+    published_followup = (
+        _published_pr_validation_anchor(managed_ledger, candidate, context, value)
+        if allow_published_pr_followup
+        else None
+    )
+
     if (
-        candidate.get("stage") != "VALIDATION_PENDING"
-        or context.get("stage") != "VALIDATION_PENDING"
+        (candidate.get("stage") != "VALIDATION_PENDING" and published_followup is None)
+        or (context.get("stage") != "VALIDATION_PENDING" and published_followup is None)
         or context.get("taskStage") != "IMPLEMENTATION_READY"
-        or context.get("prFollowup") is not None
+        or (context.get("prFollowup") is not None and published_followup is None)
         or not (
             _expired_publication_context_is_unpublished(context, expired_publication)
             or retired_publication_is_unpublished
+            or published_followup is not None
         )
         or value.get("stage") != "FIX_READY"
         or value.get("handoffMode")
@@ -16534,7 +16626,7 @@ def _completed_validation_input_task_id(
         or managed_task.get("state")
         not in (
             {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
-            if expired_publication
+            if expired_publication or published_followup is not None
             else {"IMPLEMENTATION_READY"}
         )
         or (historical is None and validation_context_digest is None)
@@ -16543,6 +16635,7 @@ def _completed_validation_input_task_id(
     with store.connect() as connection:
         if (
             validation_context_digest is not None
+            and published_followup is None
             and connection.execute(
                 """SELECT 1 FROM publication_requests request
                JOIN publication_permits permit ON permit.request_id=request.request_id
@@ -16578,14 +16671,17 @@ def _completed_validation_input_task_id(
             else value.get("commitSha") or ""
         )
         source_digest = str(sent[1].get("resultDigest") or "")
-        historical = managed_ledger.read_result(f"{task_id}||{source_head}|{source_digest}")
+        source_pr_key = str(published_followup["pr_key"]) if published_followup else ""
+        historical = managed_ledger.read_result(
+            f"{task_id}|{source_pr_key}|{source_head}|{source_digest}"
+        )
         if historical is None:
             return None
         provenance = json.loads(historical.get("provenance_json") or "{}")
         validation = historical.get("validation") or {}
         if (
             historical.get("task_id") != task_id
-            or historical.get("pr_key") is not None
+            or historical.get("pr_key") != (source_pr_key or None)
             or historical.get("result_type") is not None
             or historical.get("source") != "dispatch-result"
             or str(historical.get("worker_state") or "").casefold() != "patched"
@@ -16674,7 +16770,11 @@ def _completed_validation_input_task_id(
     if (
         snapshot != projected
         or source.get("taskId") != task_id
-        or (source.get("contextDigest") != expected_context_digest and expired_publication is None)
+        or (
+            source.get("contextDigest") != expected_context_digest
+            and expired_publication is None
+            and published_followup is None
+        )
         or source.get("commitSha") != historical["head_sha"]
         or source.get("headSha") != historical["head_sha"]
         or any(
@@ -16684,6 +16784,12 @@ def _completed_validation_input_task_id(
         return None
     if validation_context_digest is not None and (
         _task_result_digest(source, snapshot) != historical["result_digest"]
+    ):
+        return None
+    if published_followup is not None and (
+        source.get("followupDigest") != value.get("followupDigest")
+        or source.get("previousCommitSha") != value.get("previousCommitSha")
+        or source.get("selectedBaseSha") != context.get("selectedBaseSha")
     ):
         return None
     if expired_publication is not None and (
@@ -19221,6 +19327,101 @@ def publication_feedback_commit(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _pending_committed_pr_validation(
+    store: RadarLedger, candidate: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Keep an ingested unpublished fix while its exact validation is pending."""
+    binding = _ledger_binding_kwargs(candidate)
+    if not all(binding.get(k) for k in ("intent_id", "worktree_path")) or not candidate.get(
+        "threadId"
+    ):
+        return None
+    with store.connect() as connection:
+        row = connection.execute(
+            """SELECT payload_json FROM events WHERE opportunity_key=?
+               AND event_type='TASK_RESULT_VALIDATION_DEFERRED'
+               AND json_extract(payload_json,'$.intentId')=?
+               AND json_extract(payload_json,'$.threadId')=?
+               AND json_extract(payload_json,'$.worktreePath')=?
+               ORDER BY id DESC LIMIT 1""",
+            (
+                candidate["key"],
+                candidate["intentId"],
+                candidate["threadId"],
+                candidate["worktreePath"],
+            ),
+        ).fetchone()
+    if row is None:
+        return None
+    deferred = json.loads(row["payload_json"])
+    try:
+        value, _raw = _read_authenticated_validation_result(
+            candidate | {"resultDigest": deferred["resultDigest"]}
+        )
+        head = str(value.get("commitSha") or "")
+        if (
+            value.get("stage") != "FIX_READY"
+            or value.get("handoffMode") != "controller_commit_complete"
+            or head == candidate.get("headSha")
+            or value.get("headSha") != head
+            or any(
+                value.get(k) != candidate.get(k)
+                for k in ("key", "issueUrl", "threadId", "worktreePath")
+            )
+            or value.get("taskId") != candidate.get("intentId")
+        ):
+            return None
+        preparation = store.historical_pr_followup_preparation(
+            key=candidate["key"],
+            task_id=candidate["intentId"],
+            thread_id=candidate["threadId"],
+            wake_digest=str(value.get("followupDigest") or ""),
+        )
+        if (
+            preparation is None
+            or preparation.get("worktreePath") != candidate["worktreePath"]
+            or preparation["snapshot"].get("prUrl") != candidate.get("prUrl")
+            or preparation["snapshot"].get("headSha") != candidate.get("headSha")
+            or preparation["snapshot"].get("preparedHeadSha") != value.get("previousCommitSha")
+        ):
+            return None
+        receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+        match = ISSUE_URL.match(str(candidate["issueUrl"]))
+        if (
+            match is None
+            or not isinstance(receipt, dict)
+            or not verify_probe_receipt(
+                receipt,
+                repo=match.group(1),
+                base_sha=str(value.get("selectedBaseSha") or ""),
+                code_paths=value.get("codePaths"),
+                required_level=REPRODUCED_VALIDATED,
+                issue_url=candidate["issueUrl"],
+                task_id=candidate["intentId"],
+                thread_id=candidate["threadId"],
+                head_sha=head,
+                commit_sha=head,
+                result_digest=deferred["resultDigest"],
+            )
+        ):
+            return None
+        worktree = Path(candidate["worktreePath"])
+        if (
+            command(["git", "rev-parse", "HEAD"], cwd=worktree) != head
+            or _local_changed_files(worktree)
+            or command(["git", "rev-parse", "HEAD^"], cwd=worktree)
+            != preparation["snapshot"]["preparedHeadSha"]
+        ):
+            return None
+        return {
+            "reason": "PR_FOLLOWUP_VALIDATION_PENDING",
+            "commitSha": head,
+            "resultDigest": deferred["resultDigest"],
+        }
+    except (OSError, RuntimeError, ValueError, KeyError):
+        return None
+
+
 def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     candidates = store.pr_followup_candidates()
@@ -19261,6 +19462,10 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             continue
         if archived[thread_id] == 1:
             restore_required.append(candidate | {"reason": "thread_archived"})
+            continue
+        pending_validation = _pending_committed_pr_validation(store, candidate)
+        if pending_validation is not None:
+            active_deferred.append(candidate | pending_validation)
             continue
         rebind_status_getter = getattr(store, "pr_followup_rebind_status", None)
         rebind_status = (
@@ -19906,6 +20111,16 @@ def _pr_followup_reserve_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     candidate = candidates[0] if len(candidates) == 1 else None
     if candidate is None:
         raise RuntimeError("PR follow-up authorization is stale or invalid")
+    pending_validation = _pending_committed_pr_validation(store, candidate)
+    if pending_validation is not None:
+        return {
+            "ok": True,
+            "deferred": True,
+            "key": candidate["key"],
+            "threadId": candidate["threadId"],
+            "prUrl": candidate["prUrl"],
+            **pending_validation,
+        }
     wip_limited, _active_task_count_value, _task_limit = _global_task_wip(
         store, exclude_intent_id=str(candidate.get("intentId") or "") or None
     )
@@ -23520,6 +23735,65 @@ def _controller_verified_result_changed_files(value: dict[str, Any]) -> set[str]
     return set()
 
 
+def _published_pr_validation_anchor(
+    managed_ledger: ManagedLedger,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Recognize only an unpublished fix for the same controller-owned open PR."""
+    followup = context.get("prFollowup")
+    receipt = context.get("publicationReceipt")
+    if (
+        candidate.get("stage") not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+        or context.get("stage") != candidate.get("stage")
+        or context.get("taskStage") != "IMPLEMENTATION_READY"
+        or not isinstance(followup, dict)
+        or not isinstance(receipt, dict)
+        or value.get("stage") != "FIX_READY"
+        or value.get("handoffMode") != "controller_commit_complete"
+        or value.get("followupDigest") != followup.get("wakeDigest")
+        or value.get("previousCommitSha") != followup.get("preparedHeadSha")
+        or followup.get("headSha") != followup.get("preparedHeadSha")
+        or followup.get("prUrl") != receipt.get("prUrl")
+        or value.get("selectedBaseSha") != context.get("selectedBaseSha")
+        or any(
+            value.get(k) != candidate.get(k)
+            for k in ("key", "issueUrl", "threadId", "worktreePath")
+        )
+        or value.get("taskId") != candidate.get("intentId")
+    ):
+        return None
+    try:
+        pr = managed_ledger.published_pr_authority_for_opportunity(
+            candidate["key"],
+            pr_url=receipt["prUrl"],
+            receipt_head_sha=receipt["commitSha"],
+        )
+    except (ValueError, KeyError):
+        return None
+    if (
+        pr is None
+        or pr.get("state") != "OPEN"
+        or pr.get("head_sha") != followup.get("headSha")
+        or value.get("commitSha") == pr.get("head_sha")
+    ):
+        return None
+    return pr
+
+
+def _litellm_formal_checks_context(
+    store: RadarLedger, candidate: dict[str, Any], context: dict[str, Any], value: dict[str, Any]
+) -> bool:
+    return (
+        context.get("stage") == "VALIDATION_PENDING"
+        and context.get("prFollowup") is None
+        and _litellm_formal_checks_unpublished(store, candidate, context)
+    ) or _published_pr_validation_anchor(
+        ManagedLedger(store.path, ensure_schema=False), candidate, context, value
+    ) is not None
+
+
 def _litellm_formal_checks_unpublished(
     store: RadarLedger, candidate: dict[str, Any], context: dict[str, Any]
 ) -> bool:
@@ -23542,9 +23816,7 @@ def _litellm_formal_checks_need_refresh(
 
     if (
         candidate.get("key") != "BerriAI/litellm#37498"
-        or context.get("stage") != "VALIDATION_PENDING"
-        or context.get("prFollowup") is not None
-        or not _litellm_formal_checks_unpublished(store, candidate, context)
+        or not _litellm_formal_checks_context(store, candidate, context, value)
         or value.get("stage") != "FIX_READY"
     ):
         return False
@@ -23612,11 +23884,8 @@ def _litellm_controller_formal_checks(
 ) -> tuple[dict[str, Any], bytes]:
     """Run Litellm's Git-writing official gates as the controller, never the child."""
 
-    if (
-        candidate.get("key") != "BerriAI/litellm#37498"
-        or context.get("stage") != "VALIDATION_PENDING"
-        or context.get("prFollowup") is not None
-        or not _litellm_formal_checks_unpublished(store, candidate, context)
+    if candidate.get("key") != "BerriAI/litellm#37498" or not _litellm_formal_checks_context(
+        store, candidate, context, value
     ):
         return value, (
             json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
@@ -23827,6 +24096,7 @@ def _litellm_controller_formal_checks(
         completion_proof=completion,
         validation_context_digest=source_context_digest,
         allow_retired_latest_target=context.get("publicationReceipt") is not None,
+        allow_published_pr_followup=True,
     ) != candidate.get("intentId"):
         return blocked("COMPLETED_IMMUTABLE_VALIDATION_INPUT_REQUIRED")
     if source_context_digest != context.get("contextDigest") and (
