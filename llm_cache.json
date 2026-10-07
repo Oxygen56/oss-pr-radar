@@ -96,6 +96,37 @@
     ],
     "why": "Issue provides a concrete, reproducible root cause: MCP OAuth authorization-server discovery at github.com/login/oauth/.well-known/oauth-authorization-server returns 404, so Cline bails before reaching its already-implemented device-code grant. Endpoint checks and a minimal device-flow client are supplied, giving a clear reference-vs-implementation validation path. No open PR or duplicate covers this fix; the two merged PRs are unrelated (promotion messaging, search approval crash)."
   },
+  "006c6c869e70b6b102f255762f16611bd63b0012548daea8b2b1110444691c96": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe the watch receiver under the list_state read lock after a lag Resync so buffered pre-resync events are not replayed",
+      "Add a regression unit test in kube.rs using the 16-slot client_with helper on a current-thread runtime"
+    ],
+    "risks": [
+      "Resubscribing under the read lock could interact with the daemon's write-lock ordering and introduce lock contention or deadlock if not carefully scoped",
+      "Behavior change in event ordering may affect downstream consumers (addressed_router cancel_instance_streams, DynamicSubscriber ZMQ streams, llm discovery controller reconcile_group) if any rely on replay semantics",
+      "Overlap with open PR #15767 requires differentiating via added regression test coverage rather than duplicating the same one-file fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: 16 workers flap Removed->Added (32 events) before the watch task runs, then worker 17 joins; assert the first event after Resync is Added(instance_id 17) with no stale Removed/Added pairs for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib and confirm the new test fails on main (a4adcfe923) and passes with the fix"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the resubscribe-under-lock approach versus filtering buffered events by snapshot generation",
+      "Whether PR #15767 will be revised to add the missing regression test before a competing PR lands"
+    ],
+    "why": "Issue provides a concrete root cause (lagged broadcast receiver replays buffered pre-resync events after Resync), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a deterministic unit-test reproduction on a current-thread runtime with the 16-slot client_with helper, and a concrete expected-vs-actual event ordering. The suggested fix (resubscribe under the list_state read lock, matching mem.rs) is actionable. Existing PR #15767 covers the same path but lacks regression tests, leaving a clear gap for a test-backed contribution."
+  },
   "0077f1c5e5c6b55490b7744aa6aa2c762e311b6c95a07bc386ae4cae5d529a76": {
     "confidence": 0.6,
     "contradictions": [
@@ -32407,6 +32438,40 @@
     ],
     "why": "Issue provides detailed reproduction attempts, multiple configurations, and evidence isolating the fault to shared audio routing infrastructure. Maintainer comment gives concrete next step (record RoomIO audio) to distinguish subscription vs downstream fault. Root cause is narrowed to AudioRecognition/STT stream lifecycle, making the work actionable."
   },
+  "3b892433ee6a84809c065bf89e068178721acfbd8305d0a4503da66e476ad9c2": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims the helper is verified on origin/main plus the #13466 branch, but triage states terminate-reason.ts/describeAgentTerminateReason exist only on the #13466 branch, not main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agents/runtime/agent-headless.ts: add getLoopType() accessor and narrow private loopType to LoopType | null",
+      "packages/core/src/agents/forkedAgent.ts: add loopType?: LoopType | null to ForkedAgentResult and populate at the getTerminateMode() read site",
+      "terminateReasonMessage: pass loopType through to describeAgentTerminateReason"
+    ],
+    "risks": [
+      "#13466 is OPEN with CHANGES_REQUESTED and its CI has never executed; the helper this fix depends on may change or not land",
+      "Narrowing loopType to LoopType | null could break any other assignment of a plain string into the private field",
+      "terminateReason reaches TUI, telemetry, and tools/agent/agent.ts beyond the six memory call sites"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting a loop-detected background/forked agent stop message includes the detector name, e.g. '(consecutive_identical_tool_calls)'",
+      "Run targeted unit tests for the memory planner call sites and forkedAgent to confirm no signature changes are needed"
+    ],
+    "unknowns": [
+      "Whether #13466 will merge and in what final form, which determines if steps 2-3 are implementable",
+      "Whether any other code assigns a non-LoopType string into AgentHeadless.loopType"
+    ],
+    "why": "The issue is precisely diagnosed and independently verified: loopType exists on AgentHeadless but has no accessor, ForkedAgentResult lacks the field, and the shared helper is already loopType-aware. However, the triage bot and commenters establish a hard dependency: terminate-reason.ts / describeAgentTerminateReason only exist on the unmerged #13466 branch (CHANGES_REQUESTED, CI never ran), so steps 2-3 are unimplementable on main. This unresolved dependency/coverage question materially determines whether code work is actionable now."
+  },
   "3ba03c31b073140338babe61017db028459c63e903dacc1389c6df74b5ccccd8": {
     "confidence": 0.85,
     "contradictions": [],
@@ -57226,6 +57291,47 @@
     ],
     "why": "The issue provides strong evidence of a real bug: providerOptions.deepseek.thinking is dropped by the Gateway, causing reasoning to remain enabled. However, the root cause is not yet identified, and the deterministic gate requires HUMAN_REVIEW. The issue is actionable but needs maintainer confirmation on the preferred fix direction."
   },
+  "66609bc1b2e789bacee270805bbf992c3314829b871d097d7e4cdfe4aedb869f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with best_score 16 for PR #15, but no PR directly references this issue",
+      "preTaskEvidence duplicate status is 'semantic_overlap_requires_review' while related_issue_assessment reports 'none'"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/platforms/cuda.py::_get_backend_priorities SM120 MLA candidate list",
+      "FlashInferMLASparseTRTLLMBackend.supports_compute_capability / supported_kv_cache_dtypes",
+      "SM120 sparse-MLA kernel path for rope-free (qk_nope=256/kv_lora=512) shape"
+    ],
+    "risks": [
+      "Existing PRs #15/#54929/#41834 may already cover the root cause, making this a duplicate",
+      "AI disclosure policy conflict may block public contribution",
+      "Kernel work requires SM120 hardware (RTX PRO 6000) which may not be available to the contributor",
+      "fp8_ds_mla rope-free KV format remains an unresolved capacity lever per issue comments"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Boot GLM-5.3-Flash on SM120 with qk_rope_head_dim=0 and verify attention backend selection no longer fails",
+      "Run numerical parity check of sparse-MLA output vs an fp32 reference for the rope-free shape",
+      "Regression test that FLASHINFER_MLA_SPARSE (no-rope lane) is considered for SM120 when kv_cache_dtype=bfloat16"
+    ],
+    "unknowns": [
+      "Whether PR #15 or #54929 already implements the SM120 rope-free sparse-MLA fix",
+      "Whether the repository's AI disclosure policy permits this contribution",
+      "Whether the contributor has access to SM120 hardware for validation",
+      "Whether the fp8_ds_mla rope-free KV format (failure mode 1) is in scope or a separate issue"
+    ],
+    "why": "The issue describes a concrete SM120 sparse-MLA gap for rope-free GLM-5.3-Flash (qk_rope_head_dim=0), but the supplied evidence shows the root cause is already being addressed by multiple open PRs with direct semantic overlap (PR #15 'Make the rope-free MLA path work on SM12x' with 3 test files, PR #54929 Triton sparse-MLA fallback for SM12x, PR #41834 SM12x support). The duplicate status is 'semantic_overlap_requires_review' and the pre-task evidence explicitly flags '现有 PR 可能已覆盖根因，需先比较实现边界'. Additionally, the submission policy is 'ai_disclosure_conflict' and pre-review failed with 'policy_or_disclosure_uncertain, reproduction_or_validation_missing'. These are materially blocking unknowns: whether existing PRs already cover the fix, and whether the AI disclosure policy permits the contribution."
+  },
   "667fd8a0166a0c07f67db4092eb26ec8fd7bc49ef8fb7c1e540d01a012e09d49": {
     "confidence": 0.55,
     "contradictions": [
@@ -58411,6 +58517,37 @@
       "Whether maintainers prefer rename vs fail-fast; exact implementation details of existing PR"
     ],
     "why": "Issue clearly identifies a reserved namespace collision in bedrock_mantle that breaks Codex 0.147. Existing PR #36184 overlaps but lacks bidirectional rename and has CI failures; a stronger PR with proper mapping and tests is plausible."
+  },
+  "68b17f2f4d118ca12d5d7e480f0d350173d3bf0abf645a5e8dc45a9efe40a2e1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "CronStore.claimDueRuns parameter binding in @cline/core hub store",
+      "optional: surface claim failures in CronRunner.tick() when no logger is configured"
+    ],
+    "risks": [
+      "Fix must not alter concurrency/lease semantics or the SQL query",
+      "Bun vs node:sqlite binding differences could mask regressions if only one runtime is tested",
+      "Optional logging change expands scope beyond the focused fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run existing cron store claim/reclaim/requeue tests under Bun to reproduce zero claimed runs",
+      "After binding :now/:capacity, rerun cron store tests under Bun and Node to confirm claims succeed",
+      "Add a regression test asserting claimDueRuns returns queued rows under bun:sqlite binding"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer positional binding vs prefixed named keys vs first-appearance order"
+    ],
+    "why": "Issue pinpoints a concrete root cause: CronStore.claimDueRuns binds named params as an object under bun:sqlite, so :now/:capacity never reach the statement and the claim SELECT returns no rows. A contributor reproduced it with existing store tests and confirmed binding the exact :now/:capacity names fixes it without changing query or lease behavior."
   },
   "68b56a1f72dbc64249ff0acb67e6df970fb89e2462aa55042bf554815759024b": {
     "confidence": 0.7,
@@ -65157,6 +65294,43 @@
       "Whether the deferred scrubbing tradeoff (#8653) will be re-opened for these variables"
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP children, breaking external Python interpreters. Reporter supplied a minimal repro, /proc environ evidence, and a working workaround. Triage bot disputed the AppImage attribution, but the reporter rebutted with binary-level string evidence and a mount-prefix match, so the root cause is plausibly established though not fully settled. Code anchors (mcp-client.ts, sanitize-child-env.ts, shared-env-keys.ts) give a clear fix surface."
+  },
+  "72b300ef13395abdb1df9b670227307e7e4396d53a66b65b3ab2ade2a1dedfa3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "preTaskEvidence policy.status='ai_disclosure_conflict' and aiDisclosureConflict=true conflict with the candidate being treated as actionable private work",
+      "duplicate status reported as 'none' while pre-review failure is 'duplicate_changed' and PR #60186 has semantically related KV cache budget title"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/kv_cache_utils.py or equivalent KV cache sizing logic to include CUDA graph capture memory in the budget",
+      "profile_cudagraph_memory() to account for actual graph capture cost and its dependence on KV block count",
+      "possibly post-capture KV cache adjustment when measured use exceeds gpu_memory_utilization"
+    ],
+    "risks": [
+      "AI disclosure policy conflict may block public submission",
+      "Possible overlap with open PR #60186 covering KV cache init memory accounting",
+      "CUDA graph memory measurement may be hardware/driver dependent, complicating deterministic regression testing"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on a 24 GiB GPU with Qwen/Qwen3-0.6B and kv_cache_dtype='fp8' to confirm startup OOM",
+      "Add a regression test asserting that KV cache budget accounting includes CUDA graph memory and that startup does not exceed gpu_memory_utilization",
+      "Verify default KV cache dtype still starts successfully and that an infeasible configuration fails early with an actionable error"
+    ],
+    "unknowns": [
+      "Whether PR #60186 already fixes or covers this exact FP8 CUDA graph memory omission",
+      "Whether the AI disclosure conflict permits any code contribution workflow",
+      "Exact code location of profile_cudagraph_memory() and KV cache budget accounting in the current base SHA"
+    ],
+    "why": "Issue describes a plausible FP8 KV cache OOM caused by CUDA graph memory being omitted from the KV cache budget, with a concrete reproduction and suggested fix. However, the supplied evidence contains a material contradiction: the candidate's own preTaskEvidence reports policy.status='ai_disclosure_conflict' and aiDisclosureConflict=true, while the candidate summary also lists a pre-review failure 'duplicate_changed'. The duplicate assessment claims status 'none' with only keyword-overlap PR #60186, but that PR title ('Count V2's KV cache init memory against the KV cache budget') is semantically close to the issue's root cause, so duplicate/coverage status is unresolved. These unresolved policy and duplicate facts determine whether code work is actionable."
   },
   "72bc35d16100cc0793996eaf67942f1b0430dafe0d2d136dcdc9f9f764028458": {
     "confidence": 0.8,
@@ -72446,6 +72620,43 @@
     ],
     "why": "Issue provides a concrete, reproducible root cause: GitHub's authorization-server discovery endpoint 404s, so Cline's existing device-code grant is never reached. Reproduction steps and endpoint checks are supplied, and a commenter provides a minimal device-flow client to validate the fallback. No open PR or duplicate covers this fix; the two merged PRs only share the incidental token '404s' and have no code overlap."
   },
+  "808b3480a7912223c95bc470c8b54ad1f93fcb792fbacff797f7c610ac787e37": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Comments state #5289 was merged to main on 2026-10-06, yet occurrences on 4.0.0 stable (published 2026-10-01) are reported as unfixed; it is unresolved whether the merged fix already covers this class",
+      "One comment reports the cause string listing 'claude-code, opencode, codex' while refusing an opencode request, contradicting the other reports that omit opencode"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/reviewtransaction/status.go",
+      "scripts/crosslane/opencode.go",
+      "scripts/gen-sdd-agent-digests/opencode.go",
+      "internal/components/telemetryruntime/opencode.go"
+    ],
+    "risks": [
+      "The merged PR #5289 may already cover this exact failure class, making new work redundant",
+      "The issue body's reproduction steps are empty placeholders ('1. 2. 3.'), so the canonical repro is only in comments",
+      "The repository has an AI-disclosure policy conflict flagged in the candidate policy"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the selectorless preflight refusal on a build containing #5289 to determine whether the merged fix already resolves the class",
+      "If still reproducible, add a failing test asserting OpenCode is admitted as an immutable-review runtime in the preflight eligibility check"
+    ],
+    "unknowns": [
+      "Whether merged PR #5289 already resolves the immutable_review_transport_unsupported refusal for OpenCode",
+      "The actual root cause of the eligibility refusal, which the issue explicitly declines to assert",
+      "Whether the reported occurrences are on builds that include the merged fix"
+    ],
+    "why": "The issue is a pile of privacy-scrubbed occurrence reports that explicitly assert no root cause. The only concrete code anchor is a merged PR (#5289, 'resolve OpenCode review eligibility once per process') that the comments themselves say was merged to main on 2026-10-06, after the reported stable releases. That makes the duplicate/merged-fix coverage unresolved: it is unclear whether the merged PR already fixes this class, which directly determines whether any new code work is actionable."
+  },
   "80a9c0a1272f9006ed767af9756e95b39494546dc7f2730887142890e6a6cace": {
     "confidence": 0.6,
     "contradictions": [
@@ -74710,6 +74921,41 @@
       "Whether PR #52244 already fixes this specific cross-worker spec mismatch"
     ],
     "why": "Issue reports a concrete cross-worker KV-spec assert on 2-node TP with prefix caching, and a contributor has narrowed the config-derivation path, but the decisive fact is unresolved: whether rank 1's enable_prefix_caching is False (flag dropped on headless path) or True with the derivation bypassed. The contributor explicitly asks for rank-1 runtime values or the node-2 launch command, so the root cause is not yet pinned to a single code path."
+  },
+  "85470c8881edc6cb35eb7851230bd24a10e20eb33a3160815c77e26c375ea5d3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/eplb/expert_location.py: add logical_expert_id bounds guard in logical_to_all_physical",
+      "python/sglang/srt/models/glm5_next.py: route shared-expert weights to an unfused shared-expert module when fusion is disabled, or raise an explicit error",
+      "python/sglang/srt/layers/moe/fused_moe_triton/layer.py: handle shared-expert weight_loader path when _has_fused_shared is False"
+    ],
+    "risks": [
+      "Open PRs #41105 and #42845 touch GLM-5.3 / flashinfer_trtllm / moe_runner_backend semantics but do not reference this issue and show no direct code overlap; a fix could conflict or be partially covered",
+      "Maintainer comment recommends deep_gemm/triton on SM90 and calls flashinfer trtllm unstable on Hopper, so maintainers may treat the flashinfer_trtllm path as unsupported rather than fix it",
+      "Distinguishing the band-aid bounds guard from the proper shared-expert routing fix affects scope and review acceptance"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Launch GLM-5.3-Flash with --moe-runner-backend flashinfer_trtllm and confirm startup no longer raises IndexError index 288 out of bounds",
+      "Regression: launch with default triton backend and confirm shared-experts fusion path still loads weights correctly",
+      "Unit test logical_to_all_physical with logical_expert_id == cpu_map.shape[1] to assert a clear error rather than IndexError"
+    ],
+    "unknowns": [
+      "Whether PR #41105 or #42845 already fixes or supersedes this exact crash path (no direct code overlap reported, but semantic overlap is flagged for review)",
+      "Whether maintainers consider flashinfer_trtllm on SM90/H20 a supported configuration worth fixing versus documenting as unsupported"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause chain: overrides.py disables shared-experts fusion for flashinfer_trtllm, glm5_next builds the fused MoE layer with only 288 routed experts, EPLB cpu_map is [num_layers, 288], and the shared-expert weight (expert_id=288) falls through to logical_to_all_physical which lacks a logical_expert_id bounds guard. Reproduction command, image, hardware, and full traceback are supplied, and a concrete validation path exists (startup with --moe-runner-backend flashinfer_trtllm vs triton)."
   },
   "8553370484bdafa63adf6f0467c93a1aa84f8a5711c31a35e2520f80c57bd1b5": {
     "confidence": 0.7,
@@ -89664,6 +89910,41 @@
       "Exact mechanism of crash not fully proven (core dump unavailable), but the upstream fix is a security release and safe to apply regardless"
     ],
     "why": "Issue provides concrete crash evidence (exit 139, traceback frames, hiredis 3.4.0) and identifies a known upstream fix (hiredis 3.4.1) with a clear safe-minimum dependency bump. The root cause is well-scoped to a dependency version, and the validation path is straightforward: reproduce with the vulnerable version and verify the fix with the patched version."
+  },
+  "9fa0f45e0560eda97a1895aea80f2f6bf1d4d52bd5f968cd2ce20f403480c255": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue body update says desktop already shows subagents and scope is mobile-only, while the original Summary/Expected Behavior describes the main agent view generally lacking any indication"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/app/src/pages/session.tsx: render subagent running/stuck indicator in main session view",
+      "packages/app/src/utils/session.ts: derive child-session running state from parentID children",
+      "mobile layout: surface the same subagent list shown on desktop next to the session title"
+    ],
+    "risks": [
+      "Scope ambiguity: original report was main-view indicator, follow-up narrowed to mobile-only missing list; fix could over- or under-reach",
+      "Behavior may have shifted between 2.0.16 and 2.0.23 (subagents overview reportedly removed), so target version must be pinned",
+      "Avoid expanding API/session schema behavior beyond UI surfacing"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on mobile viewport: start parent session, launch long-running `general` subagent, confirm no indicator in main view",
+      "After fix, assert indicator appears and reflects running/stuck state without navigating to subagents page",
+      "Regression: desktop subagent list next to session title still renders; GET /api/session?parentID=<parent> children still map to displayed entries"
+    ],
+    "unknowns": [
+      "Whether the intended fix is mobile-only or also a main-view indicator on desktop",
+      "Exact current component/route state on the pinned base SHA (ecc4916) versus 2.0.23 bundle described in comments"
+    ],
+    "why": "Issue describes a concrete, reproducible UI gap: mobile web view omits the subagent status indicator that desktop shows next to the session title, and the main view gives no running/stuck signal. Code anchors (session.child.backToParent, subagents timeline category, parentID) and an API-verified backend (GET /api/session?parentID returns children) give a plausible front-end-only fix path with a clear expected-vs-actual pair."
   },
   "9fb4580cf3cddc5bbbf0958a6148ce65efe5d899674cab03fb99b58f29137d2b": {
     "confidence": 0.85,
@@ -129424,6 +129705,43 @@
     ],
     "why": "The issue reports a concrete init failure (hybrid KV cache manager force-disabled by NixlConnector, unify_hybrid_kv_cache_specs raising), but the supplied evidence shows the report is stale: it was filed against vLLM 0.20.1, and maintainers state upstream HMA-capability-based configuration and GDN transfer support have since landed, with the current pin at vLLM 0.28.0. Multiple contributors are explicitly asked to retest on current Dynamo and confirm whether the failure still reproduces; no retest result is supplied. Whether any code work is actionable depends on that unresolved reproduction status."
   },
+  "e6bc1f2b919ac8f7131a816a175855e6153c670e484ba07f3329c0528ea1a126": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment reports PR #3117 as semantic overlap with root_cause_coverage=false and no direct code overlap, while the issue states #3117 addresses only the version check; these are consistent but the duplicate status remains 'semantic_overlap_requires_review'"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "tools/checkpoint/loader_mixtral_hf.py: replace split-and-int version parse with packaging.version.Version comparison",
+      "tools/checkpoint/loader_mixtral_hf.py set_mlp_state: select block_sparse_moe vs mlp MoE block and map fused gate_up_proj/down_proj to linear_fc1/linear_fc2"
+    ],
+    "risks": [
+      "Open PR #3117 already covers the version-check half; a new submission must clearly add the fused-expert layout fix and not duplicate #3117",
+      "The transformers-4 branch of the patch was not exercised in the reported validation",
+      "Fused-expert layout assumes non-transposed weights; is_transposed guard may not cover all transformers-5 variants",
+      "Validation was on GB200 with TP4/PP2/EP1 only; other parallel layouts untested"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run tools/checkpoint/convert.py --loader mixtral_hf --saver mcore on a Mixtral-8x7B HF checkpoint under transformers 5.8.1 and confirm all layers save without exception",
+      "Compare converted weights/eval loss against the same conversion under transformers 4.49.0 and assert bit-identical results (BF16 and hybrid-FP8)",
+      "Exercise the transformers-4 block_sparse_moe branch to confirm no regression",
+      "Add a unit test for verify_transformers_version covering 5.8.1, 5.0.0.dev0, and 4.57.0rc1"
+    ],
+    "unknowns": [
+      "Whether PR #3117 or another open PR has since been extended to cover the transformers-5 fused-expert layout",
+      "Whether maintainers require the fix to be folded into #3117 rather than a separate PR"
+    ],
+    "why": "Issue identifies two concrete, code-anchored root causes in tools/checkpoint/loader_mixtral_hf.py: (1) a lexicographic version comparison that rejects transformers 5.x and non-integer version strings, and (2) a stale transformers-4 MoE module layout (block_sparse_moe with per-expert w1/w2/w3) that fails on transformers-5's fused mlp.experts.gate_up_proj/down_proj. A concrete diff is supplied and the fused-expert mapping is validated by bit-identical eval loss (1.97968 hybrid-FP8, 1.952644 BF16) against a transformers-4.49.0 conversion on 2x4 GB200. This is a checkpoint-conversion weight-mapping/numerical-equivalence contribution, not mere installation or CLI plumbing."
+  },
   "e6c0780c8bc9b33d47b2d8154c6a0bbdc011b81968b5440bcbbf4e52d4293817": {
     "confidence": 0.6,
     "contradictions": [
@@ -144042,5 +144360,35 @@
       "Exact vLLM version where the older message was observed; whether the issue is still reproducible on latest main with the updated message"
     ],
     "why": "Issue reports a user-visible bug where --enable-dbo triggers an assertion during VllmConfig construction instead of a clean validation error. Root cause is identified: __post_init__ uses asserts for all2all backend validation, and the error message is outdated. A contributor comment confirms the fix location and provides a minimal reproduction command. Existing PRs are incomplete or draft, leaving room for a proper fix with tests."
+  },
+  "ffec852af28b2adc113ae5eff208a818b6244daa044d564431fd1eb326b35815": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "fs/gguf/gguf.go: add Q2_0 tensor type size/block handling",
+      "internal/testutil/gguf/gguf.go: test fixture for Q2_0 tensor parsing"
+    ],
+    "risks": [
+      "Q2_0 support may already be covered by open PR #18443, making a new implementation duplicative",
+      "Exact block size semantics for Q2_0 must match llama.cpp to avoid silent size miscalculation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Parse a GGUF containing a Q2_0 blk.1.ffn_down_exps.weight tensor with dims 640x2560x512 and assert computed byte size equals 838860800 without overflow",
+      "Regression test that ollama create succeeds on the referenced GSQ-RCO GGUF"
+    ],
+    "unknowns": [
+      "Whether PR #18443 is merged or will land, which determines if this is already covered"
+    ],
+    "why": "Maintainer rick-github supplied concrete evidence: dumpgguf shows blk.1.ffn_down_exps.weight is Q2_0 with 640x2560x512 dims, and points to PR #18443 which adds Q2_0 GGUF tensor support. This establishes the root cause as missing Q2_0 tensor type handling in Ollama's Go GGUF parser, matching the issue's overflow error. A concrete validation path exists: parse the GGUF and verify tensor size computation."
   }
 }
