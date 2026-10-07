@@ -12787,23 +12787,35 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
         ):
             raise RuntimeError("validation task-turn worktree input binding mismatch")
         candidate = candidate | projection
-        with opportunity_action_guard(ledger_action_guard_root(store.path), candidate["key"]):
-            with _task_worktree_private_descriptor(candidate) as opened:
-                context_raw = _read_task_context_bytes_from_private(opened)
-                context = json.loads(context_raw)
-                source_raw = _validation_worktree_input_bytes(
-                    candidate=candidate,
-                    reservation_digest=str(validation_binding["reservationDigest"]),
-                    worktree_input_path=str(validation_binding["worktreeInputPath"]),
-                    worktree_input_digest=str(validation_binding["worktreeInputDigest"]),
+        with _task_worktree_private_descriptor(candidate) as opened:
+            try:
+                os.stat(
+                    "validation-real-mcp-oauth-cross-replica",
+                    dir_fd=opened.private_fd,
+                    follow_symlinks=False,
                 )
-                _refresh_published_validation_resource_binding(
-                    store,
-                    candidate=candidate,
-                    context=context,
-                    source=json.loads(source_raw),
-                    opened=opened,
-                )
+                has_prepared_resources = True
+            except FileNotFoundError:
+                has_prepared_resources = False
+            if has_prepared_resources:
+                with opportunity_action_guard(
+                    ledger_action_guard_root(store.path), candidate["key"]
+                ):
+                    context_raw = _read_task_context_bytes_from_private(opened)
+                    context = json.loads(context_raw)
+                    source_raw = _validation_worktree_input_bytes(
+                        candidate=candidate,
+                        reservation_digest=str(validation_binding["reservationDigest"]),
+                        worktree_input_path=str(validation_binding["worktreeInputPath"]),
+                        worktree_input_digest=str(validation_binding["worktreeInputDigest"]),
+                    )
+                    _refresh_published_validation_resource_binding(
+                        store,
+                        candidate=candidate,
+                        context=context,
+                        source=json.loads(source_raw),
+                        opened=opened,
+                    )
     prompt = _task_turn_prompt(args.delivery_kind, candidate)
     executable = shutil.which("codex")
     if not executable:
