@@ -31608,6 +31608,210 @@ def test_validation_scope_rebuild_is_retryable_if_receipt_rebind_crashes(monkeyp
     assert finalized["reproductionReceipt"]["commitSha"] == corrected_head
 
 
+def _completed_pr_result_with_wrong_schema(tmp_path, monkeypatch):
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=worktree,
+        target_base_bound=True,
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+    )
+    _managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store, worktree, result_path, explicit_pr_followup=True, degrade_stage=False
+    )
+    head = run_git(worktree, "rev-parse", "HEAD")
+    candidate = store.pr_followup_candidates()[0]
+    wake = candidate["wakeDigest"]
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=wake, prepared_head_sha=head)
+    store.authorize_task_turn_delivery(
+        delivery_kind="pr-followup",
+        thread_id="thread-1",
+        delivery_token=wake,
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    started = datetime.now(UTC)
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=wake)
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+        prepared_followup_head=head,
+    )
+    context = json.loads(context_path.read_bytes())
+    context_path = MODULE.shared_context_path(context["issueUrl"])
+    original = json.loads(result_path.read_bytes())
+    for name in ("reproductionReceipt", "probeReceipt", "resultDigest", "independentReview"):
+        original.pop(name, None)
+    original.update(
+        schemaVersion="workspace-result-v1",
+        taskId="intent-1",
+        contextDigest=context["contextDigest"],
+        followupDigest=wake,
+        handoffMode="controller_commit_required",
+        commitSha=None,
+        headSha=head,
+        previousControllerCommitSha=head,
+    )
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n")
+    result_path.write_text(json.dumps(original))
+    result_path.chmod(0o600)
+    completed = datetime.now(UTC)
+    turn = "completed-original-pr-turn"
+    journal = tmp_path / "completed-original-pr.jsonl"
+    journal.write_text(
+        "".join(
+            json.dumps(record) + "\n"
+            for record in [
+                {"type": "session_meta", "payload": {"id": "thread-1"}},
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(started),
+                    "payload": {"type": "task_started", "turn_id": turn},
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(completed),
+                    "payload": {"type": "task_complete", "turn_id": turn},
+                },
+            ]
+        )
+    )
+    journal.chmod(0o600)
+    thread_db = tmp_path / "pr-schema-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?)",
+            (
+                "thread-1",
+                str(MODULE.GITHUB_ROOT),
+                0,
+                MODULE.issue_prompt(context["issueUrl"]),
+                str(journal),
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="pr-followup", thread_id="thread-1", delivery_token=wake
+    )
+    receipt_path = state / "task_turn_receipts" / f"{receipt_key}.json"
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "deliveryKind": "pr-followup",
+                "deliveryToken": wake,
+                "threadId": "thread-1",
+                "turnId": turn,
+                "turnStatus": "completed",
+            }
+        )
+    )
+    receipt_path.chmod(0o600)
+    quarantined = MODULE._quarantine_shared_context(
+        store,
+        context_path,
+        RuntimeError("published task result mismatch: schemaVersion"),
+        raw=context_path.read_bytes(),
+        source_stat=context_path.stat(),
+    )
+    assert quarantined is not None
+    return store, worktree, result_path, context_path, receipt_path, original, pr_url
+
+
+def test_context_sync_corrects_only_owned_completed_pr_schema_then_original_ingestion(
+    tmp_path, monkeypatch
+):
+    store, worktree, result_path, context_path, _receipt, original, pr_url = (
+        _completed_pr_result_with_wrong_schema(tmp_path, monkeypatch)
+    )
+    context_raw = context_path.read_bytes()
+    head = run_git(worktree, "rev-parse", "HEAD")
+    dirty = run_git(worktree, "diff")
+    with pytest.raises(RuntimeError, match="published task result mismatch: schemaVersion"):
+        MODULE._recoverable_published_result(json.loads(context_raw))
+    synced = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+
+    corrected = json.loads(result_path.read_bytes())
+    assert corrected == dict(original, schemaVersion=MODULE.TASK_RESULT_SCHEMA), synced
+    assert store.active_task_quarantine("a/b#1") is None, synced
+    assert context_path.read_bytes() == context_raw
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    assert run_git(worktree, "diff") == dirty
+    assert corrected["quality"]["relevant_tests_green"] is False
+    assert corrected["quality"]["independent_review_passed"] is False
+    with store.connect() as connection:
+        proof = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='PR_RESULT_SCHEMA_CORRECTION_AUTHORIZED'"
+            ).fetchone()[0]
+        )
+    assert json.loads(base64.b64decode(proof["sourceResultBytesBase64"])) == original
+    assert proof["correctedRawDigest"] == hashlib.sha256(result_path.read_bytes()).hexdigest()
+    MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    finalized = json.loads(result_path.read_bytes())
+    assert finalized["handoffMode"] == "controller_commit_complete", ingested
+    assert run_git(worktree, "rev-parse", "HEAD^") == head
+    assert finalized["followupDigest"] == original["followupDigest"]
+    assert ingested["publicationRequests"] == []
+    assert (
+        store.task_context(issue_url=original["issueUrl"], thread_id="thread-1")[
+            "publicationReceipt"
+        ]["prUrl"]
+        == pr_url
+    )
+
+
+@pytest.mark.parametrize("defect", ["foreign-schema", "wrong-wake", "unfinished-turn"])
+def test_context_sync_rejects_unowned_pr_schema_correction(tmp_path, monkeypatch, defect):
+    store, worktree, result_path, _context_path, receipt_path, original, _pr = (
+        _completed_pr_result_with_wrong_schema(tmp_path, monkeypatch)
+    )
+    if defect == "foreign-schema":
+        original["schemaVersion"] = "future-result-v2"
+    elif defect == "wrong-wake":
+        original["followupDigest"] = "f" * 64
+    else:
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["turnStatus"] = "interrupted"
+        receipt_path.write_text(json.dumps(receipt))
+    result_path.write_text(json.dumps(original))
+    before = result_path.read_bytes()
+    head = run_git(worktree, "rev-parse", "HEAD")
+    MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert result_path.read_bytes() == before
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    assert store.active_task_quarantine("a/b#1") is not None
+
+
+def test_completed_pr_schema_correction_preserves_unrelated_quarantine(tmp_path, monkeypatch):
+    store, _worktree, result_path, context_path, _receipt, original, _pr = (
+        _completed_pr_result_with_wrong_schema(tmp_path, monkeypatch)
+    )
+    store.record_shared_context_quarantine(
+        key="a/b#1",
+        reason="UNRELATED_GATE",
+        dedupe_key="unrelated",
+        payload={"proof": "still-required"},
+        created_at=iso_z(datetime.now(UTC)),
+    )
+    context = json.loads(context_path.read_bytes())
+    corrected = MODULE._correct_completed_pr_result_schema(
+        store, context, original, result_path.read_bytes()
+    )
+    assert corrected is not None
+    assert [gate["reason"] for gate in store.active_task_quarantines("a/b#1")] == ["UNRELATED_GATE"]
+    assert corrected[0]["quality"] == original["quality"]
+
+
 def test_pr_followup_ingestion_uses_common_base_after_upstream_advances(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,

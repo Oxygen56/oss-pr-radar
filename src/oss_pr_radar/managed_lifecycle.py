@@ -3016,6 +3016,8 @@ class ManagedLedger:
             )
             expected_paths = (
                 opportunity_metadata.get("codePaths")
+                or expected_evidence.get("codePaths")
+                or expected_evidence.get("codePathsPlan")
                 or opportunity_provenance.get("codePaths")
                 or []
             )

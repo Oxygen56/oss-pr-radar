@@ -3604,6 +3604,325 @@ def _superseded_fix_ready_missing_worktree_authority(
     }
 
 
+def _correct_completed_pr_result_schema(
+    store: RadarLedger,
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+) -> tuple[dict[str, Any], bytes] | None:
+    """Produce the fixed header for one authenticated, completed PR handoff.
+
+    This is a producer correction, not another accepted reader schema. It
+    neither changes the native business payload nor supplies missing quality.
+    """
+    followup = context.get("prFollowup")
+    if not isinstance(followup, dict):
+        return None
+    wake = str(followup.get("wakeDigest") or "")
+    candidate = {
+        name: context.get(name)
+        for name in ("key", "issueUrl", "intentId", "threadId", "worktreePath", "stage")
+    }
+    identity = {name: candidate[name] for name in ("intentId", "threadId", "worktreePath")}
+    expected = {name: candidate[name] for name in ("key", "issueUrl", "threadId", "worktreePath")}
+    if (
+        value.get("schemaVersion") not in {"workspace-result-v1", TASK_RESULT_SCHEMA}
+        or not re.fullmatch(r"[0-9a-f]{64}", wake)
+        or any(value.get(name) != item for name, item in expected.items())
+        or value.get("taskId") != candidate["intentId"]
+        or value.get("contextDigest") != context.get("contextDigest")
+        or value.get("followupDigest") != wake
+        or value.get("stage") != "FIX_READY"
+        or value.get("handoffMode") != "controller_commit_required"
+        or value.get("commitSha") is not None
+        or any(value.get(name) for name in ("resultDigest", "reproductionReceipt", "probeReceipt"))
+        or not isinstance(value.get("quality"), dict)
+    ):
+        return None
+    with opportunity_action_guard(ledger_action_guard_root(store.path), str(candidate["key"])):
+        if not _private_context_matches_current_ledger(store, context):
+            return None
+        with _task_worktree_private_descriptor(candidate) as opened:
+            context_raw = _read_task_context_bytes_from_private(opened)
+            if (
+                json.loads(context_raw) != context
+                or _read_task_result_bytes_from_private(opened) != raw
+            ):
+                return None
+            if _active_task_turn_for_result(candidate):
+                return None
+            prepared = followup.get("preparedHeadSha")
+            if (
+                not prepared
+                or value.get("headSha") != prepared
+                or value.get("previousControllerCommitSha") != prepared
+                or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree) != prepared
+                or not _local_changed_files(opened.worktree)
+                or _local_changed_files(opened.worktree)
+                != _validated_changed_files(value.get("changedFiles"))
+            ):
+                return None
+            receipt_key = _task_turn_delivery_file_key(
+                delivery_kind="pr-followup",
+                thread_id=str(candidate["threadId"]),
+                delivery_token=wake,
+            )
+            receipt_path = STATE / "task_turn_receipts" / f"{receipt_key}.json"
+            receipt_raw = _read_owned_regular_file(
+                receipt_path, label="completed PR handoff receipt", reject_dangerous_writes=True
+            )
+            receipt = json.loads(receipt_raw)
+            if (
+                not isinstance(receipt, dict)
+                or receipt.get("ok") is not True
+                or receipt.get("turnStatus") != "completed"
+                or receipt.get("turnError")
+                or receipt.get("error")
+                or receipt.get("deliveryKind") != "pr-followup"
+                or receipt.get("deliveryToken") != wake
+                or receipt.get("threadId") != candidate["threadId"]
+                or not receipt.get("turnId")
+            ):
+                return None
+            _cwd, rollout = _validated_task_turn_thread(candidate)
+            latest = latest_thread_turn_state(rollout)
+            if (
+                not latest
+                or latest.get("status") != "completed"
+                or latest.get("turnId") != receipt["turnId"]
+            ):
+                return None
+            journal_raw = _read_owned_regular_file(
+                Path(str(rollout)),
+                label="completed PR handoff journal",
+                reject_dangerous_writes=True,
+            )
+            session = False
+            started_at = completed_at = None
+            for line in journal_raw.splitlines():
+                record = json.loads(line)
+                payload = record.get("payload") or {}
+                if record.get("type") == "session_meta":
+                    session = payload.get("id") == candidate["threadId"]
+                if record.get("type") != "event_msg" or payload.get("turn_id") != receipt["turnId"]:
+                    continue
+                if payload.get("type") == "task_started":
+                    started_at = parse_time(record["timestamp"])
+                elif payload.get("type") == "task_complete":
+                    if payload.get("error"):
+                        return None
+                    completed_at = parse_time(record["timestamp"])
+            with store.connect() as connection:
+                rows = connection.execute(
+                    """SELECT id,event_type,dedupe_key,payload_json,created_at FROM events
+                       WHERE opportunity_key=? AND event_type IN (
+                         'PR_FOLLOWUP_RESERVED','TASK_TURN_DELIVERY_STARTED','PR_FOLLOWUP_SENT',
+                         'PR_RESULT_SCHEMA_CORRECTION_AUTHORIZED') ORDER BY id""",
+                    (candidate["key"],),
+                ).fetchall()
+            events = [(dict(row), json.loads(row["payload_json"])) for row in rows]
+            bound = [
+                (row, payload)
+                for row, payload in events
+                if all(payload.get(name) == item for name, item in identity.items())
+            ]
+            reserved = next(
+                (
+                    (r, p)
+                    for r, p in reversed(bound)
+                    if r["event_type"] == "PR_FOLLOWUP_RESERVED" and r["dedupe_key"] == wake
+                ),
+                None,
+            )
+            started = next(
+                (
+                    (r, p)
+                    for r, p in reversed(bound)
+                    if r["event_type"] == "TASK_TURN_DELIVERY_STARTED"
+                    and p.get("deliveryKind") == "pr-followup"
+                    and p.get("deliveryToken") == wake
+                ),
+                None,
+            )
+            sent = next(
+                (
+                    (r, p)
+                    for r, p in reversed(bound)
+                    if r["event_type"] == "PR_FOLLOWUP_SENT" and r["dedupe_key"] == wake
+                ),
+                None,
+            )
+            if (
+                not session
+                or started_at is None
+                or completed_at is None
+                or reserved is None
+                or started is None
+                or sent is None
+                or not (reserved[0]["id"] < started[0]["id"] < sent[0]["id"])
+                or not (parse_time(started[0]["created_at"]) <= started_at <= completed_at)
+                or parse_time(sent[0]["created_at"]) > completed_at
+            ):
+                return None
+            corrected = dict(value, schemaVersion=TASK_RESULT_SCHEMA)
+            corrected_raw = (
+                json.dumps(corrected, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+            ).encode("utf-8")
+            proof = {
+                **identity,
+                "contextDigest": context["contextDigest"],
+                "wakeDigest": wake,
+                "turnId": receipt["turnId"],
+                "turnReceiptRawDigest": hashlib.sha256(receipt_raw).hexdigest(),
+                "journalRawDigest": hashlib.sha256(journal_raw).hexdigest(),
+                "contextRawDigest": hashlib.sha256(context_raw).hexdigest(),
+                "correctedRawDigest": hashlib.sha256(corrected_raw).hexdigest(),
+            }
+            if value["schemaVersion"] == "workspace-result-v1":
+                result_stat = os.stat(
+                    "result.json", dir_fd=opened.private_fd, follow_symlinks=False
+                )
+                if not (started_at.timestamp() <= result_stat.st_mtime <= completed_at.timestamp()):
+                    return None
+                proof.update(
+                    sourceRawDigest=hashlib.sha256(raw).hexdigest(),
+                    sourceResultBytesBase64=base64.b64encode(raw).decode("ascii"),
+                    sourceModifiedAt=result_stat.st_mtime,
+                )
+                if (
+                    _read_task_result_bytes_from_private(opened) != raw
+                    or _read_task_context_bytes_from_private(opened) != context_raw
+                    or _read_owned_regular_file(
+                        receipt_path,
+                        label="completed PR handoff receipt",
+                        reject_dangerous_writes=True,
+                    )
+                    != receipt_raw
+                ):
+                    return None
+                with store.transaction() as connection:
+                    store._event(
+                        connection,
+                        str(candidate["key"]),
+                        "PR_RESULT_SCHEMA_CORRECTION_AUTHORIZED",
+                        sha256_json(proof),
+                        proof,
+                        iso_z(datetime.now(UTC)),
+                    )
+                raw = _write_task_result_json_to_private(opened, corrected)
+                if raw != corrected_raw:
+                    raise RuntimeError("completed PR schema correction bytes changed")
+            else:
+                prior = next(
+                    (
+                        p
+                        for r, p in reversed(bound)
+                        if r["event_type"] == "PR_RESULT_SCHEMA_CORRECTION_AUTHORIZED"
+                        and all(p.get(name) == item for name, item in proof.items())
+                    ),
+                    None,
+                )
+                if prior is None or raw != corrected_raw:
+                    return None
+                original_raw = base64.b64decode(prior["sourceResultBytesBase64"], validate=True)
+                original = json.loads(original_raw)
+                if (
+                    hashlib.sha256(original_raw).hexdigest() != prior.get("sourceRawDigest")
+                    or original.get("schemaVersion") != "workspace-result-v1"
+                    or dict(original, schemaVersion=TASK_RESULT_SCHEMA) != corrected
+                ):
+                    return None
+                proof = prior
+            _clear_completed_pr_schema_quarantines(store, context, proof)
+            return corrected, raw
+
+
+def _clear_completed_pr_schema_quarantines(
+    store: RadarLedger, context: dict[str, Any], proof: dict[str, Any]
+) -> None:
+    """Clear only the exact format error after its owned producer correction."""
+    key = str(context["key"])
+    path = shared_context_path(str(context["issueUrl"]))
+    reason = "SHARED_CONTEXT_INVALID"
+    error = "published task result mismatch: schemaVersion"
+    gates = [
+        gate
+        for gate in store.active_task_quarantines(key)
+        if gate.get("reason") == reason and gate.get("payload", {}).get("error") == error
+    ]
+    if not gates:
+        return
+    quarantine_fd, _path, handles = _open_shared_context_quarantine_directory(create=False)
+    try:
+        for gate in gates:
+            payload = gate["payload"]
+            digest = str(payload.get("originalBytesSha256") or "")
+            artifact_identity = sha256_json(
+                {
+                    "key": key,
+                    "reason": reason,
+                    "originalPath": str(path),
+                    "originalBytesSha256": digest,
+                }
+            )
+            artifact_path = shared_context_quarantine_root() / f"q-{artifact_identity}.json"
+            dedupe = hashlib.sha256(
+                f"shared-context|{path}|{digest}|{reason}".encode("utf-8")
+            ).hexdigest()
+            if (
+                payload.get("issueUrl") != context["issueUrl"]
+                or payload.get("originalPath") != str(path)
+                or payload.get("artifactPath") != str(artifact_path)
+                or gate.get("dedupeKey") != dedupe
+                or gate.get("payloadDigest") != sha256_json(payload)
+            ):
+                continue
+            artifact, _artifact_raw = _read_context_quarantine_artifact_at(
+                quarantine_fd, artifact_path
+            )
+            expected = {
+                "schemaVersion": "shared-context-quarantine-v1",
+                "key": key,
+                "issueUrl": context["issueUrl"],
+                "reason": reason,
+                "error": error,
+                "originalPath": str(path),
+                "originalMode": 0o600,
+                "originalBytesSha256": digest,
+                "observedAt": gate.get("createdAt"),
+            }
+            if any(artifact.get(name) != item for name, item in expected.items()):
+                continue
+            original_raw = base64.b64decode(
+                str(artifact.get("originalBytesBase64") or ""), validate=True
+            )
+            original = json.loads(original_raw)
+            if hashlib.sha256(
+                original_raw
+            ).hexdigest() != digest or _context_without_pr_followup_check_time(
+                original
+            ) != _context_without_pr_followup_check_time(context):
+                continue
+            store.clear_task_quarantine_member_exact(
+                key,
+                reason=reason,
+                dedupe_key=dedupe,
+                payload_digest=str(gate["payloadDigest"]),
+                evidence={
+                    "revalidated": True,
+                    "repair": "COMPLETED_PR_RESULT_SCHEMA_CORRECTED",
+                    **{
+                        name: item
+                        for name, item in proof.items()
+                        if name != "sourceResultBytesBase64"
+                    },
+                },
+            )
+    finally:
+        for descriptor in reversed(handles):
+            os.close(descriptor)
+
+
 def _recoverable_published_result(
     context: dict[str, Any],
     *,
@@ -3649,6 +3968,16 @@ def _recoverable_published_result(
     }
     if not isinstance(value, dict):
         raise RuntimeError("published task result must be an object")
+    if store is not None and (
+        value.get("schemaVersion") == "workspace-result-v1"
+        or any(
+            gate.get("payload", {}).get("error") == "published task result mismatch: schemaVersion"
+            for gate in store.active_task_quarantines(str(context.get("key") or ""))
+        )
+    ):
+        correction = _correct_completed_pr_result_schema(store, context, value, raw)
+        if correction is not None:
+            value, raw = correction
     authority = None
     if store is not None and "worktreePath" not in value and value.get("stage") == "FIX_READY":
         verified_path = context_path or shared_context_path(str(context.get("issueUrl") or ""))
@@ -19707,6 +20036,7 @@ def _pr_followup_prompt(candidate: dict[str, Any]) -> str:
         f"直接读取并验证 {context_path}，再进入其中记录的 worktreePath 继续；"
         "不要在当前入口目录等待 .oss-pr-radar/task-context.json。"
         "只处理该上下文绑定的最新 PR 快照、审查意见、冲突和检查，完成后按技能协议更新结果。"
+        f"result.json 的 schemaVersion 必须精确为 {TASK_RESULT_SCHEMA}，其他身份字段照上下文填写。"
         "完整意见读取 evidence 中的 body，summary 只供展示；逐条核对意见、当前代码和真实检查输出。"
         "需要补充的技术事实由本任务继续查证，不要笼统要求用户决定是否继续。"
         "先复现具体问题再修复；审查机器人给出的安全标签本身不等于已经证实的安全问题。"

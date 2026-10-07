@@ -1003,6 +1003,54 @@ def test_lease_rfc3339_boundaries_and_malformed_recovery(tmp_path):
     assert event and event["event_type"] == "MALFORMED_LEASE_RECOVERED"
 
 
+@pytest.mark.parametrize("paths_field", ["codePaths", "codePathsPlan"])
+def test_probe_queue_reads_saved_pre_task_scope_without_accepting_foreign_scope(
+    tmp_path, paths_field
+):
+    checkout, sha = real_checkout(tmp_path)
+    ledger = ManagedLedger(tmp_path / "nested-evidence.sqlite3", ensure_schema=True)
+    ledger.upsert_opportunity(
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={"intentId": "nested-task"},
+        metadata={"preTaskEvidence": {"baseSha": sha, paths_field: ["target.py"]}},
+    )
+    ledger.bind_task(
+        task_id="nested-task",
+        opportunity_key="owner/repo#1",
+        thread_id="thread-nested",
+        worktree_path=str(checkout),
+        state="REPRODUCTION_REQUIRED",
+    )
+    request = dict(
+        task_id="nested-task",
+        opportunity_key="owner/repo#1",
+        repo="owner/repo",
+        issue_url="https://github.com/owner/repo/issues/1",
+        default_branch="main",
+        selected_base_sha=sha,
+        code_paths=["target.py"],
+        profile_id=None,
+        checkout_path=str(checkout),
+        head_sha=sha,
+        commit_sha=sha,
+        result_digest="nested-result",
+        idempotency_key="nested-probe",
+    )
+    with pytest.raises(ValueError, match="bound to its opportunity"):
+        ledger.queue_reproduction_probe(**dict(request, code_paths=["foreign.py"]))
+    queued = ledger.queue_reproduction_probe(**request)
+    assert queued["state"] == "PENDING"
+    processed = ledger.run_pending_reproduction_probes()
+    assert processed["processed"][0]["state"] == "WAITING_EXTERNAL"
+    assert ledger.read_task("nested-task")["state"] == "REPRODUCTION_REQUIRED"
+
+
 def test_probe_queue_rejects_receipt_identity_not_derived_from_opportunity(tmp_path):
     checkout, sha = real_checkout(tmp_path)
     ledger = ManagedLedger(tmp_path / "identity.sqlite3", ensure_schema=True)
