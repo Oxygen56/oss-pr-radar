@@ -8120,7 +8120,7 @@ class RadarLedger:
         intent_id: str | None = None,
         worktree_path: str | None = None,
     ) -> None:
-        """Persist a failed deterministic prefetch so the scheduler does not retry forever."""
+        """Retain each actual failed prefetch for bounded retry accounting."""
 
         with self.transaction() as connection:
             binding = _resolve_exact_intent_binding(
@@ -8167,11 +8167,30 @@ class RadarLedger:
                 or deferred_payload is None
             ):
                 raise LedgerError("validation prefetch task is not current")
+            prior_failures = connection.execute(
+                f"""SELECT COUNT(*) FROM events b
+                    JOIN intents i ON i.intent_id=?
+                    WHERE b.opportunity_key=? AND b.event_type='VALIDATION_PREFETCH_BLOCKED'
+                      AND {_intent_event_binding_clause("i", "b")}
+                      AND json_extract(b.payload_json,'$.resultDigest')=?""",
+                (binding["intent_id"], key, result_digest),
+            ).fetchone()[0]
+            dedupe_key = (
+                result_digest
+                if prior_failures == 0
+                else sha256_json(
+                    {
+                        "intentId": binding["intent_id"],
+                        "resultDigest": result_digest,
+                        "attempt": prior_failures + 1,
+                    }
+                )
+            )
             self._event(
                 connection,
                 key,
                 "VALIDATION_PREFETCH_BLOCKED",
-                result_digest,
+                dedupe_key,
                 {
                     "intentId": str(binding["intent_id"]),
                     "threadId": thread_id,
@@ -8188,7 +8207,13 @@ class RadarLedger:
         with self.connect() as connection:
             rows = connection.execute(
                 f"""SELECT o.key,i.intent_id,i.thread_id,i.worktree_path,
-                          b.payload_json,b.created_at
+                          b.payload_json,b.created_at,
+                          (SELECT COUNT(*) FROM events a
+                           WHERE a.opportunity_key=o.key
+                             AND a.event_type='VALIDATION_PREFETCH_BLOCKED'
+                             AND {_intent_event_binding_clause("i", "a")}
+                             AND json_extract(a.payload_json,'$.resultDigest')=
+                                 json_extract(d.payload_json,'$.resultDigest')) AS attempt_count
                    FROM opportunities o
                    JOIN intents i ON i.opportunity_key=o.key
                      AND i.status IN ('DISPATCHED','COMPLETED')
@@ -8222,6 +8247,7 @@ class RadarLedger:
                     "resultDigest": payload.get("resultDigest"),
                     "dependencyFailures": list(payload.get("dependencyFailures") or []),
                     "blockedAt": row["created_at"],
+                    "attemptCount": int(row["attempt_count"]),
                 }
             )
         return blocked

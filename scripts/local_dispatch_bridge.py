@@ -217,6 +217,7 @@ VALIDATION_PREFETCH_TIMEOUTS = {
 VALIDATION_COREPACK_PACKAGE = "corepack@0.36.0"
 VALIDATION_COREPACK_PREFIX = ".oss-pr-radar/validation-toolchain"
 VALIDATION_COREPACK_ENTRY = f"{VALIDATION_COREPACK_PREFIX}/node_modules/corepack/dist/corepack.js"
+VALIDATION_COREPACK_TRANSPORT_RETRY_DELAYS = (300, 900)
 VALIDATION_POLICY_REVISION = "ci_delegation_v1"
 EXPIRED_PUBLICATION_PROMPT_REVISION = "expired_publication_real_commands_v2"
 TRANSIENT_PUBLICATION_AUDIT_REASONS = {
@@ -21878,6 +21879,36 @@ def _validation_policy_reassessment_needed(candidate: dict[str, Any]) -> bool:
     )
 
 
+def _validation_corepack_transport_retry_due(failure: dict[str, Any]) -> bool:
+    """Retry the observed Corepack fetch failure without retrying indefinitely."""
+
+    attempts = failure.get("attemptCount", 1)
+    failures = failure.get("dependencyFailures")
+    if (
+        type(attempts) is not int
+        or not 1 <= attempts <= len(VALIDATION_COREPACK_TRANSPORT_RETRY_DELAYS)
+        or not isinstance(failures, list)
+        or len(failures) != 1
+        or not isinstance(failures[0], dict)
+    ):
+        return False
+    item = failures[0]
+    summary = str(item.get("summary") or "")
+    if (
+        item.get("kind") != "pnpm_corepack_locked_install"
+        or item.get("failureType") != "COMMAND_FAILED"
+        or "corepack" not in summary
+        or "Error when performing the request to " not in summary
+    ):
+        return False
+    try:
+        blocked_at = parse_time(str(failure.get("blockedAt") or ""))
+    except (TypeError, ValueError):
+        return False
+    delay = VALIDATION_COREPACK_TRANSPORT_RETRY_DELAYS[attempts - 1]
+    return (datetime.now(UTC) - blocked_at).total_seconds() >= delay
+
+
 def _execute_validation_prefetch(
     candidate: dict[str, Any], commands: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -23510,7 +23541,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             prefetch_failure = prefetch_blocked.get(
                 (str(candidate["key"]), str(candidate["resultDigest"]))
             )
-            if prefetch_failure:
+            if prefetch_failure and not _validation_corepack_transport_retry_due(prefetch_failure):
                 environment_blocked.append(
                     candidate
                     | {

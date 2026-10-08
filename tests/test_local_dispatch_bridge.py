@@ -35618,6 +35618,60 @@ def test_validation_followup_prefetch_failure_is_blocked_without_delivery(monkey
     assert store.unresolved_validation_followups() == []
 
 
+def test_validation_followup_retries_observed_corepack_transport_failure(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green",)
+    )
+    (worktree / "package.json").write_text('{"packageManager":"pnpm@10.17.1"}\n')
+    (worktree / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    value = json.loads(result_path.read_text())
+    value["changedFiles"] = ["runtime.ts"]
+    value["tests"] = [{"command": "pnpm build", "exitCode": 127, "summary": "corepack not found"}]
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path)
+    store.record_validation_deferred(
+        "a/b#1", thread_id="thread-1", result_digest=digest, missing=["relevant_tests_green"]
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    failure = {
+        "kind": "pnpm_corepack_locked_install",
+        "failureType": "COMMAND_FAILED",
+        "summary": "corepack.cjs:13170\nError: Error when performing the request to https://registr",
+    }
+    actual_datetime = datetime
+
+    def listed_after(blocked_at, seconds):
+        class Clock(actual_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return MODULE.parse_time(blocked_at) + timedelta(seconds=seconds)
+
+        monkeypatch.setattr(MODULE, "datetime", Clock)
+        return MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    first_event = None
+    for attempt, delay in [(1, 300), (2, 900), (3, None)]:
+        store.record_validation_prefetch_blocked(
+            key="a/b#1", thread_id="thread-1", result_digest=digest, dependency_failures=[failure]
+        )
+        blocked = store.validation_prefetch_blocked()[0]
+        with store.connect() as connection:
+            rows = connection.execute(
+                "SELECT id,payload_json,created_at FROM events WHERE event_type='VALIDATION_PREFETCH_BLOCKED' ORDER BY id"
+            ).fetchall()
+        if first_event is None:
+            first_event = tuple(rows[0])
+        assert tuple(rows[0]) == first_event
+        if delay is None:
+            assert listed_after(blocked["blockedAt"], 86400)["candidates"] == []
+        else:
+            assert listed_after(blocked["blockedAt"], delay - 1)["candidates"] == []
+            listed = listed_after(blocked["blockedAt"], delay)
+            assert [item["resultDigest"] for item in listed["candidates"]] == [digest]
+        assert len(rows) == attempt
+        assert store.unresolved_validation_followups() == []
+
+
 def test_validation_prefetch_failure_does_not_reserve_followup(monkeypatch, tmp_path):
     store, _worktree, result_path = _controller_commit_result(
         tmp_path,

@@ -254,7 +254,11 @@ receiving their own worktrees.
   pre-commit environments. The controller never interprets or executes
   dependency commands. It then resumes the same task once. A changed result
   digest rearms validation without duplicating the previous wake-up. If the
-  app server returns a durable receipt proving that no target turn started,
+  pinned Corepack download fails with the observed fetch transport error, the
+  same bound result gets at most two automatic prefetch retries, after five
+  and fifteen minutes. Each failed attempt remains recorded. Other failures
+  stay blocked; retries use the same locked command and never bypass checks.
+  If the app server returns a durable receipt proving that no target turn started,
   the local collector retires the failed reservation after one minute and
   retries the same serialized work item. It never releases a reservation on an
   ambiguous or materialized turn. A sent follow-up that remains on the same
