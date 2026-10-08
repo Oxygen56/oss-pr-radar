@@ -287,6 +287,10 @@ receiving their own worktrees.
   unrelated fork is preserved. Push effects bind the actual target repository;
   normal same-name effects keep their existing request digest. PR creation still
   uses the authorized upstream and personal `owner:branch` in its fork network.
+  Named fork creation supplies the explicit upstream and disables cloning;
+  GitHub CLI rejects an explicit `--remote` flag in that form. An expired
+  reservation enters the existing signed absence-reconciliation path even
+  before expiry housekeeping runs, then reuses its original row after release.
   Reviewer transport failures persist a fair-rotation cursor and move the next
   cycle to another candidate; no time-based review cooldown is used.
   Broad validation failures must be compared against the same gate on the

@@ -1138,7 +1138,6 @@ def test_fork_name_collision_continues_original_executor_with_real_git(monkeypat
                 "fork",
                 "vercel-labs/skills",
                 "--clone=false",
-                "--remote=false",
                 "--fork-name",
                 "vercel-labs-skills",
             ]

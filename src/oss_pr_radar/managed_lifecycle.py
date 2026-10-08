@@ -4221,7 +4221,7 @@ class ManagedLedger:
                 if existing["state"] == "FINALIZED":
                     connection.commit()
                     return dict(existing) | {"allowed": True, "replayed": True}
-                if existing["state"] in {"EXPIRED", "CHECK_ABSENCE_REQUIRED"}:
+                if existing["state"] in {"ACTIVE", "EXPIRED", "CHECK_ABSENCE_REQUIRED"}:
                     connection.execute(
                         "UPDATE managed_publication_reservations SET state='CHECK_ABSENCE_REQUIRED',updated_at=? WHERE reservation_key=?",
                         (observed, existing["reservation_key"]),

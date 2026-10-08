@@ -463,7 +463,7 @@ def _ensure_fork_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[
             raise RuntimeError(f"publication fork lookup failed: {output(lookup)[:240]}")
         fork_command = ["gh", "repo", "fork", args.repo, "--clone=false"]
         if collision:
-            fork_command.extend(["--remote=false", "--fork-name", fork_repo.rsplit("/", 1)[1]])
+            fork_command.extend(["--fork-name", fork_repo.rsplit("/", 1)[1]])
         created_proc = run(
             fork_command,
             cwd=Path(args.worktree),
