@@ -1838,6 +1838,63 @@ def fetch_target_branch(
         raise RuntimeError("target branch changed after live audit")
 
 
+def _restore_missing_source_parent(path: Path, failure: RuntimeError) -> bool:
+    """Restore the exact missing parent reported by a partial-clone repack."""
+
+    error = str(failure)
+    missing = set(re.findall(r"error: Could not read ([0-9a-f]{40})", error))
+    child = re.search(r"fatal: Failed to traverse parents of commit ([0-9a-f]{40})", error)
+    if (
+        len(missing) != 1
+        or child is None
+        or "fatal: could not finish pack-objects to repack local links" not in error
+        or "fatal: index-pack failed" not in error
+    ):
+        return False
+    parent = missing.pop()
+    local_git = ["git", "--no-lazy-fetch", "--no-replace-objects"]
+    objects = command(
+        [*local_git, "cat-file", "--batch-check"],
+        cwd=path,
+        timeout=15,
+        stdin=f"{parent}\n{child[1]}\n",
+    ).splitlines()
+    if (
+        len(objects) != 2
+        or objects[0] != f"{parent} missing"
+        or not objects[1].startswith(f"{child[1]} commit ")
+    ):
+        return False
+    header = command([*local_git, "cat-file", "commit", child[1]], cwd=path, timeout=15).split(
+        "\n\n", 1
+    )[0]
+    if f"parent {parent}" not in header.splitlines():
+        return False
+    # Fetch the missing ancestry without trusting the broken local negotiation.
+    # No destination ref, FETCH_HEAD, new shallow boundary, or maintenance writes.
+    github_git_command(
+        [
+            "git",
+            "-c",
+            "fetch.writeCommitGraph=false",
+            "fetch",
+            "--refetch",
+            "--filter=blob:none",
+            "--refmap=",
+            "--no-write-fetch-head",
+            "--no-tags",
+            "--no-prune",
+            "--no-auto-maintenance",
+            "--no-recurse-submodules",
+            "origin",
+            parent,
+        ],
+        cwd=path,
+        timeout=180,
+    )
+    return True
+
+
 def source_repo(repo: str, *, target_base: dict[str, Any] | None = None) -> Path:
     GITHUB_ROOT.mkdir(parents=True, exist_ok=True)
     for path in sorted(GITHUB_ROOT.iterdir()):
@@ -1851,7 +1908,13 @@ def source_repo(repo: str, *, target_base: dict[str, Any] | None = None) -> Path
         except RuntimeError:
             continue
         if normalize_origin(origin) == repo.casefold():
-            fetch_target_branch(path, target_base)
+            try:
+                fetch_target_branch(path, target_base)
+            except RuntimeError as exc:
+                if not _restore_missing_source_parent(path, exc):
+                    raise
+                # One recovery attempt, followed by the same audited fetch.
+                fetch_target_branch(path, target_base)
             resolved = path.resolve()
             if target_base is None:
                 prewarm_source_repo(resolved)
@@ -32513,6 +32576,8 @@ def main() -> int:
     title_commit_parser.add_argument("--worktree-path")
     subparsers.add_parser("refresh-prs")
     subparsers.add_parser("refresh-startup-pr-states")
+    source_refresh_parser = subparsers.add_parser("refresh-source-repository")
+    source_refresh_parser.add_argument("--repo", required=True)
     recovery_list_parser = subparsers.add_parser("recovery-list")
     recovery_list_parser.add_argument("--min-age-minutes", type=int, default=90)
     recovery_list_parser.add_argument("--delivery-min-age-minutes", type=int, default=5)
@@ -32777,6 +32842,18 @@ def main() -> int:
         result = title_commit(args)
     elif args.operation == "refresh-prs":
         result = refresh_pull_requests(args)
+    elif args.operation == "refresh-source-repository":
+        # Use the same source preparation as an automatic claim; the normal
+        # signed runtime authorization above remains mandatory.
+        _validated_context_identity(f"https://github.com/{args.repo}/issues/1")
+        source = source_repo(args.repo)
+        selected_ref = _target_ref(source)
+        result = {
+            "ok": True,
+            "sourceRepoPath": str(source),
+            "targetRef": selected_ref,
+            "targetSha": command(["git", "rev-parse", "--verify", selected_ref], cwd=source),
+        }
     elif args.operation == "recovery-list":
         result = recovery_list(args)
     elif args.operation == "recovery-reserve":

@@ -148,6 +148,15 @@ receiving their own worktrees.
   layout; legacy root-level names remain readable only when their repository
   identity is unambiguous. This keeps UI ownership stable while preserving
   repository isolation and avoiding lazy partial-clone timeouts.
+- If that source fetch reports an exact missing parent during partial-clone
+  repacking, the bridge verifies the local child and its missing parent without
+  fetching implicitly. It restores that parent and its ancestry from the same
+  canonical origin, then retries the original audited fetch once. This repair
+  does not change source ownership, existing worktrees, task contexts, refs,
+  `FETCH_HEAD`, or shallow boundaries; the ordinary branch refresh still updates
+  its tracking ref and rejects a changed audited target. The signed runtime
+  operation `refresh-source-repository --repo OWNER/REPO` runs this same source
+  preparation and checkout-readiness check without creating or rebinding tasks.
 - Before queue sync, `orphan-list` reconciles asynchronous worktree creations
   whose real task ID appeared after the controller's initial lookup. Only one
   unbound task matching creation start time, canonical prompt, exact GitHub

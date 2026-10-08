@@ -8838,6 +8838,120 @@ def test_source_repo_confirms_remote_default_when_origin_head_is_missing(monkeyp
     assert run_git(repository, "status", "--porcelain") == ""
 
 
+@pytest.mark.parametrize("target_changed", [False, True])
+def test_source_repo_restores_real_missing_parent_without_rebinding(
+    monkeypatch, tmp_path, target_changed
+):
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    run_git(upstream, "init", "-b", "main")
+    run_git(upstream, "config", "user.name", "Radar Test")
+    run_git(upstream, "config", "user.email", "radar@example.com")
+    commits = []
+    for number in range(3):
+        (upstream / "runtime.py").write_text(f"value = {number}\n")
+        run_git(upstream, "add", ".")
+        run_git(upstream, "commit", "-m", f"baseline {number}")
+        commits.append(run_git(upstream, "rev-parse", "HEAD"))
+    run_git(upstream, "config", "uploadpack.allowFilter", "true")
+    run_git(upstream, "config", "uploadpack.allowAnySHA1InWant", "true")
+    github = tmp_path / "sources"
+    github.mkdir()
+    repository = github / "repository"
+    run_git(tmp_path, "clone", "--no-hardlinks", upstream.as_uri(), str(repository))
+    run_git(repository, "config", "remote.origin.promisor", "true")
+    run_git(repository, "config", "remote.origin.partialclonefilter", "blob:none")
+    run_git(repository, "repack", "-a", "-d")
+    pack_directory = repository / ".git" / "objects" / "pack"
+    saved = tmp_path / "saved-pack"
+    saved.mkdir()
+    for path in pack_directory.iterdir():
+        path.rename(saved / path.name)
+    with next(saved.glob("*.pack")).open("rb") as packed:
+        subprocess.run(
+            ["git", "unpack-objects"],
+            cwd=repository,
+            stdin=packed,
+            check=True,
+            capture_output=True,
+        )
+    # Existing ordinary C points to missing P, outside the retained shallow boundary.
+    shallow = repository / ".git" / "shallow"
+    shallow.write_text(commits[0] + "\n")
+    worktrees = []
+    for number in range(15):
+        worktree = tmp_path / f"linked-{number}"
+        run_git(repository, "worktree", "add", "--detach", str(worktree), commits[2])
+        (worktree / "private.txt").write_text(f"preserve {number}\n")
+        (worktree / "task-context.json").write_text(f'{{"identity":{number}}}\n')
+        worktrees.append(worktree)
+    (repository / ".git" / "objects" / commits[1][:2] / commits[1][2:]).unlink()
+    (upstream / "runtime.py").write_text("value = 4\n")
+    run_git(upstream, "add", ".")
+    run_git(upstream, "commit", "-m", "incoming commit")
+    live_head = run_git(upstream, "rev-parse", "HEAD")
+    target = {
+        "branch": "main",
+        "defaultBranch": "main",
+        "source": "repository_default",
+        "sha": commits[2] if target_changed else live_head,
+    }
+    root_head = run_git(repository, "rev-parse", "HEAD")
+    shallow_bytes = shallow.read_bytes()
+    real_command = MODULE.command
+    failures = []
+    repair_states = []
+
+    def preserved_state():
+        fetch_head = repository / ".git" / "FETCH_HEAD"
+        return (
+            run_git(repository, "show-ref"),
+            run_git(repository, "rev-parse", "HEAD"),
+            shallow.read_bytes(),
+            fetch_head.read_bytes() if fetch_head.exists() else None,
+            [(w / "private.txt").read_bytes() for w in worktrees],
+            [(w / "task-context.json").read_bytes() for w in worktrees],
+        )
+
+    def observed_command(args, **kwargs):
+        if args == ["git", "remote", "get-url", "origin"]:
+            return "https://github.com/a/b.git"
+        restoring = "--refetch" in args
+        if restoring:
+            repair_states.append(preserved_state())
+        try:
+            result = real_command(args, **kwargs)
+        except RuntimeError as exc:
+            failures.append((args, str(exc)))
+            raise
+        if restoring:
+            repair_states.append(preserved_state())
+        return result
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", github)
+    monkeypatch.setattr(MODULE, "command", observed_command)
+    # The source entry itself must encounter the first failure: a failed fetch
+    # can already install its incoming pack before repack-local-links fails.
+    if target_changed:
+        with pytest.raises(RuntimeError, match="target branch changed after live audit"):
+            MODULE.source_repo("a/b", target_base=target)
+    else:
+        assert MODULE.source_repo("a/b", target_base=target) == repository
+    assert len(failures) == 1
+    assert f"Could not read {commits[1]}" in failures[0][1]
+    assert f"Failed to traverse parents of commit {commits[2]}" in failures[0][1]
+    assert "could not finish pack-objects to repack local links" in failures[0][1]
+    assert len(repair_states) == 2 and repair_states[0] == repair_states[1]
+    assert run_git(repository, "rev-parse", "HEAD") == root_head
+    assert shallow.read_bytes() == shallow_bytes
+    assert run_git(repository, "rev-parse", "refs/remotes/origin/main") == live_head
+    assert run_git(repository, "--no-lazy-fetch", "cat-file", "-t", commits[1]) == "commit"
+    for number, worktree in enumerate(worktrees):
+        assert run_git(worktree, "rev-parse", "HEAD") == commits[2]
+        assert (worktree / "private.txt").read_text() == f"preserve {number}\n"
+        assert (worktree / "task-context.json").read_text() == f'{{"identity":{number}}}\n'
+
+
 @pytest.mark.parametrize(
     "remote_error",
     ["fatal: Authentication failed", "fatal: unable to read repository configuration"],
