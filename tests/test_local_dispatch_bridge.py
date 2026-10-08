@@ -35672,6 +35672,75 @@ def test_validation_followup_retries_observed_corepack_transport_failure(monkeyp
         assert store.unresolved_validation_followups() == []
 
 
+@pytest.mark.skipif(shutil.which("npm") is None, reason="real npm is required")
+def test_validation_prefetch_prepares_declared_license_checker_with_real_npm(tmp_path):
+    _store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green",)
+    )
+    manifest_path = worktree / "package.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "local-license-build",
+                "version": "1.0.0",
+                "license": "MIT",
+                "packageManager": "pnpm@10.17.1",
+                "scripts": {"build": "node scripts/generate-licenses.ts && obuild"},
+            }
+        )
+    )
+    lock_path = worktree / "pnpm-lock.yaml"
+    lock_path.write_text("lockfileVersion: '9.0'\n")
+    script_path = worktree / "scripts/generate-licenses.ts"
+    script_path.parent.mkdir()
+    script_path.write_text(
+        "import { execSync } from 'child_process';\n"
+        "const output = execSync('npx license-checker --json', { encoding: 'utf-8' });\n"
+    )
+    value = json.loads(result_path.read_text())
+    value["changedFiles"] = ["runtime.ts"]
+    value["tests"] = [
+        {
+            "command": "test -x node_modules/.bin/license-checker && pnpm build",
+            "exitCode": 1,
+            "summary": "license-checker not prepared",
+        }
+    ]
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path)
+    candidate = {"worktreePath": str(worktree), "resultDigest": digest}
+    commands, failures = MODULE._validation_prefetch_plan(candidate)
+    tool = next(item for item in commands if item["kind"] == "license_checker_local_install")
+    assert tool["argv"][-1] == "license-checker@25.0.1"
+    assert MODULE._unresolved_validation_dependency_failures(commands, failures) == []
+    assert (
+        MODULE._unresolved_validation_dependency_failures(
+            [item for item in commands if item is not tool], failures
+        )
+        == failures
+    )
+    original = {path: path.read_bytes() for path in [manifest_path, lock_path, script_path]}
+    head = run_git(worktree, "rev-parse", "HEAD")
+    corepack = worktree / MODULE.VALIDATION_COREPACK_ENTRY
+    corepack.parent.mkdir(parents=True)
+    corepack.write_text("preserved existing toolchain\n")
+    completed = MODULE._execute_validation_prefetch(candidate, [tool])
+    assert completed[0]["kind"] == "license_checker_local_install"
+    assert (worktree / "node_modules/.bin/license-checker").is_file()
+    actual = subprocess.run(
+        ["npx", "--offline", "license-checker", "--json"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert actual.returncode == 0, actual.stderr
+    assert isinstance(json.loads(actual.stdout), dict)
+    assert {path: path.read_bytes() for path in original} == original
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    assert corepack.read_text() == "preserved existing toolchain\n"
+
+
 def test_validation_prefetch_failure_does_not_reserve_followup(monkeypatch, tmp_path):
     store, _worktree, result_path = _controller_commit_result(
         tmp_path,

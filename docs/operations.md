@@ -258,6 +258,11 @@ receiving their own worktrees.
   same bound result gets at most two automatic prefetch retries, after five
   and fifteen minutes. Each failed attempt remains recorded. Other failures
   stay blocked; retries use the same locked command and never bypass checks.
+  For the observed build script that runs `npx license-checker --json` before
+  `obuild`, the bridge additionally prepares `license-checker@25.0.1` in a
+  separate task-private toolchain and exposes its local executable. The
+  manifest and exact build script must still declare that invocation; project
+  manifests and lockfiles are not changed, and the normal build remains required.
   If the app server returns a durable receipt proving that no target turn started,
   the local collector retires the failed reservation after one minute and
   retries the same serialized work item. It never releases a reservation on an

@@ -213,11 +213,17 @@ VALIDATION_PREFETCH_TIMEOUTS = {
     "pnpm_locked_install": 600,
     "corepack_local_install": 600,
     "pnpm_corepack_locked_install": 600,
+    "license_checker_local_install": 600,
 }
 VALIDATION_COREPACK_PACKAGE = "corepack@0.36.0"
 VALIDATION_COREPACK_PREFIX = ".oss-pr-radar/validation-toolchain"
 VALIDATION_COREPACK_ENTRY = f"{VALIDATION_COREPACK_PREFIX}/node_modules/corepack/dist/corepack.js"
 VALIDATION_COREPACK_TRANSPORT_RETRY_DELAYS = (300, 900)
+VALIDATION_LICENSE_CHECKER_PACKAGE = "license-checker@25.0.1"
+VALIDATION_LICENSE_CHECKER_PREFIX = ".oss-pr-radar/validation-build-tools"
+VALIDATION_LICENSE_CHECKER_ENTRY = (
+    f"{VALIDATION_LICENSE_CHECKER_PREFIX}/node_modules/license-checker/bin/license-checker"
+)
 VALIDATION_POLICY_REVISION = "ci_delegation_v1"
 EXPIRED_PUBLICATION_PROMPT_REVISION = "expired_publication_real_commands_v2"
 TRANSIENT_PUBLICATION_AUDIT_REASONS = {
@@ -21403,7 +21409,9 @@ def _unresolved_validation_dependency_failures(
             f"{failure.get('result', '')}"
         ).casefold()
         covered = False
-        if re.search(r"(?:^|\s)cargo\s", command_text):
+        if "license-checker" in text:
+            covered = "license_checker_local_install" in kinds
+        elif re.search(r"(?:^|\s)cargo\s", command_text):
             covered = "cargo_locked_fetch" in kinds
         elif re.search(r"(?:^|\s)go\s+(?:test|vet|build|run)\b", command_text):
             covered = "go_locked_download" in kinds
@@ -21794,7 +21802,44 @@ def _validation_prefetch_plan(
                         ],
                     }
                 )
+            if "license-checker" in failure_text and _declares_license_checker_build(
+                root, manifest
+            ):
+                commands.append(
+                    {
+                        "kind": "license_checker_local_install",
+                        "cwd": str(root),
+                        "argv": [
+                            "npm",
+                            "install",
+                            "--prefix",
+                            VALIDATION_LICENSE_CHECKER_PREFIX,
+                            "--no-save",
+                            "--package-lock=false",
+                            "--ignore-scripts",
+                            "--no-audit",
+                            "--no-fund",
+                            VALIDATION_LICENSE_CHECKER_PACKAGE,
+                        ],
+                    }
+                )
     return commands, dependency_failures
+
+
+def _declares_license_checker_build(root: Path, manifest: dict[str, Any]) -> bool:
+    scripts = manifest.get("scripts")
+    if not isinstance(scripts, dict) or scripts.get("build") != (
+        "node scripts/generate-licenses.ts && obuild"
+    ):
+        return False
+    source = root / "scripts/generate-licenses.ts"
+    if (
+        source.is_symlink()
+        or not source.is_file()
+        or root.resolve() not in source.resolve().parents
+    ):
+        return False
+    return "execSync('npx license-checker --json'," in source.read_text(encoding="utf-8")
 
 
 def _validation_result_digest(candidate: dict[str, Any]) -> str:
@@ -21958,6 +22003,18 @@ def _execute_validation_prefetch(
             "--ignore-scripts",
             "--prefer-offline",
         ],
+        "license_checker_local_install": [
+            "npm",
+            "install",
+            "--prefix",
+            VALIDATION_LICENSE_CHECKER_PREFIX,
+            "--no-save",
+            "--package-lock=false",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            VALIDATION_LICENSE_CHECKER_PACKAGE,
+        ],
     }
     completed: list[dict[str, Any]] = []
     for item in commands:
@@ -22026,10 +22083,28 @@ def _execute_validation_prefetch(
             scripts = manifest.get("scripts") if isinstance(manifest, dict) else None
             if not isinstance(scripts, dict) or scripts.get("postinstall") != "patch-package":
                 raise RuntimeError("validation dependency patch command is not declared")
+        if kind == "license_checker_local_install":
+            manifest = json.loads((cwd / "package.json").read_text(encoding="utf-8"))
+            if not _declares_license_checker_build(cwd, manifest):
+                raise RuntimeError("validation license checker build command is not declared")
+            if worktree not in (cwd / VALIDATION_LICENSE_CHECKER_PREFIX).resolve().parents:
+                raise RuntimeError("validation license checker toolchain escapes the worktree")
         started = monotonic()
         timeout = VALIDATION_PREFETCH_TIMEOUTS[kind]
         try:
             command(argv, cwd=cwd, timeout=timeout)
+            if kind == "license_checker_local_install":
+                entry = (cwd / VALIDATION_LICENSE_CHECKER_ENTRY).resolve()
+                bin_dir = (cwd / "node_modules/.bin").resolve()
+                if worktree not in entry.parents or worktree not in bin_dir.parents:
+                    raise RuntimeError("validation license checker executable escapes the worktree")
+                if not entry.is_file():
+                    raise RuntimeError("validation license checker executable is absent")
+                bin_dir.mkdir(parents=True, exist_ok=True)
+                link = bin_dir / "license-checker"
+                if link.is_symlink() or link.is_file():
+                    link.unlink()
+                link.symlink_to(os.path.relpath(entry, bin_dir))
             if kind == "pnpm_corepack_locked_install":
                 entry = (cwd / VALIDATION_COREPACK_ENTRY).resolve()
                 bin_dir = (cwd / "node_modules/.bin").resolve()
