@@ -20123,6 +20123,41 @@
     ],
     "why": "Issue reports run-to-run logprob divergence for identical batches on Qwen3.6-35B-A3B (hybrid GDN+MoE) with a concrete repro script and code anchors, but the supplied evidence leaves the root cause unresolved: the reporter explicitly cannot separate Triton fused MoE, GDN chunked prefill over varlen batches, and FA2 varlen, and a commenter attributes the run-to-run part to engine-core batching (multiprocessing) rather than a nondeterministic kernel, while still observing row divergence in FP8 in_proj_qkvz on sm_89. The candidate's own actionability evidence has root_cause_signal=false, and the duplicate assessment flags semantic overlap with PR #55947 requiring human comparison. These unresolved root-cause and duplicate-coverage facts materially determine whether a code fix is actionable."
   },
+  "24f1a4f2a74f989c1accb2802e11a8a2deb13416f5f9b9db22b3b12237225ac7": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal=false while issue_body supplies a specific root cause and code anchors",
+      "open_pr_assessment reports direct code overlap with PR #43074 but duplicateStatus=human_review_required"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: release draft embed/lm_head before target pool sizing",
+      "python/sglang/srt/speculative/eagle_worker_v2.py: idempotent early init_lm_head/init_token_map path"
+    ],
+    "risks": [
+      "Early release may break drafts that do not share target embed/head (standalone EAGLE, different-checkpoint drafts)",
+      "PP ranks without a draft worker must be guarded",
+      "Overlap with open PR #43074 may make this work redundant"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the supplied EAGLE/MTP same-checkpoint command and confirm startup OOM at the draft pool torch.zeros",
+      "After fix, assert target KV pool reaches requested --max-total-tokens and free memory remains positive at pool end",
+      "Regression: standalone EAGLE / different-checkpoint draft and non-last PP ranks must skip the early release without error"
+    ],
+    "unknowns": [
+      "Whether open PR #43074 already resolves the issue or leaves independent implementation space",
+      "Whether the maintainers consider the scheduler-side early-release approach acceptable versus the loader-side alternative"
+    ],
+    "why": "Issue describes a concrete memory-lifetime bug (draft embed_tokens/lm_head copies freed only inside draft.alloc_memory_pool, after target pool sizing) with a measured before/after table and a one-hunk scheduler patch, but the supplied duplicate assessment reports an open PR #43074 ('fix(spec): release draft embed/lm_head copies before KV pool sizing') that directly overlaps the same code path (eagle_worker_v2.py) and references this issue, with duplicateStatus=human_review_required. Coverage by an open PR is an unresolved fact that determines whether independent code work is actionable."
+  },
   "25066b07d1f7cda452b8737faa42d21033e07bc2bfd836691b46bd198f4530fe": {
     "confidence": 0.7,
     "contradictions": [],
@@ -23300,6 +23335,42 @@
       "Whether the failure is a code defect or environment/driver/compile-cache issue"
     ],
     "why": "The issue reports two intermittent CUDA runtime failures (cudaErrorInvalidValue in cuDNN DSA backward, cudaErrorUnknown in packed-THD build_attention_indices) with no deterministic reproducer, no confirmed root cause, and explicit uncertainty whether the two incidents share a cause. The reporter's own questions ask whether existing PRs (#6848, #6206, #6910/#6939) already cover these failures, and the duplicate assessment flags semantic overlap requiring human review. Without a reproduction or root-cause evidence, no concrete code change is actionable."
+  },
+  "29f286fb781a9971d6ea46b1b4ca52bebe3d400bbb8baa42ab756f5ca6810dd2": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence.maintainer_approved=true conflicts with issue body stating maintainer approval is still required and TASKs are draft"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/pkg/mcp/server/proxy_tool.go",
+      "plugins/wasm-go/pkg/mcp/server/proxy_auto.go",
+      "plugins/wasm-go/pkg/mcp/server/proxy_outbound.go",
+      "plugins/wasm-go/pkg/mcp/server/sse_proxy.go"
+    ],
+    "risks": [
+      "No maintainer approval or assignment; TASKs remain draft",
+      "No runtime red/green evidence yet",
+      "Reusing SDK RouteCall accepts unchecked rewrite errors and INFO payload logging"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run go test -count=1 ./... in plugins/wasm-go/pkg/mcp",
+      "Run go test -race -count=1 ./server/...",
+      "Execute three-version routing harness once implemented"
+    ],
+    "unknowns": [
+      "Whether maintainer assignment/approval will be granted",
+      "Whether the design's static root-cause claims hold under runtime reproduction"
+    ],
+    "why": "Design issue #5012 is a planning artifact (issue-spec/design) with draft TASKs and no implementation authorization; preTaskEvidence policy status is needs_assignment with assignmentRequired=true and no assignees, which is a materially blocking unknown for actionable code work. Root cause is described statically but no reproduction or runtime evidence exists."
   },
   "2a04319a1bf88140a0e8e0bb4211629f530d2ed8f0d755ee9b3ada78bc19fe9b": {
     "confidence": 0.85,
@@ -92877,6 +92948,44 @@
     ],
     "why": "Issue is a real user-visible bug with strong reproduction evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed unmerged and do not settle the policy, so a new PR would be premature without maintainer direction."
   },
+  "9f79ffad3d12e79c8720f789e840fdd0afae27f43624f52fdbc3a194e9a53028": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/pkg/mcp/server/proxy_tool.go: restore main-request forwarding for final HTTP tools/list and tools/call via RouteCall",
+      "plugins/wasm-go/pkg/mcp/server/proxy_auto.go: align auto final business dispatch with main-request forwarding",
+      "plugins/wasm-go/pkg/mcp/server/proxy_server.go and proxy_outbound.go: header inheritance and phase-aware response handling",
+      "plugins/wasm-go/pkg/mcp/server/sse_proxy.go: preserve legacy SSE channel model with header compatibility",
+      "plugins/wasm-go/pkg/mcp/server/plugin.go: lifecycle and continuation ownership"
+    ],
+    "risks": [
+      "Scope is broad (proxy_tool, proxy_auto, proxy_server, proxy_outbound, sse_proxy, plugin lifecycle) and could expand into a full #4281 revert if not carefully bounded",
+      "Response-phase changes may expose new response filters/plugins to MCP responses that previously bypassed them, requiring explicit enumeration",
+      "Route-level retries may cause multiple backend arrivals; exactly-once tool side effects are explicitly not guaranteed",
+      "Existing RouteCall INFO logging of full request/response is accepted but must not be treated as a failure marker"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build a conformance-style test asserting post-request filter execution, original route policy, and header passthrough on the legacy path against the pre-#4281 oracle commit",
+      "Reproduce the 5-second truncation regression on affected revision bda81f10 with a 6-second business RPC and route timeout of 15s, then verify the candidate succeeds",
+      "Verify modern/auto final business RPCs no longer use sidecall and that handshake/discovery sidecall counts and targets are unchanged",
+      "Run real proxy-Wasm/Envoy harness with pinned image, config, and synthetic data; record exact commands, hashes, and cleanup proof"
+    ],
+    "unknowns": [
+      "Repository assignment requirement (policy status needs_assignment) is unmet; issue has no assignees",
+      "No runtime reproduction has been executed yet; the proposal explicitly states '当前尚无本提案的运行时复现或修复证据'"
+    ],
+    "why": "Issue #5011 is a maintainer-approved proposal (johnlanni: 'Proposal approved ✅') with a precisely located root cause: PR #4281 switched final tools/list and tools/call from main-request rewrite forwarding to DispatchHttpCall sidecalls, changing post-request filter execution, original route forwarding policy, legacy header passthrough, and imposing the 5s callout default on business RPCs. The proposal pins a compatibility oracle commit (958b5e7f), identifies affected revision (bda81f10), and enumerates concrete code anchors (proxy_tool.go, proxy_auto.go). Six confirmed SPECs define acceptance criteria including a red/green runtime evidence plan. The merged PR #4281 is the introducing change, not a competing fix, so it does not cover this issue. The only gate concern is assignment_required, which is a repository process requirement, not a technical blocker."
+  },
   "9f8d3c286adddf53fa7eaf54d9aca8cc0ab61bddb1754ccc2253db7d5adb2a4c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -102444,6 +102553,33 @@
       "Whether PR #37655 already fixes the root cause or only partially addresses it"
     ],
     "why": "Issue provides a clear root cause (missing encrypted_content replay or previous_response_id chaining in the /v1/messages to Responses API bridge), concrete reproduction steps, and measured evidence of cache misses. Maintainer comment requests more repro details but does not contradict the root cause; the issue remains actionable with a defined fix direction and validation path."
+  },
+  "b22ac7eaeda0fe4bafe6feae4dd4cffbffaa3bc25c4d3b5c2f58b3351dff5bbe": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/smolagents/local_python_executor.py: evaluate_condition must truth-test each non-final comparison result before evaluating the next comparator, while preserving the returned object and leaving the final comparison result untested"
+    ],
+    "risks": [
+      "Changing short-circuit semantics could affect existing behavior for non-boolean comparison results (referenced #192/#638)",
+      "Must preserve the exact returned object and avoid truth-testing the final comparison result"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the issue's FalseLike/Left classes asserting events == ['compare', 'bool'] for `left < 1 < later()` (no 'later' event)",
+      "Run the targeted local_python_executor test module and existing comparison tests to confirm no regression in non-boolean comparison results or pandas error handling"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a minimal, dependency-free reproduction against a pinned base SHA, a clear CPython-vs-smolagents behavioral diff, and a specific code anchor in evaluate_condition where the early return only handles `current_result is False` instead of truth-testing false-like objects before evaluating the next comparator. This is a concrete, actionable correctness fix in the agent runtime path."
   },
   "b23458a086727897c48c5afb097272de6041089847c1ce2260ffeff3434407ee": {
     "confidence": 0.85,
