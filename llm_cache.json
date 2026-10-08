@@ -5550,6 +5550,42 @@
     ],
     "why": "The issue provides a precise root cause: DSV4's compressed KV cache geometry (num_states=2) violates the paged MQA kernel's compile-time block_kv template constraints (32/64), causing an assert or silent memory corruption. It includes code anchors, reproduction details, and a concrete validation path via reference comparison and regression tests. The track is llm_algorithm with kernel_algorithm and numerics_quantization mechanisms, satisfying the algorithm requirement."
   },
+  "0a3a3e1d6dd870c7f7517bb25696e699d7b4670808684bb958a960cc0079b5c5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal=false while issue body supplies explicit root cause and code anchors",
+      "candidate.algorithm_evidence.qualified=true but formula_signal=false and experiment_signal=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: release draft embed/lm_head before target pool sizing",
+      "python/sglang/srt/speculative/eagle_worker_v2.py: idempotent early init_lm_head/init_token_map path"
+    ],
+    "risks": [
+      "Early release may interact with PP ranks that host no draft worker",
+      "Idempotency assumption for repeated init_lm_head/empty_cache must hold across model families",
+      "Duplicate/overlapping open PR #43074 may already cover the same fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the supplied EAGLE/MTP same-checkpoint command on a 2x16GB-class setup and confirm startup OOM at the draft pool torch.zeros",
+      "After fix, assert target KV pool sizes to the requested --max-total-tokens (139000) and free memory remains positive at pool end",
+      "Regression: standalone EAGLE / different-checkpoint draft and non-last PP ranks must skip the early release without error"
+    ],
+    "unknowns": [
+      "Whether open PR #43074 already implements the same scheduler-side release and thus removes independent implementation space",
+      "Whether the issue's proposed scheduler-side fix is the maintainer-preferred approach vs the loader-side alternative"
+    ],
+    "why": "Issue provides a clear root cause (draft embed_tokens/lm_head copies freed only inside draft.alloc_memory_pool, after target pool sizing) with code anchors, a measured before/after table, and a concrete one-hunk scheduler-side fix. However, the supplied duplicate assessment reports an open PR #43074 ('fix(spec): release draft embed/lm_head copies before KV pool sizing') with direct code overlap on eagle_worker_v2.py and semantic overlap on eagle_mtp/under_sized, status human_review_required. Unresolved coverage by an open PR is a materially blocking unknown for independent implementation space."
+  },
   "0a3e8baad96d62a830fbc8fde026097174abbab7e30b5a97fcf13cc7e01022e8": {
     "confidence": 0.8,
     "contradictions": [
@@ -69716,6 +69752,29 @@
     ],
     "why": "The issue provides a precise root cause (duplicate check before trimming in InMemorySessionService), a minimal repro, and a concrete fix with tests. The behavior is a data-loss bug on a critical path, and the proposed contract tests are actionable."
   },
+  "776e3e37232ee9882b8360ee90ce50901b12550f206ac2844183780882901e9e": {
+    "confidence": 0.9,
+    "contradictions": [
+      "algorithm_evidence claims parameter_efficient_finetuning/formula_signal while issue is a Feishu channel parsing bug with no training objective or numerical method"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Lexical 'adapter' match misclassified as PEFT algorithm work",
+      "Root cause already covered by maintainer-owned PR #11563"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [],
+    "why": "Issue is a Feishu channel integration/parsing bug (rich-post media, code, link, and reply context loss) in packages/channels/feishu/src/FeishuAdapter.ts and ChannelBase.ts. Track is llm_algorithm, which requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The 'parameter_efficient_finetuning'/'adapter' match is a lexical false positive on the word 'adapter' (FeishuAdapter), not a PEFT mechanism. This is ordinary provider integration/plumbing work, explicitly excluded for this track. Additionally, maintainer-owned PR #11563 already covers the inbound rich-post media, code/link preservation, and file/image parent reference root cause, with remaining items (shared collect buffering, temp-file lifecycle, merged-forward) explicitly deferred as follow-ups."
+  },
   "776e5cdbcf96ef1c0401e0a7c2b551ab64f45dffd6e0586b8e6f48b2c827fb17": {
     "confidence": 0.85,
     "contradictions": [],
@@ -91387,6 +91446,41 @@
       "Whether maintainers have a preferred design for pinning (e.g., metadata key naming) or whether PR #21682 actually fixes the issue."
     ],
     "why": "The issue precisely identifies a user-visible bug where manual thread renames are overwritten by Observational Memory's auto-generated titles, with clear root cause in the OM persist logic and a concrete proposed fix (pinned titles). The evidence includes code anchors, a proposed design, and test surface, making it actionable."
+  },
+  "9cdc7c82808c0da5ea10988e8eb2293543e6766fbc931bf90006731415298930": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "config/schema.py: refuse lora.r>0 combined with expand_layers and positive freeze_trainable_layers, naming the three fields and pointing to lora.r:0 + quantization:none (sft) or task:sft (pretrain)",
+      "docs/peft-and-efficiency.md and docs/training.md: make LLaMA Pro examples loadable and correct the expand_layers/get_peft_model ordering note",
+      "tests: loader-level refusal tests on sft and pretrain, with lora.r:0 on sft as a passing control"
+    ],
+    "risks": [
+      "Route 1 is a refusal, not a functional composition; route 2 (restricting adapters to new blocks and saving the expanded base) remains a separate enhancement",
+      "PR #1716 and #1494 touch overlapping paths (config/schema.py, trainer/sft.py) and must be checked for conflict before implementation",
+      "freeze_trainable_layers semantics were recently changed by merged #1586; tests must pin the current code behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "CPU test through the real SFTTrainerWrapper.setup() with the tiny Llama fixture, expand_layers + positive freeze_trainable_layers + lora.r>0, asserting the loader refuses",
+      "Same config with lora.r:0 on sft asserts setup succeeds and trainable non-LoRA tensors are only in the appended blocks",
+      "Pretrain variant asserts refusal with a message naming task:sft",
+      "Doc-example load tests for every LLaMA Pro example in peft-and-efficiency.md and training.md"
+    ],
+    "unknowns": [
+      "Whether PR #1716 or #1494 will land first and conflict with the config/schema.py refusal location"
+    ],
+    "why": "Issue #1326 documents a concrete, reproducible LLaMA Pro + LoRA interaction bug: get_peft_model re-freezes the appended blocks after the LLaMA Pro freeze, so with default q/v targets the new blocks receive exactly zero gradient and only original-layer adapters learn. The owner has ruled route 1 (refuse lora.r>0 with expand_layers and positive freeze_trainable_layers at config load), scoped the fix to config/schema.py plus docs and CPU tests, and confirmed no open PR covers the refusal. This is a concrete parameter-efficient-finetuning mechanism with a clear reference-vs-implementation validation path (trainable-set assertion after setup, gradient norms, save/reload logits)."
   },
   "9ce805a9a9c950b9ecefdcd7f4d2a4423852eb4fc6f5adbc717263d987651776": {
     "confidence": 0.55,
