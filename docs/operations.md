@@ -280,6 +280,13 @@ receiving their own worktrees.
   digest; the review creates no sidebar task and performs no public action.
   Pending and granted publication requests are rechecked at the privileged
   execution boundary, so a legacy request cannot inherit a task-authored pass.
+  When the user's same-name fork belongs to a different upstream, publication
+  uses the deterministic `<upstream-owner>-<upstream-name>` fork name instead.
+  It verifies that named fork's exact full name and upstream before selecting
+  its remote, and checks those identities again before pushing. The existing
+  unrelated fork is preserved. Push effects bind the actual target repository;
+  normal same-name effects keep their existing request digest. PR creation still
+  uses the authorized upstream and personal `owner:branch` in its fork network.
   Reviewer transport failures persist a fair-rotation cursor and move the next
   cycle to another candidate; no time-based review cooldown is used.
   Broad validation failures must be compared against the same gate on the

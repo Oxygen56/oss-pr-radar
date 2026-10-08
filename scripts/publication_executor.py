@@ -399,6 +399,28 @@ def ensure_fork(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
     return _guarded_publication_action(args, store, lambda: _ensure_fork_unlocked(args, store))
 
 
+def _collision_fork_repo(upstream_repo: str, head_owner: str) -> str:
+    return f"{head_owner}/{upstream_repo.replace('/', '-')}"
+
+
+def _fork_metadata(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("publication fork lookup returned invalid JSON") from exc
+
+
+def _is_exact_target_fork(metadata: Any, upstream_repo: str, fork_repo: str) -> bool:
+    if not isinstance(metadata, dict) or metadata.get("fork") is not True:
+        return False
+    parent = metadata.get("parent")
+    return (
+        str(metadata.get("full_name") or "").casefold() == fork_repo.casefold()
+        and isinstance(parent, dict)
+        and str(parent.get("full_name") or "").casefold() == upstream_repo.casefold()
+    )
+
+
 def _ensure_fork_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
     match = ISSUE_URL.match(args.issue_url)
     if not match or match.group(1).casefold() != args.repo.casefold():
@@ -418,6 +440,20 @@ def _ensure_fork_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[
     repository_name = args.repo.rsplit("/", 1)[1]
     fork_repo = f"{args.head_owner}/{repository_name}"
     lookup = run(["gh", "api", f"repos/{fork_repo}"], cwd=Path(args.worktree), timeout=45)
+    collision = False
+    if lookup.returncode == 0:
+        metadata = _fork_metadata(lookup.stdout)
+        parent = metadata.get("parent") if isinstance(metadata, dict) else None
+        if (
+            isinstance(metadata, dict)
+            and metadata.get("fork") is True
+            and isinstance(parent, dict)
+            and str(parent.get("full_name") or "")
+            and str(parent.get("full_name") or "").casefold() != args.repo.casefold()
+        ):
+            collision = True
+            fork_repo = _collision_fork_repo(args.repo, args.head_owner)
+            lookup = run(["gh", "api", f"repos/{fork_repo}"], cwd=Path(args.worktree), timeout=45)
     created = False
     if lookup.returncode == 0:
         raw = lookup.stdout
@@ -425,8 +461,11 @@ def _ensure_fork_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[
         detail = output(lookup).casefold()
         if "404" not in detail and "not found" not in detail:
             raise RuntimeError(f"publication fork lookup failed: {output(lookup)[:240]}")
+        fork_command = ["gh", "repo", "fork", args.repo, "--clone=false"]
+        if collision:
+            fork_command.extend(["--remote=false", "--fork-name", fork_repo.rsplit("/", 1)[1]])
         created_proc = run(
-            ["gh", "repo", "fork", args.repo, "--clone=false"],
+            fork_command,
             cwd=Path(args.worktree),
             timeout=180,
         )
@@ -445,10 +484,7 @@ def _ensure_fork_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[
             raise RuntimeError(f"publication fork creation could not be reconciled: {detail[:240]}")
         created = True
         raw = confirmed.stdout
-    try:
-        metadata = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("publication fork lookup returned invalid JSON") from exc
+    metadata = _fork_metadata(raw)
     parent = metadata.get("parent") if isinstance(metadata, dict) else None
     if not isinstance(metadata, dict) or metadata.get("fork") is not True:
         raise RuntimeError("expected publication repository is not a fork")
@@ -457,6 +493,8 @@ def _ensure_fork_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[
         or str(parent.get("full_name") or "").casefold() != args.repo.casefold()
     ):
         raise RuntimeError("existing fork does not belong to the target upstream repository")
+    if collision and not _is_exact_target_fork(metadata, args.repo, fork_repo):
+        raise RuntimeError("named publication fork does not match the exact target repository")
 
     worktree = Path(args.worktree).resolve()
     expected_url = f"https://github.com/{fork_repo}.git"
@@ -507,8 +545,17 @@ def _push_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[str, An
         raise RuntimeError("push owner does not match the publication permit")
     expected_fork = f"{publication['headOwner']}/{upstream_repo.rsplit('/', 1)[1]}".casefold()
     remote_url = output(run(["git", "remote", "get-url", args.remote], cwd=worktree))
-    if normalize_origin(remote_url) != expected_fork:
-        raise RuntimeError("push remote is not the expected user fork")
+    actual_fork = normalize_origin(remote_url)
+    if actual_fork != expected_fork:
+        named_fork = _collision_fork_repo(upstream_repo, publication["headOwner"]).casefold()
+        if actual_fork != named_fork:
+            raise RuntimeError("push remote is not the expected user fork")
+        lookup = run(["gh", "api", f"repos/{named_fork}"], cwd=worktree, timeout=45)
+        if lookup.returncode != 0:
+            raise RuntimeError(f"publication fork lookup failed: {output(lookup)[:240]}")
+        if not _is_exact_target_fork(_fork_metadata(lookup.stdout), upstream_repo, named_fork):
+            raise RuntimeError("push fork does not belong to the target upstream repository")
+        expected_fork = named_fork
     request = {
         "issueUrl": args.issue_url,
         "commitSha": args.commit_sha,
