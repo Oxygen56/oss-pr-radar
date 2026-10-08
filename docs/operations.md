@@ -393,6 +393,12 @@ reported cause. Uninstall an expired staged configuration using the original
 worker installer before activating another release; resetting the staging
 records first loses the receipt needed to authenticate that uninstall.
 
+The heartbeat may continue updating `latest_controller_cycle.json` while startup
+is blocked. This live status report remains available, but is excluded from both
+legacy report import and the bound legacy report digest. Database rows, follow-up
+data and historical reports remain bound and must not change during the snapshot
+and rehearsal.
+
 Then create a fresh live snapshot and rehearsal, generate and validate managed-counts evidence
 against the exact Stage 6 projection, issue the short-lived worker-staging
 authorization, stage the four worker plists unloaded, update the two automations,
