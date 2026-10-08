@@ -30338,6 +30338,42 @@
     ],
     "why": "Issue reports a silent degenerate output on v0.27.0 with NVFP4 and TP8, but lacks a reproducible environment (collect_env not run on affected build) and has no maintainer confirmation. Existing PR #50617 overlaps semantically but is not linked and may not address the root cause. Gate requires HUMAN_REVIEW."
   },
+  "36ea8259e7f5d63e5e627e5f6a3c6a30f6ceda136c979b83710b67cfd912dad8": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/lib/spend-reservation-ledger.ts: refusal diagnostic recording file role and failed predicate without path/salt/request content",
+      "startup check warning when OPENCODEX_HOME resolves inside an iCloud Drive or File Provider synced folder",
+      "docs guidance to keep state directory out of synced folders",
+      "tests/lib/spend-ledger-owner.test.ts or new journal-path fixture covering each refusal predicate"
+    ],
+    "risks": [
+      "Diagnostic must not weaken the strict ownership/link guard or leak sensitive path/salt data",
+      "Startup warning may miss some Google Drive configurations, so absence of warning does not rule out sync",
+      "Exact producer of the extra link remains unidentified; fix is diagnostic/avoidance rather than eliminating the external cause"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the existing production-journal fixture in a disposable home under ~/Documents vs /tmp and compare nlink observations",
+      "Synthetic second hard link on the journal: assert append/compaction refuse with SPEND_LEDGER_OWNER_UNAVAILABLE and unchanged bytes, then remove alias and confirm recovery",
+      "Regression test asserting the new diagnostic reports file role and predicate name without leaking path, salt, or request content"
+    ],
+    "unknowns": [
+      "Which process/provider creates the transient second hard link (not required for the diagnostic/avoidance change)",
+      "Whether the planned change is already covered by open PR #6398 or another in-flight PR"
+    ],
+    "why": "Maintainer and reporter converged on a concrete, reproducible root cause: the spend-ledger journal guard refuses when nlink==2, and an external File Provider/sync daemon (Google Drive 'sync Documents' enabled) transiently adds a second hard link under Documents (819/913 samples nlink=2) versus 0/1370 outside Documents. Maintainer confirmed no OpenCodex code path calls link and that the guard is intended, and is preparing a diagnosable/avoidable change (record file role and failed predicate, startup warning for synced OPENCODEX_HOME, docs guidance)."
+  },
   "36fd654a7fe726f71b8a65afad1b9189533c60eefbb3af4523cb5d363f3f1583": {
     "confidence": 0.7,
     "contradictions": [],
@@ -34792,6 +34828,42 @@
       "Maintainer preference for server-side vs client-side fix"
     ],
     "why": "Issue reports a high-impact tool-call failure in server-filesystem after a schema rewrite, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed: a maintainer fix is needed in the client or server, and the issue is primarily a bug report without a proposed code change. The workaround shim suggests a potential server-side fix, but design confirmation is required."
+  },
+  "3e7e94cb06e4a4864ed45f7e6ae00fe87c4bf9a6093cbf5d46f2b7dae89f78b8": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue proposes a code fix for the flashinfer_trtllm path, while a collaborator comment recommends deepgemm/triton on SM90 and the reporter confirms triton is the working path on H20"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/eplb/expert_location.py: bounds guard on logical_expert_id in logical_to_all_physical",
+      "python/sglang/srt/models/glm5_next.py: route shared-expert weights to an unfused shared-expert module when disable_shared_experts_fusion is set, or raise an explicit error",
+      "python/sglang/srt/layers/moe/fused_moe_triton/layer.py: weight_loader shared-expert branch handling when _has_fused_shared is False"
+    ],
+    "risks": [
+      "Open maintainer-owned PRs #41105/#42845 may already cover or conflict with the same glm5_next/flashinfer_trtllm code path",
+      "flashinfer_trtllm is reported as primarily maintained for sm10x; the H20/SM90 crash may be an unsupported-backend configuration rather than a general bug",
+      "A bounds guard alone converts the crash into an error without fixing shared-expert routing, so a band-aid fix could mask the real defect"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the supplied command: python -m sglang.launch_server --model-path zai-org/GLM-5.3-Flash --tp-size 4 --moe-runner-backend flashinfer_trtllm and confirm the IndexError at expert_location.py:376",
+      "Add a regression test asserting logical_to_all_physical raises a clear error (not IndexError) for logical_expert_id >= cpu_map.shape[1]",
+      "Add a weight-loading test for glm5_next with disable_shared_experts_fusion=True verifying shared-expert weights land in the correct module and no out-of-bounds index occurs"
+    ],
+    "unknowns": [
+      "Whether PRs #41105 or #42845 already fix or supersede this crash path (semantic_overlap_requires_review, no direct code overlap, no issue reference)",
+      "Whether the maintainers consider flashinfer_trtllm on SM90/H20 a supported configuration worth fixing versus a documented limitation"
+    ],
+    "why": "The issue supplies a concrete traceback, executable reproduction command, and a step-by-step root-cause chain (disable_shared_experts_fusion -> determine_num_fused_shared_experts()==0 -> cpu_map shape [num_layers,288] -> shared expert loaded with expert_id=288 -> logical_to_all_physical IndexError). However, the supplied duplicate assessment reports semantic overlap with open maintainer-owned PRs #41105 and #42845 (both touching glm5_next/flashinfer_trtllm/moe_runner_backend) with status 'semantic_overlap_requires_review' and no direct code overlap or issue reference, so it is unresolved whether the fix is already covered. Additionally, a collaborator comment recommends deepgemm/triton on SM90 and states flashinfer_trtllm kernels are mainly maintained for sm10x, and the reporter confirms the working path on H20 is triton fused moe, which materially affects whether this crash path is actionable as a code contribution versus an unsupported-backend configuration."
   },
   "3e84fc74db9b69dd26829742358baac44fd023fff0a0d8dd91bb0c27a3f0ba7d": {
     "confidence": 0.55,
@@ -45349,6 +45421,41 @@
       "Whether PR #11761 already covers this exact root cause or only overlaps paths"
     ],
     "why": "Issue provides a concrete, source-anchored root cause: virtualized row-height measurement writes React state synchronously from Ink commit-time layout listeners (use-box-metrics -> emitLayoutListeners -> resetAfterCommit), producing a measure->heights->offsets->window->measure cycle that exceeds React's nested-update limit. The reporter supplies a deterministic unique-key regression test that still fails with the known duplicate-ID fix (#11743) applied and passes with the proposed VirtualizedList change, which separates this driver from the duplicate-key driver. This is a real, actionable component-level fix with a concrete validation path."
+  },
+  "50a93c8d404e0c229516139a980bf278f600674a03de356c4317b59d932d2948": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue states the fix is in Canvas (agent-server-conversation-service.api.ts) while the maintainer bot questions whether the cloud App-API accepts these fields, implying the change may need to land outside this repo"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/api/conversation-service/agent-server-conversation-service.api.ts: restore a server-side PATCH of repository/branch/provider for cloud conversations",
+      "src/api/cloud/conversation-service.api.ts: reconcile overlayStoredRepoSelection with the server-persisted fields"
+    ],
+    "risks": [
+      "Fix may belong in the cloud/enterprise API rather than this repository",
+      "Overlap with open PR #16666 on the same function could cause conflicting or duplicate work",
+      "Changing PATCH semantics could alter API behavior beyond the bug scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: start conversation without repo, Connect Repo, then GET /api/v1/app-conversations?ids=<id> and assert selected_repository/selected_branch/git_provider are set",
+      "Open same conversation in a second browser/private window and assert repository badge renders",
+      "Regression: local (non-cloud) backend behavior unchanged; server-rejection path still connects repo locally and agent still clones"
+    ],
+    "unknowns": [
+      "Whether the cloud App-API PATCH /api/v1/app-conversations/{id} accepts selected_repository/selected_branch/git_provider",
+      "The required running-app failure capture (screenshot/video) is still a placeholder",
+      "Whether PR #16666 already covers or conflicts with the cloud-side fix"
+    ],
+    "why": "Issue gives a plausible root cause (updateConversationRepository writes only to local storage after the direct agent-server port) and a concrete repro, but two supplied facts materially block actionability: (1) the maintainer bot explicitly requires a running-app capture (screenshot/video) of the failure, which is still a TODO placeholder, and (2) it asks whether the cloud App-API even accepts selected_repository/selected_branch/git_provider in PATCH /api/v1/app-conversations/{id}, i.e. whether the fix belongs in this repo at all. Additionally PR #16666 touches the same function/path with semantic overlap and unresolved coverage, so duplicate/ownership is not settled."
   },
   "50afe7c0b6424b7971df3a266a510a7bb4598ca0352eb1a347abd0136a98c2df": {
     "confidence": 0.8,
@@ -58946,6 +59053,44 @@
       "Whether the ai_disclosure_conflict policy permits an automated public contribution"
     ],
     "why": "The issue reports a concrete, reproducible numerical instability (identical batches give different logprobs; batch2_repeat up to 0.168) with a minimal script and code anchors, but the supplied evidence does not establish a root cause. The reporter explicitly lists three unseparated candidates (Triton fused MoE, GDN chunked prefill over varlen batches, FA2 varlen), and the only comment attributes the run-to-run part to batch composition in vllm/v1/engine/core.py while leaving the shared-step divergence unexplained and card-dependent (FP8 in_proj_qkvz on sm_89 vs a different GEMM on sm_120). No reference-vs-implementation test or numerical regression target is defined yet."
+  },
+  "668c95e9af853721889858839778fa30f5f68114827ad9c463517e11840624da": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body states the responsible operation has not been isolated and attention kernel causation is not established, while candidate.algorithm_evidence lists kernel_algorithm and attention as matched mechanisms"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Isolate the responsible operation in the NVLS batch-invariant prefill path (Mamba/MoE layer pattern ME*)",
+      "Fix the numerical/parity divergence once the operation is identified",
+      "Add or tighten a tolerance/regression test around the isolated path"
+    ],
+    "risks": [
+      "Root cause unisolated; a fix may target the wrong operation",
+      "Distinguishing a genuine numerical bug from expected BF16/FP reduction-order nondeterminism",
+      "Requires 8x H100 hardware and the specific 26.09 CI image, limiting independent reproduction",
+      "Overlap with open PR #7725 (semantic_overlap_requires_review) and related parity issues #7831/#7856/#7845 could mean the root cause is already covered"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the documented command on the CI checkout 722eb084a072fd5b07118ab6b4dfe926d10f5a9d and 8 H100 workers",
+      "Bisect/ablate the NVLS dispatcher, Torch grouped GEMM, and attention backend to isolate the mismatching operation",
+      "Compare dynamic prefill vs full-sequence forward logits with atol=0, rtol=0 after the fix"
+    ],
+    "unknowns": [
+      "Which operation actually produces the logits mismatch",
+      "Whether open PR #7725 or related issues #7831/#7856/#7845 already cover this root cause",
+      "Whether the divergence is a genuine bug or expected reduction-order nondeterminism under batch-invariant mode"
+    ],
+    "why": "The issue reports a concrete, reproducible logits-equality failure (1232/8192 mismatched elements, atol=0/rtol=0) in TestDynamicInferenceNVLS::test_batch_invariant_prefill_matches_full_forward, but explicitly states the responsible operation has not been isolated and that the explicit FlashAttention configuration alone does not establish an attention kernel cause. No root cause is established, so a reference-vs-implementation numerical fix cannot yet be scoped."
   },
   "669679e2ceb0f06ee4cb9d4ef3930850a2e976c1e6be44da20462400fbb15954": {
     "confidence": 0.72,
@@ -81910,6 +82055,38 @@
     ],
     "why": "Issue #1464 documents seven concrete resource-leak sites with executed reproductions, file:line anchors, and observed leftovers; maintainer confirmed the sweep site was fixed by merged PR #1640 and explicitly released the remaining six sites as unclaimed, each independently actionable. The candidate's algorithm_evidence (post_training_objective, PEFT, distributed_training, etc.) is misapplied: this is CLI/resource-lifecycle plumbing, not an LLM algorithm mechanism, so the llm_algorithm track framing is not supported by the evidence."
   },
+  "8d393878c57c4bfaaa2c182456ccde3b2c30ce9669c85dfd26ba4b0af0735a7c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/find.ts searchSkillsAPI ranking/re-sort logic",
+      "limit handling passed to /api/search",
+      "exact-name match prioritization over install count"
+    ],
+    "risks": [
+      "Changing ranking may regress #546 intent to prefer popular skills",
+      "API-side ranking behavior may be outside repo control",
+      "Need to confirm whether fix belongs in CLI re-sort or API query"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test reproducing `find eval` with limit=20 returning no exact-name matches",
+      "Regression test asserting exact-name matches (expo-skill-eval, agentic-eval, llm-evaluation, eval-harness) appear near top",
+      "Test that limit variations (10/20/30/50/100) do not drop exact-name matches"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the API limit-dependent ranking a server-side issue rather than CLI-side",
+      "Whether #754 is a duplicate root cause"
+    ],
+    "why": "Issue provides a concrete user-visible bug with a public repro (`npx skills@1.7.1 find eval`), API-level evidence showing `limit` changes ranking, and code anchors (`src/find.ts`, `searchSkillsAPI`, client-side install-count re-sort from #546). Root cause is plausibly identified: client re-sorting by install count plus API limit-dependent recall pushes exact-name matches out. This is actionable code work in an agent/AI infra CLI search path."
+  },
   "8d3b49f070eda3a23a52ec812c433cd22c6ca59a51d9f9f86aa156f5d304165a": {
     "confidence": 0.8,
     "contradictions": [
@@ -88597,6 +88774,39 @@
     ],
     "why": "Issue has a clear root cause and reproduction, but a maintainer/collaborator already opened PR #12726 directly covering the same fix in the same file, and the issue requires assignment. Competing work is not clearly actionable until the existing PR is resolved or the maintainer explicitly invites a contribution."
   },
+  "98be03f3319ed496c87a82e5a703bc47d8a9c3ef98eb1f9ddb624107317a38b8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/utils/conversation-archive-status.ts: single shared archived predicate distinguishing MISSING from ERROR",
+      "src/components/features/conversation-panel/conversation-panel.tsx: list visibility and Archived chip driven by the shared predicate",
+      "src/stores/archived-conversations-store.ts: tri-state explicit archive intent with override semantics",
+      "src/components/features/conversation-panel/conversation-status-dot.tsx: keep ERROR as red Error indicator, not archived",
+      "conversation card menu: single direction (Unarchive vs Archive) consistent with effective archived state"
+    ],
+    "risks": [
+      "Unarchive semantics for a still-MISSING runtime require the tri-state override design; without it the action is a no-op",
+      "Scope creep into #17374 lifecycle normalization if the shared predicate is over-generalized",
+      "Behavior change to list visibility could surprise users who expect missing-runtime history to remain visible"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: sandbox_status MISSING (Cloud) row is hidden by default, shown with Archived chip under Show archived, and menu offers Unarchive",
+      "Regression test: local runtime_info.runtime_status missing + can_resume false produces the same archived behavior",
+      "Regression test: ERROR runtime keeps red Error indicator and does not inherit archived chip or archive-gated read-only treatment",
+      "Test that explicit Unarchive override on a MISSING row yields neutral Unavailable status while runtime stays missing"
+    ],
+    "unknowns": [],
+    "why": "Issue documents a concrete, reproducible UI state inconsistency: two independent archive notions (sandbox_status-derived indicator vs browser-local archived store) disagree, with named code anchors and a triage-confirmed interim direction (treat MISSING/non-resumable runtime as archived everywhere, unify behind a single predicate, keep ERROR distinct). Acceptance criteria and a regression-test requirement are explicit, giving a clear reference-vs-implementation validation path."
+  },
   "98e2f618fa730be0f2715bbd17995145d29b5fd6917d0461057d8657729699dd": {
     "confidence": 0.85,
     "contradictions": [
@@ -93304,6 +93514,44 @@
       "No open PR or duplicate fix was found, but coverage was only checked against supplied evidence"
     ],
     "why": "Issue provides a concrete, reproducible root cause: SarvamRealtimeSTTService forces reconnect_on_error=False, its receive-loop override marks the service unusable on any close, and a failed first connect is never retried while the service stays usable. Reproduction is executable with a local websocket server and expected/actual outputs are given, so the fix is actionable."
+  },
+  "a0e47d1740132561551c84cd71888a6bae117412cfb9cf5d2afcf8e935f52bfc": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while the issue body supplies a detailed root cause and code anchors; the flag appears stale rather than a real contradiction."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: release draft embed/lm_head before pool profiling",
+      "python/sglang/srt/speculative/eagle_worker_v2.py: ensure early release is idempotent with later alloc_memory_pool path",
+      "python/sglang/srt/mem_cache/kv_cache_configurator.py: confirm draft pool sizing reuses target memory_pool_config correctly"
+    ],
+    "risks": [
+      "Early release may interact with PP ranks or non-last stages where draft_worker is None; the hasattr guard must be validated.",
+      "If the sharing path is not truly idempotent for some model families, the early call could rebind tensors incorrectly.",
+      "Open draft PR #42210 overlaps scheduler.py and 'checkpoint' semantics but does not reference this issue and is WIP; it does not establish coverage of this root cause."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided sglang serve command on nvidia/Qwen3.8-27B-NVFP4, tp=2, --max-total-tokens 139000, EAGLE draft from same checkpoint; assert startup succeeds and pool sizes to 139000 tokens.",
+      "Regression: run without the patch and confirm the same command OOMs at draft pool torch.zeros, matching the reported traceback.",
+      "Verify idempotency: confirm the later init_lm_head inside draft.alloc_memory_pool is a no-op and no double-free or tensor rebinding error occurs.",
+      "Guard test: run standalone EAGLE / different-checkpoint draft and PP ranks without a draft to confirm the hasattr guard skips cleanly."
+    ],
+    "unknowns": [
+      "Whether PR #42210 actually touches the same embed/lm_head release ordering or only shares the scheduler.py path; direct code overlap is reported as false.",
+      "Whether maintainers require a specific assignment or design confirmation for scheduler.py changes; none is indicated in supplied evidence."
+    ],
+    "why": "Issue identifies a concrete root cause: EAGLE/MTP same-checkpoint draft keeps redundant embed_tokens/lm_head copies resident because the sharing/free path (init_lm_head/set_embed_and_head) runs inside draft.alloc_memory_pool, after target pool sizing and draft pool allocation. Evidence includes exact code anchors (eagle_worker_v2.py:310-353, qwen3_5_mtp.py:170-187, kv_cache_configurator.py:366-370), a measured before/after table (106501 vs 139000 tokens, OOM vs healthy), a traceback, and a one-hunk guarded scheduler-side fix with idempotency/fallback reasoning. This is a memory-pool sizing invariant, not mere plumbing."
   },
   "a0ea9a30c80f30182181be6ab1e2c48c84b56b86a8d38f2591db62456980ed3d": {
     "confidence": 0.55,
@@ -128969,6 +129217,41 @@
     ],
     "why": "Issue reports a concrete, reproducible user-visible latency bug (~120s vs ~5s) with ordered reproduction steps, expected/actual behavior, isolation tests ruling out config and MCP servers, and static code anchors pointing to 120000ms waits in runAndWait()/streamOutput() and completion-event handling. No open PR or duplicate issue covers it. Root cause is suspected rather than confirmed, but the evidence supports a concrete reference-vs-implementation validation path (native Codex ~5s vs Ekko ~120s) and targeted code investigation."
   },
+  "df97c160f20b0a88377dd808ef92f85af54da232078d267d466c676f59faf30d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body initially describes missing main-view indicator generally, then amends scope to mobile-only; follow-up comment first claims subagents overview is gone entirely, then corrects that desktop still shows them."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/app/src/pages/session.tsx: surface child/subagent running/stuck status in main agent view (mobile)",
+      "packages/app/src/utils/session.ts: derive subagent status from session children/active state",
+      "packages/core/src/session.ts or packages/schema/src/session.ts: ensure child status fields are available to the view"
+    ],
+    "risks": [
+      "Scope ambiguity: original issue was main-view indicator, follow-up narrowed to mobile-only; fix must not regress desktop.",
+      "Stuck detection heuristic (frozen tokens.output) may be noisy and needs a defined threshold.",
+      "Pre-review flagged base_sha_changed, so the branch base may need rebasing before validation."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: start parent session, launch a long-running subagent, stay on main agent view on mobile viewport; assert a running/stuck indicator appears.",
+      "Regression: verify desktop subagent display next to session title is unchanged.",
+      "Unit test the status-derivation helper with mocked children (running, frozen tokens.output, completed)."
+    ],
+    "unknowns": [
+      "No confirmed root cause in code (root_cause_signal=false); the exact component/state path for the mobile omission is not yet identified.",
+      "No maintainer design preference recorded for how stuck subagents should be surfaced."
+    ],
+    "why": "Issue reports a concrete UI/state-surfacing gap: the main agent view (mobile) does not show running/stuck subagents, while desktop does and the API exposes children via parentID. Comments provide ordered repro steps, expected/actual pairs, and API-level evidence (GET /api/session?parentID=... returns children; /api/session/active shows running with frozen tokens.output). This is actionable frontend/state work in an agent-infra repo, not a docs/CLI/install task."
+  },
   "df9dfc48a70eee0386c16a471c8471fca4c204f105633de04b7d0785ce5981fb": {
     "confidence": 0.6,
     "contradictions": [],
@@ -137707,6 +137990,39 @@
     ],
     "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced stream=true in transform_responses_api_request and incomplete aggregation in the streaming iterator, with concrete evidence and suggested fix locations. This is actionable for an agent_ai_infra track."
   },
+  "edcb6b126ab007d00823d608de69c434ea9b02e6bdcfcf2be7c656899800da62": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "examples/modelopt/quant_configs/nvfp4_experts.yaml: add '*mtp*' exclusion",
+      "examples/modelopt/quant_configs/nvfp4_experts_weightonly.yaml: add '*mtp*' exclusion",
+      "Real-quant Nemotron-3 Super recipes: set vllm_kwargs.speculative_config.num_speculative_tokens to 0"
+    ],
+    "risks": [
+      "Disabling MTP speculative decoding changes rollout behavior and may mask the underlying vLLM layout bug until vLLM #54574 is adopted",
+      "The '*mtp*' exclusion pattern could over-match other MTP submodules if naming differs across model variants",
+      "Recipe-only workaround may need removal once vLLM support lands, requiring follow-up cleanup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run grpo-nemotron3-super-120BA12B-16n4g-megatron-qa-nvfp4-w4a16-real-300step.sh and confirm Bridge conversion no longer reports unmapped mtp.layers.0...experts.linear_fc1/fc2.weight_quantizer._amax",
+      "Confirm initial vLLM refit no longer enters NemotronHMTP.load_weights/_load_w13 and does not raise 'shard_dim=0 is not a valid data dimension for a 3D tensor'",
+      "Run the W4A4 variant and verify both nightly tests complete with the recipe-only workaround"
+    ],
+    "unknowns": [
+      "Whether the exact '*mtp*' quantizer_name pattern is accepted by the ModelOpt config schema in this repo version",
+      "Whether maintainers prefer the recipe-only workaround versus waiting for vLLM #54574 adoption"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause for two sequential MTP quantization failures: broad '*.experts.*' ModelOpt patterns matching the MTP grouped-MoE module create unmapped _amax buffers, and vLLM 0.29.0 builds the NemotronHMTP drafter with an incompatible quantized expert layout. Both are tied to specific config files and a concrete recipe-only fix, with a clear validation path via the W4A16/W4A4 nightly recipes."
+  },
   "edcd4d8de7ec8b2d897d486b7fec2f465b62a65a64cc0366d2bee7627e09c26d": {
     "confidence": 0.9,
     "contradictions": [
@@ -141052,6 +141368,41 @@
     ],
     "why": "Issue documents a clear user-visible streaming/non-streaming discrepancy for reasoning_content on the alibabacloud DeepSeek adapter, with a reproducible curl A/B test. However, the supplied evidence explicitly lacks a root-cause signal (root_cause_signal=false) and the issue itself states the direct upstream provider response was never tested independently, so it is unknown whether the loss occurs in the upstream adapter, the provider's SSE field shape, or LiteLLM's stream normalizer. Without that determination, the concrete code change is not yet actionable."
   },
+  "f3971b5fd6ed6c80e5484f35743172b92adfde42667989345e67c51ea0edcb05": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "config/schema.py: add load-time refusal for lora.r > 0 combined with expand_layers and positive freeze_trainable_layers, naming the three fields and pointing to lora.r: 0 + quantization: none (sft) or task: sft (pretrain)",
+      "docs/peft-and-efficiency.md and docs/training.md: make every LLaMA Pro example load and correct the expand_layers/get_peft_model ordering note",
+      "tests: refusal test on both sft and pretrain through the loader, with lora.r: 0 on sft as a loading control"
+    ],
+    "risks": [
+      "Route 2 (composing LLaMA Pro with LoRA) is explicitly deferred; a fix must not silently implement it",
+      "Saved adapters from the current q/v path reload silently wrong (peft drops layer-2/3 keys), so any partial fix must not leave that path reachable",
+      "freeze_trainable_layers semantics for zero/negative values must stay consistent with the recently merged description fix (#1586)",
+      "PR #1716/#1723/#1494 show semantic overlap on config/schema.py and sft.py but none covers this refusal; must avoid duplicating their scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "CPU test through real SFTTrainerWrapper.setup() with tiny Llama fixture, expand_layers + positive freeze_trainable_layers + lora.r > 0, asserting refusal at load",
+      "Same config with lora.r: 0 on sft asserts setup succeeds and trainable non-LoRA tensors are confined to appended blocks via named_parameters()",
+      "Pretrain variant asserts refusal message names task: sft as the required recipe",
+      "If LoRA is later allowed: backward pass gives non-zero gradient to at least one adapter per appended block, and save+reload reproduces trained logits with max |diff| == 0 on CPU float32"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the refusal scope to also cover freeze_trainable_layers <= 0 with LoRA (expansion without freeze), which the issue leaves as a separate decision"
+    ],
+    "why": "Issue documents a concrete algorithmic defect: get_peft_model re-freezes LLaMA Pro's appended zero-init blocks, so with default q/v targets the new blocks receive exactly zero gradient and all learning lands in adapters on original layers. Owner ruling selects route 1 (refuse LoRA + expand_layers + positive freeze_trainable_layers at load), with explicit acceptance criteria and a CPU reference-vs-implementation validation path via the tiny Llama fixture. This is a parameter-efficient-finetuning mechanism with a measurable gradient/logit regression, not plumbing."
+  },
   "f3a1cc8c679ea5416a1aef3ea3d4f98c48bc50d201c511c454435a1176b5b444": {
     "confidence": 0.6,
     "contradictions": [
@@ -142892,6 +143243,44 @@
       "Whether PR #11913 already covers or conflicts with this root cause"
     ],
     "why": "Root cause is well established (single unchunked POST to /session/:id/attachments, express.raw 8mb, proxy 413 before daemon), but the triage bot explicitly reclassified this as an enhancement folded into deferred reverse-proxy deployment work (#3803), and the issue is not attachments-specific — all daemon binary-ingress routes share the gap. The transport contract (chunk protocol vs documented proxy requirement vs --max-body-size flag) is an unresolved design decision, and open PR #11913 overlaps the same web-shell session path with changes requested. Whether a code contribution is actionable depends on that unresolved scope/design choice."
+  },
+  "f6931d9b3381efc97abce247d4fbd9d41ad42a209149f01439fb6032f0f27d2e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "config/schema.py: add task/path gate validator for rope_scaling_type mirroring SFT_KERNEL_AWARE_TASKS / FREEZE_APPLYING_TASKS",
+      "docs/peft-and-efficiency.md: update scope wording from 'do not consume' to 'refused at load'",
+      "tests: parametrized refusal tests over task literal plus controls for sft/tts/pretrain transformers paths",
+      "changelog fragment"
+    ],
+    "risks": [
+      "Scope creep if wiring RoPE into vision/audio/streaming/unsloth is attempted instead of refusal",
+      "Over-broad validator could break existing configs that silently relied on the field being ignored",
+      "Task literal enumeration must stay in sync with schema task list"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Parametrized test over task literal asserting load_config_from_string fails when rope_scaling_type is set on non-applying tasks, message names field/task/allowed tasks",
+      "Control tests: sft text transformers, tts, pretrain transformers each load with all four rope_scaling_type values",
+      "Path-level tests for vision/audio/streaming/unsloth/mlx paths asserting refusal or application, reading instantiated rotary module",
+      "Mutation check: removing the validator fails the named tests",
+      "Regression: longcontext template and llama3.1-8b-longctx recipe still load"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer refusal vs. wiring for each non-applying path (issue states preference for refusal, but per-path choice is left to the PR)"
+    ],
+    "why": "Issue precisely documents that rope_scaling_type is accepted for all 23 tasks but only read in SFT/tts/pretrain transformers text paths, with exact file:line anchors, a dispatch table, and existing precedent validators (#983, #1532). Acceptance criteria specify a concrete validation path (parametrized load_config_from_string refusal tests, rotary-module inspection, mutation check)."
   },
   "f6948c9e9597bf79aea2baee1a107d5046f441cee90999e97407418aac20e145": {
     "confidence": 0.82,
