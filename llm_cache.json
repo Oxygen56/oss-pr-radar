@@ -7655,6 +7655,36 @@
     ],
     "why": "The issue provides a clear root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm with a concrete mechanism (model_architecture, distributed_training) and a validation path via numerical regression or controlled experiment."
   },
+  "0e4ea4fa9f439f05614a117580dadd92b8d1e4afc8dee6070a18b3a16e598276": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and score=9 claim high algorithmic depth, but the issue body describes only a dtype/backend validation crash"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/server_args.py: reject or auto-fallback dtype=float32 with flashinfer attention backend"
+    ],
+    "risks": [
+      "Fix is a guard/fallback rather than a real FP32 kernel path, so it may be judged low-value plumbing",
+      "Open PRs #41213/#42863 show semantic overlap on dtype/float32 but no direct code overlap; duplicate coverage is unresolved"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Start engine with dtype='float32' and default backend; assert a clear ValueError or successful fallback to torch_native instead of KeyError/SIGKILL",
+      "Regression: dtype='float32' with attention_backend='torch_native' still starts and answers"
+    ],
+    "unknowns": [
+      "Whether maintainers consider a ServerArgs guard acceptable versus requiring an actual FP32-capable backend path"
+    ],
+    "why": "The issue is a documented dtype/backend compatibility crash (KeyError: torch.float32 in FlashInfer's filename_safe_dtype_map) whose suggested fix is a ServerArgs validation guard or backend fallback. This is configuration/CLI plumbing, not an LLM algorithm contribution: no training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is at stake. The 'numerics_quantization'/'distributed_training' mechanism matches are keyword-level (fp32, process group) and do not reflect algorithmic work."
+  },
   "0e5d8ee7ec25f3b6bdb38ec3d8d3dff2004bbcf0c6e96f16e59c0e880f79c085": {
     "confidence": 0.8,
     "contradictions": [
@@ -130507,6 +130537,39 @@
       "Whether the AI disclosure conflict blocks contribution in this repository"
     ],
     "why": "Issue describes a concrete dense-DP IPC payload selection bug with a plausible root cause (data_parallel_rank reset to 0 vs data_parallel_index) and a reproduction script, but supplied evidence contains a materially blocking contradiction: an open PR #56950 already directly references this issue with a matching fix title ('Use DP index for dense DP weight updates'), 2 test files, and review approval, while the duplicate assessment simultaneously claims root_cause_coverage=false and no material competition gaps. This unresolved coverage/duplicate status determines whether independent code work is actionable."
+  },
+  "dffd0320ca6f28e9b854252da1044f3fe93db98e6895690b1efc5ba461740173": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body proposes a concrete root cause, but open_pr_assessment reports rootCauseCoverage=false and duplicateStatus=human_review_required for PR #8607 which references the same issue"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "MiMo-Audio local_transformer / input_local_transformer CUDA graph capture path (eval mode before capture or deferred capture)",
+      "Regression test asserting deterministic greedy output with graphs enabled"
+    ],
+    "risks": [
+      "PR #8607 may already implement the same fix, making this redundant",
+      "Distinguishing dropout-induced nondeterminism from other graph-capture or floating-point variability",
+      "Requires A100-class GPU and MiMo-Audio tokenizer to reproduce"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run examples/offline_inference/mimo_audio/end2end.py three times with fixed seed 42 and compare WAV hashes and Stage 0 token IDs with graphs enabled vs disabled",
+      "Add a regression test that captures the graph and asserts identical token IDs/audio across repeats"
+    ],
+    "unknowns": [
+      "Whether PR #8607 already resolves the reported nondeterminism or leaves independent implementation space",
+      "Whether the maintainers consider the dropout-before-capture diagnosis the accepted root cause"
+    ],
+    "why": "Issue #8601 reports non-deterministic MiMo-Audio greedy output with private CUDA graphs enabled, and the body offers a plausible capture-mode root cause (dropout active during graph capture before model.eval()). However, the supplied evidence shows an open PR #8607 ('Disable dropout before CUDA graph capture') that directly references this issue and overlaps the same code path, so the fix may already be covered. The duplicate/coverage status is explicitly 'human_review_required', which is a materially blocking unknown for deciding whether independent code work is actionable."
   },
   "e001e260a5ed2fdd769d74f02f0262b35373fd44754a00396f3aa234a58bda61": {
     "confidence": 0.8,
