@@ -27588,6 +27588,30 @@
     ],
     "why": "The issue provides a clear frontend-only bug with a concrete root cause: the sidebar reads from the null 'metrics' field instead of the populated 'stats.usage_to_metrics' path. It includes a reproducible command, expected vs actual behavior, and acceptance criteria with a regression test requirement. No competing open PRs or duplicates were found."
   },
+  "31b2a6ea810e89783b7cd57d54d2a2ab464a05874537fe794e5a0da811007c24": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate gate_decision is ALLOW_TO_WORK with score 11, but the supplied reproduction evidence and factory comment state the bug is outside the AI SDK codebase scope."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Any code change in vercel/ai would be a no-op or would incorrectly alter SDK behavior that already forwards the requested limit correctly."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No repository-level regression test is possible; the fix belongs to the hosted Gateway service/model catalog, not vercel/ai."
+    ],
+    "unknowns": [],
+    "why": "The supplied reproduction evidence establishes that the clamp originates in the hosted Vercel AI Gateway service, not in the vercel/ai repository: the SDK-independent raw HTTP request to /v1/responses reproduces the 29,000 clamp without any AI SDK involvement, and the SDK is confirmed to forward maxOutputTokens: 128000 unchanged. The factory's own reproduction comment explicitly concludes the bug is outside the AI SDK codebase scope, so no actionable code change exists in this repo."
+  },
   "31bfb57af3db8ef18646392c3a5c4ae0c2354ab65b61c186dd16662f42c54a9e": {
     "confidence": 0.55,
     "contradictions": [
@@ -30360,6 +30384,40 @@
       "Whether the original field crash is initiated independently of the duplicate-ID driver"
     ],
     "why": "Issue provides a concrete reproduction, an expanded dev-mode stack through useBoxMetrics/emitLayoutListeners/resetAfterCommit, and a source-level mechanism (synchronous setState from Ink commit-phase layout listeners feeding heights -> offsets -> render window -> new measurements). The reporter also supplies a deterministic unique-key regression test that still fails with #11743 applied and passes with the proposed fix, which separates this commit/layout feedback path from the duplicate-history-key driver. Remaining uncertainty is about whether the field crash is independently initiated, not about whether the code work is actionable."
+  },
+  "36bfaf297678cd4657182516f9dba3ffc811ebfdfef59a48ac4c6cc364070ac6": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "config/schema.py: add load-time refusal for lora.r > 0 combined with expand_layers and positive freeze_trainable_layers, with a message naming the three fields and pointing to lora.r: 0 + quantization: none (sft) or task: sft (pretrain)",
+      "docs/peft-and-efficiency.md and docs/training.md: make every LLaMA Pro example loadable and correct the expand_layers/get_peft_model ordering statement",
+      "tests: loader-level refusal tests on both sft and pretrain, with lora.r: 0 on sft as a passing control"
+    ],
+    "risks": [
+      "Route 1 is a behavior change that may break existing configs relying on LoRA + expansion without the freeze; the owner left freeze_trainable_layers <= 0 + LoRA as a separate decision",
+      "The freeze_trainable_layers description was already fixed by merged #1586, so the remaining scope is the refusal plus docs and tests; overlapping edits to the same docs section as #1308",
+      "PR #1716 and #1494 touch config/schema.py and trainer/sft.py with semantic overlap but no direct code overlap or root-cause coverage; they must be compared before submitting to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "CPU test through the real SFTTrainerWrapper.setup() with the tiny Llama fixture, expand_layers + positive freeze_trainable_layers + lora.r > 0, asserting the load is refused",
+      "Same for PretrainTrainerWrapper.setup(), asserting the refusal message names task: sft",
+      "Control: lora.r: 0 on sft with the same expansion loads and leaves trainable tensors only in the appended blocks (assert on named_parameters(), not the helper return)",
+      "Doc-example load tests for every LLaMA Pro example in docs/peft-and-efficiency.md and docs/training.md"
+    ],
+    "unknowns": [
+      "Whether PR #1716 or #1494 will be extended to cover this refusal, which would change the competition picture"
+    ],
+    "why": "Issue #1326 documents a concrete, reproducible mechanism: apply_block_expansion_if_configured freezes everything but the appended blocks, then get_peft_model re-freezes non-adapter params (including the new zero-init o_proj/down_proj) and attaches adapters to all layers; measured per-layer LoRA gradient norms show exactly zero gradient on the new blocks and non-zero on originals. The owner has ruled route 1 (refuse lora.r>0 + expand_layers + positive freeze_trainable_layers at config load), scoped the work to config/schema.py plus docs and CPU tests, and confirmed no open PR covers it. This is a concrete training-mechanism invariant with a reference-vs-implementation validation path (named_parameters after real setup(), gradient norms, save/reload logits diff)."
   },
   "36ccd055a96db4f3c333ed6b3324d810083ea8c01c3d13309563fda93ac094d3": {
     "confidence": 0.8,
@@ -71100,6 +71158,36 @@
     ],
     "why": "Issue reports a concrete bug with a clear repro and plausible root cause (Gemini 3.5 API change). Existing PR #36292 overlaps semantically but is not linked to the issue and may not fully address the root cause. A new PR that directly fixes the mapping and adds a regression test could be materially better."
   },
+  "796c90452fde32e95f63b2086f5196ae1c38b86366a1498b32b6192f781665f8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/agent/component/agent.go: validate grounding result contains substantive text after stripping citation markers before accepting it as the grounded answer",
+      "grounding fallback/error handling must account for deltas already emitted in streaming mode"
+    ],
+    "risks": [
+      "Streaming path cannot retract already-emitted deltas, so the fix must define acceptable failure semantics rather than a simple fallback",
+      "Overly strict marker-stripping validation could reject legitimate answers that contain markers plus text",
+      "Maintainer may have a preferred design for streaming failure handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a component-level regression test that stubs the grounding invoker to return only `[ID:0] [ID:1]` and asserts the original answer is preserved and grounding is not marked applied",
+      "Add a streaming variant test asserting marker-only deltas do not silently replace the answer and failure is surfaced",
+      "Run targeted unit tests for the agent component package plus static checks"
+    ],
+    "unknowns": [
+      "Exact upstream streaming callback contract for surfacing post-emission failure is not fully specified in the issue"
+    ],
+    "why": "Issue provides a deterministic component-level reproduction (stub grounding invoker returning marker-only `[ID:0] [ID:1]`), a concrete code anchor (`applyCitationGrounding` in internal/agent/component/agent.go), and a clear root cause: any nonblank `resp.Content` is accepted as the grounded answer, replacing the substantive answer and marking grounding `applied`, with streaming deltas already emitted. This is an actionable agent-runtime correctness bug with a defined validation path."
+  },
   "79791e1f2f3bac80b509ddb18eccb164784e3105835e4961034c6f07ac6dae10": {
     "confidence": 0.55,
     "contradictions": [
@@ -71504,6 +71592,41 @@
     ],
     "unknowns": [],
     "why": "Issue provides a concrete root cause in packages/mcp/src/tool/oauth.ts: auth() catches InvalidClientError/UnauthorizedClientError, calls invalidateCredentials('all'), and retries authInternal with the same options, which wipes a pre-registered static client and masks the original error during authorization-code exchange. A minimal reproduction with expected/actual behavior is supplied, and the fix scope is localized to the auth/authInternal recovery logic."
+  },
+  "7a38bf04c9a7cb1dd31cf34b8b3395b5d5645fdb6530074202b62f59015c7378": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/agent/component/invoke.go: resolve `variables` and serialize into GET query parameters",
+      "internal/agent/component/invoke.go: serialize `variables` into JSON POST/PUT body preserving array/object types",
+      "internal/agent/component/invoke.go: serialize `variables` into form fields for form datatype",
+      "Preserve existing raw-body-only request behavior"
+    ],
+    "risks": [
+      "Scope creep into the separate save-validation defect mentioned in the issue",
+      "Changing request serialization could alter behavior for existing raw-body configurations",
+      "SSRF/URL validation interactions if query params are appended to rawURL"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing component-level test calling NewInvokeComponent/Invoke with POST, datatype json, no raw body, and variables chunks/top_k; assert downstream receives JSON object with both keys",
+      "Repeat for PUT and for GET asserting configured query parameter appears in URL",
+      "Add form POST test asserting variables become form fields",
+      "Regression test that raw-body-only requests still work unchanged"
+    ],
+    "unknowns": [
+      "Exact maintainer-preferred serialization semantics for edge cases (e.g., nested refs, empty values) is not specified, but does not block a minimal fix"
+    ],
+    "why": "Issue provides a concrete root cause: invoke.go reads only string inputs[\"body\"] and passes rawURL directly to http.NewRequestWithContext, so configured `variables` are never serialized into GET query params or POST/PUT bodies. Reproduction steps, expected/actual pair, and code anchors are supplied, and the reporter states local tests reproduced the empty-body failure and passed after implementing serialization for GET, JSON POST/PUT, and form POST."
   },
   "7a3b310c094519b54ceaa56368ca2d87edbe94b3ea8984e455071d2351c5c656": {
     "confidence": 0.7,
@@ -93255,6 +93378,33 @@
       "Maintainer preference on which alignment option to choose"
     ],
     "why": "Issue identifies a clear correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision."
+  },
+  "9fcc48e1849fab403e21066e687ea51ea880ced83a991c259def0cc6102eafe1": {
+    "confidence": 0.9,
+    "contradictions": [
+      "algorithm_evidence.mechanisms=['parameter_efficient_finetuning'] with matched_terms=['adapter'] conflicts with the actual code anchors (FeishuAdapter.ts, ChannelBase.ts), which are messaging-channel adapters, not PEFT adapters",
+      "candidate.category=PR_COMPETITION_OPPORTUNITY and gate_decision=HUMAN_REVIEW conflict with open_pr_assessment showing maintainer-owned PR #11563 already covering the same paths and semantics"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Misclassifying channel integration work as llm_algorithm would produce a spurious algorithm-correctness task",
+      "Existing maintainer-owned PR #11563 already covers the inbound rich-post/reference parsing root cause"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [
+      "Whether any residual shared-collect buffering or temp-file ownership work remains outside PR #11563's scope, per collaborator comments"
+    ],
+    "why": "Issue #11554 is a Feishu channel integration bug (rich-post/reference parsing loses media, code, links) in packages/channels/feishu/src/FeishuAdapter.ts and ChannelBase.ts. The candidate's algorithm_evidence claims parameter_efficient_finetuning via the matched term 'adapter', which is a false positive: 'FeishuAdapter' is a messaging channel adapter, not a PEFT/LoRA adapter. No training objective, model mechanism, distributed invariant, quantization method, kernel algorithm, or evaluation methodology is present. Track=llm_algorithm requires such a mechanism, so this is ordinary provider/channel integration plumbing and must be rejected."
   },
   "9fef989f0b9fa443256d13371cd59e9c3bc9c431d9b6b1c8c1e6586b9ea35399": {
     "confidence": 0.85,
@@ -122602,6 +122752,39 @@
       "Whether the AI-disclosure policy conflict blocks contribution to this repository"
     ],
     "why": "The issue reports a real regression (build A/B: clean on g487ecf187, degenerate on g385dce36b) but the reporter explicitly could not construct a synthetic reproduction; only long real agentic sessions trigger it. A maintainer comment (ZJY0516) attributes it to 'tool call / vllm frontend', which points at frontend parsing rather than the algorithm mechanisms (attention kernels, TP, FP8) the candidate claims. The candidate's algorithm_evidence lists model_architecture/distributed_training/numerics_quantization/evaluation_method, but the supplied evidence does not establish which of the three candidate components (vLLM commit range, FlashInfer 0.6.18, transformers 5.16.1) is responsible, and the code anchors (collect_env.py, parser glm45/glm47, fused_moe layer) are speculative rather than tied to a demonstrated root cause."
+  },
+  "d3fa861acbbbadf32e246e7f2aaa2b02533fb5096c23ce9b03a743f89f225caa": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/service/agent.go: reuse terminal/source selection for the persisted session answer instead of first-nonempty map iteration",
+      "Ensure display-only Message wrappers are not persisted as model history"
+    ],
+    "risks": [
+      "Map iteration nondeterminism may make the bug intermittent, requiring stubbed deterministic model output",
+      "Changing answer selection could alter behavior for workflows where the first nonempty bucket was intentionally used",
+      "Maintainer may prefer a different selection semantics than terminalCanvasOutput reuse"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build Begin -> query-rewrite Agent -> answer Agent -> Message with distinguishable intermediate JSON and final prose; disable citations",
+      "Execute repeatedly and assert saved session assistant message equals final answer node content, not intermediate JSON",
+      "Continue the session and assert subsequent turns receive the correct assistant history"
+    ],
+    "unknowns": [
+      "Exact code path where the separately collected answer is written to session persistence is not shown in supplied evidence",
+      "Whether maintainers have an existing design preference for answer selection semantics"
+    ],
+    "why": "Issue provides a concrete root-cause hypothesis: RunAgent in internal/service/agent.go selects the first nonempty answer/content/result while ranging over the unordered state.Snapshot() map, so an intermediate node's output (e.g. query-rewrite JSON) can be persisted as the assistant answer even though terminalCanvasOutput resolves the correct final output. Reproduction steps are ordered and include an expected/actual pair, and a validation path (focused regression with SQLite + model stubs, repeated runs) is described. No open PR or duplicate issue covers it."
   },
   "d3fd2440a660b5cc7a01e8fe71ce0ff3611d6c4ac5c79f5c9022015680329bb4": {
     "confidence": 0.6,
