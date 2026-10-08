@@ -18188,6 +18188,32 @@
     ],
     "why": "Issue reports a concrete regression in Buzz's SDK-ts harness where permissionMode defaults to 'dontAsk', overriding the CLI flag and denying all tool calls. Multiple users confirm the symptom. However, the root cause is inferred from user analysis, not confirmed by maintainers, and the open PR/related issue lookup timed out, so duplicate work cannot be excluded. The deterministic gate is HUMAN_REVIEW, and the track is agent_ai_infra, not llm_algorithm, so the algorithm evidence requirement does not apply."
   },
+  "21ddc00c74dd67e072d25248122891dbfda961e09a7e19f184658719df838057": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/service/agent.go: align persisted session answer selection with terminalCanvasOutput/source selection instead of first nonempty map entry"
+    ],
+    "risks": [
+      "Changing answer selection could alter behavior for workflows with multiple terminal outputs or display-only Message wrappers",
+      "Maintainer may prefer a different selection semantics than reusing terminal/source selection"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build Begin -> query-rewrite Agent -> answer Agent -> Message with distinguishable intermediate JSON and final prose, disable citations, run repeatedly, and assert saved session assistant messages and continuation history contain the final answer, not the intermediate JSON."
+    ],
+    "unknowns": [
+      "Exact intended precedence when multiple terminal outputs exist is not specified"
+    ],
+    "why": "Issue provides a concrete root cause: RunAgent in internal/service/agent.go selects the first nonempty answer/content/result while ranging over the unordered state.Snapshot() map, so an intermediate node output can be persisted instead of the terminal answer. Reproduction steps and a validation path (deterministic stubs, repeated runs, session history inspection) are supplied, and no duplicate/merged fix or assignment blocker is present."
+  },
   "21e999e67da83e5205ae0c3b4e2f4520ee9ccecdab93eb5895fa4baecd3085c1": {
     "confidence": 0.6,
     "contradictions": [
@@ -31599,6 +31625,40 @@
       "No maintainer confirmation on preferred implementation, but the suggested fix is straightforward and aligns with sibling executor."
     ],
     "why": "The issue provides a precise root cause: in ModalExecutor._wait_for_server, the retry counter and sleep are only inside the except branch, so a non-200 response causes an unbounded busy loop. A concrete reproduction harness and a suggested fix are included, making the contribution actionable."
+  },
+  "386648c961127ffc3ce08c57e4bc81a8f6a18b2173dc594afce294e56caf6176": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/utils/conversation-archive-status.ts: unify archived predicate and drop ERROR from archived mapping",
+      "src/components/features/conversation-panel/conversation-status-dot.tsx: align indicator with shared predicate",
+      "src/components/features/conversation-panel/conversation-panel.tsx: derive list visibility and Archived chip from shared predicate",
+      "src/stores/archived-conversations-store.ts: integrate explicit archive intent with runtime-derived archived state",
+      "src/api/agent-server-adapter.ts: ensure MISSING/non-resumable normalization feeds the shared predicate"
+    ],
+    "risks": [
+      "Unifying predicates may unintentionally change behavior for explicitly archived rows or other sandbox statuses",
+      "Unarchive must not attempt to resume or connect to a missing runtime; regression risk if store logic triggers runtime actions",
+      "Scope creep into #17374 lifecycle normalization or localStorage migration should be avoided"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for Cloud sandbox_status: \"MISSING\" row hidden by default and shown with Archived chip under Show archived",
+      "Add regression test for local runtime_info.runtime_status: \"missing\" + can_resume: false behaving identically",
+      "Add regression test that ERROR runtime keeps red Error indicator, no Archived chip, not excluded from default list, not archive-gated",
+      "Run npm test and npm run build; optionally verify live via npm run dev against a finished non-resumable conversation"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete, code-anchored root cause: two independent archived notions (runtime-derived isArchivedSandboxStatus vs browser-local archived-conversations store) disagree for MISSING/non-resumable runtimes, and ERROR is incorrectly conflated with MISSING. Acceptance criteria define a single shared predicate and a clear validation path."
   },
   "3869a689a4ac88ee3cd663699f334b613175e4cd5375bedf7806eca3732ff12e": {
     "confidence": 0.85,
@@ -79405,6 +79465,40 @@
     ],
     "why": "Issue describes a concrete quantization-dispatch failure (INCConfig rejected by Qwen4ExpPLEEmbeddingMethod.from_quant_config) with traceback and a tested workaround, but the supplied evidence contains a materially blocking unknown: open PR #58977 ('Support BF16 INC PLE embeddings in Qwen4Exp') overlaps the exact code paths (vllm/models/qwen4_exp/common/ngram_embedding.py, nvidia/ngram_embedding.py) and may already cover the root cause. Duplicate/merged-fix coverage is unresolved (status semantic_overlap_requires_review), and the pre-task policy flags an AI disclosure conflict. These determine whether new code work is actionable."
   },
+  "87b0c807517b5b23705fabf779b789c344417b8098849661014287d7a3bbc7dd": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body states custom subagents pass, but a recent comment reports a custom subagent (planner) failing with the same error"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unclear: possibly the LLM-run request path that attaches x-opencode-session / agent identity for providerID.startsWith('opencode')",
+      "Unclear: possibly Console/Zen free-tier admission logic distinguishing built-in vs custom agents"
+    ],
+    "risks": [
+      "Root cause may live in the closed-source Zen backend, making a client-side fix ineffective",
+      "Fixing the wrong layer could mask the admission gate or weaken free-tier enforcement",
+      "No reproduction path plan was supplied (reproductionPathPlan=false), so a failing test cannot yet be anchored"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Establish a failing test that reproduces the free-tier rejection for a custom primary agent while a built-in primary agent succeeds with the same session/model/auth",
+      "Inspect the outgoing request headers/body for custom vs built-in agents to confirm whether agent identity or session metadata differs"
+    ],
+    "unknowns": [
+      "Whether the rejection is decided client-side (missing agent/session identity) or server-side (Zen admission policy)",
+      "Which exact request field differs between built-in and custom agents",
+      "Whether the maintainers consider this a client bug or intended free-tier restriction"
+    ],
+    "why": "The issue reports a reproducible symptom (custom primary agents rejected by the Console free tier with MissingSessionID while built-in agents work), but the supplied evidence contains no root-cause signal and no code anchor tying the failure to a specific client-side path. The error string is explicitly noted as absent from the desktop bundle and produced by the Zen backend, so the actionable code change is undetermined: it could be a client-side session/agent identity header omission, or a backend admission policy. Without a confirmed root cause or a concrete failing test target, code work is not yet actionable."
+  },
   "87c5d24d76bc26839584c708fe2d333a970f27bee31787adb61d85112ffe193b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -86533,6 +86627,39 @@
       "Whether the orphaned-provider fix should be scoped to this issue or shared with #15447"
     ],
     "why": "Maintainer triage on main confirms two concrete, code-anchored root causes: deferred BEGIN in packages/shared/src/nodeSqliteClient.ts causing immediate SQLITE_BUSY on read-to-write upgrade (busy_timeout bypassed), and RunExecutionService.startRootRun failing the run without calling ClaudeAdapterV2.interruptTurn, leaving the claude process orphaned. Reproduction steps, traceback, span timing (458 ms vs 5 s timeout), and a controlled node:sqlite experiment are supplied; no duplicate/merged coverage and no open PR."
+  },
+  "93e6bde31197371a8ad5f9bc4e84af518f0ec489797ac7493b1b24dcbb610ec3": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "integrations/hermes-plugin-mem0/pyproject.toml: declare ollama dependency or optional extra",
+      "integrations/hermes-plugin-mem0/_oss_providers.py: validate provider SDK availability before constructing Memory",
+      "mem0/embeddings/ollama.py: replace unguarded input() prompt with a clear non-interactive ImportError"
+    ],
+    "risks": [
+      "Changing mem0/embeddings/ollama.py input() behavior may affect interactive users who rely on the install prompt",
+      "Adding ollama as a hard dependency could bloat installs; an optional extra may be preferred",
+      "Windows/Python 3.14 managed environment specifics may not be reproducible in CI"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that constructs the ollama embedder without the ollama package installed and asserts a clear non-interactive error rather than EOFError",
+      "Add a packaging test asserting the ollama dependency/extra is declared and installed in the managed environment",
+      "Reproduce the original failure by installing the plugin per declared requirements and calling mem0_search with ollama embedder configured"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a hard dependency vs optional extra for ollama",
+      "Whether the fix should live in the plugin, mem0ai core, or both"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: hermes-plugin-mem0 declares ollama as a provider with pip_dep but pyproject.toml omits the ollama dependency, and mem0/embeddings/ollama.py performs an unguarded input() on ImportError, producing EOFError in non-TTY environments. Reproduction steps and expected fixes (declare dependency/extra and/or pre-check SDK with clear non-interactive error) are explicit. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific gate does not apply. No duplicate/merged fix covers this; related issues #7568/#7531 share only the 'memory' behavior signature and are distinct defects."
   },
   "940211bc7a43ee86f94ff053abf2d642f242cfc972259d3e870ac149e2d66a27": {
     "confidence": 0.8,
