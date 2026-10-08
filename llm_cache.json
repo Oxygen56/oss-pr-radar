@@ -26379,6 +26379,41 @@
     ],
     "why": "Issue provides a precise root cause: the native Rust sidecar omits native_offloading_capacity in runtime_data, with code anchors and a concrete reproduction. An open PR #14313 directly addresses the same code path but lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "2ecdada8e232e45a8bd9a8f096912df3450df6b0ac11d1699329fc69ce652278": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims message/part rows are never written, but current source at 0621ea9 persists via session_message in projector.ts/sql.ts",
+      "Issue cites migration 20260923013825_project_time_active as introducing the message/part schema, but that migration only adds project activity tracking"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/session/projector.ts",
+      "packages/core/src/session/sql.ts",
+      "packages/core/src/session/message.ts"
+    ],
+    "risks": [
+      "Fixing the wrong persistence path if the reporter's schema is from an older sidecar build",
+      "Expanding API or schema behavior beyond the minimal fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the exact sidecar build and confirm whether durable event rows advance while message/part rows do not",
+      "Add a failing test around SessionMessageUpdater persistence in projector.ts, then run targeted package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact sidecar version/build exhibiting the failure",
+      "Whether durable event rows advance while the UI stays in working",
+      "Sanitized sqlite_master schema of the affected database to identify the actual persistence path"
+    ],
+    "why": "The report describes a real persistence failure with ordered reproduction steps and DB evidence, but the supplied source check at 0621ea9 shows the current projector writes to session_message (projector.ts L395-411, sql.ts L79-96), not the session_v2/message/part tables the reporter cites; the migration 20260923013825_project_time_active only adds project activity tracking. The claimed schema and the current code disagree, so the root cause and the correct persistence path are unresolved."
+  },
   "2ef970abc583932f1c1b7782d719600287e7a0a1e2b67e1b2aa51f3f7bf5936b": {
     "confidence": 0.8,
     "contradictions": [],
@@ -40391,6 +40426,39 @@
     ],
     "why": "The issue describes a reproducible LLM generation bug (infinite exclamation marks) in vLLM with a known workaround (setting max_num_batched_tokens equal to max_length), indicating a concrete root cause in batching/token limits. The evidence includes a clear reproduction path (deploy script, model, environment) and a validation path (comparing behavior with and without the workaround). Although the issue is a bug report rather than a code change, it is actionable for algorithm-level investigation and fix."
   },
+  "4822152d460f3aaf4522b8024babe4b473961c4cd43d9f2b0ae64cb629442716": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter says every dispatch fails on 3.0.65/0.0.86, while commenter reports payloads validate fine on current main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/utils/hooks.ts or hub session.hook error path: include rejected field paths and schema messages",
+      "run-handlers.test.ts: regression test asserting named field paths on invalid payload"
+    ],
+    "risks": [
+      "The 'every dispatch fails' claim may already be fixed on main, leaving only the error-message improvement",
+      "Open PR #14856 may already implement the error-message change, risking duplicate work",
+      "Windows/cmd.exe environment differences could affect reproduction"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a workspace containing .clinerules/hooks/PreToolUse.mjs and run the CLI command from the issue; confirm the error names the offending field path",
+      "Add/run run-handlers.test.ts case feeding an invalid session.hook payload and asserting the error includes the rejected field path"
+    ],
+    "unknowns": [
+      "Whether the dispatch failure persists on a build including PR #14856",
+      "Whether PR #14856 will be merged, making the error-message fix redundant"
+    ],
+    "why": "Issue reports a concrete CLI hook dispatch failure with verbatim error and three reproduction variants; comment thread identifies the actionable sub-problem (session.hook error does not name rejected schema field paths) and a concrete validation path (test in run-handlers.test.ts). Open PR #14856 overlaps only on the error-message aspect and is unmerged, so it does not cover the full dispatch failure. No repository prohibition, assignment requirement, or AI-use blocker is present."
+  },
   "482ed2114b69768416aad498007af395a856ff0f8465533a83eff1b8b7d9c6a6": {
     "confidence": 0.8,
     "contradictions": [],
@@ -45369,6 +45437,35 @@
       "Whether maintainers consider this proxy bug in scope for the llm_algorithm track"
     ],
     "why": "The issue is a well-documented proxy health-check aggregation bug, but the track is llm_algorithm and the required concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is absent. The 'evaluation_method' match is a keyword artifact from health-check aggregation, not an LLM algorithm contribution. This is ordinary proxy/API plumbing, which the track rules explicitly reject."
+  },
+  "50403786580ded9955ae785228a511918d8b50a20618aafe8902d40cabcf0eaa": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/service/agent.go: reuse terminal/source selection (terminalCanvasOutput) for the persisted session answer instead of first-nonempty map iteration",
+      "Ensure display-only Message wrappers are excluded from model history selection"
+    ],
+    "risks": [
+      "Changing answer selection could alter behavior for workflows where the first nonempty bucket was intentionally used",
+      "Map iteration nondeterminism makes the bug intermittent, so a single passing run is not sufficient evidence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build Begin -> query-rewrite Agent -> answer Agent -> Message with distinguishable intermediate JSON and final prose, disable citations, run repeatedly, and assert saved session assistant messages equal the final answer",
+      "Continue the same session and assert the correct assistant history is fed into subsequent turns",
+      "Run targeted unit tests for the agent service package and static checks"
+    ],
+    "unknowns": [
+      "No maintainer confirmation of preferred fix approach, but this is normal review uncertainty and not blocking"
+    ],
+    "why": "Issue identifies a concrete root cause: RunAgent in internal/service/agent.go selects the first nonempty answer/content/result while ranging over the unordered state.Snapshot() map, so an intermediate node's output can be persisted as the session answer instead of the terminal output. Reproduction steps and a validation path (repeated runs with distinguishable intermediate JSON vs final prose, checking saved session history) are supplied, and no duplicate/merged fix or assignment blocker is present."
   },
   "504e23dd5b02ef7bfb5347458fd44e014432f4d4331192c8976033ad7582c13f": {
     "confidence": 0.8,
@@ -76615,6 +76712,39 @@
       "Whether the ai_disclosure_conflict policy permits any automated contribution to this repository"
     ],
     "why": "Issue establishes a clear root cause in _is_preflight_ping() and a concrete validation path, but the supplied evidence shows three open PRs (#17555, #17876, #17636) with semantic overlap on the same mock-LLM server file, and the issue itself states the fix already exists inside PR #17876. Whether that fix is already covered by an open PR is a materially blocking unknown for deciding if new code work is actionable."
+  },
+  "83f9907396f6e3fda42c9831de67a653e9023cd94b3f1866590a90f19f1f0cd1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "burn-wgpu/cubecl Metal kernel synchronization or readback path",
+      "tensor min/max into_scalar sync semantics",
+      "regression test comparing WGPU/Metal vs flex backend outputs for LSTM->Dense->Linear->Sigmoid"
+    ],
+    "risks": [
+      "Heisenbug may be timing/GPU-specific and hard to reproduce deterministically in CI",
+      "Fix may require changes in cubecl/wgpu rather than burn itself",
+      "NdArray removal means comparison baseline must be flex backend"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build a minimal LSTM->Dense->Linear->Sigmoid model, run identical checkpoint/inputs on WGPU/Metal and flex backend, assert outputs match within tolerance",
+      "Add a regression test that calls min().into_scalar()/max().into_scalar() before the final Linear and verifies results are stable",
+      "Run burn-backend-tests linear/module tests on the Metal backend"
+    ],
+    "unknowns": [
+      "Exact code location of the missing sync/readback in the WGPU/Metal path",
+      "Whether the bug reproduces on non-Metal WGPU backends"
+    ],
+    "why": "Issue reports a concrete, reproducible backend correctness divergence: WGPU/Metal inference produces saturated/wrong values while NdArray (now flex) is correct, with a Heisenbug hint (min/max into_scalar before final Linear changes results) pointing to a missing sync/readback in the WGPU path. A collaborator explicitly told the reporter to go ahead, so the work is actionable. Root cause is not yet pinned to a specific line, but the divergence plus the sync hint gives a concrete reference-vs-implementation validation path."
   },
   "83fab0b5825d4638cddb4c6f35490cf2e38f6dd5cc4cbbf519e9b9df08a762f2": {
     "confidence": 0.8,
