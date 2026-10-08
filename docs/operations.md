@@ -318,6 +318,14 @@ receiving their own worktrees.
 
 ## Quality Review
 
+Validation continuation records each newly executed check's original command,
+absolute cwd, integer exit code and phase (`before_fix`, `after_fix` or `formal`).
+Unmarked failed baseline evidence requires a new correctly recorded run; the
+controller does not relabel old results or infer success from `--baseline`.
+The observed `npm_config_offline=true` execution setting is excluded from
+dependency symptom matching. Actual missing or uncached dependencies in the
+captured check description still block validation through the original path.
+
 Run `local_dispatch_bridge.py --runtime-root <runtime-root> metrics --days 30`. Review:
 
 - `submitReadyRate`: primary metric;

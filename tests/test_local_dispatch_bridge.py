@@ -38724,6 +38724,75 @@ def test_sdk_import_standins_can_be_supplemented_by_actual_project_test_pass(com
     ).ready
 
 
+def test_offline_execution_flag_keeps_failed_baseline_in_normal_validation(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green",)
+    )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    value = json.loads(result_path.read_text())
+    baseline = worktree / ".oss-pr-radar/baseline-runtime.py"
+    baseline.write_text(run_git(worktree, "show", "main:runtime.py"))
+    probe = worktree / ".oss-pr-radar/built-entry-regression.py"
+    probe.write_text("import runpy, sys\nassert runpy.run_path(sys.argv[1])['value'] == 2\n")
+    tests = []
+    for target, expected in [(baseline, 1), (worktree / "runtime.py", 0)]:
+        command = "npm_config_offline=true " + shlex.join(
+            [sys.executable, str(probe.relative_to(worktree)), str(target.relative_to(worktree))]
+        )
+        actual = subprocess.run(command, shell=True, cwd=worktree, capture_output=True, text=True)
+        assert actual.returncode == expected
+        tests.append(
+            {
+                "command": command,
+                "cwd": str(worktree),
+                "exitCode": actual.returncode,
+                "stdout": actual.stdout,
+                "stderr": actual.stderr,
+                "result": "Expected assertion failure after the real selected base executed."
+                if expected
+                else "The current implementation passed the same assertion.",
+            }
+        )
+    value["tests"] = tests
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path, store=store)
+    store.record_validation_deferred(
+        "a/b#1", thread_id="thread-1", result_digest=digest, missing=["relevant_tests_green"]
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+
+    # Unmarked baseline evidence still requires a new, correctly recorded run.
+    assert not MODULE.assess_submit_ready(
+        {field: True for field in QUALITY_FIELDS}, task_result=value
+    ).ready
+    assert MODULE._is_validation_dependency_failure(tests[0]) is False
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert [item["resultDigest"] for item in listed["candidates"]] == [digest]
+    assert listed["environmentBlocked"] == []
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=digest,
+            prefetch_complete=False,
+        )
+    )
+    assert reserved.get("blocked") is not True
+    assert reserved["prefetch"] == []
+    assert all(phase in reserved["prompt"] for phase in ["before_fix", "after_fix", "formal"])
+    assert "绝对 cwd" in reserved["prompt"]
+
+
+def test_offline_execution_flag_preserves_actual_dependency_failure():
+    assert MODULE._is_validation_dependency_failure(
+        {
+            "command": "npm_config_offline=true pnpm build",
+            "exitCode": 1,
+            "result": "Offline dependency was not cached; no module named required_sdk.",
+        }
+    )
+
+
 def test_explicit_before_fix_failure_does_not_block_current_passing_fix(tmp_path):
     store, worktree, result_path = _controller_commit_result(tmp_path)
     value = json.loads(result_path.read_text(encoding="utf-8"))

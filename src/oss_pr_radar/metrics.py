@@ -106,8 +106,14 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
 
 
 def is_validation_dependency_failure(item: dict[str, Any]) -> bool:
+    # Keep the observed npm execution flag out of dependency symptom matching.
+    command = re.sub(
+        r"(?<!\S)npm_config_offline=true(?=\s|$)",
+        "",
+        str(item.get("command") or "").casefold(),
+    )
     text = (
-        f"{item.get('command', '')}\n{item.get('summary', '')}\n{item.get('outcome', '')}\n{item.get('result', '')}"
+        f"{command}\n{item.get('summary', '')}\n{item.get('outcome', '')}\n{item.get('result', '')}"
     ).casefold()
     if any(marker in text for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS):
         return True
