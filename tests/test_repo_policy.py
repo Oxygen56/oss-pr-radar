@@ -54,14 +54,14 @@ def test_unedited_llm_boilerplate_quality_rule_is_not_total_ai_prohibition():
     assert policy.ai_prohibited is False
 
 
-def test_explicit_ai_disclosure_is_held_for_user_review():
+def test_explicit_ai_disclosure_is_authorized_and_still_recorded():
     policy = discover_policy(
         FakeClient(
             {"CONTRIBUTING.md": ("Contributors must disclose significant AI assistance in the PR.")}
         ),
         "example/project",
     )
-    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.status == "NORMAL"
     assert policy.ai_disclosure is True
 
 
@@ -83,9 +83,9 @@ provider/model-id values. Human-only work must say so explicitly.
         "example/project",
     )
 
-    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.status == "NORMAL"
     assert policy.ai_disclosure is True
-    assert submission_policy_from_text(text) == "ai_disclosure_conflict"
+    assert submission_policy_from_text(text) == "normal"
 
 
 def test_required_ai_assistance_fields_are_disclosure_policy():
@@ -107,9 +107,9 @@ def test_required_ai_assistance_fields_are_disclosure_policy():
         "bytedance/deer-flow",
     )
 
-    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.status == "NORMAL"
     assert policy.ai_disclosure is True
-    assert submission_policy_from_text(text) == "ai_disclosure_conflict"
+    assert submission_policy_from_text(text) == "normal"
 
 
 def test_required_ai_assisted_contribution_provenance_is_detected():
@@ -121,7 +121,7 @@ The pull request body must preserve and complete the Contribution provenance
 block from the repository template.
 """
 
-    assert submission_policy_from_text(text) == "ai_disclosure_conflict"
+    assert submission_policy_from_text(text) == "normal"
 
 
 def test_conditional_ai_agent_policy_and_scope_confirmation_are_detected():
@@ -139,7 +139,7 @@ comment to the pull request.
 
     policy = discover_policy(FakeClient({"AGENTS.md": text}), "example/project")
 
-    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.status == "NORMAL"
     assert policy.ai_disclosure is True
     assert policy.assignment_required is True
 
@@ -195,7 +195,7 @@ def test_pr_template_ai_disclosure_policy_is_still_detected():
         ),
         "example/project",
     )
-    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.status == "NORMAL"
     assert policy.ai_disclosure is True
 
 
@@ -210,9 +210,9 @@ def test_automated_agent_tool_name_template_is_ai_disclosure_policy():
         "example/project",
     )
 
-    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.status == "NORMAL"
     assert policy.ai_disclosure is True
-    assert submission_policy_from_text(text) == "ai_disclosure_conflict"
+    assert submission_policy_from_text(text) == "normal"
 
 
 def test_dedicated_ai_agent_pr_section_is_a_disclosure_policy():
@@ -230,9 +230,9 @@ In this AGENT section, provide evidence for the implementation and tests.
         "OpenHands/OpenHands",
     )
 
-    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.status == "NORMAL"
     assert policy.ai_disclosure is True
-    assert submission_policy_from_text(text) == "ai_disclosure_conflict"
+    assert submission_policy_from_text(text) == "normal"
 
 
 def test_pr_template_is_prioritized_over_nested_policy_noise():
@@ -288,7 +288,7 @@ def test_required_public_codex_branch_prefix_is_a_disclosure_conflict():
         "example/project",
     )
 
-    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.status == "NORMAL"
     assert policy.ai_disclosure is True
 
 
@@ -340,7 +340,7 @@ get closed on sight.
 
     assert policy.ai_disclosure is True
     assert policy.assignment_required is True
-    assert submission_policy_from_text(text) == "ai_disclosure_and_assignment"
+    assert submission_policy_from_text(text) == "needs_assignment"
 
 
 def test_project_board_ready_gate_is_treated_as_pre_implementation_approval():
