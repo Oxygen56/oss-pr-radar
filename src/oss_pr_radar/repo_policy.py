@@ -33,6 +33,7 @@ POLICY_PARTS = {
 }
 POLICY_FILE_WORKERS = 6
 AI_DISCLOSURE_RE = re.compile(
+    r"\bclear statement that ai assistance was used\b|"
     r"(?:if|when).{0,80}(?:ai assistance|ai[- ]assisted|ai tools?|generative ai)"
     r".{0,100}(?:,\s*|\b(?:please|must|should)\s+)disclos(?:e|ure)\b|"
     r"(?:generative ai|ai[- ]generated|ai[- ]assisted|ai tools?|"
@@ -165,6 +166,11 @@ NONSTANDARD_AGREEMENT_RE = re.compile(
 AI_AGENT_SCOPE_RE = re.compile(
     r"(?:contribution policy for ai agents|if you are an ai agent)", re.I
 )
+AUTOMATED_SUBMISSION_RE = re.compile(
+    r"\bpure\s+code[- ]agent\s+(?:pull requests?|prs?)\s+"
+    r"(?:are\s+)?(?:not allowed|prohibited)\b",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -257,6 +263,8 @@ def select_policy_entries(tree: list[dict[str, Any]], limit: int = 24) -> list[d
 
 
 def _global_submission_blocked(text: str) -> bool:
+    if AUTOMATED_SUBMISSION_RE.search(text):
+        return True
     for pattern in (NO_UNSOLICITED_RE, ISSUES_ONLY_RE):
         for match in pattern.finditer(text):
             prefix = text[max(0, match.start() - 600) : match.start()]
@@ -280,9 +288,9 @@ def classify_policy_text(text: str) -> PolicyTextClassification:
 
 def submission_policy_from_text(text: str, static_rule: str = "normal") -> str:
     flags = classify_policy_text(text)
-    has_ai_policy = static_rule == "ai_disclosure_conflict" or (
-        flags.ai_disclosure or flags.ai_prohibited
-    )
+    # The user authorizes truthful disclosure. A repository's AI-use ban
+    # remains a separate policy restriction.
+    has_ai_policy = flags.ai_prohibited
     needs_assignment = static_rule == "needs_assignment" or flags.assignment_required
     contributions_closed = static_rule == "contributions_closed" or flags.unsolicited_pr_blocked
     nonstandard_agreement = (
@@ -332,7 +340,7 @@ def discover_policy(client: GitHubClient, repo: str) -> PolicySnapshot:
             else "LEGAL_POLICY_REVIEW"
             if flags.nonstandard_agreement
             else "AI_POLICY_REVIEW"
-            if flags.ai_disclosure or flags.ai_prohibited
+            if flags.ai_prohibited
             else "NORMAL"
         )
         digest = sha256_json(

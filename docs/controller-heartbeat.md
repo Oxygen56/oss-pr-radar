@@ -20,9 +20,10 @@ independent.
   task capacity, state, and metrics.
 - The controller owns live GitHub evidence, the durable ledger, task lifecycle,
   Feishu delivery, and policy-permitted publication.
-- Public GitHub content must never disclose AI, Codex, automation, credentials,
-  or private filesystem paths. A repository that requires AI disclosure may
-  receive a private Codex task, but automatic public publication stays blocked.
+- The user authorizes truthful public AI-assistance disclosure. Include required
+  disclosure in the verified PR body before requesting publication. Never expose
+  credentials or private filesystem paths, or falsely certify human review.
+  Repository bans on AI-assisted or fully automated submissions still apply.
 
 ## One command
 

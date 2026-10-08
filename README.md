@@ -132,18 +132,18 @@ two-line task input only after signature and live-evidence checks:
 https://github.com/owner/repo/issues/123
 ```
 
-Repositories that explicitly require AI-use disclosure or prohibit AI-assisted
-contributions cannot enter automatic publication. CLA requirements do not block
+Truthful public AI-assistance disclosure is user-authorized and does not block
+automatic publication. Required disclosure must be in the verified PR body.
+Repositories that prohibit AI-assisted or fully automated contributions remain
+ineligible for automatic publication. CLA requirements do not block
 PR creation, but the system never accepts a CLA. DCO sign-off is permitted only
 with the user's configured Git identity and is revalidated before publication.
 Broader relicensing or proprietary-use contribution agreements are not treated
 as ordinary CLA/DCO and are filtered before task creation.
 
-A disclosure-required repository may still receive a private local-fix task only
-when the issue is otherwise actionable. A semantic `WAIT_MAINTAINER` result is
-dispatchable only when its structured reason is `DISCLOSURE_ONLY`; assignment,
-design, evidence, duplicate, or unclassified waits remain in discovery and do
-not create a desktop task.
+Required human review, assignment, design approval, legal/identity certification,
+and duplicate-work restrictions remain independent of AI-assistance disclosure.
+Do not invent compliance with those requirements.
 
 ## Setup
 
