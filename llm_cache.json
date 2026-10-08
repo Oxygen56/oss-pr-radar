@@ -5225,6 +5225,41 @@
     ],
     "why": "Issue provides a clear root cause (Anthropic tool types not recognized by router capability filter), a deterministic code-level reproduction, and a concrete expected behavior. An open PR (#39094) overlaps semantically but is not linked and lacks root-cause coverage, so a new contribution remains actionable."
   },
+  "09efb1b31d171250455919d25fa0ec93358015d5e27608593bd2a455a7640e0c": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/logprobs.py: append_logprobs_for_next_position accepts per-entry ranks instead of assuming sorted top-k",
+      "vllm/v1/sample/ops/logprobs.py: Sampler.gather_specific_token_logprobs computes a real vocab rank per requested token id",
+      "Rust engine-core client logprobs decoding: rank derived from vocab rank, not list index",
+      "Regression test asserting logprob_token_ids ranks match logprobs=-1 ranks on both model runners"
+    ],
+    "risks": [
+      "Tie handling: vLLM's existing >= rank definition places tied tokens at the end of their tie group, so tests must not assert exact equality with logprobs=-1 for tied tokens",
+      "V2 side depends on #36746 landing; V1 fix must remain standalone and rebase cleanly",
+      "CPU/Triton backend first logprobs=-1 call is slow and can trip the default 300s timeout unless VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS is raised"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal repro with Qwen/Qwen3-0.6B and facebook/opt-125m under VLLM_USE_V2_MODEL_RUNNER=0 and =1; assert each logprob_token_ids entry's rank equals the rank reported by logprobs=-1 for the same token",
+      "Add a unit/regression test comparing logprob_token_ids ranks against the full logprobs=-1 distribution, including a tie case to confirm the existing >= tie semantics are preserved",
+      "Run the wider logprobs/sampler test suite to check no regression in logprobs=k and logprobs=-1 paths"
+    ],
+    "unknowns": [
+      "Whether the repository's AI disclosure policy blocks the automated contribution path (policy status ai_disclosure_conflict) is a process constraint, not a technical blocker for the fix itself"
+    ],
+    "why": "Issue provides a concrete, reproducible algorithm-level defect: `rank` for `logprob_token_ids` entries is the request-list position rather than the vocab rank. Root cause is anchored in code (`append_logprobs_for_next_position` in vllm/logprobs.py, `Sampler.gather_specific_token_logprobs` on V1, `_fill_logprob_token_ids_kernel` on V2, Rust `PositionLogprobs::from_decoded_row`), with GPU and CPU reproductions and a clear reference-vs-implementation validation path against `logprobs=-1`. The author has a standalone V1 fix plus regression test, and the overlapping PR #60377 is the author's own standalone fix, not a competing duplicate."
+  },
   "09f67855e52672e0a2620cd3df8c4d11ac79739c1cb7aac535a0e939e2c795a0": {
     "confidence": 0.6,
     "contradictions": [
@@ -8778,6 +8813,41 @@
     ],
     "why": "Maintainer triage confirms a real mobile work-log presentation bug with concrete root cause: ProviderRuntimeIngestion emits generic fallbacks (`Tool updated`/`Tool`) when payload.title is missing, and mobile threadActivity.ts/thread-work-log.tsx render that summary as row identity while ignoring structured metadata (toolName, kind, command, paths). Concrete code anchors and a shared-helper direction (deriveToolActivityPresentation) are supplied, and the issue is explicitly not a duplicate of the cited related work."
   },
+  "10b47d1ad34dcb3779f9b1e9e0e39074ec3ee589be764f8bf00c3cd78aa33ea4": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while the issue body describes a specific allocator inconsistency (available_size reports the allocation fits but alloc returns None)"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/allocation.py (alloc_token_slots / evict_to_free_tokens / reclaim_plan)",
+      "python/sglang/srt/managers/schedule_batch.py (prepare_for_extend)",
+      "python/sglang/srt/managers/scheduler.py (_get_new_batch_prefill_raw)"
+    ],
+    "risks": [
+      "PR #42700 may already fix the same root cause, making a new fix duplicative",
+      "Fix could alter unified-memory admission semantics and regress non-SWA paths",
+      "Reproduction depends on /flush_cache and /reset_prefix_cache interleaving, which is not fully reduced"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay the attached request_stream.jsonl with repro_wire_log_replay.py against gpt-oss-20b with --enable-unified-memory and confirm the scheduler OOM reproduces",
+      "Run the same replay without --enable-unified-memory as the control and confirm no OOM",
+      "Add a regression test asserting alloc_token_slots does not raise when joint available tokens exceed the requested allocation"
+    ],
+    "unknowns": [
+      "Whether PR #42700 or #43009 already resolves this exact root cause",
+      "Whether the maintainers consider the unified-memory allocator path the intended fix location"
+    ],
+    "why": "Issue supplies a strong reproduction (traceback, ordered steps, executable replay client, A/B comparison with and without --enable-unified-memory) and concrete code anchors in the unified SWA allocator path. However, the supplied evidence explicitly flags an unresolved duplicate/overlap: open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') shares distinctive semantics (alloc_token_slots, scheduler) and PR #43009 touches schedule_batch.py, with duplicateStatus 'semantic_overlap_requires_review'. Whether existing PRs already cover this root cause materially determines whether new code work is actionable, so this is a blocking unknown rather than normal review uncertainty."
+  },
   "10b537ad76035757c85318d3852b7189d287bcf7bf1dd8eef42d3c26a8251943": {
     "confidence": 0.6,
     "contradictions": [
@@ -10533,6 +10603,47 @@
       "Exact root cause of hang in pack_tensors; whether fix should be in TRL or vLLM; reproducibility at smaller scale not verified."
     ],
     "why": "Issue describes a concrete distributed-training deadlock and OOM in AsyncGRPO weight transfer, with clear reproduction steps and expected behavior. It identifies a real algorithmic mechanism (distributed training, numerical precision) and supports a reference-vs-implementation test. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
+  "13e5fa84aa5f25b11d2509d1e922d447da101b26a1dfb50366e212f41f65d8c9": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Open PR assessment flags semantic_overlap_requires_review with PR #1716 (score 22) and #1494 (score 34) on overlapping paths, but none references this issue and none implements the route-1 refusal; owner comment states no open PR covers the refusal"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "config/schema.py: add load-time refusal for lora.r > 0 combined with expand_layers and positive freeze_trainable_layers, naming the three fields and pointing to lora.r: 0 + quantization: none (sft) or task: sft (pretrain)",
+      "trainer/sft.py and trainer/pretrain.py: ensure refusal fires through the real loader path before get_peft_model re-freezes blocks",
+      "docs/peft-and-efficiency.md and docs/training.md: make LLaMA Pro examples loadable and correct the expand_layers/get_peft_model ordering statement",
+      "freeze_trainable_layers field description: align with code for positive, zero, and negative values (partially covered by merged #1586)"
+    ],
+    "risks": [
+      "Route 2 (composing LoRA with LLaMA Pro) is explicitly deferred; a fix must not silently implement route 2",
+      "Pretrain has no lora.r: 0 branch, so the refusal message must direct pretrain users to task: sft",
+      "Docs edits overlap with #1308's section; coordination needed to avoid conflicts",
+      "Existing open PRs (#1494, #1716, #1723) touch related paths (sft.py, schema.py) and may conflict"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "CPU test through real SFTTrainerWrapper.setup() with tiny Llama fixture: expand_layers + positive freeze_trainable_layers + lora.r > 0 is refused at load",
+      "Same refusal test for PretrainTrainerWrapper.setup()",
+      "Control: lora.r: 0 on sft with expand_layers + positive freeze_trainable_layers loads and yields trainable non-LoRA tensors only in appended blocks (assert on named_parameters() after setup)",
+      "Regression: each LLaMA Pro example in docs/peft-and-efficiency.md and docs/training.md loads",
+      "Sign-pinning test for freeze_trainable_layers description vs code for positive, zero, negative"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the merged #1586 description fix sufficient to close the description item, or want an additional sign-pinning test",
+      "Exact refusal message wording and whether it should be a schema-level or loader-level check"
+    ],
+    "why": "Issue provides a measured, reproducible root cause: apply_block_expansion_if_configured freezes non-new blocks, then get_peft_model re-freezes the appended zero-init blocks, so with default q/v targets the new blocks receive exactly zero gradient while the console claims only new blocks train. Owner ruling selects route 1 (refuse LoRA r>0 + expand_layers + positive freeze_trainable_layers at load), with concrete acceptance criteria and a CPU tiny-Llama fixture path. This is a concrete PEFT/model-mechanism and training-objective invariant with a reference-vs-implementation validation path, not mere plumbing."
   },
   "13e7bc093eda0d8f5641120c95af6a91a69e561113b6f386a0812789f9fc4e99": {
     "confidence": 0.8,
@@ -25059,6 +25170,39 @@
     ],
     "why": "Issue provides a clear root cause (placement group deadlock due to insufficient CPU capacity), a concrete reproduction path, and a workaround. The referenced PR #165 directly addresses the root cause with a fail-fast mechanism and cleanup, making the contribution actionable."
   },
+  "2cb64ce37cc23a36c05a831f414838c72d67a1f8a98ccb1a313ce2eb38994de4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe the watch receiver under the list_state read lock after a lag Resync so buffered pre-resync events are dropped",
+      "lib/runtime/src/discovery/kube/daemon.rs: preserve the invariant that list_state updates and event sends occur under the same write lock",
+      "Add a regression test in kube.rs using the 16-slot client_with channel that flaps 16 workers then adds worker 17 and asserts the next event is Added(17)"
+    ],
+    "risks": [
+      "Resubscribing under the read lock could deadlock or contend with the daemon's write-lock path if lock ordering is not preserved",
+      "The 4096-event channel means the lag scenario is hard to trigger in production; the unit test must faithfully simulate the lag to be meaningful",
+      "Overlapping open PR #15767 may already implement a similar fix, so the contribution should add the missing regression test and root-cause coverage rather than duplicate the patch"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test in lib/runtime/src/discovery/kube.rs on a current-thread runtime: 16 workers flap Removed->Added (32 events) before the watch task runs, then worker 17 joins; assert the first event after Resync is Added(instance_id 17), not a stale Removed/Added pair for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib to confirm the new test fails on main (a4adcfe923) and passes with the fix",
+      "Run cargo clippy/check on dynamo-runtime to confirm no regressions in the discovery module"
+    ],
+    "unknowns": [
+      "Whether PR #15767's 40-line change already matches the resubscribe-under-lock approach or takes a different route",
+      "Whether maintainers have a preferred fix location (kube.rs vs daemon.rs) for the resync semantics"
+    ],
+    "why": "Issue provides a concrete root cause (lagged broadcast receiver replays pre-resync buffered events after list_and_watch reconciles from list_state), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a deterministic unit-test reproduction on a current-thread runtime with the 16-slot client_with channel, and an expected-vs-actual event pair. The proposed fix (resubscribe under the list_state read lock, matching mem.rs) is concrete and testable. The open PR #15767 covers the same path but lacks tests and root-cause coverage, leaving a clear gap for a test-backed fix."
+  },
   "2cb812b502e6a1ab0fd78e4f429baa1a7d8ef9ead39292c5465ab560f1991c09": {
     "confidence": 0.85,
     "contradictions": [],
@@ -26826,6 +26970,43 @@
       "Whether maintainers intend the full architectural fix or accept the incremental runtime_config copy in PR #14845"
     ],
     "why": "Issue #14762 is a model-card/runtime-config propagation bug in the ThunderAgent proxy registration path, not an LLM algorithm contribution. The supplied algorithm_evidence only matches generic terms (normalization, overflow) and the issue's own proposed direction is architectural plumbing: stop registering a synthetic model card and route through the existing pluggable router/flow-control contract. No training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is present, so the llm_algorithm track requirement is not met. Additionally, open PR #14845 already directly covers the issue with tests and passing checks, making this a covered opportunity."
+  },
+  "30ecfefa9f013057ff5d5ffc26a9c5d4ab3a34a8db27c9a9463fa5a5719e7773": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while the issue provides detailed measurements and ruled-out hypotheses, leaving the actual defect unlocalized.",
+      "open_pr_assessment reports semantic overlap with PR #40022/#31555 but direct_code_overlap=false and no issue linkage, so duplicate coverage is neither confirmed nor excluded."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/linear.py (fused packed-module loading / shard mapping)",
+      "compressed-tensors W4A16 symmetric group-128 dequant kernel path",
+      "python/sglang/srt/models/llama.py (Qwen3.5 packed_modules_mapping / ignore handling)"
+    ],
+    "risks": [
+      "Root cause may already be covered by PR #40022 or PR #31555, making a new fix duplicative.",
+      "Fixing the fused in_proj_qkvz shard mapping could regress other packed-module models.",
+      "Only tested on sm_120; kernel-path fix may not generalize across architectures."
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's docker command and wikitext-2 PPL harness; confirm SGLang PPL ~9.98 vs vLLM ~6.05 on the same checkpoint.",
+      "Add a targeted unit/integration test that loads the compressed-tensors W4A16 group-128 checkpoint and asserts per-layer weight equivalence against the checkpoint tensors for in_proj_qkvz and the WNA16 kernel path.",
+      "Run the existing compressed-tensors / quantized-linear test suite plus lint on the touched modules."
+    ],
+    "unknowns": [
+      "Which of the two remaining suspects (fused in_proj_qkvz shard mapping vs symmetric group-128 WNA16 kernel) actually causes the degradation.",
+      "Whether PR #40022 or PR #31555 already fixes or subsumes this issue's root cause.",
+      "Whether the failure reproduces on architectures other than sm_120."
+    ],
+    "why": "Issue reports a real quality regression for compressed-tensors W4A16 int4 group-128 checkpoints, with a concrete reproduction and PPL/KLD measurements. However, the root cause is explicitly unverified: the reporter lists two remaining suspects (packed int4 in_proj_qkv sharding into fused in_proj_qkvz, and the symmetric group-128 WNA16 kernel path) and no code anchor or failing test isolates either. The supplied open-PR assessment also flags semantic overlap with PR #40022 (compressed-tensors nvfp4) and PR #31555 (W4A16Sparse24 dense-dequant fallback for compressed-tensors int4) without direct code overlap or issue linkage, so duplicate/coverage status is unresolved. These are materially blocking unknowns for deciding whether a new code contribution is actionable."
   },
   "30fc78275f52ed9ae08cc32fdc9fa7e37bd0c0a22ebd4b32db882efbc2c6c16f": {
     "confidence": 0.8,
@@ -35935,6 +36116,43 @@
     ],
     "why": "Issue #797 documents three concrete mechanisms (TRL config defaults, peft k-bit preparation, unsloth hardcode) with file/line anchors and a CPU reproduction; maintainer comments confirm #1045 shipped the k-bit text-path fix and explicitly enumerate remaining open items (vision/audio test, TRL/HF args threading, unread trainers, unsloth), so the remaining work is well-scoped and actionable."
   },
+  "4113845a915843897311f559eaa4e80a96cdb8713ea10c44b0769eb977e1950f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "preTaskEvidence policy.status=ai_disclosure_conflict and aiDisclosureConflict=true conflict with proceeding to a public code contribution without resolving disclosure requirements"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu_worker.py or equivalent profile_cudagraph_memory() to account for actual graph capture cost including KV block dependence",
+      "KV cache sizing logic to reserve measured CUDA graph memory or adjust cache after capture when budget is exceeded",
+      "early actionable error path when configuration cannot fit"
+    ],
+    "risks": [
+      "Repository AI disclosure policy conflict may block public contribution",
+      "Potential duplicate coverage with issue #60489 sharing cache/memory/oom behavior signals",
+      "Changing KV cache sizing after graph capture could alter memory utilization semantics or break existing gpu_memory_utilization expectations"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on a 24 GiB GPU with Qwen/Qwen3-0.6B and kv_cache_dtype='fp8' to confirm OOM during startup",
+      "Compare startup memory accounting with default KV cache dtype to isolate the CUDA graph estimate gap",
+      "Add a regression test asserting that measured CUDA graph memory is included in the KV cache budget or that an early actionable error is raised"
+    ],
+    "unknowns": [
+      "Whether issue #60489 is a true duplicate or merely shares behavior signals",
+      "Whether the repository's AI disclosure conflict can be resolved for this contribution",
+      "Whether maintainers have an existing design preference for adjusting KV cache after graph capture versus changing profile_cudagraph_memory()"
+    ],
+    "why": "Issue describes a plausible FP8 KV cache OOM caused by CUDA graph memory being omitted from the cache budget, with a suggested fix in profile_cudagraph_memory(). However, the supplied evidence contains a material contradiction: preTaskEvidence reports policy.status=ai_disclosure_conflict and aiDisclosureConflict=true, while the candidate submission_policy is also ai_disclosure_conflict. This unresolved repository disclosure requirement is a materially blocking unknown for actionable code work. Additionally, the related_issue_assessment flags potential overlap with issue #60489 sharing cache/memory/oom signals, and the duplicate status is only 'none' with keywordOverlapOnly=true, leaving unresolved duplicate coverage uncertainty."
+  },
   "4115513c8b5501bda31df4ca75efe36827facb08509898bb2a581f23d17981c5": {
     "confidence": 0.85,
     "contradictions": [
@@ -41672,6 +41890,42 @@
       "Whether existing PR #12658 will be updated with tests"
     ],
     "why": "Issue clearly describes a version-skew bug during rolling updates: v1.4 frontend sends MsgPack to v1.2 workers that only accept JSON. Existing PR #12658 is a draft with no tests and failing CI, leaving room for a more complete fix with regression tests."
+  },
+  "4b113030d3bf885471dab32eb684d53d010b932fcb2f7b50297e9e719a76a631": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/output_formatter.py: populate resolved size/output_format from actual generated bytes",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor requested output_format (e.g. jpeg) or reject unsupported formats with a client error",
+      "quality/background: only emit meaningful supported values and document unsupported controls",
+      "tests: decode returned b64_json and assert format/size metadata for multiple outputs"
+    ],
+    "risks": [
+      "Backend capability for quality/background is undecided; echoing unsupported request values would misrepresent output",
+      "Changing output_format handling could alter existing API behavior for callers relying on PNG default",
+      "Overlap with schema-field PRs #15420/#15605 requires reusing their types rather than duplicating them"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's curl against a FLUX.2-klein-4B Omni worker and confirm size/background/quality/output_format are null and bytes decode as PNG despite output_format=jpeg",
+      "Add a CPU-side unit test that feeds known image bytes through the formatter and asserts size and output_format match independently decoded media",
+      "Regression test asserting an unsupported output_format returns an explicit client error rather than HTTP 200 with mismatched bytes",
+      "Run targeted unit tests for the vllm omni component plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers want unsupported output_format rejected vs. silently coerced to PNG",
+      "Whether quality/background have any implemented backend semantics to report"
+    ],
+    "why": "Issue provides a concrete reproduction (curl + decode script), a specific code anchor (components/src/dynamo/vllm/omni/output_formatter.py lines ~251/270) where the response is built from created/data only and PNG is hardcoded, and a native control showing the engine can emit JPEG and report size/format. Acceptance criteria are testable against independently decoded media. Related PRs #15420/#15605 only add/sync schema fields and do not touch the Omni formatter producer/encoding path, so no duplicate coverage blocks the work."
   },
   "4b13cfdafb207ea363c82ca594e0f04339675321305d2d789d1e734911b43a9e": {
     "confidence": 0.7,
@@ -112780,6 +113034,39 @@
     ],
     "why": "The issue is a well-argued feature request for an operator/admin surface over accountless-subject memory, but the supplied actionability evidence shows no public reproduction, no root-cause signal, and probe_ready=false; the pre-review gate already failed on reproduction_or_validation_missing. The proposed work is a new admin API surface plus a pending-cap policy change, which is a design decision rather than a concrete bug fix with a reference-vs-implementation validation path."
   },
+  "c57152fe1be908d4982c6edf68a7cc65fb5416859bd03cf2b8bcd2297206983b": {
+    "confidence": 0.82,
+    "contradictions": [
+      "algorithm_evidence claims qualified algorithm mechanisms while the issue body describes only a dependency upgrade and compiler regression tests"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "requirements.txt XGrammar pin bump",
+      "regression tests for empty-object/boolean-schema/whitespace qwen_xml cases"
+    ],
+    "risks": [
+      "Dependency bump may pull incompatible apache-tvm-ffi and break other backends",
+      "Upstream fix may not cover all schema limitations (bucket E/F remain unfixed)",
+      "ai_disclosure_conflict policy blocks automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the supplied model-free CPU reproducer under both XGrammar versions to confirm compile/accept differences",
+      "Add CI regression covering closed/open empty-object, boolean-true schema, and newline-separated parameters"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the XGrammar bump in scope for this repo versus upstream",
+      "Whether a supported TRT-qualified XGrammar/TVM-FFI combination exists"
+    ],
+    "why": "The issue requests a dependency version bump (XGrammar 0.1.32 -> 0.2.7) plus regression coverage, not an algorithm/mechanism change. Under track=llm_algorithm this is dependency/configuration plumbing: the root cause is an upstream compiler defect already fixed in a newer release, and the requested work is a requirements pin update plus tests. The supplied algorithm_evidence matched terms (adapter, fp8, tensor parallel) are incidental to the engine config, not the defect; no training objective, kernel algorithm, quantization method, or evaluation methodology is being changed. The CPU reproducer is strong evidence, but it validates an upstream fix rather than a TRT-LLM algorithm contribution."
+  },
   "c5729ba95292131234e69912488e2c474787c490a3adbe6cb3f222c1d91108a1": {
     "confidence": 0.7,
     "contradictions": [
@@ -141978,6 +142265,40 @@
       "Exact maintainer-preferred location for the re-check (auth layer vs request-processing layer) is not specified, but both are reasonable and do not block implementation"
     ],
     "why": "Issue provides a concrete, reproducible access-control bypass on POST /v1/chat/completions: the ?model= query string overrides the body model after the key allowlist check (can_key_call_model in user_api_key_auth) has already passed, so a key scoped to allowed-model serves denied-model with HTTP 200. Root cause is anchored to named code paths (user_api_key_auth, can_key_call_model, base_process_llm_request setting self.data['model']), and the mock_response config gives an unambiguous reference-vs-implementation test. No duplicate or merged fix covers this route; the only overlapping PRs are keyword-only and unrelated."
+  },
+  "f62a22e1d5fee3cba2dd20b3b24765e8760486ee4045180520bce5004b2acfb7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims qualified=true with PEFT/quantization mechanisms, but the issue body describes only config cross-field validation with no training, quantization, or kernel semantics"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add cross-field validation in EngineArgs.create_engine_config rejecting convert=classify with runner=generate",
+      "Raise descriptive ValueError instead of reaching _init_pooler assertion"
+    ],
+    "risks": [
+      "Fix is config plumbing rather than algorithm work, outside llm_algorithm scope",
+      "Overlaps with open PR #60441 which already implements the config-stage rejection",
+      "Repository AI disclosure policy conflict flagged in pre-task evidence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Regression test constructing EngineArgs/LLM with convert=classify and runner=generate, asserting ValueError at config validation",
+      "Verify convert=classify with runner unset/pooling still initializes a pooler model"
+    ],
+    "unknowns": [
+      "Whether PR #60441 will merge as-is, leaving no residual work",
+      "Whether maintainers consider this config validation in scope for any algorithm-track contribution"
+    ],
+    "why": "Issue is a config cross-field validation bug (convert=classify + runner=generate) that crashes with a bare AssertionError; the fix is ordinary CLI/config plumbing, not an LLM algorithm mechanism. Track=llm_algorithm requires a concrete training objective, model mechanism, distributed invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; the matched terms (adapters, bf16/fp16/int8) are incidental and the code path is config validation. Additionally, open PR #60441 already directly references the issue and implements the same config-stage rejection, so the opportunity is covered."
   },
   "f63868a81c7408d5636331a9b3db5a525b9fecc1951dbdddc9569dab00bcd67e": {
     "confidence": 0.55,
