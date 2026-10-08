@@ -27,7 +27,6 @@ from oss_pr_radar.publication import (  # noqa: E402
     ISSUE_URL,
     audit_publication_request,
     public_branch_is_safe,
-    public_text_is_safe,
 )
 from oss_pr_radar.release_binding import bind_runtime, runtime_ledger_path  # noqa: E402
 from oss_pr_radar.util import sha256_json, sha256_text  # noqa: E402
@@ -667,8 +666,6 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
         raise RuntimeError("PR title does not match the publication permit")
     if str(body_path) != publication["bodyPath"] or sha256_text(body) != publication["bodyDigest"]:
         raise RuntimeError("PR body does not match the publication permit")
-    if not public_text_is_safe(args.title, body):
-        raise RuntimeError("public PR text contains an AI-assistance disclosure")
     request = {
         "issueUrl": args.issue_url,
         "commitSha": args.commit_sha,

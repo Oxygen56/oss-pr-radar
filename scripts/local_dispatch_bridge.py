@@ -104,7 +104,6 @@ from oss_pr_radar.publication import (  # noqa: E402
     _changed_probe_paths,
     broker_publication_request,
     public_branch_is_safe,
-    public_text_is_safe,
     publication_evidence_from_request,
     request_publication,
 )
@@ -11612,7 +11611,7 @@ def _legacy_codex_decision_prompt(event: dict[str, Any]) -> str:
             "",
             "请读取完整 issue、评论、仓库规则和相关 PR，给出简短中文建议，并明确需要用户决定什么。",
             "不要创建子任务、子 Agent 或委派其他会话；只在当前会话内完成这次只读判断。",
-            "不要修改代码、公开评论或创建 PR。若涉及公开披露 AI 使用，只准备私下措辞并等待用户确认。",
+            "不要修改代码、公开评论或创建 PR。用户已授权如实声明 AI 协助；仓库要求时准备该声明，不再要求用户确认。",
         )
     )
 
@@ -11631,9 +11630,9 @@ def _codex_decision_prompt(event: dict[str, Any]) -> str:
             "请读取完整 issue、评论、仓库规则和相关 PR，自行查清缺少的技术事实并给出本次核查的最终结论。",
             "技术路线、复现办法和已有 PR 的覆盖比较由你判断，不要要求用户决定是否继续。",
             "区分可以自动继续的工作、已有实现覆盖而不再实施的工作，以及等待维护者或前置依赖的工作；明确依据。",
-            "只有即将发生的具体对外发送、法律、身份或 AI 声明才列出缺少的授权；这不能阻止其余只读查证。",
+            "只有即将发生的具体对外发送、法律或身份声明才列出缺少的授权；如实声明 AI 协助已有用户授权，这不能阻止其余只读查证。",
             "不要创建子任务、子 Agent 或委派其他会话；只在当前会话内完成这次只读判断。",
-            "不要修改代码、公开评论或创建 PR。若涉及公开披露 AI 使用，只准备私下措辞并等待用户确认。",
+            "不要修改代码、公开评论或创建 PR。用户已授权如实声明 AI 协助；仓库要求时准备该声明，不再要求用户确认。",
         )
     )
 
@@ -18315,8 +18314,6 @@ def _finalize_controller_merge(
         raise RuntimeError("controller branch name exposes an AI tool")
     if not commit_message or "\n" in commit_message or len(commit_message) > 120:
         raise RuntimeError("controller merge requires one concise commitMessage")
-    if not public_text_is_safe(commit_message, ""):
-        raise RuntimeError("controller merge message contains an AI-assistance disclosure")
 
     followup = context.get("prFollowup")
     evidence = followup.get("evidence") if isinstance(followup, dict) else None
@@ -18816,8 +18813,6 @@ def _finalize_controller_commit(
         raise RuntimeError("controller branch name exposes an AI tool")
     if not commit_message or "\n" in commit_message or len(commit_message) > 120:
         raise RuntimeError("controller commit requires one concise commitMessage")
-    if not public_text_is_safe(commit_message, ""):
-        raise RuntimeError("controller commit message contains an AI-assistance disclosure")
 
     actual = _local_changed_files(worktree)
     followup = context.get("prFollowup")
@@ -18993,13 +18988,11 @@ def _finalize_controller_commit(
 
 def _publication_block_reason(context: dict[str, Any], value: dict[str, Any]) -> str | None:
     explicit = str(value.get("publicationBlockedReason") or "").strip()
-    if explicit in {"AI_DISCLOSURE_REQUIRED", "AI_USE_PROHIBITED"}:
+    if explicit == "AI_USE_PROHIBITED":
         return explicit
     policy = _policy_from_context(context)
     if policy.get("ai_prohibited") is True:
         return "AI_USE_PROHIBITED"
-    if policy.get("ai_disclosure") is True:
-        return "AI_DISCLOSURE_REQUIRED"
     return None
 
 
@@ -19426,7 +19419,6 @@ def _completed_controller_handoff_evidence(
                 or not commit_message
                 or "\n" in commit_message
                 or len(commit_message) > 120
-                or not public_text_is_safe(commit_message, "")
             ):
                 return None
         elif handoff_mode == "controller_commit_complete":
@@ -21298,7 +21290,7 @@ def _pr_followup_prompt(candidate: dict[str, Any]) -> str:
         "完整意见读取 evidence 中的 body，summary 只供展示；逐条核对意见、当前代码和真实检查输出。"
         "需要补充的技术事实由本任务继续查证，不要笼统要求用户决定是否继续。"
         "先复现具体问题再修复；审查机器人给出的安全标签本身不等于已经证实的安全问题。"
-        "可以继续已授权的本地查证、修复和测试，只有即将发生的具体对外安全披露、法律、身份或 AI 声明才单独停止该动作；"
+        "可以继续已授权的本地查证、修复和测试，如实声明 AI 协助已有用户授权；只有即将发生的具体对外安全披露、法律或身份声明才单独停止该动作；"
         "若确需停止，必须记录具体动作和缺少的授权，其余可独立处理的意见和失败检查继续完成。"
         "代码提交和对外更新仍由控制器按原协议完成，不要直接提交、推送、评论或发布。"
         + resolution_scope_instruction
@@ -25848,8 +25840,6 @@ def _publication_payload_from_evidence(evidence: dict[str, Any], issue_url: str)
     title = publication["title"].strip()
     if not body.strip():
         raise RuntimeError("PR body must not be empty")
-    if not public_text_is_safe(title, body):
-        raise RuntimeError("public PR text contains an AI-assistance disclosure")
     match = ISSUE_URL.match(issue_url)
     if not match:
         raise RuntimeError("invalid issue URL")

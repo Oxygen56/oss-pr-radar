@@ -10876,12 +10876,7 @@ class RadarLedger:
             return None
         payload = json.loads(row["payload_json"])
         audit_payload = json.loads(audit_row["payload_json"]) if audit_row else {}
-        audit_policy = ((audit_payload.get("liveAudit") or {}).get("evidence") or {}).get(
-            "policy"
-        ) or {}
         submission_policy = payload.get("submissionPolicy")
-        if not submission_policy and audit_policy.get("ai_disclosure") is True:
-            submission_policy = "ai_disclosure_conflict"
         submission_policy = submission_policy or "normal"
         authorization_active = (
             row["status"] in RECOVERABLE_CONTEXT_INTENT_STATUSES and row["stage"] != "AUDIT_NO_GO"

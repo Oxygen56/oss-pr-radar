@@ -95,8 +95,11 @@ produce RETRY. When the supplied evidence already establishes a root cause and a
 concrete validation path, use NO_OBJECTION unless a missing fact actually determines
 whether code work is actionable. Examples of materially blocking unknowns are missing
 reproduction or root-cause evidence, unresolved duplicate/merged-fix coverage,
-repository assignment or disclosure requirements, unavailable required hardware, or
-contradictory evidence.
+unmet repository assignment or human-review requirements, repository prohibitions on
+AI use or fully automated submissions, unavailable required hardware, or contradictory
+evidence. The user has authorized truthful public disclosure of AI assistance. A
+requirement to state that AI assistance was used is not by itself a blocking unknown
+and must not by itself produce RETRY.
 
 For track=llm_algorithm, require a concrete training objective, model mechanism,
 distributed-training invariant, quantization/numerical method, kernel algorithm, or

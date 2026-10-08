@@ -27290,7 +27290,7 @@ def test_controller_merge_preserves_child_prepared_resolution(tmp_path):
     ]
 
 
-def test_controller_keeps_ai_disclosure_fix_local_and_signs_dco(tmp_path):
+def test_authorized_disclosure_does_not_replace_policy_validation_or_dco(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         policy_verified=False,
@@ -27305,10 +27305,11 @@ def test_controller_keeps_ai_disclosure_fix_local_and_signs_dco(tmp_path):
     assert result["ingested"] == [
         {
             "key": "a/b#1",
-            "stage": "FIX_READY",
-            "publicationBlockedReason": "AI_DISCLOSURE_REQUIRED",
+            "stage": "VALIDATION_PENDING",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
         }
     ]
+    assert result["validationDeferred"][0]["missing"] == ["policy_verified"]
     assert "Signed-off-by: Test Contributor <test@example.com>" in run_git(
         worktree, "show", "-s", "--format=%B", "HEAD"
     )

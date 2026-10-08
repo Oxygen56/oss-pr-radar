@@ -2540,7 +2540,7 @@ def test_historical_state_drift_migration_rejects_published_opportunity(tmp_path
         store.invalidate_state_drift_intent("a/b#1", intent_id="intent-1", historical_terminal=True)
 
 
-def test_task_context_recovers_disclosure_policy_from_live_audit(tmp_path):
+def test_task_context_does_not_turn_authorized_disclosure_into_a_conflict(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent(autoSubmitAuthorized=False, publicSubmissionAllowed=False))
     store.claim("intent-1", "worker")
@@ -2563,7 +2563,7 @@ def test_task_context_recovers_disclosure_policy_from_live_audit(tmp_path):
 
     context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
 
-    assert context["submissionPolicy"] == "ai_disclosure_conflict"
+    assert context["submissionPolicy"] == "normal"
     assert context["publicSubmissionAllowed"] is False
 
 
