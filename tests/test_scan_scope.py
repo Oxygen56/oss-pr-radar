@@ -59,5 +59,5 @@ def test_fixed_scope_covers_mature_agent_ecosystem_domains():
     assert {"EleutherAI/lm-evaluation-harness", "huggingface/lighteval"} <= (LLM_EVALUATION_REPOS)
 
 
-def test_eliza_publication_requires_ai_disclosure():
-    assert repo_rules("elizaOS/eliza") == "ai_disclosure_conflict"
+def test_eliza_disclosure_is_authorized():
+    assert repo_rules("elizaOS/eliza") == "normal"

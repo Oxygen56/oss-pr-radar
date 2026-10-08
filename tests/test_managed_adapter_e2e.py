@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from test_ledger import legal_publication_probe
+from test_ledger import intent, legal_publication_probe
 
 from oss_pr_radar import scanner
 from oss_pr_radar.ledger import RadarLedger
@@ -14,8 +14,188 @@ from oss_pr_radar.managed_lifecycle import ManagedLedger, import_open_pr_observa
 from oss_pr_radar.metrics import QUALITY_FIELDS
 from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES
 from oss_pr_radar.scanner import Radar
+from oss_pr_radar.util import iso_z
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
+
+
+@pytest.mark.parametrize("historical_abandonment", [False, True])
+def test_failed_prestart_creation_can_retry_after_managed_binding_abandonment(
+    tmp_path, monkeypatch, historical_abandonment
+):
+    database = tmp_path / "state" / "radar_ledger.sqlite3"
+    store = RadarLedger(database)
+    adapter = ManagedAdapter(tmp_path, database)
+    value = intent(
+        selectedBaseSha="a" * 40,
+        codePaths=["runtime.py"],
+        taskStage="REPRODUCTION_REQUIRED",
+        probeLevel="PATHS_VERIFIED",
+        probeReceiptDigest="0f8f6dad119663308a67a827b8c1b66f09bfcfe36fa851ee215a5ead2a0b2048",
+    )
+    worktree = str(tmp_path / "worktree")
+    store.enqueue(value)
+    store.claim("intent-1", "controller")
+    first = store.reserve_creation("intent-1", owner="controller")
+    store.bind_creation_client(
+        "intent-1",
+        owner="controller",
+        creation_token=first["creationToken"],
+        client_thread_id="failed-client",
+    )
+
+    def failed_probe(_self, **_kwargs):
+        raise ValueError("reproduction probe evidence is not bound to its opportunity")
+
+    with monkeypatch.context() as old_probe:
+        old_probe.setattr(ManagedLedger, "queue_reproduction_probe", failed_probe)
+        with pytest.raises(ValueError, match="not bound to its opportunity"):
+            adapter.bind_task_after_thread(
+                intent=value, thread_id="failed-client", worktree_path=worktree
+            )
+    assert adapter.ledger.read_task("intent-1")["thread_id"] == "failed-client"
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET creation_started_at=? WHERE intent_id='intent-1'",
+            (iso_z(datetime.now(UTC) - timedelta(hours=2)),),
+        )
+    with monkeypatch.context() as legacy:
+        if historical_abandonment:
+            legacy.setattr(store, "_release_abandoned_creation_task_binding", lambda *_args: None)
+        store.abandon_creation(
+            "intent-1",
+            owner="controller",
+            creation_token=first["creationToken"],
+            client_thread_id="failed-client",
+            reason="ASYNC_CREATION_NOT_MATERIALIZED",
+        )
+    assert adapter.ledger.read_task("intent-1")["thread_id"] == (
+        "failed-client" if historical_abandonment else None
+    )
+    store.enqueue(value | {"expiresAt": iso_z(datetime.now(UTC) + timedelta(hours=2))})
+    store.claim("intent-1", "controller")
+    second = store.reserve_creation("intent-1", owner="controller")
+    store.bind_creation_client(
+        "intent-1",
+        owner="controller",
+        creation_token=second["creationToken"],
+        client_thread_id="new-client",
+    )
+    released = store.reconcile_abandoned_creation_task_bindings()
+    assert len(released) == int(historical_abandonment)
+    assert store.reconcile_abandoned_creation_task_bindings() == []
+    adapter.bind_task_after_thread(intent=value, thread_id="new-client", worktree_path=worktree)
+    assert adapter.ledger.read_task("intent-1")["thread_id"] == "new-client"
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_reproduction_probes WHERE task_id='intent-1'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='CREATION_ABANDONED'"
+            ).fetchone()[0]
+            == 1
+        )
+        for client in ("failed-client", "new-client"):
+            assert connection.execute(
+                "SELECT 1 FROM managed_lifecycle_events WHERE idempotency_key=?",
+                (f"task-bind:intent-1:{client}",),
+            ).fetchone()
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='ABANDONED_CREATION_TASK_BINDING_RELEASED'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_unabandoned_creation_keeps_its_immutable_managed_thread(tmp_path):
+    database = tmp_path / "state" / "radar_ledger.sqlite3"
+    store = RadarLedger(database)
+    adapter = ManagedAdapter(tmp_path, database)
+    value = intent(selectedBaseSha="a" * 40, codePaths=["runtime.py"])
+    store.enqueue(value)
+    store.claim("intent-1", "controller")
+    first = store.reserve_creation("intent-1", owner="controller")
+    store.bind_creation_client(
+        "intent-1",
+        owner="controller",
+        creation_token=first["creationToken"],
+        client_thread_id="first-client",
+    )
+    adapter.bind_task_after_thread(
+        intent=value, thread_id="first-client", worktree_path=str(tmp_path / "worktree")
+    )
+    assert store.reconcile_abandoned_creation_task_bindings() == []
+    with pytest.raises(ValueError, match="task identity is immutable"):
+        adapter.bind_task_after_thread(
+            intent=value, thread_id="different-client", worktree_path=str(tmp_path / "worktree")
+        )
+    assert adapter.ledger.read_task("intent-1")["thread_id"] == "first-client"
+
+
+@pytest.mark.parametrize("producer", ["scanner", "dispatch"])
+def test_new_discovery_preserves_a_bound_task_opportunity(tmp_path, producer):
+    database = tmp_path / "state" / "radar_ledger.sqlite3"
+    adapter = ManagedAdapter(tmp_path, database)
+    managed = adapter.ledger
+    original = managed.upsert_opportunity(
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="REPRODUCTION_REQUIRED",
+        source="dispatch",
+        provenance={"intentId": "bound-task"},
+        metadata={"selectedBaseSha": "a" * 40, "codePaths": ["runtime.py"]},
+    )
+    managed.bind_task(
+        task_id="bound-task",
+        opportunity_key="owner/repo#1",
+        thread_id="bound-thread",
+        worktree_path=str(tmp_path / "bound-worktree"),
+        state="REPRODUCTION_REQUIRED",
+    )
+    if producer == "scanner":
+        observed = adapter.record_scan_report(
+            {
+                "run_id": "new-discovery",
+                "candidate_details": [
+                    {
+                        "repo": "owner/repo",
+                        "num": 1,
+                        "url": "https://github.com/owner/repo/issues/1",
+                        "auto_spawn": True,
+                        "preTaskEvidence": {"baseSha": "b" * 40},
+                    }
+                ],
+            }
+        )
+    else:
+        observed = adapter.record_dispatch_queue(
+            {
+                "mode": "shadow",
+                "intents": [
+                    {
+                        "intentId": "f" * 64,
+                        "key": "owner/repo#1",
+                        "issueUrl": "https://github.com/owner/repo/issues/1",
+                        "preTaskEvidence": {"baseSha": "b" * 40},
+                    }
+                ],
+            }
+        )
+    assert observed["recorded"] == 1
+    with managed._connection() as connection:
+        actual = connection.execute(
+            "SELECT * FROM managed_opportunities WHERE opportunity_key='owner/repo#1'"
+        ).fetchone()
+    assert dict(actual) == original
+    assert managed.read_task("bound-task")["thread_id"] == "bound-thread"
 
 
 def test_followup_snapshot_ignores_unmanaged_pr_without_admission(tmp_path):

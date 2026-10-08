@@ -228,6 +228,37 @@ def test_legacy_db_binding_tracks_wal_logical_changes(tmp_path):
         connection.close()
 
 
+def test_live_snapshot_survives_controller_status_updates_but_binds_legacy_reports(tmp_path):
+    source, legacy_db, reports, _ = _inputs(tmp_path)
+    status = reports / "latest_controller_cycle.json"
+    status.write_text(json.dumps({"checkedAt": "before", "ok": False}), encoding="utf-8")
+
+    def update_controller_status():
+        status.write_text(json.dumps({"checkedAt": "during", "ok": False}), encoding="utf-8")
+
+    snapshot = build_live_snapshot(
+        source,
+        legacy_db=legacy_db,
+        legacy_reports=reports,
+        followup=tmp_path / "followup.json",
+        quiesce_token="test-writer-stopped",
+        client=_FakeGitHub(_responses(), on_first=update_controller_status),
+        workers=1,
+        max_attempts=1,
+    )
+    kwargs = {
+        "source": source,
+        "legacy_db": legacy_db,
+        "legacy_reports": reports,
+        "followup": tmp_path / "followup.json",
+    }
+    status.write_text(json.dumps({"checkedAt": "after", "ok": False}), encoding="utf-8")
+    validate_snapshot_binding(snapshot, **kwargs)
+    (reports / "latest.json").write_text(json.dumps({"status": "changed"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="input digests do not match"):
+        validate_snapshot_binding(snapshot, **kwargs)
+
+
 def test_live_snapshot_rejects_stale_future_naive_and_tampered_evidence(tmp_path):
     source, legacy_db, reports, _ = _inputs(tmp_path)
     snapshot = build_live_snapshot(

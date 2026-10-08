@@ -583,7 +583,11 @@ def issue_worker_staging_authorization(
 
 
 def _validate_worker_records(
-    records: list[dict[str, Any]], *, specs: list[dict[str, Any]], spec_digest: str
+    records: list[dict[str, Any]],
+    *,
+    specs: list[dict[str, Any]],
+    spec_digest: str,
+    require_current: bool = True,
 ) -> list[dict[str, Any]]:
     expected = {str(spec["Label"]) for spec in specs}
     normalized = sorted(records, key=lambda item: str(item.get("label")))
@@ -594,7 +598,7 @@ def _validate_worker_records(
         if (
             observed.tzinfo is None
             or observed > datetime.now(UTC)
-            or datetime.now(UTC) - observed > timedelta(minutes=10)
+            or (require_current and datetime.now(UTC) - observed > timedelta(minutes=10))
         ):
             raise RuntimeError("staged worker observation is stale")
         if (
@@ -749,13 +753,18 @@ def _validate_receipt_staging_binding(
         raise RuntimeError("staged receipt consumed proof mismatch")
 
 
-def _receipt_matches_files(value: dict[str, Any], *, specs: list[dict[str, Any]]) -> bool:
+def _receipt_matches_files(
+    value: dict[str, Any], *, specs: list[dict[str, Any]], require_current: bool = True
+) -> bool:
     records = value.get("workers")
     if not isinstance(records, list):
         return False
     try:
         normalized = _validate_worker_records(
-            records, specs=specs, spec_digest=str(value["workerSpecDigest"])
+            records,
+            specs=specs,
+            spec_digest=str(value["workerSpecDigest"]),
+            require_current=require_current,
         )
     except (KeyError, TypeError, ValueError, RuntimeError):
         return False
@@ -877,12 +886,13 @@ def verify_staged_worker_receipt(
     specs: list[dict[str, Any]],
     worker_reports: list[dict[str, Any]],
     home: Path | None = None,
+    require_current: bool = True,
 ) -> bool:
     """Validate consumed stage proof against actual plist bytes and reports."""
 
     try:
         value = _read_staged_receipt(runtime_root)
-        _validate_receipt_staging_window(value)
+        _validate_receipt_staging_window(value, require_current=require_current)
         binding = active_release(runtime_root)[1]
         current = _current_ledger_identity(runtime_root)
         if any(
@@ -917,7 +927,12 @@ def verify_staged_worker_receipt(
         reports = {str(item.get("label")): item for item in worker_reports}
         if not isinstance(records, list) or len(records) != len(specs):
             return False
-        _validate_worker_records(records, specs=specs, spec_digest=worker_spec_digest(specs))
+        _validate_worker_records(
+            records,
+            specs=specs,
+            spec_digest=worker_spec_digest(specs),
+            require_current=require_current,
+        )
         expected_labels = {str(spec["Label"]) for spec in specs}
         if {str(item.get("label")) for item in records} != expected_labels:
             return False
@@ -942,7 +957,7 @@ def verify_staged_worker_receipt(
                 or item.get("plistSha256") != hashlib.sha256(plist.read_bytes()).hexdigest()
             ):
                 return False
-        if not _receipt_matches_files(value, specs=specs):
+        if not _receipt_matches_files(value, specs=specs, require_current=require_current):
             return False
         return True
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, json.JSONDecodeError):

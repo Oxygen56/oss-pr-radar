@@ -17,7 +17,9 @@ def test_controller_protocol_has_one_deterministic_entrypoint():
 
 def test_controller_protocol_keeps_task_and_publication_boundaries():
     assert "controller, not an issue implementation task" in PROTOCOL
-    assert "automatic public publication stays blocked" in PROTOCOL
+    assert "user authorizes truthful public AI-assistance disclosure" in PROTOCOL
+    assert "disclosure in the verified PR body before requesting publication" in PROTOCOL
+    assert "Repository bans on AI-assisted or fully automated submissions still apply" in PROTOCOL
     assert "publicationReceipt.prUrl" in PROTOCOL
 
 

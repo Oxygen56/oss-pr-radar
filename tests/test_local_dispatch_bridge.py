@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import fcntl
 import gc
 import hashlib
@@ -10,6 +11,7 @@ import json
 import multiprocessing
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import stat
@@ -38,7 +40,7 @@ from oss_pr_radar.dispatch import (
 )
 from oss_pr_radar.independent_review import REVIEW_SCHEMA, _receipt_path, _source_digest
 from oss_pr_radar.ledger import LedgerError, RadarLedger
-from oss_pr_radar.local_publication import slow_advance_once
+from oss_pr_radar.local_publication import advance_once, slow_advance_once
 from oss_pr_radar.managed_lifecycle import ManagedLedger, import_open_pr_observations
 from oss_pr_radar.metrics import QUALITY_FIELDS
 from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest
@@ -833,7 +835,7 @@ def _finalize_controller_commit_for_test(
     return finalized, raw
 
 
-def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monkeypatch):
+def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monkeypatch, tmp_path):
     monkeypatch.setattr(
         MODULE,
         "orphan_list",
@@ -874,7 +876,9 @@ def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monk
     )
 
     result = MODULE.orphan_reconcile(
-        SimpleNamespace(ledger=Path("/tmp/ledger"), min_age_minutes=70, project_id="github")
+        SimpleNamespace(
+            ledger=tmp_path / "state" / "ledger.sqlite3", min_age_minutes=70, project_id="github"
+        )
     )
 
     assert result["ok"] is True
@@ -2758,6 +2762,202 @@ def test_codex_decision_prompt_forbids_subtask_fanout():
     assert "不要创建子任务、子 Agent 或委派其他会话" in prompt
 
 
+def test_codex_decision_legacy_binding_is_reused_after_automatic_prompt_change(monkeypatch):
+    event = _codex_decision_outbox()["events"][0]
+    prompt = MODULE._legacy_codex_decision_prompt(event)
+    binding = {
+        "threadId": "legacy-thread",
+        "candidateKey": event["candidateKey"],
+        "notificationDigest": event["notificationDigest"],
+        "projectId": "github",
+        "promptDigest": sha256_json(MODULE.canonical_prompt(prompt)),
+    }
+    monkeypatch.setattr(
+        MODULE, "_read_codex_decision_bindings", lambda: {"events": {event["eventId"]: binding}}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_codex_decision_thread",
+        lambda _id: {
+            "prompt": prompt,
+            "cwd": str(MODULE.GITHUB_ROOT),
+            "threadSource": "appServer",
+            "projectId": "github",
+            "archived": 0,
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_recover_codex_decision_thread",
+        lambda *_a, **_k: pytest.fail("must reuse existing task"),
+    )
+
+    assert MODULE._existing_codex_decision_binding(event, project_id="github") is binding
+
+
+def test_completed_legacy_candidate_title_reconciles_without_current_outbox(monkeypatch):
+    prompt = "这是已绑定的历史候选核查。"
+    binding = {
+        "threadId": "legacy-thread",
+        "projectId": "github",
+        "promptDigest": sha256_json(MODULE.canonical_prompt(prompt)),
+        "desiredTitle": "[有价值·待决策] 10-01 12:00 a/b#1 Candidate",
+    }
+    monkeypatch.setattr(
+        MODULE, "_read_codex_decision_bindings", lambda: {"events": {"old-event": binding}}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_codex_decision_thread",
+        lambda _id: {
+            "prompt": prompt,
+            "cwd": str(MODULE.GITHUB_ROOT),
+            "threadSource": "appServer",
+            "projectId": "github",
+            "archived": 0,
+            "title": binding["desiredTitle"],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "persisted_thread_turn_state",
+        lambda _id: {"status": "completed", "turnId": "finished"},
+    )
+    applied = []
+    monkeypatch.setattr(
+        MODULE, "_ensure_desktop_thread_title", lambda _id, title: applied.append(title)
+    )
+
+    result = MODULE._reconcile_codex_decision_titles()
+
+    assert result["deferred"] == []
+    assert applied == ["[候选已评估] 10-01 12:00 a/b#1 Candidate"]
+    assert result["renamed"][0]["threadId"] == "legacy-thread"
+
+
+@pytest.mark.parametrize(
+    ("live_status", "active_writer", "renamed"),
+    [("interrupted", False, True), ("completed", False, False), ("interrupted", True, False)],
+)
+def test_original_title_reconcile_stops_owned_legacy_candidate_without_journal_marker(
+    monkeypatch, tmp_path, live_status, active_writer, renamed
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    prompt = "这是已绑定的历史候选核查。"
+    original = "[有价值·待决策] 09-01 17:32 a/b#1 Candidate"
+    binding = {
+        "threadId": "legacy-thread",
+        "projectId": "github",
+        "promptDigest": sha256_json(MODULE.canonical_prompt(prompt)),
+        "desiredTitle": original,
+    }
+    bindings = {"events": {"old-event": binding}}
+    monkeypatch.setattr(MODULE, "_read_codex_decision_bindings", lambda: bindings)
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, title TEXT, name TEXT, archived INTEGER, "
+            "first_user_message TEXT, cwd TEXT, project_id TEXT, thread_source TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "legacy-thread",
+                prompt,
+                original,
+                0,
+                prompt,
+                str(MODULE.GITHUB_ROOT),
+                "github",
+                "appServer",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _id: None)
+    monkeypatch.setattr(
+        MODULE,
+        "_active_task_turn_for_result",
+        lambda _binding: {"turnId": "active"} if active_writer else None,
+    )
+    probes = []
+
+    def read_native(thread_ids):
+        assert not active_writer
+        probes.append(thread_ids)
+        return {"legacy-thread": {"status": live_status, "turnId": "stopped"}}
+
+    monkeypatch.setattr(MODULE, "live_thread_turn_states", read_native)
+    applied = []
+
+    def apply_titles(candidates):
+        with sqlite3.connect(thread_db) as connection:
+            for candidate in candidates:
+                applied.append(candidate["desiredTitle"])
+                connection.execute(
+                    "UPDATE threads SET name=? WHERE id=?",
+                    (candidate["desiredTitle"], candidate["threadId"]),
+                )
+        return {str(candidate["threadId"]): None for candidate in candidates}
+
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", apply_titles)
+    with store.connect() as connection:
+        before_events = connection.execute("SELECT count(*) FROM events").fetchone()[0]
+    result = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert applied == (["[候选评估已停止] 09-01 17:32 a/b#1 Candidate"] if renamed else [])
+    assert probes == ([] if active_writer else [{"legacy-thread"}])
+    assert bool(result.get("candidateTitles", {}).get("renamed")) is renamed
+    assert bindings == {"events": {"old-event": binding}}
+    with store.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == before_events
+    assert MODULE._codex_decision_thread("legacy-thread")["title"] == (
+        applied[0] if renamed else original
+    )
+
+
+def test_stopped_reproduction_title_requires_current_exact_block_and_terminal_turn(
+    monkeypatch, tmp_path
+):
+    store, worktree = registered_store(tmp_path)
+    binding = store.title_bindings()[0]
+    context_path = MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    raw = b'{"reason":"REPRODUCTION_ENVIRONMENT_BLOCKED","reproductionVerified":false}'
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    result_path.write_bytes(raw)
+    result_path.chmod(0o600)
+    block_key = MODULE._task_result_evidence_block_key(binding, raw, context_path.read_bytes())
+    managed = ManagedLedger(store.path)
+    managed.record_event(
+        event_type="TASK_RESULT_EVIDENCE_BLOCKED",
+        idempotency_key=block_key,
+        opportunity_key=binding["key"],
+        task_id=binding["intentId"],
+        state="DISPATCHED",
+        source="result-ingestion",
+        provenance={"threadId": binding["threadId"]},
+        payload={"reason": "REPRODUCTION_ENVIRONMENT_BLOCKED"},
+    )
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _id: {"status": "completed"})
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _binding: None)
+    assert MODULE._task_title_display_state(store, binding) == "REPRODUCTION_BLOCKED"
+
+    monkeypatch.setattr(
+        MODULE, "_active_task_turn_for_result", lambda _binding: {"turnId": "new-turn"}
+    )
+    assert MODULE._task_title_display_state(store, binding) == "GO"
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _binding: None)
+    result_path.write_bytes(b'{"reason":"NEW_RESULT"}')
+    assert MODULE._task_title_display_state(store, binding) == "TURN_COMPLETED"
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _id: {"status": "failed"})
+    assert MODULE._task_title_display_state(store, binding) == "TURN_FAILED"
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _id: None)
+    assert MODULE._task_title_display_state(store, binding) == "GO"
+
+
 def test_codex_decision_dispatch_creates_once_and_reuses_session(monkeypatch, tmp_path):
     outbox = _codex_decision_outbox()
     event = outbox["events"][0]
@@ -3106,7 +3306,8 @@ def test_codex_decision_worker_creates_and_titles_independent_task(monkeypatch, 
     assert app_server_argv[app_server_argv.index("multi_agent") - 1] == "--disable"
     assert app_server_argv[app_server_argv.index("multi_agent_v2") - 1] == "--disable"
     assert desired_titles == [
-        ("thread-1", "[有价值·待决策] 08-23 12:00 owner/repo#1 需要决定是否继续")
+        ("thread-1", "[候选自动评估中] 08-23 12:00 owner/repo#1 需要决定是否继续"),
+        ("thread-1", "[候选已评估] 08-23 12:00 owner/repo#1 需要决定是否继续"),
     ]
     assert result["threadId"] == "thread-1"
     assert result["turnStatus"] == "completed"
@@ -8637,6 +8838,120 @@ def test_source_repo_confirms_remote_default_when_origin_head_is_missing(monkeyp
     assert run_git(repository, "status", "--porcelain") == ""
 
 
+@pytest.mark.parametrize("target_changed", [False, True])
+def test_source_repo_restores_real_missing_parent_without_rebinding(
+    monkeypatch, tmp_path, target_changed
+):
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    run_git(upstream, "init", "-b", "main")
+    run_git(upstream, "config", "user.name", "Radar Test")
+    run_git(upstream, "config", "user.email", "radar@example.com")
+    commits = []
+    for number in range(3):
+        (upstream / "runtime.py").write_text(f"value = {number}\n")
+        run_git(upstream, "add", ".")
+        run_git(upstream, "commit", "-m", f"baseline {number}")
+        commits.append(run_git(upstream, "rev-parse", "HEAD"))
+    run_git(upstream, "config", "uploadpack.allowFilter", "true")
+    run_git(upstream, "config", "uploadpack.allowAnySHA1InWant", "true")
+    github = tmp_path / "sources"
+    github.mkdir()
+    repository = github / "repository"
+    run_git(tmp_path, "clone", "--no-hardlinks", upstream.as_uri(), str(repository))
+    run_git(repository, "config", "remote.origin.promisor", "true")
+    run_git(repository, "config", "remote.origin.partialclonefilter", "blob:none")
+    run_git(repository, "repack", "-a", "-d")
+    pack_directory = repository / ".git" / "objects" / "pack"
+    saved = tmp_path / "saved-pack"
+    saved.mkdir()
+    for path in pack_directory.iterdir():
+        path.rename(saved / path.name)
+    with next(saved.glob("*.pack")).open("rb") as packed:
+        subprocess.run(
+            ["git", "unpack-objects"],
+            cwd=repository,
+            stdin=packed,
+            check=True,
+            capture_output=True,
+        )
+    # Existing ordinary C points to missing P, outside the retained shallow boundary.
+    shallow = repository / ".git" / "shallow"
+    shallow.write_text(commits[0] + "\n")
+    worktrees = []
+    for number in range(15):
+        worktree = tmp_path / f"linked-{number}"
+        run_git(repository, "worktree", "add", "--detach", str(worktree), commits[2])
+        (worktree / "private.txt").write_text(f"preserve {number}\n")
+        (worktree / "task-context.json").write_text(f'{{"identity":{number}}}\n')
+        worktrees.append(worktree)
+    (repository / ".git" / "objects" / commits[1][:2] / commits[1][2:]).unlink()
+    (upstream / "runtime.py").write_text("value = 4\n")
+    run_git(upstream, "add", ".")
+    run_git(upstream, "commit", "-m", "incoming commit")
+    live_head = run_git(upstream, "rev-parse", "HEAD")
+    target = {
+        "branch": "main",
+        "defaultBranch": "main",
+        "source": "repository_default",
+        "sha": commits[2] if target_changed else live_head,
+    }
+    root_head = run_git(repository, "rev-parse", "HEAD")
+    shallow_bytes = shallow.read_bytes()
+    real_command = MODULE.command
+    failures = []
+    repair_states = []
+
+    def preserved_state():
+        fetch_head = repository / ".git" / "FETCH_HEAD"
+        return (
+            run_git(repository, "show-ref"),
+            run_git(repository, "rev-parse", "HEAD"),
+            shallow.read_bytes(),
+            fetch_head.read_bytes() if fetch_head.exists() else None,
+            [(w / "private.txt").read_bytes() for w in worktrees],
+            [(w / "task-context.json").read_bytes() for w in worktrees],
+        )
+
+    def observed_command(args, **kwargs):
+        if args == ["git", "remote", "get-url", "origin"]:
+            return "https://github.com/a/b.git"
+        restoring = "--refetch" in args
+        if restoring:
+            repair_states.append(preserved_state())
+        try:
+            result = real_command(args, **kwargs)
+        except RuntimeError as exc:
+            failures.append((args, str(exc)))
+            raise
+        if restoring:
+            repair_states.append(preserved_state())
+        return result
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", github)
+    monkeypatch.setattr(MODULE, "command", observed_command)
+    # The source entry itself must encounter the first failure: a failed fetch
+    # can already install its incoming pack before repack-local-links fails.
+    if target_changed:
+        with pytest.raises(RuntimeError, match="target branch changed after live audit"):
+            MODULE.source_repo("a/b", target_base=target)
+    else:
+        assert MODULE.source_repo("a/b", target_base=target) == repository
+    assert len(failures) == 1
+    assert f"Could not read {commits[1]}" in failures[0][1]
+    assert f"Failed to traverse parents of commit {commits[2]}" in failures[0][1]
+    assert "could not finish pack-objects to repack local links" in failures[0][1]
+    assert len(repair_states) == 2 and repair_states[0] == repair_states[1]
+    assert run_git(repository, "rev-parse", "HEAD") == root_head
+    assert shallow.read_bytes() == shallow_bytes
+    assert run_git(repository, "rev-parse", "refs/remotes/origin/main") == live_head
+    assert run_git(repository, "--no-lazy-fetch", "cat-file", "-t", commits[1]) == "commit"
+    for number, worktree in enumerate(worktrees):
+        assert run_git(worktree, "rev-parse", "HEAD") == commits[2]
+        assert (worktree / "private.txt").read_text() == f"preserve {number}\n"
+        assert (worktree / "task-context.json").read_text() == f'{{"identity":{number}}}\n'
+
+
 @pytest.mark.parametrize(
     "remote_error",
     ["fatal: Authentication failed", "fatal: unable to read repository configuration"],
@@ -9811,7 +10126,17 @@ def test_recovery_skips_a_recently_active_thread(monkeypatch, tmp_path):
     assert result["recoverable"] == []
 
 
-def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("error_code", "error_message"),
+    [
+        ("cyber_policy", "try rephrasing"),
+        ("other", "workspace routing discovery timed out"),
+        ("other", "workspace routing discovery failed"),
+    ],
+)
+def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(
+    monkeypatch, tmp_path, error_code, error_message
+):
     project_root = tmp_path / "github"
     worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
     worktree.mkdir(parents=True)
@@ -9829,8 +10154,8 @@ def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(monkeypat
                             "type": "task_complete",
                             "turn_id": "turn-1",
                             "error": {
-                                "codex_error_info": "cyber_policy",
-                                "message": "try rephrasing",
+                                "codex_error_info": error_code,
+                                "message": error_message,
                             },
                         },
                     }
@@ -9886,10 +10211,16 @@ def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(monkeypat
 
     assert result["blocked"] == []
     assert result["recoverable"][0]["immediateRecovery"] is True
-    assert result["recoverable"][0]["terminalError"]["code"] == "cyber_policy"
+    assert result["recoverable"][0]["terminalError"]["code"] == error_code
 
 
-def test_recovery_immediately_resumes_an_interrupted_validation_followup(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "routing_error",
+    [None, "workspace routing discovery timed out", "workspace routing discovery failed"],
+)
+def test_recovery_immediately_resumes_an_interrupted_validation_followup(
+    monkeypatch, tmp_path, routing_error
+):
     store, worktree = registered_store(tmp_path)
     run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
     store.record_stage("a/b#1", "VALIDATION_PENDING")
@@ -9924,9 +10255,9 @@ def test_recovery_immediately_resumes_an_interrupted_validation_followup(monkeyp
         )
 
     interrupted = {
-        "status": "interrupted",
-        "code": "turn_interrupted",
-        "message": "interrupted",
+        "status": "failed" if routing_error else "interrupted",
+        "code": "other" if routing_error else "turn_interrupted",
+        "message": routing_error or "interrupted",
         "turnId": "turn-validation",
     }
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
@@ -10160,7 +10491,8 @@ def test_refreshed_quota_recovery_preserves_retry_limit(monkeypatch, tmp_path):
     assert exhausted[0]["reason"] == "RECOVERY_RETRY_EXHAUSTED"
 
 
-def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path):
+@pytest.mark.parametrize("routing_failed", [False, True])
+def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path, routing_failed):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
         connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER)")
@@ -10188,9 +10520,11 @@ def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path):
         lambda _ids: {
             "thread-1": {
                 "turnId": "turn-1",
-                "status": "interrupted",
-                "code": "turn_interrupted",
-                "message": "interrupted",
+                "status": "failed" if routing_failed else "interrupted",
+                "code": "other" if routing_failed else "turn_interrupted",
+                "message": "workspace routing discovery failed"
+                if routing_failed
+                else "interrupted",
             }
         },
     )
@@ -10246,7 +10580,8 @@ def test_interrupted_recovery_keeps_active_worker_despite_previous_abort(monkeyp
     assert MODULE._rearm_interrupted_recovery_turns(Store()) == ([], [])
 
 
-def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
+@pytest.mark.parametrize("routing_failed", [False, True])
+def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path, routing_failed):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
         connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER)")
@@ -10275,9 +10610,11 @@ def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
         lambda _ids: {
             "thread-1": {
                 "turnId": "turn-2",
-                "status": "interrupted",
-                "code": "turn_interrupted",
-                "message": "interrupted",
+                "status": "failed" if routing_failed else "interrupted",
+                "code": "other" if routing_failed else "turn_interrupted",
+                "message": "workspace routing discovery failed"
+                if routing_failed
+                else "interrupted",
             }
         },
     )
@@ -10293,10 +10630,12 @@ def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
             "nonce": "nonce-2",
             "retry_count": 2,
             "terminal_error": {
-                "status": "interrupted",
-                "code": "turn_interrupted",
+                "status": "failed" if routing_failed else "interrupted",
+                "code": "other" if routing_failed else "turn_interrupted",
                 "turnId": "turn-2",
-                "message": "interrupted",
+                "message": "workspace routing discovery failed"
+                if routing_failed
+                else "interrupted",
             },
         }
     ]
@@ -10415,6 +10754,8 @@ def test_recovery_delivery_preserves_validation_followup_prompt():
     assert "只有在本轮结束后才能继续" in prompt
     assert "删除输入里的 reproductionReceipt、probeReceipt 和 resultDigest" in prompt
     assert "由系统重新生成" in prompt
+    assert "task-context.json" in prompt and "身份和授权的唯一来源" in prompt
+    assert "不得复制旧 contextDigest、tests、成功叙述或签名" in prompt
 
 
 def test_policy_recovery_delivery_keeps_the_exact_issue_identity(monkeypatch, tmp_path):
@@ -10945,6 +11286,75 @@ def test_validation_progress_marker_tracks_check_outcomes_not_wording():
 
     assert first == rewritten
     assert fixed != first
+
+
+def test_validation_progress_marker_ignores_success_rewrites_and_owned_tmp_suffix():
+    first = {
+        "tests": [
+            {"command": "test -x .venv/bin/python", "exitCode": 1},
+            {
+                "command": 'env TMPDIR="/private/tmp/opr-AXDy7X" '
+                'PATH="/opt/homebrew/opt/node@22/bin:$PATH" '
+                "npm -w packages/core run test:ci",
+                "exitCode": 1,
+                "summary": "2 failed, 34351 passed; cold scan 186.8ms",
+            },
+            {"command": "jq . .oss-pr-radar/task-context.json", "exitCode": 0},
+            {"command": "npm -w packages/core run lint", "exitCode": 0},
+        ]
+    }
+    repeated = {
+        "tests": [
+            {"command": "test -x .venv/bin/python", "exitCode": 1},
+            {
+                "command": 'env TMPDIR="/private/tmp/opr-o4NH0L" '
+                'PATH="/opt/homebrew/opt/node@22/bin:$PATH" '
+                "npm -w packages/core run test:ci",
+                "exitCode": 1,
+                "summary": "2 failed, 34351 passed; cold scan 203.3ms",
+            },
+            {"command": "sed -n '1,220p' .oss-pr-radar/task-context.json", "exitCode": 0},
+            {"command": "npm run lint -- packages/core/src/extension", "exitCode": 0},
+        ]
+    }
+    unchanged = MODULE._validation_progress_marker(first)
+
+    assert MODULE._validation_progress_marker(repeated) == unchanged
+    assert repeated["tests"][1]["command"].startswith('env TMPDIR="/private/tmp/opr-o4NH0L"')
+    fixed = copy.deepcopy(repeated)
+    fixed["tests"][1]["exitCode"] = 0
+    assert MODULE._validation_progress_marker(fixed) != unchanged
+    new_failure = copy.deepcopy(repeated)
+    new_failure["tests"][3]["exitCode"] = 1
+    assert MODULE._validation_progress_marker(new_failure) != unchanged
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "/opt/homebrew/opt/node@26/bin",
+        "/private/tmp/opr-AXDy7X/child",
+        "/private/tmp/opr-AXDy7XX",
+        "/tmp/opr-AXDy7X",
+        "npm -w packages/core run test -- src/extension/extensionManager.test.ts",
+    ],
+)
+def test_validation_progress_marker_preserves_failed_runtime_paths_and_arguments(replacement):
+    command = (
+        'env TMPDIR="/private/tmp/opr-AXDy7X" '
+        'PATH="/opt/homebrew/opt/node@22/bin:$PATH" '
+        "npm -w packages/core run test:ci"
+    )
+    if replacement.startswith("/opt/"):
+        changed = command.replace("/opt/homebrew/opt/node@22/bin", replacement)
+    elif replacement.startswith("/"):
+        changed = command.replace("/private/tmp/opr-AXDy7X", replacement)
+    else:
+        changed = command.replace("npm -w packages/core run test:ci", replacement)
+
+    assert MODULE._validation_progress_marker({"tests": [{"command": command, "exitCode": 1}]}) != (
+        MODULE._validation_progress_marker({"tests": [{"command": changed, "exitCode": 1}]})
+    )
 
 
 def test_app_server_watchdog_polls_on_wall_clock_despite_continuous_events(monkeypatch):
@@ -12725,6 +13135,170 @@ def test_restore_reconcile_trusts_verified_postcondition_over_transport_error(
     assert restored == 1
 
 
+def test_exact_environment_blocked_reproduction_keeps_other_ready_work(tmp_path):
+    store, _ready_worktree, _ready_result = _controller_commit_result(tmp_path)
+    worktree = MODULE.managed_worktree_path("intent-2", "a/b")
+    worktree.mkdir(parents=True)
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    run_git(worktree, "branch", "-M", "main")
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-2",
+            "key": "a/b#2",
+            "repo": "a/b",
+            "issueNumber": 2,
+            "issueUrl": "https://github.com/a/b/issues/2",
+            "title": "Reproduction environment unavailable",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "defaultBranch": "main",
+            "selectedBaseSha": base_sha,
+            "codePaths": ["runtime.py"],
+            "probeRequired": True,
+            "probeLevel": "UNVERIFIED",
+            "taskStage": "REPRODUCTION_REQUIRED",
+        }
+    )
+    store.claim("intent-2", "controller")
+    store.commit_dispatch(
+        "intent-2",
+        owner="controller",
+        thread_id="thread-2",
+        project_id="github",
+        worktree_path=str(worktree),
+    )
+    store.record_audit_snapshot(
+        "a/b#2",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "reproduction-environment-evidence",
+            "liveAudit": {
+                "capturedAt": iso_z(now),
+                "evidence": {
+                    "digest": "reproduction-environment-evidence",
+                    "issue": {"state": "open"},
+                },
+            },
+        },
+        dedupe_key="reproduction-environment-evidence",
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/2",
+        thread_id="thread-2",
+        cwd=worktree,
+    )
+    context_raw = context_path.read_bytes()
+    context = json.loads(context_raw)
+    assert context["stage"] == "DISPATCHED"
+    assert context["taskStage"] == "REPRODUCTION_REQUIRED"
+    result_path = Path(context["resultPath"])
+    value = {
+        "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+        "contextDigest": context["contextDigest"],
+        "key": "a/b#2",
+        "issueUrl": "https://github.com/a/b/issues/2",
+        "threadId": "thread-2",
+        "worktreePath": str(worktree),
+        # The actual child result omitted taskId; preserve that shape.
+        "stage": "REPRODUCTION_REQUIRED",
+        "reason": "REPRODUCTION_ENVIRONMENT_BLOCKED",
+        "reproductionVerified": False,
+        "evidence": {"environmentBlocker": "Bun and repository dependencies are absent."},
+        "tests": [{"command": "bun --version", "exitCode": 127}],
+    }
+    raw = json.dumps(value, indent=2).encode() + b"\n"
+    result_path.write_bytes(raw)
+    assert run_git(worktree, "status", "--porcelain") == ""
+    with store.connect() as connection:
+        intent_before = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-2'"
+            ).fetchone()[0]
+        )
+
+    # Targeted reads of the same public ingestion entry point prove that this
+    # task alone produces no accepted result or publication request.
+    args = SimpleNamespace(ledger=store.path, key="a/b#2")
+    first = MODULE.ingest_task_results(args)
+    assert first["ok"] is True, first
+    assert first["errors"] == []
+    assert first["ingested"] == []
+    assert first["publicationRequests"] == []
+    assert first["validationDeferred"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#2",
+            "reason": "REPRODUCTION_ENVIRONMENT_BLOCKED",
+            "alreadyRecorded": False,
+        }
+    ]
+    repeated = MODULE.ingest_task_results(args)
+    assert repeated["ok"] is True, repeated
+    assert repeated["errors"] == []
+    assert repeated["ingested"] == []
+    assert repeated["publicationRequests"] == []
+    assert repeated["workBlocked"] == [dict(first["workBlocked"][0], alreadyRecorded=True)]
+
+    # The unfiltered real entry point must advance the independent valid
+    # contribution in the same batch while retaining this task's waiting state.
+    combined = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert combined["ok"] is True, combined
+    assert combined["errors"] == []
+    assert combined["workBlocked"] == repeated["workBlocked"]
+    assert combined["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(combined["publicationRequests"]) == 1
+    assert combined["publicationRequests"][0]["key"] == "a/b#1"
+    assert result_path.read_bytes() == raw
+    assert context_path.read_bytes() == context_raw
+    assert json.loads(result_path.read_bytes())["reproductionVerified"] is False
+    assert "quality" not in json.loads(result_path.read_bytes())
+    assert "reproductionReceipt" not in json.loads(result_path.read_bytes())
+    current = store.task_context(issue_url="https://github.com/a/b/issues/2", thread_id="thread-2")
+    assert current["stage"] == "DISPATCHED"
+    assert current["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert store.active_task_quarantine("a/b#2") is None
+    assert not any(item["key"] == "a/b#2" for item in store.implementation_followup_candidates())
+    # The evidence block neither parks recovery nor bypasses the existing
+    # default 90-minute age gate. These are isolated fixture ledger reads.
+    assert any(item["key"] == "a/b#2" for item in store.recovery_candidates(min_age_minutes=0))
+    assert not any(item["key"] == "a/b#2" for item in store.recovery_candidates())
+    with store.connect() as connection:
+        intent_after = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-2'"
+            ).fetchone()[0]
+        )
+        for field in ("taskStage", "probeLevel", "probeReceiptDigest", "quality"):
+            assert intent_after.get(field) == intent_before.get(field)
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE opportunity_key='a/b#2' "
+                "AND event_type IN ('TASK_RESULT_INGESTED','IMPLEMENTATION_FOLLOWUP_SENT')"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events WHERE opportunity_key='a/b#2' "
+                "AND event_type='TASK_RESULT_EVIDENCE_BLOCKED'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
 def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path):
     store, worktree = registered_store(tmp_path)
     context_path = MODULE.write_task_context(
@@ -13189,12 +13763,28 @@ def _audit_refresh_validation_result(tmp_path, *, omit_task_id=False):
     return store, worktree, result_path, old_context, current_context
 
 
-def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "recovery_completed,generated_build_case,summarized_validation_check",
+    [
+        (False, None, False),
+        (True, None, False),
+        (False, "core", False),
+        (False, "channel", False),
+        (False, "non_generated", False),
+        (False, "core", True),
+        (False, "channel", True),
+    ],
+)
+def test_native_incomplete_validation_survives_same_binding_audit_refresh(
+    monkeypatch, tmp_path, recovery_completed, generated_build_case, summarized_validation_check
+):
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         controller_policy_complete=True,
         target_base_bound=True,
+        validation_generated_build_failure=generated_build_case,
+        summarized_validation_check=summarized_validation_check,
         missing_quality=(
             "regression_test_verified",
             "relevant_tests_green",
@@ -13255,11 +13845,131 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
         result = (
             {"thread": {"id": "thread-1"}}
             if response_id == 1
-            else {"turn": {"id": "native-incomplete-validation"}}
+            else {
+                "turn": {
+                    "id": "native-incomplete-validation-generated-build"
+                    if observed.get("generated_retry")
+                    else "native-incomplete-validation-recovery"
+                    if observed.get("recovery")
+                    else "native-incomplete-validation"
+                }
+            }
         )
         return buffer, {"result": result}
 
     def complete_validation(*_args, **_kwargs):
+        turn_id = (
+            "native-incomplete-validation-generated-build"
+            if observed.get("generated_retry")
+            else "native-incomplete-validation-recovery"
+            if observed.get("recovery")
+            else "native-incomplete-validation"
+        )
+        with rollout.open("a") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": iso_z(datetime.now(UTC)),
+                        "payload": {"type": "task_started", "turn_id": turn_id},
+                    }
+                )
+                + "\n"
+            )
+        if recovery_completed and not observed.get("recovery"):
+            error = {
+                "codex_error_info": "other",
+                "message": "workspace routing discovery timed out",
+            }
+            with rollout.open("a") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "timestamp": iso_z(datetime.now(UTC)),
+                            "payload": {
+                                "type": "task_complete",
+                                "turn_id": turn_id,
+                                "error": error,
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+            return {"turnId": turn_id, "status": "failed", "error": error}
+        if generated_build_case is not None:
+            source_raw = (worktree / observed["worktree_input_path"]).read_bytes()
+            source = json.loads(source_raw)
+            sent_prompt = next(
+                message["params"]["input"][0]["text"]
+                for message in reversed(_task_turn_messages(process))
+                if message.get("method") == "turn/start"
+            )
+            assert ("普通离线构建属于 run_tests 的前置步骤" in sent_prompt) == bool(
+                observed.get("generated_retry")
+            )
+            native_items = [
+                {
+                    "type": "UserMessage",
+                    "id": "native-user-message",
+                    "client_id": "native-client",
+                    "content": [{"type": "text", "text": sent_prompt, "text_elements": []}],
+                }
+            ]
+            for test in source["tests"]:
+                actual = subprocess.run(
+                    ["/bin/zsh", "-lc", test["command"]],
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                )
+                assert actual.returncode == test["exitCode"] == 1
+                native_items.append(
+                    {
+                        "type": "CommandExecution",
+                        "status": "failed",
+                        "command": ["/bin/zsh", "-lc", test["command"]],
+                        "cwd": worktree.as_uri(),
+                        "exit_code": actual.returncode,
+                        "stdout": actual.stdout,
+                        "stderr": actual.stderr,
+                        "aggregated_output": actual.stdout + actual.stderr,
+                    }
+                )
+            with rollout.open("a") as handle:
+                for item in native_items:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "type": "event_msg",
+                                "timestamp": iso_z(datetime.now(UTC)),
+                                "payload": {
+                                    "type": "item_completed",
+                                    "thread_id": "thread-1",
+                                    "turn_id": turn_id,
+                                    "item": item,
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+                handle.write(
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "timestamp": iso_z(datetime.now(UTC)),
+                            "payload": {"type": "task_complete", "turn_id": turn_id},
+                        }
+                    )
+                    + "\n"
+                )
+            observed.update(
+                raw=result_path.read_bytes(),
+                source_raw=source_raw,
+                checks=source["tests"],
+                quality=source["quality"],
+            )
+            return {"turnId": turn_id, "status": "completed"}
         source_path = worktree / observed["worktree_input_path"]
         source_raw = source_path.read_bytes()
         source = json.loads(source_raw)
@@ -13283,7 +13993,9 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
         assert [check["exitCode"] for check in checks] == [127, 1]
         value = dict(
             source,
-            contextDigest=current["contextDigest"],
+            contextDigest=source["contextDigest"]
+            if observed.get("recovery")
+            else current["contextDigest"],
             tests=checks,
             reason="VALIDATION_INCOMPLETE",
         )
@@ -13302,21 +14014,41 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
             checks=checks,
             quality=value["quality"],
         )
-        return {"turnId": "native-incomplete-validation", "status": "completed"}
+        with rollout.open("a") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": iso_z(datetime.now(UTC)),
+                        "payload": {"type": "task_complete", "turn_id": turn_id},
+                    }
+                )
+                + "\n"
+            )
+        return {"turnId": turn_id, "status": "completed"}
 
     def launch_worker(argv, **kwargs):
         if "task-turn-worker" not in argv:
             return original_popen(argv, **kwargs)
+        is_recovery = argv[argv.index("--delivery-kind") + 1] == "recovery"
+        observed["recovery"] = is_recovery
+        observed["generated_retry"] = (
+            generated_build_case is not None
+            and "--reservation-digest" in argv
+            and argv[argv.index("--reservation-digest") + 1] != reserved["reservationDigest"]
+        )
         worker_args = SimpleNamespace(
             ledger=store.path,
-            delivery_kind="validation-followup",
+            delivery_kind="recovery" if is_recovery else "validation-followup",
             thread_id="thread-1",
-            delivery_token=candidate["resultDigest"],
+            delivery_token=argv[argv.index("--delivery-token") + 1],
             delivery_attempt_digest=None,
             intent_id=None,
             worktree_path=None,
             **{
                 option.replace("-", "_"): argv[argv.index("--" + option) + 1]
+                if "--" + option in argv
+                else None
                 for option in (
                     "reservation-digest",
                     "snapshot-id",
@@ -13328,13 +14060,25 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
                 )
             },
         )
-        observed["worktree_input_path"] = worker_args.worktree_input_path
+        if not is_recovery:
+            observed["worktree_input_path"] = worker_args.worktree_input_path
         completed = MODULE.task_turn_worker_entry(worker_args)
-        assert completed["ok"] and completed["turnStatus"] == "completed", completed
+        expected_status = "failed" if recovery_completed and not is_recovery else "completed"
+        assert completed["ok"] and completed["turnStatus"] == expected_status, completed
         return SimpleNamespace(pid=os.getpid())
+
+    original_prompt = MODULE._validation_followup_prompt
+
+    def old_prompt(candidate):
+        prompt = original_prompt(candidate)
+        start = prompt.index("重新运行检查前，先读取仓库贡献指南和构建脚本")
+        end = prompt.index("确认当前环境后重新运行真实用户入口", start)
+        return prompt[:start] + prompt[end:]
 
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     with monkeypatch.context() as delivery:
+        if generated_build_case is not None:
+            delivery.setattr(MODULE, "_validation_followup_prompt", old_prompt)
         delivery.setattr(MODULE, "ledger", lambda _path: store)
         delivery.setattr(MODULE, "_app_server_action_session", action_session)
         delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
@@ -13349,7 +14093,10 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
                 result_digest=candidate["resultDigest"],
             )
         )
-    assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
+    expected_status = "failed" if recovery_completed else "completed"
+    assert delivered["ok"] and delivered["turnStatus"] == expected_status, delivered
+    if recovery_completed:
+        observed["raw"] = result_path.read_bytes()
     candidate = store.task_result_candidates_for_ingestion()[0]
     with store.connect() as connection:
         prior_events = [
@@ -13393,12 +14140,202 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
     assert current_context["contextDigest"] != old_context["contextDigest"]
     assert current_context["targetBase"] == old_context["targetBase"]
     assert result_path.read_bytes() == observed["raw"]
+    if recovery_completed:
+        recovery = next(
+            item
+            for item in store.recovery_candidates(min_age_minutes=0)
+            if item["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
+        )
+        store.reserve_recovery(
+            thread_id="thread-1",
+            nonce=recovery["recoveryNonce"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+        with monkeypatch.context() as delivery:
+            delivery.setattr(MODULE, "ledger", lambda _path: store)
+            delivery.setattr(MODULE, "_app_server_action_session", action_session)
+            delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+            delivery.setattr(MODULE, "_read_app_server_response", read_response)
+            delivery.setattr(MODULE, "_wait_for_app_server_terminal_turn", complete_validation)
+            delivery.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+            delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+            resumed = MODULE.recovery_deliver(
+                SimpleNamespace(
+                    ledger=store.path,
+                    thread_id="thread-1",
+                    recovery_nonce=recovery["recoveryNonce"],
+                    intent_id="intent-1",
+                    worktree_path=str(worktree),
+                )
+            )
+        assert resumed["ok"] and resumed["turnStatus"] == "completed", resumed
+        receipt_key = MODULE._task_turn_delivery_file_key(
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=reserved["resultDigest"],
+            validation_reservation_digest=reserved["reservationDigest"],
+        )
+        assert (
+            json.loads((MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json").read_text())[
+                "turnStatus"
+            ]
+            == "failed"
+        )
+    if generated_build_case is not None:
+        consumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+        assert (
+            consumed["ok"] and consumed["ingested"] == [] and consumed["publicationRequests"] == []
+        ), consumed
+        assert result_path.read_bytes() == observed["raw"]
+        assert store.validation_followup_candidates() == []
+        assert (
+            store.reconcile_validation_no_progress() == 0 and store.validation_no_progress() == []
+        )
+        assert "resultDigest" not in candidate
+        before = result_path.read_bytes()
+        input_path = worktree / observed["worktree_input_path"]
+        immutable_input = input_path.read_bytes()
+        with store.connect() as connection:
+            historical_rows = [
+                tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+            ]
+        receipt_key = MODULE._task_turn_delivery_file_key(
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=reserved["resultDigest"],
+            validation_reservation_digest=reserved["reservationDigest"],
+        )
+        receipt_path = MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json"
+        receipt_raw = receipt_path.read_bytes()
+        if generated_build_case == "core":
+            for change in ({"turnStatus": "failed"}, {"reservationDigest": "f" * 64}):
+                receipt_path.write_text(json.dumps(json.loads(receipt_raw) | change))
+                rejected = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+                assert rejected["candidates"] == [] and store.validation_no_progress() == [], (
+                    rejected
+                )
+                receipt_path.write_bytes(receipt_raw)
+            journal_before = rollout.read_bytes()
+            with rollout.open("a") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "timestamp": iso_z(datetime.now(UTC)),
+                            "payload": {
+                                "type": "task_started",
+                                "turn_id": "still-active-validation",
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+            rejected = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+            assert rejected["candidates"] == [] and store.validation_no_progress() == [], rejected
+            rollout.write_bytes(journal_before)
+        reopened = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+        if generated_build_case == "non_generated":
+            assert reopened["candidates"] == [] and store.validation_no_progress() == [], reopened
+            assert result_path.read_bytes() == before and input_path.read_bytes() == immutable_input
+            return
+        assert reopened["errors"] == [] and len(reopened["candidates"]) == 1, reopened
+        fresh = reopened["candidates"][0]
+        assert fresh["generatedBuildContract"] == MODULE.GENERATED_BUILD_CONTRACT
+        if generated_build_case == "channel":
+            installed_package = worktree / "node_modules/@qwen-code/channel-base"
+            assert json.loads((installed_package / "package.json").read_text())["name"] == (
+                "@qwen-code/channel-base"
+            )
+            assert (installed_package / "src/index.js").is_file()
+            assert not (installed_package / "dist/index.js").exists()
+            assert reopened["environmentBlocked"] == [] and fresh["prefetchRequired"] is False
+        new_reserved = MODULE.validation_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path, thread_id="thread-1", result_digest=reserved["resultDigest"]
+            )
+        )
+        assert (
+            new_reserved["ok"]
+            and new_reserved["reservationDigest"] != reserved["reservationDigest"]
+        )
+        assert "普通离线构建属于 run_tests 的前置步骤" in new_reserved["prompt"]
+        unresolved = store.unresolved_validation_followups()
+        assert (
+            len(unresolved) == 1
+            and unresolved[0]["reservationDigest"] == new_reserved["reservationDigest"]
+        )
+        with monkeypatch.context() as delivery:
+            delivery.setattr(MODULE, "ledger", lambda _path: store)
+            delivery.setattr(MODULE, "_app_server_action_session", action_session)
+            delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+            delivery.setattr(MODULE, "_read_app_server_response", read_response)
+            delivery.setattr(MODULE, "_wait_for_app_server_terminal_turn", complete_validation)
+            delivery.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+            delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+            new_delivered = MODULE.validation_followup_deliver(
+                SimpleNamespace(
+                    ledger=store.path, thread_id="thread-1", result_digest=reserved["resultDigest"]
+                )
+            )
+        assert new_delivered["ok"] and new_delivered["turnStatus"] == "completed", new_delivered
+        assert store.unresolved_validation_followups() == []
+        assert result_path.read_bytes() == before and input_path.read_bytes() == immutable_input
+        assert json.loads(before)["quality"] == observed["quality"]
+        assert all(
+            json.loads(before)["quality"][name] is False
+            for name in (
+                "regression_test_verified",
+                "relevant_tests_green",
+                "independent_review_passed",
+            )
+        )
+        second = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+        assert second["candidates"] == [] and second["errors"] == [], second
+        with store.connect() as connection:
+            sent_rows = connection.execute(
+                "SELECT id,dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id"
+            ).fetchall()
+            assert len(sent_rows) == 2
+            assert sent_rows[0]["dedupe_key"] == reserved["resultDigest"]
+            assert sent_rows[1]["dedupe_key"] == new_reserved["reservationDigest"]
+            new_sent = json.loads(sent_rows[1]["payload_json"])
+            assert new_sent["resultDigest"] == reserved["resultDigest"]
+            assert new_sent["reservationDigest"] == new_reserved["reservationDigest"]
+            reserved_id = connection.execute(
+                "SELECT id FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' AND dedupe_key=?",
+                (new_reserved["reservationDigest"],),
+            ).fetchone()[0]
+            assert sent_rows[1]["id"] > reserved_id
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'"
+                ).fetchone()[0]
+                == 1
+            )
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'"
+                ).fetchone()[0]
+                == 1
+            )
+            assert [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT * FROM events WHERE id<=? ORDER BY id", (historical_rows[-1][0],)
+                )
+            ] == historical_rows
+            assert (
+                connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+            )
+            assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+        return
     after = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
     assert after["errors"] == [], after["errors"]
     assert after["ok"], after
-    assert pending_sync["pendingResultIngestion"] == [{"key": "a/b#1", "threadId": "thread-1"}], (
-        pending_sync
-    )
+    assert pending_sync["pendingResultIngestion"] == (
+        [] if recovery_completed else [{"key": "a/b#1", "threadId": "thread-1"}]
+    ), pending_sync
     assert pending_context_raw == old_context_raw
     assert after["publicationRequests"] == [] and after["validationDeferred"], after
     normalized = json.loads(result_path.read_text())
@@ -13415,6 +14352,13 @@ def test_native_incomplete_validation_survives_same_binding_audit_refresh(monkey
         assert (
             base64.b64decode(json.loads(rows[0][0])["sourceResultBytesBase64"]) == observed["raw"]
         )
+        if recovery_completed:
+            recovery_proof = json.loads(rows[0][0])["recovery"]
+            assert recovery_proof["recoveryNonce"] == recovery["recoveryNonce"]
+            assert recovery_proof["turnId"] == "native-incomplete-validation-recovery"
+            assert (
+                recovery_proof["resultBytesDigest"] == hashlib.sha256(observed["raw"]).hexdigest()
+            )
         assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
         assert [
@@ -13786,9 +14730,11 @@ def test_legacy_result_migration_does_not_change_signed_result_digest(tmp_path):
 
 def _published_followup_store(
     tmp_path: Path,
+    *,
+    worktree: Path | None = None,
 ) -> tuple[RadarLedger, Path, str, str]:
     MODULE.ROOT = tmp_path
-    store, worktree = registered_store(tmp_path)
+    store, worktree = registered_store(tmp_path, worktree=worktree)
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
     source = worktree / "runtime.py"
@@ -13849,6 +14795,165 @@ def _published_followup_store(
         }
     )
     return store, worktree, head_sha, pr_url
+
+
+@pytest.mark.parametrize(
+    (
+        "result_error_field",
+        "different_shared_wake",
+        "missing_private_followup",
+        "task_scoped",
+        "advanced_head",
+    ),
+    [
+        ("contextDigest", False, False, True, False),
+        ("worktreePath", False, False, False, False),
+        ("contextDigest", True, False, False, False),
+        ("contextDigest", False, True, True, False),
+        ("contextDigest", False, True, True, True),
+    ],
+)
+def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
+    monkeypatch,
+    tmp_path,
+    result_error_field,
+    different_shared_wake,
+    missing_private_followup,
+    task_scoped,
+    advanced_head,
+):
+    """Use the recovery entry point with the retained PR_OPEN envelope shape."""
+
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, published_head, pr_url = _published_followup_store(
+        tmp_path / "original", worktree=worktree
+    )
+    local_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    private_raw = local_path.read_bytes()
+    context = json.loads(private_raw)
+    if missing_private_followup:
+        # The retained production task already has native recovery authority.
+        # Build that same history through the original restore and writer,
+        # before introducing the observed missing-follow-up split.
+        store.restore_task_context(
+            context,
+            source_updated_at=iso_z(datetime.fromtimestamp(local_path.stat().st_mtime, UTC)),
+        )
+        local_path = MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        )
+        private_raw = local_path.read_bytes()
+        context = json.loads(private_raw)
+        assert context["probeRequired"] is False
+    shared = json.loads(private_raw)
+    shared["prFollowup"]["checkedAt"] = iso_z(datetime.now(UTC) - timedelta(minutes=1))
+    shared["prFollowup"]["evidence"]["pullResponseDigest"] = "e" * 64
+    if different_shared_wake:
+        shared["prFollowup"]["wakeDigest"] = "d" * 64
+    shared_path = MODULE.shared_context_path(context["issueUrl"])
+    MODULE._atomic_json(shared_path, shared)
+    shared_raw = shared_path.read_bytes()
+    replacement_followup = None
+    current_head = published_head
+    if missing_private_followup:
+        private = dict(context, prFollowup=None)
+        local_path.write_text(MODULE.canonical_json(private), encoding="utf-8")
+        private_raw = local_path.read_bytes()
+        if advanced_head:
+            # An ordinary update of this same PR leaves the old wake and
+            # rejected result behind; it does not replace the task identity.
+            (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
+            run_git(worktree, "add", "runtime.py")
+            run_git(worktree, "commit", "-m", "fix: update the existing PR")
+            current_head = run_git(worktree, "rev-parse", "HEAD")
+        checked_at = iso_z(datetime.now(UTC))
+        store.import_pr_followups(
+            {
+                "version": "pr_followup_v3",
+                "generatedAt": checked_at,
+                "items": [
+                    {
+                        "url": pr_url,
+                        "headSha": current_head,
+                        "actionDigest": "replacement-action",
+                        "taskActionDigest": "replacement-task-action",
+                        "taskFollowupRequired": True,
+                        "taskActions": ["当前分支检查失败"],
+                        "evidence": {"actionableCheckNames": ["Ruff"]},
+                        "checkedAt": checked_at,
+                    }
+                ],
+            }
+        )
+        replacement_followup = store.active_pr_followup(context["key"])
+        assert replacement_followup["wake_digest"] != shared["prFollowup"]["wakeDigest"]
+    result_path = Path(context["resultPath"])
+    value = {
+        "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+        "key": context["key"],
+        "issueUrl": context["issueUrl"],
+        "taskId": context["intentId"],
+        "threadId": context["threadId"],
+        "worktreePath": str(worktree),
+        "contextDigest": context["contextDigest"],
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+        "stage": "PR_OPEN",
+        "commitSha": published_head,
+    }
+    value[result_error_field] = "f" * 64 if result_error_field == "contextDigest" else "/other"
+    result_raw = json.dumps(value).encode("utf-8")
+    result_path.write_bytes(result_raw)
+    result_digest = hashlib.sha256(result_raw).hexdigest()
+    original_gate = MODULE._quarantine_shared_context(
+        store,
+        shared_path,
+        RuntimeError("published task result mismatch: contextDigest"),
+        raw=shared_raw,
+        source_stat=shared_path.stat(),
+    )
+    artifact_path = Path(original_gate["artifactPath"])
+    artifact_raw = artifact_path.read_bytes()
+
+    first = MODULE.recover_shared_task_contexts(store)
+    second = MODULE.recover_shared_task_contexts(store)
+
+    if task_scoped:
+        assert first["errors"] == second["errors"] == []
+        assert first["privateErrors"] == second["privateErrors"] == []
+        assert first["quarantined"] == second["quarantined"] == [original_gate | {"new": False}]
+    else:
+        assert first["errors"][0]["source"] == second["errors"][0]["source"] == "private"
+        assert first["quarantined"] == second["quarantined"] == []
+    assert first["resultReceiptsRestored"] == second["resultReceiptsRestored"] == 0
+    assert first["restored"] == second["restored"] == []
+    assert not store.task_result_digest_seen(
+        context["key"],
+        result_digest,
+        intent_id=context["intentId"],
+        thread_id=context["threadId"],
+        worktree_path=str(worktree),
+    )
+    assert result_path.read_bytes() == result_raw
+    assert local_path.read_bytes() == private_raw
+    assert shared_path.read_bytes() == shared_raw
+    assert artifact_path.read_bytes() == artifact_raw
+    assert run_git(worktree, "rev-parse", "HEAD") == current_head
+    current = store.task_context(issue_url=context["issueUrl"], thread_id=context["threadId"])
+    assert current["publicationReceipt"]["prUrl"] == pr_url
+    assert current["publicationReceipt"]["commitSha"] == published_head
+    assert store.active_task_quarantine(context["key"])["reason"] == "SHARED_CONTEXT_INVALID"
+    assert store.publication_work_items() == []
+    if missing_private_followup:
+        assert store.active_pr_followup(context["key"]) == replacement_followup
+        assert current["prFollowup"]["wakeDigest"] == replacement_followup["wake_digest"]
 
 
 def test_late_pr_followup_result_unblocks_pending_new_issue_claim(monkeypatch, tmp_path):
@@ -14173,15 +15278,24 @@ def test_ingestion_reports_unfinished_followup_missing_worktree(tmp_path):
 
 
 def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monkeypatch, tmp_path):
-    store, worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, worktree, head_sha, pr_url = _published_followup_store(
+        tmp_path, worktree=MODULE.managed_worktree_path("intent-1", "a/b")
+    )
     candidate = store.pr_followup_candidates()[0]
+    previous_context = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    ).read_bytes()
     prepared = []
 
     def prepare(value):
         prepared.append(value)
-        return {"preparedHeadSha": "b" * 40}
+        return {"preparedHeadSha": head_sha}
 
     monkeypatch.setattr(MODULE, "_prepare_pr_followup", prepare)
 
@@ -14203,7 +15317,16 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
     assert "不要在当前入口目录等待 .oss-pr-radar/task-context.json" in result["prompt"]
     context = json.loads(Path(result["contextPath"]).read_text(encoding="utf-8"))
     assert context["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
-    assert context["prFollowup"]["preparedHeadSha"] == "b" * 40
+    assert context["prFollowup"]["preparedHeadSha"] == head_sha
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    assert Path(result["contextPath"]).read_bytes() != previous_context
+    assert shared_path.read_bytes() == Path(result["contextPath"]).read_bytes()
+    assert MODULE._private_context_matches_current_ledger(store, context) is True
+    wrong_head = {
+        **context,
+        "prFollowup": {**context["prFollowup"], "preparedHeadSha": "c" * 40},
+    }
+    assert MODULE._private_context_matches_current_ledger(store, wrong_head) is False
     assert context["prFollowup"]["resultContract"] == {
         "schemaVersion": "pr-followup-result-contract-v3",
         "requiredWakeDigestField": "followupDigest",
@@ -14231,7 +15354,7 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
             cwd=worktree,
         ).read_text(encoding="utf-8")
     )
-    assert refreshed["prFollowup"]["preparedHeadSha"] == "b" * 40
+    assert refreshed["prFollowup"]["preparedHeadSha"] == head_sha
     assert refreshed["contextDigest"] == context["contextDigest"]
     assert store.pr_followup_candidates() == []
 
@@ -14615,6 +15738,75 @@ def test_context_sync_closes_legacy_reservation_superseded_by_later_result(tmp_p
     ]
     assert store.active_pr_followup_preparation("a/b#1", thread_id="thread-1") is None
     assert (worktree / ".oss-pr-radar" / "task-context.json").is_file()
+
+
+def test_context_sync_isolates_published_git_path_error_and_continues_other_task(
+    monkeypatch, tmp_path
+):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    original_candidates = store.task_context_candidates()
+    blocked = original_candidates[0]
+    other = {**blocked, "key": "a/other#2", "issueUrl": "https://github.com/a/other/issues/2"}
+    monkeypatch.setattr(store, "task_context_candidates", lambda: [blocked, other])
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "_task_live_audit_refresh_due", lambda _context: False)
+    monkeypatch.setattr(
+        MODULE, "_controller_commit_result_pending_ingestion", lambda *_a, **_k: False
+    )
+    context = store.task_context(issue_url=blocked["issueUrl"], thread_id=blocked["threadId"])
+    monkeypatch.setattr(store, "task_context", lambda **_kwargs: context)
+    calls = []
+
+    def write_context(_store, *, issue_url, **_kwargs):
+        calls.append(issue_url)
+        if issue_url == blocked["issueUrl"]:
+            try:
+                raise MODULE.ProbeUnavailable(
+                    "CODE_PATH_NOT_INDEXABLE",
+                    diagnostics={
+                        "operation": "git-add-dry-run",
+                        "exitCode": 128,
+                        "stderr": "index.lock",
+                    },
+                )
+            except MODULE.ProbeUnavailable as exc:
+                raise RuntimeError(f"task code paths are not indexable: {exc}") from exc
+        return worktree / ".oss-pr-radar" / "task-context.json"
+
+    monkeypatch.setattr(MODULE, "write_task_context", write_context)
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] and synced["errors"] == []
+    assert calls == [blocked["issueUrl"], other["issueUrl"]]
+    assert synced["written"][0]["key"] == "a/other#2"
+    assert synced["isolatedFollowups"] == [
+        {
+            "key": blocked["key"],
+            "reason": "CODE_PATH_NOT_INDEXABLE",
+            "diagnostics": {
+                "operation": "git-add-dry-run",
+                "exitCode": 128,
+                "stderr": "index.lock",
+            },
+        }
+    ]
+
+
+def test_context_sync_keeps_non_task_specific_error_as_failure(monkeypatch, tmp_path):
+    store, _worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    monkeypatch.setattr(MODULE, "_task_live_audit_refresh_due", lambda _context: False)
+    monkeypatch.setattr(
+        MODULE, "_controller_commit_result_pending_ingestion", lambda *_a, **_k: False
+    )
+
+    def fail_write(*_args, **_kwargs):
+        raise RuntimeError("controller signing key unavailable")
+
+    monkeypatch.setattr(MODULE, "write_task_context", fail_write)
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert not synced["ok"]
+    assert synced["isolatedFollowups"] == []
+    assert synced["errors"] == [{"key": "a/b#1", "error": "controller signing key unavailable"}]
 
 
 @pytest.mark.parametrize("reason", ["STRONG_EXISTING_PR", "ACTIVE_OR_CONDITIONAL_CLAIM"])
@@ -15214,8 +16406,9 @@ def test_prepare_pr_followup_retries_transient_pr_head_fetch(monkeypatch, tmp_pa
 
 
 @pytest.mark.parametrize("workspace_missing", [True, False])
-def test_drain_isolates_foreign_branch_during_real_followup_restore_and_continues_validation(
-    monkeypatch, tmp_path, workspace_missing
+@pytest.mark.parametrize("next_work", ["validation", "new_issue"])
+def test_drain_isolates_foreign_branch_and_continues_existing_or_new_work(
+    monkeypatch, tmp_path, workspace_missing, next_work
 ):
     store, expected, head, _pr_url = _published_followup_store(tmp_path / "ledger")
     github_root = MODULE.GITHUB_ROOT
@@ -15273,7 +16466,12 @@ def test_drain_isolates_foreign_branch_during_real_followup_restore_and_continue
     )
     validation = {"key": "a/b#2", "threadId": "validation-thread", "resultDigest": "result"}
     monkeypatch.setattr(
-        MODULE, "validation_followup_list", lambda _args: {"candidates": [validation]}
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {
+            "candidates": [validation] if next_work == "validation" else [],
+            "unresolved": [],
+        },
     )
     monkeypatch.setattr(MODULE, "validation_followup_reserve", lambda _args: {"ok": True})
     delivered = []
@@ -15288,15 +16486,76 @@ def test_drain_isolates_foreign_branch_during_real_followup_restore_and_continue
         "pr_followup_deliver",
         lambda _args: pytest.fail("foreign branch candidate must not be dispatched"),
     )
+    audited = []
+    if next_work == "new_issue":
+        now = datetime.now(UTC)
+        store.enqueue(
+            {
+                "intentId": "intent-new",
+                "key": "a/b#2",
+                "repo": "a/b",
+                "issueNumber": 2,
+                "issueUrl": "https://github.com/a/b/issues/2",
+                "title": "New runtime bug",
+                "mode": "canary",
+                "category": "NEW_CLEAN_CANDIDATE",
+                "autoSpawn": True,
+                "score": 12,
+                "issuedAt": iso_z(now),
+                "expiresAt": iso_z(now + timedelta(hours=1)),
+            }
+        )
+        evidence = SimpleNamespace(digest="live-policy", as_dict=lambda: {})
+        verdict = AuthorizationDecision(
+            status="HOLD",
+            reason_code="POLICY_UNKNOWN",
+            checks={"policy": "HOLD"},
+            evidence_digest=evidence.digest,
+        )
+
+        def audit(intent):
+            audited.append(intent["intentId"])
+            return evidence, verdict
+
+        monkeypatch.setattr(MODULE, "_audit_intent", audit)
+        monkeypatch.setattr(
+            MODULE,
+            "ManagedAdapter",
+            lambda *_args: SimpleNamespace(record_preflight_outcome=lambda **_kwargs: None),
+        )
+        monkeypatch.setattr(
+            MODULE, "recovery_list", lambda _args: {"recoverable": [], "unresolved": []}
+        )
 
     result = MODULE.drain_once(
-        SimpleNamespace(ledger=store.path, project_id="github", owner="test-drain")
+        SimpleNamespace(
+            ledger=store.path, runtime_root=tmp_path, project_id="github", owner="test-drain"
+        )
     )
 
     assert result["ok"] is True
-    assert result["action"] == "validation_followup_dispatched"
-    assert result["key"] == validation["key"]
-    assert delivered == [validation["threadId"]]
+    if next_work == "validation":
+        assert result["action"] == "validation_followup_dispatched"
+        assert result["key"] == validation["key"]
+        assert delivered == [validation["threadId"]]
+    else:
+        assert result["action"] == "none"
+        assert audited == ["intent-new"]
+        assert delivered == []
+        assert result["held"][-1] == {"key": "a/b#2", "reason": "POLICY_UNKNOWN"}
+        assert store.pending()[0]["ledgerStatus"] == "PENDING"
+        ordinary_claim = MODULE.claim_intent(
+            SimpleNamespace(
+                ledger=store.path,
+                runtime_root=tmp_path,
+                intent_id="intent-new",
+                owner="ordinary-cli",
+                lease_minutes=30,
+                prepare=False,
+            )
+        )
+        assert ordinary_claim["reason"] == "higher_priority_existing_work"
+        assert audited == ["intent-new"]
     assert result["isolatedFollowups"] == [
         {"key": candidate["key"], "reason": "PR_FOLLOWUP_BRANCH_IN_USE"}
     ]
@@ -15316,6 +16575,116 @@ def test_drain_isolates_foreign_branch_during_real_followup_restore_and_continue
         assert (expected / ".oss-pr-radar" / "task-context.json").read_text() == (
             "preserve previous input\n"
         )
+
+
+@pytest.mark.parametrize(
+    "remaining_priority",
+    [
+        "key",
+        "intentId",
+        "threadId",
+        "worktreePath",
+        "wakeDigest",
+        "restore",
+        "unresolved",
+        "validation",
+        "wip_limit",
+        "other_path_error",
+    ],
+)
+def test_drain_branch_isolation_preserves_changed_identity_and_other_priority(
+    monkeypatch, tmp_path, remaining_priority
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-new",
+            "key": "a/b#2",
+            "repo": "a/b",
+            "issueNumber": 2,
+            "issueUrl": "https://github.com/a/b/issues/2",
+            "title": "New runtime bug",
+            "mode": "canary",
+            "autoSpawn": True,
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    candidate = {
+        "key": "a/b#1",
+        "intentId": "published-intent",
+        "threadId": "published-thread",
+        "worktreePath": str(tmp_path / "published-worktree"),
+        "wakeDigest": "original-wake",
+    }
+    lists = []
+
+    def followups(_args):
+        lists.append(True)
+        current = dict(candidate)
+        if len(lists) > 1 and remaining_priority in current:
+            current[remaining_priority] += "-changed"
+        return {
+            "candidates": [current],
+            "restoreRequired": [current]
+            if len(lists) > 1 and remaining_priority == "restore"
+            else [],
+            "unresolved": [current] if remaining_priority == "unresolved" else [],
+        }
+
+    def reserve(_args):
+        reason = (
+            "CODE_PATH_MISSING"
+            if remaining_priority == "other_path_error"
+            else "PR_FOLLOWUP_BRANCH_IN_USE"
+        )
+        raise RuntimeError(reason)
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": []})
+    monkeypatch.setattr(MODULE, "_rearm_negative_followup_deliveries", lambda _store: [])
+    monkeypatch.setattr(MODULE, "_rearm_interrupted_recovery_turns", lambda _store: ([], []))
+    monkeypatch.setattr(MODULE, "_codex_usage_limit_pause", lambda _store: None)
+    monkeypatch.setattr(MODULE, "publication_feedback_list", lambda _args: {"candidates": []})
+    monkeypatch.setattr(MODULE, "pr_followup_list", followups)
+    monkeypatch.setattr(MODULE, "pr_followup_reserve", reserve)
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {
+            "candidates": [],
+            "unresolved": [{"key": "a/b#3"}] if remaining_priority == "validation" else [],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE, "recovery_list", lambda _args: {"recoverable": [], "unresolved": []}
+    )
+    monkeypatch.setattr(
+        MODULE, "_private_task_limit", lambda: 1 if remaining_priority == "wip_limit" else None
+    )
+    monkeypatch.setattr(MODULE, "_active_task_count", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: pytest.fail("remaining priority and WIP must still precede live audit"),
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=store.path, runtime_root=tmp_path, project_id="github", owner="test-drain"
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "none"
+    assert result["held"][-1] == {
+        "key": "a/b#2",
+        "reason": "task_wip_limit"
+        if remaining_priority == "wip_limit"
+        else "higher_priority_existing_work",
+    }
+    assert store.pending()[0]["ledgerStatus"] == "PENDING"
 
 
 def test_pr_followup_branch_ownership_git_failure_is_not_isolated(monkeypatch, tmp_path):
@@ -16426,6 +17795,11 @@ def _controller_commit_result(
     probe_code_paths: tuple[str, ...] = ("runtime.py",),
     omit_reported_code_paths: bool = False,
     target_base_bound: bool = False,
+    validation_generated_build_failure: str | None = None,
+    summarized_validation_check: bool = False,
+    complete_normal_validation_audit: bool = False,
+    omit_commit_message: bool = False,
+    managed_opportunity_source: str = "test-legal-fixture",
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -16442,6 +17816,29 @@ def _controller_commit_result(
         extra.write_text("value = 1\n", encoding="utf-8")
     changed_files = sorted(["runtime.py", *additional_changed_files])
     baseline_files = sorted([*changed_files, *additional_baseline_files])
+    if validation_generated_build_failure == "channel":
+        workspace_package = worktree / "packages/channels/base"
+        (workspace_package / "src").mkdir(parents=True)
+        (workspace_package / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "@qwen-code/channel-base",
+                    "type": "module",
+                    "main": "dist/index.js",
+                }
+            )
+        )
+        (workspace_package / "src/index.js").write_text("export const channelBase = true;\n")
+        baseline_files.extend(
+            ["packages/channels/base/package.json", "packages/channels/base/src/index.js"]
+        )
+        installed_namespace = worktree / "node_modules/@qwen-code"
+        installed_namespace.mkdir(parents=True)
+        (installed_namespace / "channel-base").symlink_to(
+            workspace_package, target_is_directory=True
+        )
+        exclude_path = worktree / ".git/info/exclude"
+        exclude_path.write_text(exclude_path.read_text() + "node_modules/\n")
     run_git(worktree, "add", *baseline_files)
     run_git(worktree, "commit", "-m", "chore: baseline")
     run_git(worktree, "branch", "-M", "main")
@@ -16543,28 +17940,47 @@ def _controller_commit_result(
         dedupe_key="intent-1:repository-probe",
     )
     if controller_policy_complete:
-        store.record_audit_snapshot(
-            "a/b#1",
-            evidence={
-                "authorization": {"status": "ALLOW"},
-                "evidenceDigest": "c" * 64,
-                "liveAudit": {
-                    "capturedAt": iso_z(datetime.now(UTC)),
-                    "evidence": {
-                        "digest": "c" * 64,
-                        "repo": "a/b",
-                        "issue": {"number": 1, "state": "open"},
-                        "completeness": {"repositoryPolicy": "COMPLETE"},
-                        "policy": {
-                            "status": "NORMAL",
-                            "digest": "d" * 64,
-                            "ai_disclosure": False,
-                            "ai_prohibited": False,
-                        },
+        policy_audit = {
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "c" * 64,
+            "liveAudit": {
+                "capturedAt": iso_z(datetime.now(UTC)),
+                "evidence": {
+                    "digest": "c" * 64,
+                    "repo": "a/b",
+                    "issue": {"number": 1, "state": "open"},
+                    "completeness": {"repositoryPolicy": "COMPLETE"},
+                    "policy": {
+                        "status": "NORMAL",
+                        "digest": "d" * 64,
+                        "ai_disclosure": False,
+                        "ai_prohibited": False,
                     },
                 },
             },
-            dedupe_key="controller-policy-complete",
+        }
+        if complete_normal_validation_audit:
+            assert target_base_bound
+            policy_audit["targetBase"] = {
+                "branch": "main",
+                "sha": base_sha,
+                "source": "repository_default",
+                "defaultBranch": "main",
+            }
+            policy_audit["authorization"]["evidence_digest"] = "c" * 64
+            policy_audit["liveAudit"]["evidence"].update(
+                repoProbeReceipt=probe,
+                complete=True,
+                completeness={"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
+            )
+        store.record_audit_snapshot(
+            "a/b#1",
+            evidence=policy_audit,
+            dedupe_key=(
+                "intent-1:controller-policy-complete"
+                if complete_normal_validation_audit
+                else "controller-policy-complete"
+            ),
         )
     if target_base_bound:
         run_git(worktree, "switch", "--detach", base_sha)
@@ -16639,6 +18055,42 @@ def _controller_commit_result(
             "policyDigest": "d" * 64,
             "policyStatus": "NORMAL",
         }
+    if validation_generated_build_failure is not None:
+        if validation_generated_build_failure == "core":
+            command_text = "test -f packages/core/dist/index.js || { printf '%s\\n' 'workspace package has not been built (missing packages/core/dist/index.js)'; exit 1; }"
+        elif validation_generated_build_failure == "channel":
+            installed_package = worktree / "node_modules/@qwen-code/channel-base"
+            assert installed_package.is_symlink()
+            assert installed_package.resolve() == worktree / "packages/channels/base"
+            assert json.loads((installed_package / "package.json").read_text())["name"] == (
+                "@qwen-code/channel-base"
+            )
+            assert not (installed_package / "dist/index.js").exists()
+            command_text = "node --input-type=module -e \"import(process.cwd() + '/node_modules/@qwen-code/channel-base/dist/index.js')\""
+        else:
+            command_text = "cat tests/fixtures/input.json"
+        actual = subprocess.run(
+            ["/bin/zsh", "-lc", command_text], cwd=worktree, capture_output=True, text=True
+        )
+        assert actual.returncode == 1, actual.stderr
+        result["tests"] = [
+            {
+                "command": command_text,
+                "cwd": str(worktree),
+                "exitCode": actual.returncode,
+                "result": actual.stdout + actual.stderr,
+            }
+        ]
+        if summarized_validation_check:
+            assert validation_generated_build_failure in {"core", "channel"}
+            result["tests"][0].pop("cwd")
+            result["tests"][0]["result"] = (
+                "The targeted core regression command still fails before collection because "
+                "packages/core/dist/index.js is missing."
+                if validation_generated_build_failure == "core"
+                else "The real CLI development entry did not reach extension uninstall because "
+                "@qwen-code/channel-base/dist/index.js is missing."
+            )
     signed_result = dict(result)
     signed_result["handoffMode"] = "controller_commit_complete"
     signed_result["publication"] = dict(result["publication"]) | {"baseBranch": "main"}
@@ -16688,7 +18140,7 @@ def _controller_commit_result(
         issue_number=1,
         issue_url="https://github.com/a/b/issues/1",
         state="SYSTEM_PROCESSING",
-        source="test-legal-fixture",
+        source=managed_opportunity_source,
         provenance={"fixture": True},
         metadata={"selectedBaseSha": base_sha, "codePaths": receipt_code_paths},
     )
@@ -16777,6 +18229,8 @@ def _controller_commit_result(
             result_quality["policy_verified"] = True
             result["quality"] = result_quality
             result_path.write_text(json.dumps(result), encoding="utf-8")
+        if omit_commit_message:
+            result.pop("commitMessage")
         _sign_reproduction_certificate(
             result,
             result_path=result_path,
@@ -16797,7 +18251,14 @@ def _controller_commit_result(
 
 @pytest.mark.parametrize("upstream_fixed", [True, False, None])
 def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
-    monkeypatch, tmp_path, upstream_fixed, *, expired_history=False, foreign_branch=False
+    monkeypatch,
+    tmp_path,
+    upstream_fixed,
+    *,
+    expired_history=False,
+    foreign_branch=False,
+    return_completed_fixture=False,
+    overwritten_discovery=False,
 ):
     from oss_pr_radar import publication
     from oss_pr_radar.evidence import EvidenceBundle
@@ -16809,6 +18270,7 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         worktree=managed_path,
         controller_policy_complete=True,
         target_base_bound=True,
+        managed_opportunity_source="dispatch" if overwritten_discovery else "test-legal-fixture",
     )
     bind_validation_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(MODULE, "THREAD_DB", tmp_path / "absent-thread-db")
@@ -16957,6 +18419,72 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     assert audited.reason == "LATEST_TARGET_REVALIDATION_REQUIRED", audited
     assert run_git(worktree, "rev-parse", "refs/remotes/origin/main") == live_base
 
+    legacy_metadata = None
+    if overwritten_discovery:
+        from oss_pr_radar.managed_adapter import ManagedAdapter
+
+        queue = {
+            "mode": "shadow",
+            "intents": [
+                {
+                    "intentId": "f" * 64,
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "decisionDigest": "d" * 64,
+                    "preTaskGate": {},
+                    "preTaskEvidence": {"baseSha": "b" * 40},
+                }
+            ],
+        }
+        original_upsert = ManagedLedger.upsert_opportunity
+
+        def legacy_upsert(self, **kwargs):
+            kwargs.pop("preserve_task_binding", None)
+            return original_upsert(self, **kwargs)
+
+        adapter = ManagedAdapter(tmp_path, store.path)
+        with monkeypatch.context() as legacy:
+            legacy.setattr(ManagedLedger, "upsert_opportunity", legacy_upsert)
+            assert adapter.record_dispatch_queue(queue)["recorded"] == 1
+        with store.connect() as connection:
+            damaged = connection.execute(
+                "SELECT * FROM managed_opportunities WHERE opportunity_key='a/b#1'"
+            ).fetchone()
+        legacy_metadata = json.loads(damaged["metadata_json"])
+        assert set(legacy_metadata) == {"decisionDigest", "preTaskGate", "preTaskEvidence"}
+        assert damaged["state"] == "PENDING_PREFLIGHT"
+        assert damaged["source"] == "dispatch"
+        # An explicit conflicting base still fails through the original entry;
+        # only the observed missing-field projection is recoverable.
+        original_upsert(
+            adapter.ledger,
+            opportunity_key="a/b#1",
+            owner="a",
+            repo="b",
+            issue_number=1,
+            issue_url="https://github.com/a/b/issues/1",
+            state="PENDING_PREFLIGHT",
+            source="dispatch",
+            provenance=json.loads(damaged["provenance_json"]),
+            metadata=legacy_metadata | {"selectedBaseSha": "0" * 40},
+        )
+        rejected = MODULE.run_publication_queue(SimpleNamespace(ledger=store.path))
+        assert rejected["errors"] == [
+            {"requestId": request_id, "error": "target refresh managed opportunity base changed"}
+        ]
+        assert result_path.read_bytes() == source_bytes
+        assert run_git(worktree, "rev-parse", "HEAD") == old_head
+        with store.connect() as connection:
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type='PUBLICATION_TARGET_BASE_REFRESHED'"
+                ).fetchone()[0]
+                == 0
+            )
+        with monkeypatch.context() as legacy:
+            legacy.setattr(ManagedLedger, "upsert_opportunity", legacy_upsert)
+            assert adapter.record_dispatch_queue(queue)["recorded"] == 1
+
     advanced = MODULE.run_publication_queue(SimpleNamespace(ledger=store.path))
     assert advanced["ok"], advanced["errors"]
     assert advanced["pending"][0]["targetBaseRefresh"]["refreshed"] is True
@@ -16973,6 +18501,17 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     assert current["childMayEditFiles"] is False
     assert current["reproductionReceipt"] is None
     assert managed.read_task("intent-1")["state"] == "REPRODUCTION_REQUIRED"
+    if legacy_metadata is not None:
+        with store.connect() as connection:
+            refreshed = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM events WHERE event_type='PUBLICATION_TARGET_BASE_REFRESHED'"
+                ).fetchone()[0]
+            )
+        assert refreshed["history"]["managedOpportunityMetadata"] == legacy_metadata
+        recovery = refreshed["history"]["managedOpportunityEvidenceRecovery"]
+        assert recovery["authenticatedPreviousBaseSha"] == old_base
+        assert recovery["reason"] == "BOUND_TASK_DISCOVERY_PROJECTION_OVERWRITTEN"
     retained = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
     assert retained["ok"], retained["errors"]
     assert retained["ignored"] == [{"key": "a/b#1", "reason": "LATEST_TARGET_RETAINED_INPUT"}]
@@ -17408,6 +18947,16 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         for row in events
     )
     assert any(row["event_type"] == "IMPLEMENTATION_FOLLOWUP_SENT" for row in events)
+    if return_completed_fixture:
+        return store, worktree, result_path, request_id
+
+
+def test_latest_target_refresh_recovers_the_bound_task_after_discovery_overwrite(
+    monkeypatch, tmp_path
+):
+    test_latest_target_refresh_runs_native_validation_and_implementation_chain(
+        monkeypatch, tmp_path, False, overwritten_discovery=True
+    )
 
 
 def test_latest_target_expired_history_continues_commit_without_renewing_source(
@@ -19466,25 +21015,81 @@ def test_published_fix_ready_file_repairs_current_result_and_binds_pr(tmp_path):
     assert context["resultDigest"] == reviewed_digest
 
 
-@pytest.mark.parametrize("advanced_stage", ["CI_GREEN", "MAINTAINER_ACCEPTED"])
-def test_published_fix_ready_replay_preserves_immutable_binding_stage(tmp_path, advanced_stage):
+@pytest.mark.parametrize(
+    ("advanced_stage", "distinct_reservation_head", "prior_managed_result"),
+    [
+        ("CI_GREEN", False, False),
+        ("MAINTAINER_ACCEPTED", False, False),
+        ("CI_GREEN", True, False),
+        ("CI_GREEN", True, True),
+    ],
+)
+def test_published_fix_ready_replay_preserves_immutable_binding_stage(
+    tmp_path, advanced_stage, distinct_reservation_head, prior_managed_result
+):
     store, worktree, result_path = _controller_commit_result(tmp_path)
     reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
     reviewed_value["independentReview"] = MODULE.controller_review_result(
         MODULE.ROOT, reviewed_value
     )
     result_path.write_text(json.dumps(reviewed_value), encoding="utf-8")
-    managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+    current_head = str(reviewed_value["headSha"])
+    reservation_head = "d" * 40 if distinct_reservation_head else current_head
+    managed, context, _pr_url = _bind_published_pr_authority_fixture(
         store,
         worktree,
         result_path,
+        reservation_head_sha=reservation_head,
     )
+    assert context["publicationReceipt"]["commitSha"] == current_head
+    original_raw = result_path.read_bytes()
     value = json.loads(result_path.read_text(encoding="utf-8"))
-    result_digest = MODULE._task_result_digest(value, result_path.read_bytes())
+    result_digest = MODULE._task_result_digest(value, original_raw)
+    prior_event = None
+    if prior_managed_result:
+        result = managed.record_result(
+            task_id="intent-1",
+            result_digest=result_digest,
+            worker_state="patched",
+            pr_key="a/b#9",
+            head_sha=current_head,
+            commit_sha=current_head,
+            validation={"passed": True, "evidence": list(value["quality"])},
+            prior_head_sha=reservation_head,
+            new_head_sha=current_head,
+            source="dispatch-result",
+            provenance={
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "stage": "FIX_READY",
+                "probeLevel": "REPRODUCED_VALIDATED",
+            },
+        )
+        assert result["advanced"] is True
+        prior_event = managed.event_by_idempotency_key(f"result:{result['result_key']}")
+        assert prior_event["event_type"] == "PATCHED"
+        assert prior_event["opportunity_key"] is None
+    with store.connect() as connection:
+        publication_counts_before = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "publication_requests",
+                "publication_permits",
+                "publication_effects",
+                "managed_publication_reservations",
+            )
+        }
 
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
     assert first["ok"] is True, first["errors"]
-    assert managed.current_published_result_for_task("intent-1")["stage"] == "PR_OPEN"
+    first_binding = managed.current_published_result_for_task("intent-1")
+    assert first_binding["stage"] == "PR_OPEN"
+    assert first_binding["publicationCommitSha"] == reservation_head
+    assert first_binding["headSha"] == first_binding["commitSha"] == current_head
+    binding_key = f"published-task-result:intent-1:a/b#9:{current_head}:{result_digest}"
+    first_binding_event = managed.event_by_idempotency_key(binding_key)
+    assert first_binding_event["opportunity_key"] == "a/b#1"
+    if prior_event is not None:
+        assert managed.event_by_idempotency_key(prior_event["idempotency_key"]) == prior_event
 
     store.record_stage("a/b#1", advanced_stage, evidence={"checks": "green"})
     replayed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
@@ -19493,7 +21098,11 @@ def test_published_fix_ready_replay_preserves_immutable_binding_stage(tmp_path, 
     assert replayed["ignored"] == [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
     restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
     assert restored["stage"] == advanced_stage
-    assert managed.current_published_result_for_task("intent-1")["stage"] == "PR_OPEN"
+    assert managed.current_published_result_for_task("intent-1") == first_binding
+    assert managed.event_by_idempotency_key(binding_key) == first_binding_event
+    if prior_event is not None:
+        assert managed.event_by_idempotency_key(prior_event["idempotency_key"]) == prior_event
+    assert result_path.read_bytes() == original_raw
     with managed._connection() as connection:
         binding_rows = connection.execute(
             """SELECT payload_json FROM managed_lifecycle_events
@@ -19505,8 +21114,13 @@ def test_published_fix_ready_replay_preserves_immutable_binding_stage(tmp_path, 
                WHERE task_id='intent-1' AND pr_key='a/b#9'"""
         ).fetchall()
     assert [json.loads(row["payload_json"])["stage"] for row in binding_rows] == ["PR_OPEN"]
+    assert [json.loads(row["payload_json"]) for row in binding_rows] == [first_binding]
     assert [row["worker_state"] for row in result_rows] == ["PR_OPEN"]
     with store.connect() as connection:
+        assert {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in publication_counts_before
+        } == publication_counts_before
         marker_rows = connection.execute(
             """SELECT payload_json FROM events
                WHERE opportunity_key='a/b#1'
@@ -20430,7 +22044,11 @@ def test_invalid_published_backfill_does_not_mutate_authorized_task(tmp_path):
         )
 
 
-def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(tmp_path):
+@pytest.mark.parametrize(
+    "conflict",
+    ["published_binding_payload", "result_without_exact_row", "foreign_result_opportunity"],
+)
+def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(tmp_path, conflict):
     store, worktree, result_path = _controller_commit_result(tmp_path)
     managed, context, pr_url = _bind_published_pr_authority_fixture(
         store,
@@ -20450,17 +22068,42 @@ def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(t
     )
     result_digest = "a" * 64
     head_sha = str(value["headSha"])
-    event_key = f"published-task-result:intent-1:a/b#9:{head_sha}:{result_digest}"
+    published_binding = conflict == "published_binding_payload"
+    result_key = f"intent-1|a/b#9|{head_sha}|{result_digest}"
+    event_key = (
+        f"published-task-result:intent-1:a/b#9:{head_sha}:{result_digest}"
+        if published_binding
+        else f"result:{result_key}"
+    )
     managed.record_event(
-        event_type="PUBLISHED_TASK_RESULT_BOUND",
+        event_type="PUBLISHED_TASK_RESULT_BOUND" if published_binding else "PATCHED",
         idempotency_key=event_key,
-        opportunity_key="a/b#1",
+        opportunity_key=(
+            "a/b#1"
+            if published_binding
+            else "a/b#2"
+            if conflict == "foreign_result_opportunity"
+            else None
+        ),
         task_id="intent-1",
         pr_key="a/b#9",
         state="IMPLEMENTATION_READY",
         source="dispatch-result",
         payload={"wrong": True},
     )
+    if conflict == "foreign_result_opportunity":
+        managed.record_result(
+            task_id="intent-1",
+            result_digest=result_digest,
+            worker_state="patched",
+            pr_key="a/b#9",
+            head_sha=head_sha,
+            commit_sha=head_sha,
+            validation={"passed": True, "evidence": ["reviewed fixture"]},
+            prior_head_sha="d" * 40,
+            new_head_sha=head_sha,
+            source="dispatch-result",
+        )
     candidate = next(
         item
         for item in store.task_result_candidates()
@@ -20475,6 +22118,12 @@ def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(t
             dict(row)
             for row in connection.execute(
                 "SELECT * FROM managed_results ORDER BY result_key"
+            ).fetchall()
+        ]
+        events_before = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM managed_lifecycle_events ORDER BY event_id"
             ).fetchall()
         ]
 
@@ -20493,6 +22142,12 @@ def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(t
                 "SELECT * FROM managed_results ORDER BY result_key"
             ).fetchall()
         ] == results_before
+        assert [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM managed_lifecycle_events ORDER BY event_id"
+            ).fetchall()
+        ] == events_before
         assert (
             connection.execute(
                 """SELECT COUNT(*) FROM events
@@ -20626,6 +22281,45 @@ def test_published_pr_authority_requires_exact_opportunity_reservation(tmp_path)
         )
         is None
     )
+
+
+@pytest.mark.parametrize("current_followup", [False, True])
+def test_validation_list_keeps_only_current_published_followup_stale(tmp_path, current_followup):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("independent_review_passed",),
+    )
+    initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert initial["ok"] and initial["validationDeferred"]
+    candidate = store.validation_followup_candidates()[0]
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    store.commit_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE events SET created_at=? WHERE event_type='VALIDATION_FOLLOWUP_SENT'",
+            (iso_z(datetime.now(UTC) - timedelta(hours=2)),),
+        )
+    _managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store, worktree, result_path, explicit_pr_followup=True, degrade_stage=False
+    )
+    if not current_followup:
+        value = json.loads(result_path.read_text())
+        value["followupDigest"] = "obsolete-published-followup"
+        result_path.write_text(json.dumps(value))
+    before = result_path.read_bytes()
+    assert len(store.stale_validation_followups()) == 1
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+
+    assert listed["errors"] == []
+    assert len(listed["stale"]) == int(current_followup), listed
+    assert listed["publishedStaleIgnored"] == (
+        []
+        if current_followup
+        else [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
+    )
+    assert result_path.read_bytes() == before
+    assert len(store.stale_validation_followups()) == 1
+    assert store.validation_followup_candidates() == []
 
 
 def test_published_pr_authority_repairs_degraded_pr_followup_wake_chain(tmp_path):
@@ -23688,6 +25382,34 @@ def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     assert listed["controllerReviewPending"][0]["reason"] == "CONTROLLER_REVIEW_PENDING"
 
 
+def test_missing_validation_result_does_not_wait_for_independent_review(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path, authenticated=False)
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: None)
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["errors"] == []
+    assert ingested["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    candidate = store.validation_followup_candidates()[0]
+    context_path = result_path.parent / "task-context.json"
+    context_before = context_path.read_bytes()
+    result_path.unlink()
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+
+    assert listed["ok"] is True
+    assert listed["candidates"] == []
+    assert listed["controllerReviewPending"] == []
+    assert listed["concurrentDeferred"] == [
+        {
+            "key": candidate["key"],
+            "resultDigest": candidate["resultDigest"],
+            "reason": "VALIDATION_RESULT_MISSING",
+        }
+    ]
+    assert not result_path.exists()
+    assert context_path.read_bytes() == context_before
+    assert store.publication_work_items() == []
+
+
 def test_final_receipt_rebind_uses_current_valid_receipt_when_context_source_is_unavailable(
     tmp_path,
 ):
@@ -24946,6 +26668,7 @@ def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consum
         value=receipt_bound,
     )
     assert historical_context["prFollowup"]["wakeDigest"] == replacement["wakeDigest"]
+    assert publication_request["followupWakeDigest"] == receipt_bound["followupDigest"]
     assert historical_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] == [
         "runtime.py",
         "runtime/new.py",
@@ -25697,7 +27420,7 @@ def test_controller_merge_preserves_child_prepared_resolution(tmp_path):
     ]
 
 
-def test_controller_keeps_ai_disclosure_fix_local_and_signs_dco(tmp_path):
+def test_authorized_disclosure_does_not_replace_policy_validation_or_dco(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         policy_verified=False,
@@ -25712,10 +27435,11 @@ def test_controller_keeps_ai_disclosure_fix_local_and_signs_dco(tmp_path):
     assert result["ingested"] == [
         {
             "key": "a/b#1",
-            "stage": "FIX_READY",
-            "publicationBlockedReason": "AI_DISCLOSURE_REQUIRED",
+            "stage": "VALIDATION_PENDING",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
         }
     ]
+    assert result["validationDeferred"][0]["missing"] == ["policy_verified"]
     assert "Signed-off-by: Test Contributor <test@example.com>" in run_git(
         worktree, "show", "-s", "--format=%B", "HEAD"
     )
@@ -28731,6 +30455,65 @@ def test_new_controller_review_feedback_rearms_a_stalled_validation(monkeypatch,
     assert changed["candidates"][0]["resultDigest"] == third_digest
 
 
+def test_normal_validation_delivers_exact_controller_review_for_revision(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("independent_review_passed",)
+    )
+    monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
+    args = SimpleNamespace(ledger=store.path, runtime_root=tmp_path)
+    MODULE.ingest_task_results(args)
+    raw = result_path.read_bytes()
+    source = json.loads(raw)
+    review = _write_explicit_controller_review(tmp_path, source)
+    review.update(
+        verdict="FAIL",
+        summary="Cache invalidation precedes the queued Redis write.",
+        findings=[
+            {
+                "severity": "P2",
+                "file": "runtime.py",
+                "line": 1,
+                "message": "Verify the pending write across disconnect before revising the fix.",
+            }
+        ],
+    )
+    review_path = _receipt_path(
+        tmp_path,
+        key=source["key"],
+        commit_sha=source["commitSha"],
+        source_digest=_source_digest(source),
+    )
+    envelope = json.loads(review_path.read_text())
+    envelope["review"] = review
+    review_path.write_text(json.dumps(envelope))
+    listed = MODULE.validation_followup_list(args)
+    assert listed["ok"] and listed["errors"] == [], listed
+    candidate = listed["candidates"][0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            runtime_root=tmp_path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+        )
+    )
+    queued = store.unresolved_validation_followups()[0]
+    snapshot = MODULE._ensure_validation_snapshot(
+        queued, reservation_digest=reserved["reservationDigest"]
+    )
+    prompt = MODULE._validation_followup_prompt(queued | snapshot)
+    assert "reviewFeedbackContract" not in queued
+    assert MODULE.canonical_json(review) in prompt
+    assert "按这些精确意见修改同一个最小修复" in prompt
+    assert "不要创建新任务或重新实现" not in prompt
+    assert "independent_review_passed 必须保留 false" in prompt
+    assert "未提交源码改动必须交回 controller_commit_required" in prompt
+    assert result_path.read_bytes() == raw
+    assert json.loads(raw)["quality"]["independent_review_passed"] is False
+    assert run_git(worktree, "rev-parse", "HEAD") == source["commitSha"]
+    assert run_git(worktree, "status", "--porcelain") == ""
+
+
 def test_dirty_worktree_rearms_a_stalled_validation_result(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -28845,7 +30628,16 @@ def test_available_dependency_prefetch_rearms_a_stalled_validation(monkeypatch, 
     assert listed["candidates"][0]["prefetchRequired"] is True
 
 
-def test_locked_but_absent_node_dependency_builds_npm_prefetch_plan(tmp_path):
+@pytest.mark.parametrize(
+    ("failure_summary", "prefetch_required"),
+    [
+        ("eslint-config-next 16.3.0 is locked but absent", True),
+        ("ENOENT: no such file or directory, open 'fixtures/tsx.json'", False),
+    ],
+)
+def test_locked_but_absent_node_dependency_builds_npm_prefetch_plan(
+    tmp_path, failure_summary, prefetch_required
+):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     (worktree / "package.json").write_text("{}\n", encoding="utf-8")
@@ -28858,7 +30650,7 @@ def test_locked_but_absent_node_dependency_builds_npm_prefetch_plan(tmp_path):
             {
                 "command": "npm run lint:json",
                 "exitCode": 2,
-                "summary": "eslint-config-next 16.3.0 is locked but absent",
+                "summary": failure_summary,
             }
         ],
     }
@@ -28872,14 +30664,15 @@ def test_locked_but_absent_node_dependency_builds_npm_prefetch_plan(tmp_path):
         }
     )
 
-    assert len(failures) == 1
-    assert commands == [
+    assert len(failures) == int(prefetch_required)
+    expected_commands = [
         {
             "kind": "npm_locked_install",
             "cwd": str(worktree.resolve()),
             "argv": ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
         }
     ]
+    assert commands == (expected_commands if prefetch_required else [])
 
 
 def test_unlocked_unverified_gate_is_classified_as_environment_blocked(monkeypatch, tmp_path):
@@ -30030,6 +31823,964 @@ def test_validation_scope_rebuild_is_retryable_if_receipt_rebind_crashes(monkeyp
     assert finalized["reproductionReceipt"]["commitSha"] == corrected_head
 
 
+def _completed_pr_result_with_wrong_schema(tmp_path, monkeypatch):
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=worktree,
+        target_base_bound=True,
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+    )
+    _managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store, worktree, result_path, explicit_pr_followup=True, degrade_stage=False
+    )
+    head = run_git(worktree, "rev-parse", "HEAD")
+    candidate = store.pr_followup_candidates()[0]
+    wake = candidate["wakeDigest"]
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=wake, prepared_head_sha=head)
+    store.authorize_task_turn_delivery(
+        delivery_kind="pr-followup",
+        thread_id="thread-1",
+        delivery_token=wake,
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    started = datetime.now(UTC)
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=wake)
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+        prepared_followup_head=head,
+    )
+    context = json.loads(context_path.read_bytes())
+    context_path = MODULE.shared_context_path(context["issueUrl"])
+    original = json.loads(result_path.read_bytes())
+    for name in ("reproductionReceipt", "probeReceipt", "resultDigest", "independentReview"):
+        original.pop(name, None)
+    original.update(
+        schemaVersion="workspace-result-v1",
+        taskId="intent-1",
+        contextDigest=context["contextDigest"],
+        followupDigest=wake,
+        handoffMode="controller_commit_required",
+        commitSha=None,
+        headSha=head,
+        previousControllerCommitSha=head,
+    )
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n")
+    result_path.write_text(json.dumps(original))
+    result_path.chmod(0o600)
+    completed = datetime.now(UTC)
+    turn = "completed-original-pr-turn"
+    journal = tmp_path / "completed-original-pr.jsonl"
+    journal.write_text(
+        "".join(
+            json.dumps(record) + "\n"
+            for record in [
+                {"type": "session_meta", "payload": {"id": "thread-1"}},
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(started),
+                    "payload": {"type": "task_started", "turn_id": turn},
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(completed),
+                    "payload": {"type": "task_complete", "turn_id": turn},
+                },
+            ]
+        )
+    )
+    journal.chmod(0o600)
+    thread_db = tmp_path / "pr-schema-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?)",
+            (
+                "thread-1",
+                str(MODULE.GITHUB_ROOT),
+                0,
+                MODULE.issue_prompt(context["issueUrl"]),
+                str(journal),
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="pr-followup", thread_id="thread-1", delivery_token=wake
+    )
+    receipt_path = state / "task_turn_receipts" / f"{receipt_key}.json"
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "deliveryKind": "pr-followup",
+                "deliveryToken": wake,
+                "threadId": "thread-1",
+                "turnId": turn,
+                "turnStatus": "completed",
+            }
+        )
+    )
+    receipt_path.chmod(0o600)
+    quarantined = MODULE._quarantine_shared_context(
+        store,
+        context_path,
+        RuntimeError("published task result mismatch: schemaVersion"),
+        raw=context_path.read_bytes(),
+        source_stat=context_path.stat(),
+    )
+    assert quarantined is not None
+    return store, worktree, result_path, context_path, receipt_path, original, pr_url
+
+
+def test_context_sync_corrects_only_owned_completed_pr_schema_then_original_ingestion(
+    tmp_path, monkeypatch
+):
+    store, worktree, result_path, context_path, _receipt, original, pr_url = (
+        _completed_pr_result_with_wrong_schema(tmp_path, monkeypatch)
+    )
+    context_raw = context_path.read_bytes()
+    head = run_git(worktree, "rev-parse", "HEAD")
+    dirty = run_git(worktree, "diff")
+    with pytest.raises(RuntimeError, match="published task result mismatch: schemaVersion"):
+        MODULE._recoverable_published_result(json.loads(context_raw))
+    synced = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+
+    corrected = json.loads(result_path.read_bytes())
+    assert corrected == dict(original, schemaVersion=MODULE.TASK_RESULT_SCHEMA), synced
+    assert store.active_task_quarantine("a/b#1") is None, synced
+    assert context_path.read_bytes() == context_raw
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    assert run_git(worktree, "diff") == dirty
+    assert corrected["quality"]["relevant_tests_green"] is False
+    assert corrected["quality"]["independent_review_passed"] is False
+    with store.connect() as connection:
+        proof = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='PR_RESULT_SCHEMA_CORRECTION_AUTHORIZED'"
+            ).fetchone()[0]
+        )
+    assert json.loads(base64.b64decode(proof["sourceResultBytesBase64"])) == original
+    assert proof["correctedRawDigest"] == hashlib.sha256(result_path.read_bytes()).hexdigest()
+    MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    finalized = json.loads(result_path.read_bytes())
+    assert finalized["handoffMode"] == "controller_commit_complete", ingested
+    assert run_git(worktree, "rev-parse", "HEAD^") == head
+    assert finalized["followupDigest"] == original["followupDigest"]
+    assert ingested["publicationRequests"] == []
+    assert (
+        store.task_context(issue_url=original["issueUrl"], thread_id="thread-1")[
+            "publicationReceipt"
+        ]["prUrl"]
+        == pr_url
+    )
+
+
+def _ingested_pending_published_commit(tmp_path, monkeypatch):
+    store, worktree, result_path, _context, _receipt, _original, pr_url = (
+        _completed_pr_result_with_wrong_schema(tmp_path, monkeypatch)
+    )
+    value = json.loads(result_path.read_bytes())
+    value["prUrl"] = pr_url
+    result_path.write_text(json.dumps(value))
+    journal = tmp_path / "completed-original-pr.jsonl"
+    records = [json.loads(line) for line in journal.read_text().splitlines()]
+    records[-1]["timestamp"] = iso_z(datetime.now(UTC))
+    journal.write_text("".join(json.dumps(record) + "\n" for record in records))
+    MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert result["ok"] and result["validationDeferred"], result
+    return store, worktree, result_path, pr_url
+
+
+@pytest.mark.parametrize("damaged_authority", [False, True])
+def test_original_recovery_restores_owned_pending_commit_after_duplicate_no_edit_turn(
+    tmp_path, monkeypatch, damaged_authority
+):
+    store, worktree, result_path, pr_url = _ingested_pending_published_commit(tmp_path, monkeypatch)
+    pending_raw = result_path.read_bytes()
+    pending = json.loads(pending_raw)
+    head = run_git(worktree, "rev-parse", "HEAD")
+    parent = run_git(worktree, "rev-parse", "HEAD^")
+    context = store.task_context(issue_url=pending["issueUrl"], thread_id="thread-1")
+    original_followup = context["prFollowup"]
+    now = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": parent,
+                    "actionDigest": "summary-only",
+                    "taskActionDigest": "summary-only",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["反馈摘要"],
+                    "evidence": original_followup["evidence"],
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    duplicate = store.pr_followup_candidates()[0]
+    wake = duplicate["wakeDigest"]
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=wake, prepared_head_sha=parent)
+    store.authorize_task_turn_delivery(
+        delivery_kind="pr-followup",
+        thread_id="thread-1",
+        delivery_token=wake,
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=wake)
+    # Reproduce the previous original preparer's destructive reset, in the isolated fixture.
+    run_git(worktree, "reset", "--hard", parent)
+    MODULE.write_task_context(
+        store, issue_url=pending["issueUrl"], thread_id="thread-1", cwd=worktree
+    )
+    overwrite = {
+        "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+        "key": "a/b#1",
+        "issueUrl": pending["issueUrl"],
+        "taskId": "intent-1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree),
+        "stage": "PR_OPEN",
+        "reason": "FOLLOWUP_EVIDENCE_INCOMPLETE",
+        "headSha": parent,
+        "commitSha": parent,
+        "followupDigest": wake,
+        "contextDigest": pending["contextDigest"],
+        "evidence": {"userActionRequired": False},
+    }
+    result_path.write_text(json.dumps(overwrite))
+    overwrite_raw = result_path.read_bytes()
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=wake,
+        result_digest=hashlib.sha256(overwrite_raw).hexdigest(),
+        stage="PR_OPEN",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=str(worktree),
+    )
+    journal = tmp_path / "completed-original-pr.jsonl"
+    with journal.open("a") as stream:
+        for kind in ("task_started", "task_complete"):
+            stream.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": iso_z(datetime.now(UTC)),
+                        "payload": {"type": kind, "turn_id": "duplicate-no-edit"},
+                    }
+                )
+                + "\n"
+            )
+    key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="pr-followup", thread_id="thread-1", delivery_token=wake
+    )
+    MODULE._atomic_private_json(
+        MODULE.STATE / "task_turn_receipts" / f"{key}.json",
+        {
+            "ok": True,
+            "deliveryKind": "pr-followup",
+            "deliveryToken": wake,
+            "threadId": "thread-1",
+            "turnId": "duplicate-no-edit",
+            "turnStatus": "completed",
+        },
+    )
+    if damaged_authority:
+        old_key = MODULE._task_turn_delivery_file_key(
+            delivery_kind="pr-followup",
+            thread_id="thread-1",
+            delivery_token=pending["followupDigest"],
+        )
+        old_receipt = MODULE.STATE / "task_turn_receipts" / f"{old_key}.json"
+        old_receipt.write_bytes(old_receipt.read_bytes() + b" ")
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    if damaged_authority:
+        assert recovered["pendingCommitsRestored"] == [], recovered
+        assert result_path.read_bytes() == overwrite_raw
+        assert run_git(worktree, "rev-parse", "HEAD") == parent
+        return
+    restored = json.loads(result_path.read_bytes())
+    assert recovered["pendingCommitsRestored"], recovered
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    assert restored["commitSha"] == head and restored["previousCommitSha"] == parent
+    assert restored["followupDigest"] == pending["followupDigest"]
+    assert restored["handoffMode"] == "controller_commit_complete"
+    assert restored["quality"]["relevant_tests_green"] is False
+    assert restored["quality"]["independent_review_passed"] is False
+    MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["ok"] and ingested["publicationRequests"] == [], ingested
+    assert store.active_task_quarantine("a/b#1") is None
+    held = MODULE._pending_committed_pr_validation(store, duplicate)
+    assert held and held["commitSha"] == head
+    assert (
+        MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))["pendingCommitsRestored"]
+        == []
+    )
+    with store.connect() as connection:
+        audit = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='PENDING_PR_COMMIT_RESTORATION_AUTHORIZED'"
+            ).fetchone()[0]
+        )
+        assert base64.b64decode(audit["overwrittenResultBytesBase64"]) == overwrite_raw
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("incoming_kind", ["summary", "new-head", "closed", "complete", "resolved"])
+def test_original_sync_keeps_complete_same_head_feedback_without_masking_new_state(
+    tmp_path, monkeypatch, incoming_kind
+):
+    store, worktree, result_path, pr_url = _ingested_pending_published_commit(tmp_path, monkeypatch)
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    old = context["prFollowup"]
+    body = "完整可执行的反馈正文，不是短摘要。"
+    node = {
+        "url": pr_url + "#discussion-r1",
+        "body": body,
+        "bodyDigest": hashlib.sha256(body.encode()).hexdigest(),
+        "summary": body[:4],
+    }
+    evidence = dict(
+        old["evidence"],
+        prState="OPEN",
+        headSha=old["headSha"],
+        unresolvedReviewThreads=[node],
+        unansweredMaintainerComments=[],
+        requestedChanges=[],
+    )
+    checked = iso_z(datetime.now(UTC))
+    full = {
+        "key": "a/b#9",
+        "url": pr_url,
+        "headSha": old["headSha"],
+        "actionDigest": "complete-action",
+        "taskActionDigest": "complete-task",
+        "taskFollowupRequired": True,
+        "taskActions": ["完整反馈"],
+        "evidence": evidence,
+        "prState": "OPEN",
+        "checkedAt": checked,
+    }
+    store.import_pr_followups(
+        {"version": "pr_followup_v3", "generatedAt": checked, "items": [full]}
+    )
+    before = store.pr_followup_candidates()[0]
+    incoming = dict(
+        full,
+        actionDigest="incoming-action",
+        taskActionDigest="incoming-task",
+        checkedAt=iso_z(datetime.now(UTC)),
+        evidence=dict(
+            evidence, unresolvedReviewThreads=[{"url": node["url"], "summary": node["summary"]}]
+        ),
+    )
+    if incoming_kind == "new-head":
+        incoming["headSha"] = "f" * 40
+        incoming["evidence"]["headSha"] = incoming["headSha"]
+    elif incoming_kind == "closed":
+        incoming["prState"] = "CLOSED"
+        incoming["evidence"]["prState"] = "CLOSED"
+    elif incoming_kind == "complete":
+        new_body = body + "有新的修改要求。"
+        incoming["evidence"]["unresolvedReviewThreads"] = [
+            dict(node, body=new_body, bodyDigest=hashlib.sha256(new_body.encode()).hexdigest())
+        ]
+    elif incoming_kind == "resolved":
+        incoming["evidence"]["unresolvedReviewThreads"] = []
+        incoming["taskFollowupRequired"] = False
+        incoming["taskActions"] = []
+    remote = _signed_dispatch_queue(
+        scanner_version=_superseded_scanner_revision(), include_intent=False
+    )
+    monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: remote)
+    monkeypatch.setattr(
+        MODULE,
+        "recover_shared_task_contexts",
+        lambda _store: {"errors": [], "unavailable": [], "quarantined": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "fetch_cloud_pr_followup",
+        lambda: {
+            "version": "pr_followup_v3",
+            "generatedAt": incoming["checkedAt"],
+            "items": [incoming],
+        },
+    )
+    raw = result_path.read_bytes()
+    head = run_git(worktree, "rev-parse", "HEAD")
+    synced = MODULE.sync_queue(store.path)
+    assert synced["ok"], synced
+    with store.connect() as connection:
+        current = dict(
+            connection.execute(
+                "SELECT * FROM pr_followups WHERE opportunity_key='a/b#1'"
+            ).fetchone()
+        )
+    if incoming_kind == "summary":
+        assert synced["prFollowup"]["preservedCompleteFeedback"] == ["a/b#1"]
+        assert current["task_action_digest"] == "complete-task"
+        assert current["wake_digest"] == before["wakeDigest"]
+        assert current["checked_at"] == checked
+        assert json.loads(current["evidence_json"])["unresolvedReviewThreads"] == [node]
+    else:
+        assert synced["prFollowup"]["preservedCompleteFeedback"] == []
+        assert current["task_action_digest"] == "incoming-task"
+        assert current["head_sha"] == incoming["headSha"]
+        assert json.loads(current["evidence_json"]) == incoming["evidence"]
+    assert result_path.read_bytes() == raw
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+
+
+def test_pending_published_commit_keeps_original_validation_when_feedback_changes(
+    tmp_path, monkeypatch
+):
+    store, worktree, result_path, pr_url = _ingested_pending_published_commit(tmp_path, monkeypatch)
+    original_raw = result_path.read_bytes()
+    value = json.loads(original_raw)
+    head = run_git(worktree, "rev-parse", "HEAD")
+    original_context = store.task_context(issue_url=value["issueUrl"], thread_id="thread-1")
+    old_followup = original_context["prFollowup"]
+    now = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": old_followup["headSha"],
+                    "actionDigest": "cloud-only-review",
+                    "taskActionDigest": "cloud-only-review",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["同一审查意见"],
+                    "evidence": old_followup["evidence"],
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["wakeDigest"] != value["followupDigest"]
+    monkeypatch.setattr(
+        MODULE, "_prepare_pr_followup", lambda _candidate: pytest.fail("lost pending fix")
+    )
+    held = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            wake_digest=candidate["wakeDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert held["deferred"] and held["reason"] == "PR_FOLLOWUP_VALIDATION_PENDING", held
+    current_path = MODULE.write_task_context(
+        store,
+        issue_url=value["issueUrl"],
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    current = json.loads(current_path.read_bytes())
+    assert current["prFollowup"] == old_followup
+    assert (
+        result_path.read_bytes() == original_raw and run_git(worktree, "rev-parse", "HEAD") == head
+    )
+    assert store.validation_followup_candidates()[0]["resultDigest"] == value["resultDigest"]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=value["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserved["ok"] and not reserved.get("blocked"), reserved
+    assert json.loads(current_path.read_bytes())["prFollowup"] == old_followup
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == candidate["wakeDigest"]
+    assert result_path.read_bytes() == original_raw
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("quarantined", [False, True])
+def test_original_context_recovery_releases_only_stopped_quarantined_execution(
+    tmp_path, monkeypatch, active, quarantined
+):
+    store, worktree = registered_store(tmp_path)
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    now = iso_z(datetime.now(UTC))
+    if quarantined:
+        store.record_shared_context_quarantine(
+            key="a/b#1",
+            reason="RESULT_CONTEXT_DIGEST_MISMATCH",
+            dedupe_key="stopped-original",
+            payload={"error": "actual rejected result"},
+            created_at=now,
+        )
+    gates = store.active_task_quarantines("a/b#1")
+    journal = tmp_path / "stopped-quarantined.jsonl"
+    records = [
+        {"type": "session_meta", "payload": {"id": "thread-1"}},
+        {
+            "type": "event_msg",
+            "timestamp": now,
+            "payload": {"type": "task_started", "turn_id": "original-ended"},
+        },
+    ]
+    if not active:
+        records.append(
+            {
+                "type": "event_msg",
+                "timestamp": now,
+                "payload": {"type": "task_complete", "turn_id": "original-ended"},
+            }
+        )
+    journal.write_text("".join(json.dumps(record) + "\n" for record in records))
+    journal.chmod(0o600)
+    db = state / "native-thread.sqlite3"
+    state.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?)",
+            (
+                "thread-1",
+                str(worktree),
+                0,
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(journal),
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", db)
+    before_context = context_path.read_bytes()
+    assert store.active_task_count() == 1
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert store.active_task_count() == int(active), recovered
+    assert store.active_task_quarantines("a/b#1") == gates
+    assert context_path.read_bytes() == before_context
+    assert store.task_context_candidates()[0]["intentStatus"] == "DISPATCHED"
+    assert not (worktree / MODULE.TASK_PRIVATE_DIR / "result.json").exists()
+    if not active:
+        with store.transaction() as connection:
+            store._event(
+                connection,
+                "a/b#1",
+                "THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED",
+                "new-round",
+                {
+                    "intentId": "intent-1",
+                    "threadId": "thread-1",
+                    "worktreePath": str(worktree),
+                },
+                now,
+            )
+        assert store.active_task_count() == 1
+
+
+@pytest.mark.parametrize("published_handoff", [False, True])
+def test_published_formal_checks_require_completed_owned_immutable_validation(
+    tmp_path, monkeypatch, published_handoff
+):
+    store, worktree, result_path, _pr = _ingested_pending_published_commit(tmp_path, monkeypatch)
+    pending = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=pending["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserved["ok"]
+    queued = store.unresolved_validation_followups()[0]
+    reservation = queued["reservationDigest"]
+    snapshot = MODULE._ensure_validation_snapshot(queued, reservation_digest=reservation)
+    binding = {
+        "reservationDigest": reservation,
+        **snapshot,
+        **MODULE._validation_worktree_input_binding(
+            candidate=queued,
+            reservation_digest=reservation,
+            snapshot_digest=snapshot["snapshotDigest"],
+        ),
+    }
+    delivery_binding = {
+        "reservation_digest": reservation,
+        "snapshot_id": binding["snapshotId"],
+        "snapshot_path": binding["snapshotPath"],
+        "snapshot_digest": binding["snapshotDigest"],
+        "worktree_input_path": binding["worktreeInputPath"],
+        "worktree_input_digest": binding["worktreeInputDigest"],
+    }
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=pending["resultDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        **delivery_binding,
+    )
+    MODULE._ensure_validation_worktree_input(candidate=queued, **delivery_binding)
+    MODULE.validation_followup_commit(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=pending["resultDigest"],
+            reservation_digest=reservation,
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    context_path = result_path.parent / "task-context.json"
+    context_raw = context_path.read_bytes()
+    context = json.loads(context_raw)
+    value = json.loads(result_path.read_bytes()) | {"contextDigest": context["contextDigest"]}
+    candidate = store.task_result_candidates_for_ingestion()[0]
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=pending["resultDigest"],
+        validation_reservation_digest=reservation,
+    )
+    receipt = {
+        "ok": True,
+        "deliveryKind": "validation-followup",
+        "threadId": "thread-1",
+        "deliveryToken": pending["resultDigest"],
+        "reservationDigest": reservation,
+        "turnId": "fresh-published-validation",
+        "turnStatus": "completed",
+    }
+    receipt_path = MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json"
+    MODULE._atomic_private_json(receipt_path, receipt)
+    managed = ManagedLedger(store.path, ensure_schema=False)
+    assert MODULE._published_pr_validation_anchor(managed, candidate, context, value) is not None
+    if published_handoff:
+        original_head = run_git(worktree, "rev-parse", "HEAD")
+        parent = value["previousCommitSha"]
+        fresh = dict(value, stage="PR_OPEN")
+        fresh["evidence"] = {"summary": "Native checks completed; controller checks pending"}
+        if isinstance(value.get("controllerCodePathScope"), dict):
+            fresh["codePaths"] = value["controllerCodePathScope"]["reported"]
+        fresh["quality"] = dict(
+            value["quality"], fresh_state_verified=False, minimal_fix_verified=False
+        )
+        fresh["previousControllerCommitSha"] = original_head
+        for field in (
+            "previousCommitSha",
+            "targetBase",
+            "reproductionReceipt",
+            "probeReceipt",
+            "resultDigest",
+            "controllerFormalChecks",
+            "controllerCodePathScope",
+        ):
+            fresh.pop(field, None)
+        records = [
+            {
+                "type": "event_msg",
+                "timestamp": iso_z(datetime.now(UTC)),
+                "payload": {"type": "task_started", "turn_id": receipt["turnId"]},
+            }
+        ]
+        checks = []
+        for phase, code in (("before_fix", 1), ("after_fix", 0), ("formal", 0)):
+            shell = f"{sys.executable} -c 'raise SystemExit({code})'"
+            executed = subprocess.run(
+                ["/bin/sh", "-c", shell], cwd=worktree, capture_output=True, text=True
+            )
+            checks.append(
+                {
+                    "phase": phase,
+                    "cwd": str(worktree),
+                    "command": shell,
+                    "exitCode": executed.returncode,
+                }
+            )
+            records.append(
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(datetime.now(UTC)),
+                    "payload": {
+                        "type": "item_completed",
+                        "thread_id": "thread-1",
+                        "turn_id": receipt["turnId"],
+                        "item": {
+                            "type": "CommandExecution",
+                            "status": "failed" if executed.returncode else "completed",
+                            "command": ["/bin/sh", "-c", shell],
+                            "cwd": worktree.as_uri(),
+                            "exit_code": executed.returncode,
+                            "stdout": executed.stdout,
+                            "stderr": executed.stderr,
+                            "aggregated_output": executed.stdout,
+                        },
+                    },
+                }
+            )
+        fresh["tests"] = checks
+        result_path.write_text(json.dumps(fresh))
+        raw = result_path.read_bytes()
+        records.append(
+            {
+                "type": "event_msg",
+                "timestamp": iso_z(datetime.now(UTC)),
+                "payload": {"type": "task_complete", "turn_id": receipt["turnId"]},
+            }
+        )
+        journal = tmp_path / "completed-original-pr.jsonl"
+        with journal.open("a") as stream:
+            stream.write("".join(json.dumps(record) + "\n" for record in records))
+        with monkeypatch.context() as previous_runtime:
+            previous_runtime.setattr(
+                MODULE, "_completed_published_validation_handoff", lambda *_a, **_k: None
+            )
+            rejected = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+        assert rejected.get("workBlocked"), json.dumps(rejected)
+        assert rejected["workBlocked"][0]["reason"] == (
+            "PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID"
+        ), rejected
+        assert result_path.read_bytes() == raw
+        accepted = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+        assert accepted["ok"] and not accepted.get("workBlocked"), accepted
+        normalized = json.loads(result_path.read_bytes())
+        assert normalized["stage"] == "FIX_READY"
+        assert normalized["previousCommitSha"] == parent
+        assert normalized["tests"] == checks
+        assert normalized["quality"] == fresh["quality"]
+        assert accepted["publicationRequests"] == []
+        assert context_path.read_bytes() == context_raw
+        assert run_git(worktree, "rev-parse", "HEAD") == original_head
+        assert run_git(worktree, "status", "--porcelain") == ""
+        retry = store.validation_followup_candidates()[0]
+        next_round = MODULE.validation_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-1",
+                result_digest=retry["resultDigest"],
+                intent_id="intent-1",
+                worktree_path=str(worktree),
+            )
+        )
+        assert next_round["ok"] and not next_round.get("blocked"), next_round
+        assert next_round["reservationDigest"] != reservation
+        assert "task-context 的 PR_OPEN 是已有 PR 的业务状态" in next_round["prompt"]
+        with store.connect() as connection:
+            audit = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM events "
+                    "WHERE event_type='COMPLETED_PUBLISHED_VALIDATION_HANDOFF_AUTHORIZED'"
+                ).fetchone()[0]
+            )
+        assert base64.b64decode(audit["nativeRawBase64"]) == raw
+        assert audit["turnId"] == receipt["turnId"]
+        return
+    with MODULE._task_worktree_private_descriptor(candidate) as opened:
+        arguments = dict(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=opened,
+            context_raw=context_raw,
+            validation_context_digest=context["contextDigest"],
+        )
+        assert MODULE._completed_validation_input_task_id(store, managed, **arguments) is None
+        proof = {}
+        assert (
+            MODULE._completed_validation_input_task_id(
+                store,
+                managed,
+                **arguments,
+                allow_published_pr_followup=True,
+                completion_proof=proof,
+            )
+            == "intent-1"
+        )
+        assert proof["receipt"] == receipt
+        MODULE._atomic_private_json(receipt_path, receipt | {"deliveryToken": "foreign-result"})
+        assert (
+            MODULE._completed_validation_input_task_id(
+                store,
+                managed,
+                **arguments,
+                allow_published_pr_followup=True,
+            )
+            is None
+        )
+    assert MODULE._litellm_formal_checks_context(store, candidate, context, value)
+    assert not MODULE._litellm_formal_checks_context(
+        store,
+        candidate,
+        context,
+        value | {"followupDigest": "f" * 64},
+    )
+    assert value["quality"]["relevant_tests_green"] is False
+    assert value["quality"]["independent_review_passed"] is False
+
+
+@pytest.mark.parametrize("defect", ["foreign-schema", "wrong-wake", "unfinished-turn"])
+def test_context_sync_rejects_unowned_pr_schema_correction(tmp_path, monkeypatch, defect):
+    store, worktree, result_path, _context_path, receipt_path, original, _pr = (
+        _completed_pr_result_with_wrong_schema(tmp_path, monkeypatch)
+    )
+    if defect == "foreign-schema":
+        original["schemaVersion"] = "future-result-v2"
+    elif defect == "wrong-wake":
+        original["followupDigest"] = "f" * 64
+    else:
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["turnStatus"] = "interrupted"
+        receipt_path.write_text(json.dumps(receipt))
+    result_path.write_text(json.dumps(original))
+    before = result_path.read_bytes()
+    head = run_git(worktree, "rev-parse", "HEAD")
+    MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert result_path.read_bytes() == before
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    assert store.active_task_quarantine("a/b#1") is not None
+
+
+def test_completed_pr_schema_correction_preserves_unrelated_quarantine(tmp_path, monkeypatch):
+    store, _worktree, result_path, context_path, _receipt, original, _pr = (
+        _completed_pr_result_with_wrong_schema(tmp_path, monkeypatch)
+    )
+    store.record_shared_context_quarantine(
+        key="a/b#1",
+        reason="UNRELATED_GATE",
+        dedupe_key="unrelated",
+        payload={"proof": "still-required"},
+        created_at=iso_z(datetime.now(UTC)),
+    )
+    context = json.loads(context_path.read_bytes())
+    corrected = MODULE._correct_completed_pr_result_schema(
+        store, context, original, result_path.read_bytes()
+    )
+    assert corrected is not None
+    assert [gate["reason"] for gate in store.active_task_quarantines("a/b#1")] == ["UNRELATED_GATE"]
+    assert corrected[0]["quality"] == original["quality"]
+
+
+def test_pr_followup_ingestion_uses_common_base_after_upstream_advances(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        target_base_bound=True,
+        additional_changed_files=("test_runtime.py",),
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+    )
+    _managed, _value, pr_url = _bind_published_pr_authority_fixture(
+        store, worktree, result_path, explicit_pr_followup=True, degrade_stage=False
+    )
+    published_head = run_git(worktree, "rev-parse", "HEAD")
+    branch = run_git(worktree, "symbolic-ref", "--short", "HEAD")
+    original = json.loads(result_path.read_text(encoding="utf-8"))
+    selected_base = original["selectedBaseSha"]
+    run_git(worktree, "switch", "main")
+    (worktree / "upstream_only.py").write_text("upstream = True\n", encoding="utf-8")
+    run_git(worktree, "add", "upstream_only.py")
+    run_git(worktree, "commit", "-m", "chore: unrelated upstream change")
+    upstream_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "update-ref", "refs/remotes/origin/main", upstream_head)
+    run_git(worktree, "switch", branch)
+    now = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": published_head,
+                    "actionDigest": "advanced-upstream-review",
+                    "taskActionDigest": "advanced-upstream-review",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["Correct the existing PR runtime"],
+                    "evidence": {
+                        "actionableCheckNames": ["Regression"],
+                        "baseRefName": "main",
+                        "baseSha": upstream_head,
+                    },
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=candidate["wakeDigest"],
+        prepared_head_sha=published_head,
+    )
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+            prepared_followup_head=published_head,
+        ).read_text(encoding="utf-8")
+    )
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n", encoding="utf-8")
+    original.update(
+        contextDigest=context["contextDigest"],
+        followupDigest=candidate["wakeDigest"],
+        handoffMode="controller_commit_required",
+        commitSha=None,
+        headSha=published_head,
+        changedFiles=["runtime.py", "test_runtime.py"],
+    )
+    result_path.write_text(json.dumps(original), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["handoffMode"] == "controller_commit_complete", json.dumps(result)
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py", "test_runtime.py"]
+    assert finalized["targetBase"]["sha"] == selected_base
+    assert finalized["previousCommitSha"] == published_head
+    assert run_git(worktree, "rev-parse", "HEAD^") == published_head
+    assert run_git(worktree, "status", "--porcelain") == ""
+    assert finalized["followupDigest"] == candidate["wakeDigest"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "prFollowup"
+        ]["wakeDigest"]
+        == candidate["wakeDigest"]
+    )
+    assert result["publicationRequests"] == []
+
+
 def test_validation_followup_accepts_cumulative_files_with_local_correction(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -30236,15 +32987,71 @@ def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_pa
     assert repeated == finalized
 
 
-def _completed_validation_result_with_omitted_task_id(tmp_path, monkeypatch):
-    store, worktree, result_path = _controller_commit_result(
-        tmp_path,
-        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
-        missing_quality=("independent_review_passed",),
-        controller_policy_complete=True,
-    )
-    initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
-    assert initial["validationDeferred"]
+def _completed_validation_result_with_omitted_task_id(
+    tmp_path,
+    monkeypatch,
+    *,
+    target_base_bound=False,
+    complete_normal_validation_audit=False,
+    omit_commit_message=False,
+    bind_initial_implementation_receipt=False,
+    completed_fixture=None,
+):
+    if completed_fixture is None:
+        store, worktree, result_path = _controller_commit_result(
+            tmp_path,
+            worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+            missing_quality=("independent_review_passed",),
+            controller_policy_complete=True,
+            target_base_bound=target_base_bound,
+            complete_normal_validation_audit=complete_normal_validation_audit,
+            omit_commit_message=omit_commit_message,
+        )
+    else:
+        store, worktree, result_path = completed_fixture
+        assert (
+            store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+                "stage"
+            ]
+            == "VALIDATION_PENDING"
+        )
+    if bind_initial_implementation_receipt:
+        from oss_pr_radar.repo_probe import rebind_probe_receipt
+
+        initial_source = json.loads(result_path.read_bytes())
+        initial_source["reproductionReceipt"] = rebind_probe_receipt(
+            initial_source["reproductionReceipt"],
+            repo="a/b",
+            base_sha=initial_source["selectedBaseSha"],
+            code_paths=initial_source["codePaths"],
+            issue_url=initial_source["issueUrl"],
+            task_id=initial_source["taskId"],
+            thread_id=initial_source["threadId"],
+            head_sha=initial_source["headSha"],
+            commit_sha=initial_source["commitSha"],
+            result_digest=initial_source["resultDigest"],
+        )
+        result_path.write_text(json.dumps(initial_source), encoding="utf-8")
+    if complete_normal_validation_audit:
+        if completed_fixture is not None:
+            completed_result_raw = result_path.read_bytes()
+            MODULE.write_task_context(
+                store,
+                issue_url="https://github.com/a/b/issues/1",
+                thread_id="thread-1",
+                cwd=worktree,
+            )
+            assert result_path.read_bytes() == completed_result_raw
+        initial_context_path = result_path.parent / "task-context.json"
+        initial_context_raw = initial_context_path.read_bytes()
+        initial_result_raw = result_path.read_bytes()
+        old_recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+        assert old_recovered["ok"], old_recovered
+        assert initial_context_path.read_bytes() == initial_context_raw
+        assert result_path.read_bytes() == initial_result_raw
+    if completed_fixture is None:
+        initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+        assert initial["validationDeferred"]
     bind_validation_runtime(monkeypatch, tmp_path)
     candidate = store.validation_followup_candidates()[0]
     reserved = MODULE.validation_followup_reserve(
@@ -30341,9 +33148,607 @@ def _completed_validation_result_with_omitted_task_id(tmp_path, monkeypatch):
     return store, worktree, result_path, source_path
 
 
-@pytest.mark.parametrize("handoff", ["controller_commit_complete", "controller_commit_required"])
+def _completed_validation_result_with_omitted_envelope(
+    tmp_path, monkeypatch, *, completed_fixture=None
+):
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path,
+        monkeypatch,
+        target_base_bound=True,
+        complete_normal_validation_audit=True,
+        completed_fixture=completed_fixture,
+    )
+    source = json.loads(input_path.read_bytes())
+    value = json.loads(result_path.read_bytes())
+    value["taskId"] = source["taskId"]
+    value.pop("threadId")
+    value.pop("worktreePath")
+    value["quality"]["relevant_tests_green"] = False
+    value["quality"]["independent_review_passed"] = False
+    value["tests"] = [
+        {
+            "command": "npm -w packages/core run test:ci",
+            "exitCode": 1,
+            "result": "26 failed; Workflow journal path is symlinked.",
+        }
+    ]
+    writer_script = (
+        "import os, sys; from pathlib import Path; "
+        "destination = Path(sys.argv[1]); "
+        "temporary = destination.with_name('result.json.native-tmp'); "
+        "temporary.write_text(sys.argv[2], encoding='utf-8'); "
+        "os.replace(temporary, destination); print('result-written')"
+    )
+    writer_command = shlex.join(
+        [sys.executable, "-c", writer_script, str(result_path), json.dumps(value)]
+    )
+    started_at = datetime.now(UTC)
+    writer = subprocess.run(
+        ["/bin/sh", "-c", writer_command], cwd=worktree, capture_output=True, text=True
+    )
+    assert writer.returncode == 0 and writer.stdout.strip() == "result-written", writer.stderr
+    writer_completed_at = datetime.now(UTC)
+    completed_at = datetime.now(UTC)
+    turn_id = "completed-validation-turn"
+    prompt = MODULE._validation_followup_prompt(
+        {
+            "missing": ["relevant_tests_green", "independent_review_passed"],
+            "worktreeInputPath": input_path.relative_to(worktree).as_posix(),
+        }
+    )
+    records = [
+        {"type": "session_meta", "payload": {"id": "thread-1"}},
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(started_at),
+            "payload": {"type": "task_started", "turn_id": turn_id},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(started_at),
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": turn_id,
+                "item": {
+                    "type": "UserMessage",
+                    "content": [{"type": "text", "text": prompt, "text_elements": []}],
+                },
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(writer_completed_at),
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": turn_id,
+                "item": {
+                    "type": "CommandExecution",
+                    "status": "completed",
+                    "command": ["/bin/sh", "-c", writer_command],
+                    "cwd": worktree.as_uri(),
+                    "exit_code": writer.returncode,
+                    "stdout": writer.stdout,
+                    "stderr": writer.stderr,
+                    "aggregated_output": writer.stdout + writer.stderr,
+                },
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(completed_at),
+            "payload": {"type": "task_complete", "turn_id": turn_id},
+        },
+    ]
+    journal_path = tmp_path / "completed-validation-envelope.jsonl"
+    journal_path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    thread_db = tmp_path / "completed-validation-envelope-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,"
+            "rollout_path TEXT,git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(MODULE.GITHUB_ROOT),
+                0,
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(journal_path),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=source["resultDigest"],
+        validation_reservation_digest=input_path.stem,
+    )
+    receipt_path = MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json"
+    assert json.loads(receipt_path.read_bytes())["turnId"] == turn_id
+    assert started_at.timestamp() <= result_path.stat().st_mtime <= completed_at.timestamp()
+    return store, worktree, result_path, input_path, receipt_path, started_at
+
+
+def _assert_completed_validation_envelope_original_queue_and_ingest(
+    store, worktree, result_path, input_path, *, current_context_digest=None, monkeypatch=None
+):
+    original = result_path.read_bytes()
+    value = json.loads(original)
+    original_input = input_path.read_bytes()
+    context_path = result_path.parent / "task-context.json"
+    original_context = context_path.read_bytes()
+    original_head = run_git(worktree, "rev-parse", "HEAD")
+    assert "threadId" not in value and "worktreePath" not in value
+    assert value["taskId"] == "intent-1"
+
+    if monkeypatch is None:
+        queued = MODULE.enqueue_local_receipts(store.path)
+    else:
+        with monkeypatch.context() as intake:
+            intake.setattr(
+                MODULE,
+                "command",
+                lambda *_args, **_kwargs: pytest.fail("fast receipt intake ran a command"),
+            )
+            queued = MODULE.enqueue_local_receipts(store.path)
+
+    assert queued["ok"] and queued["rejected"] == [], queued
+    assert len(queued["queued"]) == 1
+    assert queued["queued"][0]["digest"] == hashlib.sha256(original).hexdigest()
+    assert result_path.read_bytes() == original
+    assert input_path.read_bytes() == original_input
+    assert context_path.read_bytes() == original_context
+    refresh_refusals = []
+    original_profile = sys.getprofile()
+    refresh_proof_code = MODULE._validation_result_context_refresh_proof.__code__
+
+    def observe_refresh_refusal(frame, event, returned):
+        if frame.f_code is refresh_proof_code and event == "return" and returned is None:
+            state = {
+                name: item
+                for name, item in frame.f_locals.items()
+                if name not in {"store", "worktree", "raw", "opened", "context_raw"}
+            }
+            refresh_refusals.append(
+                {
+                    "source": frame.f_code.co_filename,
+                    "line": frame.f_lineno,
+                    "state": json.loads(json.dumps(state, default=str)),
+                }
+            )
+        if original_profile is not None:
+            original_profile(frame, event, returned)
+
+    try:
+        if monkeypatch is not None:
+            sys.setprofile(observe_refresh_refusal)
+        resumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    finally:
+        if monkeypatch is not None:
+            sys.setprofile(original_profile)
+    assert resumed["ok"] and resumed["errors"] == [], json.dumps(
+        {"result": resumed, "auditRefreshRefusals": refresh_refusals}, indent=2, sort_keys=True
+    )
+    assert resumed.get("workBlocked", []) == []
+    assert resumed["validationDeferred"] and resumed["publicationRequests"] == [], resumed
+    if current_context_digest is not None:
+        assert len(resumed["validationContextRebindings"]) == 1
+        assert (
+            resumed["validationContextRebindings"][0]["previousContextDigest"]
+            == value["contextDigest"]
+        )
+        assert resumed["validationContextRebindings"][0]["contextDigest"] == current_context_digest
+    normalized = json.loads(result_path.read_bytes())
+    assert normalized["threadId"] == "thread-1"
+    assert normalized["worktreePath"] == str(worktree)
+    assert normalized["taskId"] == value["taskId"]
+    assert normalized["contextDigest"] == (current_context_digest or value["contextDigest"])
+    assert normalized["commitSha"] == value["commitSha"] == original_head
+    assert normalized["tests"] == value["tests"]
+    assert normalized["quality"]["relevant_tests_green"] is False
+    assert normalized["quality"]["independent_review_passed"] is False
+    assert normalized["reproductionReceipt"]["taskId"] == "intent-1"
+    assert normalized["resultDigest"]
+    assert input_path.read_bytes() == original_input
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+    assert run_git(worktree, "status", "--porcelain") == ""
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    return normalized
+
+
+def test_native_completed_validation_normalizes_missing_envelope_in_original_queue_and_ingest(
+    tmp_path, monkeypatch
+):
+    store, worktree, result_path, input_path, _receipt_path, _started_at = (
+        _completed_validation_result_with_omitted_envelope(tmp_path, monkeypatch)
+    )
+    _assert_completed_validation_envelope_original_queue_and_ingest(
+        store, worktree, result_path, input_path
+    )
+
+
+@pytest.mark.parametrize("audit_refresh", [False, True])
+def test_native_completed_validation_normalizes_missing_envelope_with_retired_unpublished_source(
+    tmp_path, monkeypatch, audit_refresh
+):
+    completed = test_latest_target_refresh_runs_native_validation_and_implementation_chain(
+        monkeypatch, tmp_path, False, return_completed_fixture=True
+    )
+    store, worktree, result_path, request_id = completed
+    old_request = store.publication_request(request_id)
+    old_request_before = dict(old_request)
+    store, worktree, result_path, input_path, receipt_path, _started_at = (
+        _completed_validation_result_with_omitted_envelope(
+            tmp_path, monkeypatch, completed_fixture=completed[:3]
+        )
+    )
+    context_path = result_path.parent / "task-context.json"
+    context = json.loads(context_path.read_bytes())
+    publication_receipt = dict(context["publicationReceipt"])
+    current_head = run_git(worktree, "rev-parse", "HEAD")
+    assert context["stage"] == "VALIDATION_PENDING"
+    assert context["intentStatus"] == "COMPLETED"
+    assert publication_receipt["status"] == "BLOCKED" and publication_receipt["prUrl"] is None
+    assert publication_receipt["commitSha"] == old_request["commit_sha"] != current_head
+    assert publication_receipt["requestedAt"] == old_request["created_at"]
+    candidate = next(
+        item
+        for item in store.task_result_candidates_for_ingestion()
+        if item["intentId"] == "intent-1"
+    )
+    refresh = store.publication_target_base_refresh(candidate)
+    assert refresh["requestId"] == request_id
+    assert store.retired_latest_target_receipt(context) is None
+    assert store.retired_latest_target_receipt(context, allow_completed_validation=True) == refresh
+    assert MODULE._litellm_formal_checks_unpublished(store, candidate, context)
+    for publication_change in (
+        {"status": "CONSUMED"},
+        {"prUrl": "https://github.com/a/b/pull/2"},
+    ):
+        changed_context = context | {"publicationReceipt": publication_receipt | publication_change}
+        assert not MODULE._litellm_formal_checks_unpublished(store, candidate, changed_context)
+    assert not MODULE._litellm_formal_checks_unpublished(
+        store, candidate | {"intentId": "foreign-intent"}, context
+    )
+    original = result_path.read_bytes()
+    original_input = input_path.read_bytes()
+    original_receipt = receipt_path.read_bytes()
+    old_context_digest = context["contextDigest"]
+    current_context_digest = None
+    if audit_refresh:
+        with store.connect() as connection:
+            prior_events = [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT id,event_type,payload_json,created_at FROM events ORDER BY id"
+                ).fetchall()
+            ]
+        live_audit = json.loads(json.dumps(context["liveAudit"]))
+        assert live_audit["evidence"]["complete"] is True
+        assert all(value == "COMPLETE" for value in live_audit["evidence"]["completeness"].values())
+        live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+        live_audit["evidence"]["digest"] = "b" * 64
+        store.record_audit_snapshot(
+            "a/b#1",
+            evidence={
+                "liveAudit": live_audit,
+                "targetBase": context["targetBase"],
+                "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+            },
+            dedupe_key="intent-1:retired-completed-validation:active-context-refresh",
+        )
+        MODULE.write_task_context(
+            store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+        )
+        recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+        assert recovered["ok"], recovered
+        current_context = json.loads(context_path.read_bytes())
+        current_context_digest = current_context["contextDigest"]
+        assert current_context_digest != old_context_digest
+        assert {
+            key
+            for key in context.keys() | current_context.keys()
+            if context.get(key) != current_context.get(key)
+        } == {"contextDigest", "liveAudit", "liveAuditRecordedAt"}
+        assert current_context["publicationReceipt"] == publication_receipt
+        assert result_path.read_bytes() == original
+        assert input_path.read_bytes() == original_input
+        assert receipt_path.read_bytes() == original_receipt
+        assert json.loads(original)["contextDigest"] == old_context_digest
+        assert json.loads(original_input)["contextDigest"] == old_context_digest
+    normalized = _assert_completed_validation_envelope_original_queue_and_ingest(
+        store,
+        worktree,
+        result_path,
+        input_path,
+        current_context_digest=current_context_digest,
+        monkeypatch=monkeypatch if audit_refresh else None,
+    )
+    assert normalized["commitSha"] == current_head
+    assert json.loads(context_path.read_bytes())["publicationReceipt"] == publication_receipt
+    assert store.publication_request(request_id) == old_request_before
+    assert receipt_path.read_bytes() == original_receipt
+    if audit_refresh:
+        with store.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='TASK_RESULT_CONTEXT_REFRESH_REBOUND' "
+                "AND id>?",
+                (prior_events[-1][0],),
+            ).fetchall()
+            assert len(rows) == 1
+            rebound = json.loads(rows[0][0])
+            assert rebound["previousContextDigest"] == old_context_digest
+            assert rebound["contextDigest"] == current_context_digest
+            assert base64.b64decode(rebound["sourceResultBytesBase64"]) == original
+            assert rebound["turnId"] == "completed-validation-turn"
+            assert [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT id,event_type,payload_json,created_at FROM events WHERE id<=? ORDER BY id",
+                    (prior_events[-1][0],),
+                ).fetchall()
+            ] == prior_events
+
+
+def test_completed_validation_controller_result_survives_retired_source_audit_refresh(
+    tmp_path, monkeypatch
+):
+    completed = test_latest_target_refresh_runs_native_validation_and_implementation_chain(
+        monkeypatch, tmp_path, False, return_completed_fixture=True
+    )
+    store, worktree, result_path, request_id = completed
+    old_request = dict(store.publication_request(request_id))
+    store, worktree, result_path, input_path, receipt_path, _started_at = (
+        _completed_validation_result_with_omitted_envelope(
+            tmp_path, monkeypatch, completed_fixture=completed[:3]
+        )
+    )
+    normalized = _assert_completed_validation_envelope_original_queue_and_ingest(
+        store, worktree, result_path, input_path
+    )
+    original = result_path.read_bytes()
+    original_input = input_path.read_bytes()
+    original_receipt = receipt_path.read_bytes()
+    context_path = result_path.parent / "task-context.json"
+    context = json.loads(context_path.read_bytes())
+    with store.connect() as connection:
+        events = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id,event_type,payload_json,created_at FROM events ORDER BY id"
+            ).fetchall()
+        ]
+    sent = next(
+        json.loads(row[2]) for row in reversed(events) if row[1] == "VALIDATION_FOLLOWUP_SENT"
+    )
+    deferred = next(
+        json.loads(row[2])
+        for row in reversed(events)
+        if row[1] == "TASK_RESULT_VALIDATION_DEFERRED"
+    )
+    assert deferred["resultDigest"] == normalized["resultDigest"] != sent["resultDigest"]
+    live_audit = json.loads(json.dumps(context["liveAudit"]))
+    live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+    live_audit["evidence"]["digest"] = "b" * 64
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": live_audit,
+            "targetBase": context["targetBase"],
+            "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+        },
+        dedupe_key="intent-1:completed-controller-result:audit-refresh",
+    )
+    MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
+    current = json.loads(context_path.read_bytes())
+    assert current["contextDigest"] != context["contextDigest"]
+    assert result_path.read_bytes() == original
+    # The real LiteLLM formal receipt needs refresh after this audit change.
+    # Keep this generic native/retired fixture on that original intake route.
+    with monkeypatch.context() as formal_refresh:
+        formal_refresh.setattr(MODULE, "_litellm_formal_checks_need_refresh", lambda *_args: True)
+        resumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert resumed["ok"] and resumed["errors"] == [], resumed
+    assert resumed["validationDeferred"] and not resumed["publicationRequests"], resumed
+    assert len(resumed["validationContextRebindings"]) == 1
+    rebound = resumed["validationContextRebindings"][0]
+    assert rebound["previousContextDigest"] == normalized["contextDigest"]
+    assert rebound["contextDigest"] == current["contextDigest"]
+    value = json.loads(result_path.read_bytes())
+    assert value["tests"] == normalized["tests"]
+    assert value["commitSha"] == normalized["commitSha"]
+    assert value["contextDigest"] == current["contextDigest"]
+    assert value["quality"]["relevant_tests_green"] is False
+    assert value["quality"]["independent_review_passed"] is False
+    assert input_path.read_bytes() == original_input
+    assert receipt_path.read_bytes() == original_receipt
+    assert store.publication_request(request_id) == old_request
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id,event_type,payload_json,created_at FROM events WHERE id<=? ORDER BY id",
+                (events[-1][0],),
+            ).fetchall()
+        ] == events
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "null_thread",
+        "foreign_thread",
+        "null_worktree",
+        "foreign_worktree",
+        "receipt_failed",
+        "receipt_turn",
+        "mtime_before_turn",
+        "raw_changed_after_proof",
+    ],
+)
+def test_native_completed_validation_keeps_missing_envelope_proof_rejections(
+    tmp_path, monkeypatch, mismatch
+):
+    store, worktree, result_path, input_path, receipt_path, started_at = (
+        _completed_validation_result_with_omitted_envelope(tmp_path, monkeypatch)
+    )
+    written_mtime = result_path.stat().st_mtime
+    if mismatch in {"null_thread", "foreign_thread", "null_worktree", "foreign_worktree"}:
+        value = json.loads(result_path.read_bytes())
+        field = "threadId" if mismatch.endswith("thread") else "worktreePath"
+        value[field] = None if mismatch.startswith("null") else "foreign-identity"
+        result_path.write_text(json.dumps(value))
+        os.utime(result_path, (written_mtime, written_mtime))
+    elif mismatch in {"receipt_failed", "receipt_turn"}:
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["turnStatus" if mismatch == "receipt_failed" else "turnId"] = (
+            "failed" if mismatch == "receipt_failed" else "foreign-turn"
+        )
+        receipt_path.write_text(json.dumps(receipt))
+    elif mismatch == "mtime_before_turn":
+        outside_time = started_at.timestamp() - 10
+        os.utime(result_path, (outside_time, outside_time))
+    original = result_path.read_bytes()
+    expected = original
+    original_input = input_path.read_bytes()
+    original_context = (result_path.parent / "task-context.json").read_bytes()
+    if mismatch == "raw_changed_after_proof":
+        native_proof = MODULE._completed_validation_input_task_id
+        original_mtime = result_path.stat().st_mtime
+        changed_after_proof = []
+
+        def proof_then_change_bytes(*args, **kwargs):
+            nonlocal expected
+            proven = native_proof(*args, **kwargs)
+            if proven is not None:
+                expected = result_path.read_bytes() + b"\n"
+                result_path.write_bytes(expected)
+                os.utime(result_path, (original_mtime, original_mtime))
+                changed_after_proof.append(expected)
+            return proven
+
+        monkeypatch.setattr(MODULE, "_completed_validation_input_task_id", proof_then_change_bytes)
+
+    rejected = MODULE.enqueue_local_receipts(store.path)
+
+    assert rejected["ok"] is False and rejected["queued"] == [], rejected
+    assert rejected["rejected"] and rejected["rejected"][0]["key"] == "a/b#1", rejected
+    if mismatch == "raw_changed_after_proof":
+        assert len(changed_after_proof) == 1 and expected == original + b"\n"
+    assert result_path.read_bytes() == expected
+    rejected_ingest = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert rejected_ingest["ingested"] == [] and rejected_ingest["publicationRequests"] == []
+    assert rejected_ingest["errors"] or rejected_ingest.get("workBlocked"), rejected_ingest
+    if mismatch == "raw_changed_after_proof":
+        assert len(changed_after_proof) == 2 and expected == original + b"\n\n"
+    assert result_path.read_bytes() == expected
+    assert input_path.read_bytes() == original_input
+    assert (result_path.parent / "task-context.json").read_bytes() == original_context
+    assert run_git(worktree, "status", "--porcelain") == ""
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+def test_completed_unsigned_validation_revision_survives_audit_refresh(tmp_path, monkeypatch):
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path,
+        monkeypatch,
+        target_base_bound=True,
+        complete_normal_validation_audit=True,
+    )
+    context_path = result_path.parent / "task-context.json"
+    old_context = json.loads(context_path.read_text())
+    input_raw = input_path.read_bytes()
+    head = run_git(worktree, "rev-parse", "HEAD")
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text() + "\nassert 'value' in globals()\n")
+    value = json.loads(result_path.read_bytes())
+    value.update(
+        taskId="intent-1",
+        handoffMode="controller_commit_required",
+        commitSha=None,
+        headSha=head,
+        previousControllerCommitSha=head,
+        changedFiles=["runtime.py"],
+        controllerCommitChangedFiles=["runtime.py"],
+        commitMessage="fix: complete the validation revision",
+    )
+    value["quality"].update(relevant_tests_green=False, independent_review_passed=False)
+    result_path.write_text(json.dumps(value))
+    original_raw = result_path.read_bytes()
+    candidate = store.task_result_candidates_for_ingestion()[0]
+    assert MODULE._controller_commit_result_pending_ingestion(store, candidate, worktree=worktree)
+
+    # Replay the actual refresh that happened after completion and before ingestion.
+    live_audit = json.loads(json.dumps(old_context["liveAudit"]))
+    live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+    live_audit["evidence"].update(
+        digest="b" * 64,
+        complete=True,
+        completeness={"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": live_audit,
+            "targetBase": old_context["targetBase"],
+            "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+        },
+        dedupe_key="intent-1:completed-unsigned-validation:current-audit",
+    )
+    MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
+    current = json.loads(context_path.read_text())
+    assert current["contextDigest"] != old_context["contextDigest"]
+    assert current["targetBase"] == old_context["targetBase"]
+    assert result_path.read_bytes() == original_raw and input_path.read_bytes() == input_raw
+
+    proof = MODULE._validation_result_context_refresh_proof
+    monkeypatch.setattr(MODULE, "_validation_result_context_refresh_proof", lambda *a, **kw: None)
+    before = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert before["errors"] == [{"key": "a/b#1", "error": "task result context digest mismatch"}], (
+        before
+    )
+    assert (
+        result_path.read_bytes() == original_raw and run_git(worktree, "rev-parse", "HEAD") == head
+    )
+    monkeypatch.setattr(MODULE, "_validation_result_context_refresh_proof", proof)
+
+    resumed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert resumed["ok"] and resumed["errors"] == [], resumed
+    assert resumed["publicationRequests"] == [] and resumed["validationDeferred"], resumed
+    final = json.loads(result_path.read_bytes())
+    assert final["contextDigest"] == current["contextDigest"]
+    assert final["handoffMode"] == "controller_commit_complete"
+    assert final["commitSha"] == run_git(worktree, "rev-parse", "HEAD") != head
+    assert final["quality"]["independent_review_passed"] is False
+    assert run_git(worktree, "status", "--porcelain") == ""
+    assert input_path.read_bytes() == input_raw
+
+
+@pytest.mark.parametrize(
+    ("handoff", "omit_previous_parent"),
+    [
+        ("controller_commit_complete", False),
+        ("controller_commit_required", False),
+        ("controller_commit_required", True),
+    ],
+)
 def test_native_completed_validation_normalizes_omitted_task_id_before_parent_check(
-    tmp_path, monkeypatch, handoff
+    tmp_path, monkeypatch, handoff, omit_previous_parent
 ):
     store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
         tmp_path, monkeypatch
@@ -30352,6 +33757,8 @@ def test_native_completed_validation_normalizes_omitted_task_id_before_parent_ch
     if handoff == "controller_commit_required":
         value = json.loads(result_path.read_text())
         value.update(handoffMode=handoff, commitSha=None, previousControllerCommitSha=head)
+        if omit_previous_parent:
+            value.pop("previousControllerCommitSha")
         value.pop("headSha", None)
         value.pop("codePaths", None)
         runtime = worktree / "runtime.py"
@@ -30437,7 +33844,16 @@ def test_native_completed_validation_normalizes_omitted_task_id_before_parent_ch
 
 
 @pytest.mark.parametrize(
-    "mismatch", ["task_id", "context", "input", "previous_head", "precommit_head", "handoff_mode"]
+    "mismatch",
+    [
+        "task_id",
+        "context",
+        "input",
+        "previous_head",
+        "null_previous_head",
+        "precommit_head",
+        "handoff_mode",
+    ],
 )
 def test_native_completed_validation_does_not_normalize_conflicting_identity_or_input(
     tmp_path, monkeypatch, mismatch
@@ -30456,11 +33872,11 @@ def test_native_completed_validation_does_not_normalize_conflicting_identity_or_
         input_path.chmod(0o600)
         input_path.write_text(json.dumps(source))
         input_path.chmod(0o400)
-    elif mismatch == "previous_head":
+    elif mismatch in {"previous_head", "null_previous_head"}:
         value.update(
             handoffMode="controller_commit_required",
             commitSha=None,
-            previousControllerCommitSha="f" * 40,
+            previousControllerCommitSha=None if mismatch == "null_previous_head" else "f" * 40,
         )
     elif mismatch == "precommit_head":
         value.update(
@@ -31502,6 +34918,44 @@ def test_validation_prefetch_supports_pnpm_and_go_failure_working_directory(tmp_
     ]
 
 
+@pytest.mark.parametrize("directory_field", ["cwd", "workingDirectory"])
+def test_validation_prefetch_uses_npm_failure_directory_for_python_change(
+    tmp_path, directory_field
+):
+    worktree = tmp_path / "worktree"
+    private = worktree / ".oss-pr-radar"
+    dashboard = worktree / "ui/litellm-dashboard"
+    private.mkdir(parents=True)
+    dashboard.mkdir(parents=True)
+    (dashboard / "package.json").write_text("{}\n", encoding="utf-8")
+    (dashboard / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    failure = {
+        "command": "NEXT_TELEMETRY_DISABLED=1 ../../scripts/with_dashboard_node.sh npm run build",
+        directory_field: "ui/litellm-dashboard",
+        "exitCode": 127,
+        "result": "Dashboard build did not start because next is not found "
+        "without ui/litellm-dashboard/node_modules.",
+    }
+    result = {"changedFiles": ["runtime.py"], "tests": [failure]}
+    raw = json.dumps(result).encode()
+    (private / "result.json").write_bytes(raw)
+
+    commands, failures = MODULE._validation_prefetch_plan(
+        {"worktreePath": str(worktree), "resultDigest": hashlib.sha256(raw).hexdigest()}
+    )
+
+    assert failures == [failure]
+    assert commands == [
+        {
+            "kind": "npm_locked_install",
+            "cwd": str(dashboard.resolve()),
+            "argv": ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        }
+    ]
+    assert MODULE._unresolved_validation_dependency_failures(commands, failures) == []
+    assert (private / "result.json").read_bytes() == raw
+
+
 def test_validation_prefetch_includes_locked_group_that_provides_missing_pytest(tmp_path):
     worktree = tmp_path / "worktree"
     result_dir = worktree / ".oss-pr-radar"
@@ -31551,6 +35005,90 @@ docs = ["mkdocs>=1"]
             ],
         }
     ]
+
+
+def test_validation_prefetch_executes_only_declared_extras_for_missing_proxy_modules(
+    monkeypatch, tmp_path
+):
+    worktree = tmp_path / "worktree"
+    private = worktree / ".oss-pr-radar"
+    private.mkdir(parents=True)
+    (worktree / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (worktree / "pyproject.toml").write_text(
+        """
+[project]
+name = "x"
+[project.optional-dependencies]
+extra_proxy = ["prisma>=0.11.0,<1.0"]
+proxy = ["apscheduler>=3.11.2,<4.0", "fastapi-sso>=0.19.0,<1.0"]
+unrelated = ["other-package>=1"]
+[dependency-groups]
+test = ["pytest>=9", "ruff>=0.15"]
+""".strip(),
+        encoding="utf-8",
+    )
+    result = {
+        "changedFiles": ["litellm/proxy/guardrails/guardrail_hooks/headroom/headroom.py"],
+        "tests": [
+            {
+                "command": ".venv/bin/python -B -m pytest -q tests/unit/proxy/test_headroom.py",
+                "exitCode": 4,
+                "result": "from prisma.errors import ClientNotConnectedError\n"
+                "ModuleNotFoundError: No module named 'prisma'",
+            },
+            {
+                "command": ".venv/bin/python -B -m litellm.proxy._lazy_openapi_snapshot",
+                "exitCode": 1,
+                "result": "ImportError: Missing dependency No module named 'apscheduler'. "
+                "Run `pip install 'litellm[proxy]'`",
+            },
+        ],
+    }
+    raw = json.dumps(result).encode()
+    result_path = private / "result.json"
+    result_path.write_bytes(raw)
+    candidate = {"worktreePath": str(worktree), "resultDigest": hashlib.sha256(raw).hexdigest()}
+    commands, failures = MODULE._validation_prefetch_plan(candidate)
+    argv = [
+        "uv",
+        "sync",
+        "--frozen",
+        "--no-install-project",
+        "--group",
+        "test",
+        "--extra",
+        "extra_proxy",
+        "--extra",
+        "proxy",
+    ]
+    assert commands == [{"kind": "uv_locked_sync", "cwd": str(worktree.resolve()), "argv": argv}]
+    assert failures == result["tests"]
+    calls = []
+    monkeypatch.setattr(MODULE, "command", lambda args, **kwargs: calls.append((args, kwargs)))
+    completed = MODULE._execute_validation_prefetch(candidate, commands)
+    assert calls == [(argv, {"cwd": worktree.resolve(), "timeout": 600})]
+    assert completed[0]["kind"] == "uv_locked_sync"
+    assert completed[0]["cwd"] == str(worktree.resolve())
+    assert MODULE._unresolved_validation_dependency_failures(commands, failures) == []
+    with pytest.raises(RuntimeError, match="not allowlisted"):
+        MODULE._execute_validation_prefetch(
+            candidate,
+            [{**commands[0], "argv": [*argv, "--extra", "undeclared"]}],
+        )
+    with pytest.raises(RuntimeError, match="not allowlisted"):
+        MODULE._execute_validation_prefetch(
+            candidate,
+            [{**commands[0], "argv": [*argv, "--all-extras"]}],
+        )
+    assert len(calls) == 1
+    assert result_path.read_bytes() == raw
+    assert (worktree / "uv.lock").read_text(encoding="utf-8") == "version = 1\n"
+    assert MODULE._locked_python_dependency_extras(
+        worktree / "pyproject.toml", "ModuleNotFoundError: No module named 'fastapi_sso.sso'"
+    ) == ["proxy"]
+    assert (
+        MODULE._locked_python_dependency_extras(worktree / "pyproject.toml", "pytest failed") == []
+    )
 
 
 def test_validation_followup_blocks_missing_python_dependencies_without_lockfile(
@@ -31629,12 +35167,16 @@ def test_validation_followup_reassesses_ci_delegation_once(tmp_path):
     )
 
 
+@pytest.mark.parametrize("patch_package", [False, True])
 def test_validation_prefetch_execution_enforces_command_and_worktree_boundaries(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, patch_package
 ):
     worktree = tmp_path / "worktree"
     package = worktree / "ui"
     package.mkdir(parents=True)
+    (package / "package.json").write_text(
+        json.dumps({"scripts": {"postinstall": "patch-package"}} if patch_package else {})
+    )
     calls = []
 
     def fake_command(args, cwd=None, timeout=300, stdin=None):
@@ -31656,19 +35198,33 @@ def test_validation_prefetch_execution_enforces_command_and_worktree_boundaries(
             ],
         }
     ]
+    if patch_package:
+        commands.append(
+            {
+                "kind": "npm_patch_package_apply",
+                "cwd": str(package),
+                "argv": ["node", "node_modules/patch-package/index.js", "--error-on-fail"],
+            }
+        )
 
     completed = MODULE._execute_validation_prefetch(candidate, commands)
 
     assert calls == [
         (
-            commands[0]["argv"],
+            item["argv"],
             package.resolve(),
-            MODULE.VALIDATION_PREFETCH_TIMEOUTS["npm_locked_install"],
+            MODULE.VALIDATION_PREFETCH_TIMEOUTS[item["kind"]],
             None,
         )
+        for item in commands
     ]
     assert completed[0]["kind"] == "npm_locked_install"
     assert completed[0]["cwd"] == str(package.resolve())
+    assert [item["kind"] for item in completed] == [item["kind"] for item in commands]
+    if patch_package:
+        (package / "package.json").write_text("{}")
+        with pytest.raises(RuntimeError, match="not declared"):
+            MODULE._execute_validation_prefetch(candidate, [commands[1]])
 
     with pytest.raises(RuntimeError, match="not allowlisted"):
         MODULE._execute_validation_prefetch(
@@ -31720,26 +35276,61 @@ def test_validation_prefetch_timeout_has_structured_failure(monkeypatch, tmp_pat
     assert raised.value.failure["timeoutSeconds"] == 600
 
 
-def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "failed_check",
+    [
+        {
+            "command": "npm run test",
+            "exitCode": 127,
+            "summary": "Vitest was unavailable because node_modules is absent",
+        },
+        {
+            "command": "npm run dev -- extensions uninstall orphaned-extension",
+            "exitCode": 1,
+            "result": "scripts/dev.js failed to spawn tsx: ENOENT.",
+        },
+        {
+            "command": "npm -w packages/core run test -- src/extension/extensionManager.test.ts",
+            "exitCode": 127,
+            "result": "The targeted core regression command still fails before collection "
+            "because the local vitest binary is absent.",
+        },
+        {
+            "command": "npm run build",
+            "exitCode": 1,
+            "result": "Offline build with installed local tools generated required artifacts, "
+            "then failed in package CLI TypeScript checks because installed ink typings do not "
+            "expose the UI selection/selectable APIs used by unrelated CLI UI files.",
+        },
+        {
+            "command": "cd ui/litellm-dashboard && NEXT_TELEMETRY_DISABLED=1 "
+            "../../scripts/with_dashboard_node.sh npm run build",
+            "exitCode": 127,
+            "result": "Dashboard build did not start because next is not found "
+            "without ui/litellm-dashboard/node_modules.",
+        },
+    ],
+)
+def test_validation_followup_reserve_runs_prefetch_inside_bridge(
+    monkeypatch, tmp_path, failed_check
+):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         missing_quality=("regression_test_verified", "relevant_tests_green"),
         worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
     )
     monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
-    ui_root = worktree / "ui"
-    ui_root.mkdir()
+    dashboard_failure = failed_check["command"].startswith("cd ui/litellm-dashboard &&")
+    ui_root = worktree / ("ui/litellm-dashboard" if dashboard_failure else "ui")
+    ui_root.mkdir(parents=True)
     (ui_root / "package-lock.json").write_text("{}\n", encoding="utf-8")
-    (ui_root / "package.json").write_text("{}\n", encoding="utf-8")
+    patch_package = failed_check["command"] == "npm run build"
+    (ui_root / "package.json").write_text(
+        json.dumps({"scripts": {"postinstall": "patch-package"}} if patch_package else {})
+    )
     value = json.loads(result_path.read_text(encoding="utf-8"))
-    value["changedFiles"] = ["runtime.py", "ui/app.tsx"]
-    value["tests"] = [
-        {
-            "command": "npm run test",
-            "exitCode": 127,
-            "summary": "Vitest was unavailable because node_modules is absent",
-        }
-    ]
+    value["changedFiles"] = ["runtime.py"] if dashboard_failure else ["runtime.py", "ui/app.tsx"]
+    value["tests"] = [failed_check]
     raw = json.dumps(value).encode()
     result_path.write_bytes(raw)
     digest = _refresh_reproduction_certificate(result_path, store=store)
@@ -31760,7 +35351,7 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tm
 
     def fake_execute(candidate, commands):
         executed.extend(commands)
-        return [{"kind": commands[0]["kind"], "cwd": commands[0]["cwd"], "durationMs": 1}]
+        return [{"kind": item["kind"], "cwd": item["cwd"], "durationMs": 1} for item in commands]
 
     monkeypatch.setattr(MODULE, "_execute_validation_prefetch", fake_execute)
 
@@ -31773,13 +35364,202 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tm
         )
     )
 
-    assert [item["kind"] for item in executed] == ["npm_locked_install"]
+    expected_kinds = ["npm_locked_install"]
+    if patch_package:
+        expected_kinds.append("npm_patch_package_apply")
+        assert executed[1]["argv"] == [
+            "node",
+            "node_modules/patch-package/index.js",
+            "--error-on-fail",
+        ]
+    assert [item["kind"] for item in executed] == expected_kinds
+    assert executed[0]["cwd"] == str(ui_root.resolve())
     assert reserved["prefetch"][0]["kind"] == "npm_locked_install"
+    assert [item["kind"] for item in reserved["prefetch"]] == expected_kinds
     assert "系统已按项目锁文件补齐缺失依赖" in reserved["prompt"]
     context_path = worktree / ".oss-pr-radar" / "task-context.json"
     context = json.loads(context_path.read_bytes())
     assert MODULE.shared_context_path(context["issueUrl"]).read_bytes() == context_path.read_bytes()
     assert MODULE.write_task_context.last_collision is None
+
+
+@pytest.mark.parametrize("missing_corepack", [False, True])
+def test_latest_target_pnpm_validation_prepares_declared_toolchain_and_patches(
+    monkeypatch, tmp_path, missing_corepack
+):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+    )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    (worktree / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    (worktree / "package.json").write_text(
+        json.dumps(
+            {
+                "packageManager": "pnpm@11.24.0+sha512." + "a" * 128,
+                "scripts": {"postinstall": "patch-package"},
+            }
+        )
+    )
+    value = json.loads(result_path.read_bytes())
+    value["changedFiles"] = ["runtime.py", "packages/cli/src/config/extension-manager.ts"]
+    value["tests"] = [
+        {
+            "command": 'pnpm -r --filter "!@qwen-code/mobile-mcp" run build',
+            "exitCode": 1,
+            "result": "The installed-pnpm workspace build built multiple packages, then "
+            "failed in the CLI package on unrelated UI selection code because the local "
+            "ink types do not expose selectable, selectionFlow, ReadonlyFrame, "
+            "ScreenSelection, and related APIs.",
+        }
+    ]
+    if missing_corepack:
+        value["tests"].insert(
+            0,
+            {
+                "command": "npm run build",
+                "exitCode": 1,
+                "result": "Repository build wrapper failed before workspace build because "
+                "/bin/sh could not find corepack. No dependency installation was performed.",
+            },
+        )
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path, store=store)
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["relevant_tests_green", "independent_review_passed"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert listed["environmentBlocked"] == []
+    assert listed["candidates"][0]["prefetchRequired"] is True
+    executed = []
+
+    def fake_execute(_candidate, commands):
+        executed.extend(commands)
+        return [{"kind": item["kind"], "cwd": item["cwd"], "durationMs": 1} for item in commands]
+
+    monkeypatch.setattr(MODULE, "_execute_validation_prefetch", fake_execute)
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=digest,
+            prefetch_complete=False,
+        )
+    )
+    expected = (
+        ["corepack_local_install", "pnpm_corepack_locked_install", "npm_patch_package_apply"]
+        if missing_corepack
+        else ["pnpm_locked_install", "npm_patch_package_apply"]
+    )
+    assert [item["kind"] for item in executed] == expected
+    assert [item["kind"] for item in reserved["prefetch"]] == expected
+    assert executed[-1]["argv"] == [
+        "node",
+        "node_modules/patch-package/index.js",
+        "--error-on-fail",
+    ]
+    assert "系统已按项目锁文件补齐缺失依赖" in reserved["prompt"]
+    assert json.loads(result_path.read_bytes())["quality"]["relevant_tests_green"] is False
+
+
+def test_core_suite_symlink_failure_delivers_canonical_tmpdir_in_original_followup(
+    monkeypatch, tmp_path
+):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+    )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    value = json.loads(result_path.read_bytes())
+    value["tests"] = [
+        {"command": "npm run build", "exitCode": 0, "result": "Successfully copied files."},
+        {
+            "command": "npm_config_update_notifier=false npm -w packages/core run test:ci",
+            "exitCode": 1,
+            "result": "26 failed; workflow-journal: expected missing, received unreadable. "
+            "Workflow journal path is symlinked. Other latency and Git checks also failed.",
+        },
+    ]
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path, store=store)
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["relevant_tests_green", "independent_review_passed"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["errors"] == [] and listed["environmentBlocked"] == []
+    assert listed["candidates"][0]["prefetchRequired"] is False
+    original = result_path.read_bytes()
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=digest,
+            prefetch_complete=False,
+        )
+    )
+    assert reserved["ok"] and reserved["prefetch"] == []
+    assert "本轮不可变输入的真实核心检查" in reserved["prompt"]
+    assert "Workflow journal path is symlinked." in reserved["prompt"]
+    assert "os.tmpdir()" in reserved["prompt"]
+    assert "mktemp -d /private/tmp/opr-XXXXXX" in reserved["prompt"]
+    assert "listen EINVAL" in reserved["prompt"]
+    assert "path_too_long" in reserved["prompt"]
+    assert "不要再使用深层工作树内的临时路径" in reserved["prompt"]
+    assert "每条检查命令显式设置 TMPDIR" in reserved["prompt"]
+    assert "保留原项目测试入口和全部测试参数" in reserved["prompt"]
+    assert "其他失败仍须诚实保留" in reserved["prompt"]
+    assert "项目 `.nvmrc` 和正式 CI" in reserved["prompt"]
+    assert "本轮构建和测试使用已安装的 Node 22" in reserved["prompt"]
+    assert "实际 Node、npm、Git 的绝对入口和版本" in reserved["prompt"]
+    assert "Node 自带的 npm 执行原 npm 命令" in reserved["prompt"]
+    assert "xcrun --find git" in reserved["prompt"]
+    assert "只为本轮验证子进程显式移除 ANTHROPIC_BASE_URL" in reserved["prompt"]
+    assert "全部参数、测试并发、超时和性能阈值" in reserved["prompt"]
+    assert "不得伪造 CI 标志、跳过用例" in reserved["prompt"]
+    assert "包括同一修复已保留的真实失败" in reserved["prompt"]
+    queued = store.unresolved_validation_followups()[0]
+    assert MODULE._task_turn_prompt("validation-followup", queued) == reserved["prompt"]
+    assert result_path.read_bytes() == original
+    assert json.loads(original)["quality"]["relevant_tests_green"] is False
+    assert not (worktree / ".oss-pr-radar/validation-tmp").exists()
+
+
+def test_corepack_pnpm_preparation_exposes_real_local_binary_for_build(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    (worktree / "package.json").write_text(json.dumps({"packageManager": "pnpm@11.24.0"}))
+    entry = worktree / MODULE.VALIDATION_COREPACK_ENTRY
+    entry.parent.mkdir(parents=True)
+    entry.write_text("#!/usr/bin/env node\n")
+    calls = []
+    monkeypatch.setattr(MODULE, "command", lambda argv, **kwargs: calls.append((argv, kwargs)))
+    argv = [
+        "node",
+        MODULE.VALIDATION_COREPACK_ENTRY,
+        "pnpm",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--prefer-offline",
+    ]
+    completed = MODULE._execute_validation_prefetch(
+        {"worktreePath": str(worktree)},
+        [{"kind": "pnpm_corepack_locked_install", "cwd": str(worktree), "argv": argv}],
+    )
+    assert (worktree / "node_modules/.bin/corepack").resolve() == entry.resolve()
+    assert calls == [(argv, {"cwd": worktree.resolve(), "timeout": 600})]
+    assert completed[0]["kind"] == "pnpm_corepack_locked_install"
 
 
 def test_validation_followup_prefetch_failure_is_blocked_without_delivery(monkeypatch, tmp_path):
@@ -31836,6 +35616,129 @@ def test_validation_followup_prefetch_failure_is_blocked_without_delivery(monkey
     assert listed["environmentBlocked"][0]["reason"] == "DEPENDENCY_PREFETCH_FAILED"
     assert listed["environmentBlocked"][0]["dependencyFailures"] == [failure]
     assert store.unresolved_validation_followups() == []
+
+
+def test_validation_followup_retries_observed_corepack_transport_failure(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green",)
+    )
+    (worktree / "package.json").write_text('{"packageManager":"pnpm@10.17.1"}\n')
+    (worktree / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    value = json.loads(result_path.read_text())
+    value["changedFiles"] = ["runtime.ts"]
+    value["tests"] = [{"command": "pnpm build", "exitCode": 127, "summary": "corepack not found"}]
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path)
+    store.record_validation_deferred(
+        "a/b#1", thread_id="thread-1", result_digest=digest, missing=["relevant_tests_green"]
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    failure = {
+        "kind": "pnpm_corepack_locked_install",
+        "failureType": "COMMAND_FAILED",
+        "summary": "corepack.cjs:13170\nError: Error when performing the request to https://registr",
+    }
+    actual_datetime = datetime
+
+    def listed_after(blocked_at, seconds):
+        class Clock(actual_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return MODULE.parse_time(blocked_at) + timedelta(seconds=seconds)
+
+        monkeypatch.setattr(MODULE, "datetime", Clock)
+        return MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    first_event = None
+    for attempt, delay in [(1, 300), (2, 900), (3, None)]:
+        store.record_validation_prefetch_blocked(
+            key="a/b#1", thread_id="thread-1", result_digest=digest, dependency_failures=[failure]
+        )
+        blocked = store.validation_prefetch_blocked()[0]
+        with store.connect() as connection:
+            rows = connection.execute(
+                "SELECT id,payload_json,created_at FROM events WHERE event_type='VALIDATION_PREFETCH_BLOCKED' ORDER BY id"
+            ).fetchall()
+        if first_event is None:
+            first_event = tuple(rows[0])
+        assert tuple(rows[0]) == first_event
+        if delay is None:
+            assert listed_after(blocked["blockedAt"], 86400)["candidates"] == []
+        else:
+            assert listed_after(blocked["blockedAt"], delay - 1)["candidates"] == []
+            listed = listed_after(blocked["blockedAt"], delay)
+            assert [item["resultDigest"] for item in listed["candidates"]] == [digest]
+        assert len(rows) == attempt
+        assert store.unresolved_validation_followups() == []
+
+
+@pytest.mark.skipif(shutil.which("npm") is None, reason="real npm is required")
+def test_validation_prefetch_prepares_declared_license_checker_with_real_npm(tmp_path):
+    _store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green",)
+    )
+    manifest_path = worktree / "package.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "local-license-build",
+                "version": "1.0.0",
+                "license": "MIT",
+                "packageManager": "pnpm@10.17.1",
+                "scripts": {"build": "node scripts/generate-licenses.ts && obuild"},
+            }
+        )
+    )
+    lock_path = worktree / "pnpm-lock.yaml"
+    lock_path.write_text("lockfileVersion: '9.0'\n")
+    script_path = worktree / "scripts/generate-licenses.ts"
+    script_path.parent.mkdir()
+    script_path.write_text(
+        "import { execSync } from 'child_process';\n"
+        "const output = execSync('npx license-checker --json', { encoding: 'utf-8' });\n"
+    )
+    value = json.loads(result_path.read_text())
+    value["changedFiles"] = ["runtime.ts"]
+    value["tests"] = [
+        {
+            "command": "test -x node_modules/.bin/license-checker && pnpm build",
+            "exitCode": 1,
+            "summary": "license-checker not prepared",
+        }
+    ]
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path)
+    candidate = {"worktreePath": str(worktree), "resultDigest": digest}
+    commands, failures = MODULE._validation_prefetch_plan(candidate)
+    tool = next(item for item in commands if item["kind"] == "license_checker_local_install")
+    assert tool["argv"][-1] == "license-checker@25.0.1"
+    assert MODULE._unresolved_validation_dependency_failures(commands, failures) == []
+    assert (
+        MODULE._unresolved_validation_dependency_failures(
+            [item for item in commands if item is not tool], failures
+        )
+        == failures
+    )
+    original = {path: path.read_bytes() for path in [manifest_path, lock_path, script_path]}
+    head = run_git(worktree, "rev-parse", "HEAD")
+    corepack = worktree / MODULE.VALIDATION_COREPACK_ENTRY
+    corepack.parent.mkdir(parents=True)
+    corepack.write_text("preserved existing toolchain\n")
+    completed = MODULE._execute_validation_prefetch(candidate, [tool])
+    assert completed[0]["kind"] == "license_checker_local_install"
+    assert (worktree / "node_modules/.bin/license-checker").is_file()
+    actual = subprocess.run(
+        ["npx", "--offline", "license-checker", "--json"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert actual.returncode == 0, actual.stderr
+    assert isinstance(json.loads(actual.stdout), dict)
+    assert {path: path.read_bytes() for path in original} == original
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    assert corepack.read_text() == "preserved existing toolchain\n"
 
 
 def test_validation_prefetch_failure_does_not_reserve_followup(monkeypatch, tmp_path):
@@ -34555,6 +38458,9 @@ def test_sdk_import_standins_return_to_native_validation_and_real_venv_entry(mon
     from oss_pr_radar.independent_review import review_once
 
     store, worktree, result_path = _controller_commit_result(tmp_path)
+    # Python 3.12 does not create the virtual environment's .gitignore.
+    with (worktree / ".git/info/exclude").open("a", encoding="utf-8") as excluded:
+        excluded.write(".venv/\n")
     schema = tmp_path / "schemas" / "independent_review.schema.json"
     schema.parent.mkdir()
     schema.write_text("{}", encoding="utf-8")
@@ -34725,6 +38631,7 @@ def test_sdk_import_standins_return_to_native_validation_and_real_venv_entry(mon
     )
     assert actual.returncode == 0, actual.stdout + actual.stderr
     assert actual.stdout.strip() == "2"
+    assert run_git(worktree, "status", "--porcelain") == ""
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value["tests"].append(
         {
@@ -34817,6 +38724,75 @@ def test_sdk_import_standins_can_be_supplemented_by_actual_project_test_pass(com
     ).ready
 
 
+def test_offline_execution_flag_keeps_failed_baseline_in_normal_validation(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green",)
+    )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    value = json.loads(result_path.read_text())
+    baseline = worktree / ".oss-pr-radar/baseline-runtime.py"
+    baseline.write_text(run_git(worktree, "show", "main:runtime.py"))
+    probe = worktree / ".oss-pr-radar/built-entry-regression.py"
+    probe.write_text("import runpy, sys\nassert runpy.run_path(sys.argv[1])['value'] == 2\n")
+    tests = []
+    for target, expected in [(baseline, 1), (worktree / "runtime.py", 0)]:
+        command = "npm_config_offline=true " + shlex.join(
+            [sys.executable, str(probe.relative_to(worktree)), str(target.relative_to(worktree))]
+        )
+        actual = subprocess.run(command, shell=True, cwd=worktree, capture_output=True, text=True)
+        assert actual.returncode == expected
+        tests.append(
+            {
+                "command": command,
+                "cwd": str(worktree),
+                "exitCode": actual.returncode,
+                "stdout": actual.stdout,
+                "stderr": actual.stderr,
+                "result": "Expected assertion failure after the real selected base executed."
+                if expected
+                else "The current implementation passed the same assertion.",
+            }
+        )
+    value["tests"] = tests
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path, store=store)
+    store.record_validation_deferred(
+        "a/b#1", thread_id="thread-1", result_digest=digest, missing=["relevant_tests_green"]
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+
+    # Unmarked baseline evidence still requires a new, correctly recorded run.
+    assert not MODULE.assess_submit_ready(
+        {field: True for field in QUALITY_FIELDS}, task_result=value
+    ).ready
+    assert MODULE._is_validation_dependency_failure(tests[0]) is False
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert [item["resultDigest"] for item in listed["candidates"]] == [digest]
+    assert listed["environmentBlocked"] == []
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=digest,
+            prefetch_complete=False,
+        )
+    )
+    assert reserved.get("blocked") is not True
+    assert reserved["prefetch"] == []
+    assert all(phase in reserved["prompt"] for phase in ["before_fix", "after_fix", "formal"])
+    assert "绝对 cwd" in reserved["prompt"]
+
+
+def test_offline_execution_flag_preserves_actual_dependency_failure():
+    assert MODULE._is_validation_dependency_failure(
+        {
+            "command": "npm_config_offline=true pnpm build",
+            "exitCode": 1,
+            "result": "Offline dependency was not cached; no module named required_sdk.",
+        }
+    )
+
+
 def test_explicit_before_fix_failure_does_not_block_current_passing_fix(tmp_path):
     store, worktree, result_path = _controller_commit_result(tmp_path)
     value = json.loads(result_path.read_text(encoding="utf-8"))
@@ -34845,3 +38821,1956 @@ def test_explicit_before_fix_failure_does_not_block_current_passing_fix(tmp_path
     assert ingested["validationDeferred"] == []
     assert ingested["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
     assert len(ingested["publicationRequests"]) == 1
+
+
+def _published_tracking_merge_fixture(monkeypatch, tmp_path, *, required=False, worktree=None):
+    store, worktree, result_path = _controller_commit_result(tmp_path, worktree=worktree)
+    source_raw = result_path.read_bytes()
+    source_value = json.loads(source_raw)
+    previous_head = source_value["commitSha"]
+    branch = source_value["branch"]
+    run_git(worktree, "switch", "main")
+    (worktree / "runtime.py").write_text("value = 3\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "refactor: update runtime")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", branch)
+    managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store, worktree, result_path, degrade_stage=False
+    )
+    publication = MODULE._publication_payload_from_evidence(source_value, source_value["issueUrl"])
+    source_request = {
+        "requestId": "published-authority-request",
+        "opportunityKey": "a/b#1",
+        "intentId": "intent-1",
+        "threadId": "thread-1",
+        "issueUrl": source_value["issueUrl"],
+        "worktreePath": str(worktree),
+        "commitSha": previous_head,
+        "headSha": previous_head,
+        "branch": branch,
+        "selectedBaseSha": source_value["selectedBaseSha"],
+        "codePaths": source_value["codePaths"],
+        "resultDigest": source_value["resultDigest"],
+        "evidenceDigest": hashlib.sha256(source_raw).hexdigest(),
+        "evidenceRawBase64": base64.b64encode(source_raw).decode("ascii"),
+        "publication": publication,
+    }
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=?,evidence_digest=? "
+            "WHERE request_id='published-authority-request'",
+            (json.dumps(source_request), source_request["evidenceDigest"]),
+        )
+    now = iso_z(datetime.now(UTC) + timedelta(seconds=1))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": previous_head,
+                    "actionDigest": "tracking-merge-action",
+                    "taskActionDigest": "tracking-merge-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["解决已发布PR的当前冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "mergeConflictPreparationVersion": "conflict_files_v1",
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    followup = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=followup["wakeDigest"],
+        prepared_head_sha=previous_head,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url=source_value["issueUrl"],
+            thread_id="thread-1",
+            cwd=worktree,
+            prepared_followup_head=previous_head,
+        ).read_bytes()
+    )
+    if not required:
+        merged = subprocess.run(
+            ["git", "merge", "--no-commit", "--no-ff", base_sha],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert merged.returncode == 1, merged.stderr
+    (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
+    if not required:
+        run_git(worktree, "add", "runtime.py")
+        run_git(worktree, "commit", "-m", "fix: resolve runtime conflict")
+    merge_head = run_git(worktree, "rev-parse", "HEAD")
+    value = source_value | {
+        "contextDigest": context["contextDigest"],
+        "handoffMode": "controller_merge_complete",
+        "commitMessage": "fix: resolve runtime conflict",
+        "commitSha": merge_head,
+        "headSha": merge_head,
+        "previousCommitSha": previous_head,
+        "mergeBaseSha": base_sha,
+        "mergeResolutionFiles": ["runtime.py"],
+        "controllerCommitChangedFiles": ["runtime.py"],
+        "changedFiles": ["runtime.py"],
+        "prUrl": pr_url,
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+        "publication": {
+            "baseBranch": "main",
+            "branch": branch,
+            "commitSha": previous_head,
+            "prUrl": pr_url,
+            "status": "PR_OPEN",
+        },
+    }
+    candidate = store.task_result_candidates()[0]
+    with MODULE._task_worktree_private_descriptor(candidate) as opened:
+        if required:
+            value["handoffMode"] = "controller_merge_required"
+            value["publication"].pop("baseBranch")
+            for field in (
+                "commitSha",
+                "previousCommitSha",
+                "mergeResolutionFiles",
+                "controllerCommitChangedFiles",
+                "codePaths",
+                "reproductionReceipt",
+                "probeReceipt",
+                "resultDigest",
+                "independentReview",
+            ):
+                value.pop(field, None)
+        else:
+            value, _raw = MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=opened,
+                managed_ledger=managed,
+                write_result=False,
+            )
+        MODULE._write_task_result_json_to_private(opened, value)
+    if not required:
+        _write_explicit_controller_review(tmp_path, value)
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700, exist_ok=True)
+    monkeypatch.setattr(MODULE, "STATE", state)
+    return store, managed, worktree, result_path, context, source_request
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_ingest_tracking_merge_recovers_metadata_then_requires_fresh_review(
+    monkeypatch, tmp_path, required
+):
+    store, _managed, worktree, result_path, _context, source = _published_tracking_merge_fixture(
+        monkeypatch, tmp_path, required=required
+    )
+    original_raw = result_path.read_bytes()
+    original = json.loads(original_raw)
+    if required:
+        assert original["handoffMode"] == "controller_merge_required"
+        assert set(original["publication"]) == {"branch", "commitSha", "prUrl", "status"}
+        assert run_git(worktree, "status", "--porcelain") == "M runtime.py"
+    else:
+        assert MODULE._controller_review_result(SimpleNamespace(ledger=store.path), original)
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    normalized = json.loads(result_path.read_bytes())
+    assert first["errors"] == [], first
+    assert first["publicationRequests"] == []
+    assert normalized["quality"]["independent_review_passed"] is False
+    assert "independentReview" not in normalized
+    assert normalized["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert normalized["handoffMode"] == "controller_merge_complete"
+    assert normalized["resultDigest"] != original.get("resultDigest")
+    assert normalized["reproductionReceipt"]["receiptDigest"] != original.get(
+        "reproductionReceipt", {}
+    ).get("receiptDigest")
+    assert MODULE._controller_review_result(SimpleNamespace(ledger=store.path), normalized) is None
+    assert (
+        MODULE._publication_payload_from_evidence(normalized, normalized["issueUrl"])
+        == source["publication"]
+    )
+    with store.connect() as connection:
+        history_row = connection.execute(
+            "SELECT payload_json FROM managed_lifecycle_events "
+            "WHERE event_type='PUBLISHED_FOLLOWUP_METADATA_RECOVERED'"
+        ).fetchone()
+    history = json.loads(history_row[0])["originalResultSnapshot"]
+    history_path = MODULE.STATE / history["snapshotPath"]
+    assert history_path.read_bytes() == original_raw
+    assert history["snapshotDigest"] == hashlib.sha256(original_raw).hexdigest()
+    assert stat.S_IMODE(history_path.stat().st_mode) == 0o400
+
+    _write_explicit_controller_review(tmp_path, normalized)
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert second["errors"] == [], second
+    assert len(second["publicationRequests"]) == 1
+    request = store.publication_request(second["publicationRequests"][0]["requestId"])["request"]
+    bound, _digest = MODULE.publication_evidence_from_request(request)
+    assert request["publicationKind"] == "PR_UPDATE"
+    assert request["existingPrUrl"] == original["prUrl"]
+    assert request["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert request["previousCommitSha"] == original.get("previousCommitSha", original["headSha"])
+    assert (
+        MODULE._publication_payload_from_evidence(bound, bound["issueUrl"])
+        == request["publication"]
+    )
+
+
+def test_publication_request_keeps_authenticated_wake_after_followup_snapshot_drift(
+    monkeypatch, tmp_path
+):
+    store, _managed, _worktree, result_path, _context, source = _published_tracking_merge_fixture(
+        monkeypatch, tmp_path
+    )
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["errors"] == [], first
+    normalized = json.loads(result_path.read_bytes())
+    source_wake = normalized["followupDigest"]
+    _write_explicit_controller_review(tmp_path, normalized)
+    actual_request = MODULE._request_publication_from_task_result
+    observed_wakes = []
+
+    def request_after_snapshot_refresh(ledger, **kwargs):
+        # The signed result is already finalized and freshly reviewed; a
+        # concurrent official snapshot replaces only the mutable follow-up row.
+        value = kwargs["value"]
+        assert value["followupDigest"] == source_wake
+        refreshed_at = iso_z(datetime.now(UTC) + timedelta(seconds=2))
+        ledger.import_pr_followups(
+            {
+                "version": "pr_followup_v3",
+                "generatedAt": refreshed_at,
+                "items": [
+                    {
+                        "url": value["prUrl"],
+                        "headSha": value["previousCommitSha"],
+                        "actionDigest": "later-official-action",
+                        "taskActionDigest": "later-official-task-action",
+                        "taskFollowupRequired": True,
+                        "taskActions": ["复核后续官方快照中的当前冲突"],
+                        "evidence": {
+                            "mergeConflict": True,
+                            "baseRefName": "main",
+                            "baseSha": value["mergeBaseSha"],
+                            "mergeConflictFiles": ["runtime.py"],
+                        },
+                        "checkedAt": refreshed_at,
+                    }
+                ],
+            }
+        )
+        with ledger.connect() as connection:
+            current_wake = connection.execute(
+                "SELECT wake_digest FROM pr_followups WHERE opportunity_key='a/b#1'"
+            ).fetchone()[0]
+        assert current_wake != source_wake
+        observed_wakes.append(current_wake)
+        return actual_request(ledger, **kwargs)
+
+    monkeypatch.setattr(
+        MODULE, "_request_publication_from_task_result", request_after_snapshot_refresh
+    )
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert second["errors"] == [], second
+    assert len(second["publicationRequests"]) == 1
+    request = store.publication_request(second["publicationRequests"][0]["requestId"])["request"]
+    bound, _digest = MODULE.publication_evidence_from_request(request)
+    assert len(observed_wakes) == 1
+    assert request["followupWakeDigest"] == bound["followupDigest"] == source_wake
+    assert request["followupWakeDigest"] != observed_wakes[0]
+    assert request["publication"] == source["publication"]
+    assert request["probeReceipt"]["resultDigest"] == bound["resultDigest"]
+    # Correct identity cannot promote the original conflict-only preparation
+    # into permission for historical publication review.
+    (result_path.parent / "task-context.json").unlink()
+    with pytest.raises(
+        RuntimeError, match="publication independent review signed context mismatch"
+    ):
+        MODULE._publication_review_context(store, request=request, value=bound)
+
+
+@pytest.mark.parametrize("context_change", [None, "drift", "missing"])
+def test_publication_queue_uses_exact_current_merge_review_before_historical_recovery(
+    monkeypatch, tmp_path, context_change
+):
+    from oss_pr_radar.independent_review import _context_review_binding_digest
+
+    store, _managed, _worktree, result_path, context, _source = _published_tracking_merge_fixture(
+        monkeypatch,
+        tmp_path,
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+    )
+    assert MODULE._is_managed_worktree(_worktree)
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["errors"] == [], first
+    normalized = json.loads(result_path.read_bytes())
+    _write_explicit_controller_review(tmp_path, normalized)
+    receipt_path = _receipt_path(
+        tmp_path,
+        key=normalized["key"],
+        commit_sha=normalized["commitSha"],
+        source_digest=_source_digest(normalized),
+    )
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["contextReviewBindingDigest"] = _context_review_binding_digest(context, normalized)
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert second["errors"] == [], second
+    assert len(second["publicationRequests"]) == 1
+    request_id = second["publicationRequests"][0]["requestId"]
+    request = store.publication_request(request_id)["request"]
+    value = MODULE._evidence_from_publication_request(request)
+    historical = store.historical_pr_followup_preparation(
+        key=value["key"],
+        task_id=value["taskId"],
+        thread_id=value["threadId"],
+        wake_digest=value["followupDigest"],
+    )
+    assert historical["snapshot"]["evidence"].get("mergeResolutionScopeReceipt") is None
+    assert (
+        historical["snapshot"]["evidence"]["mergeConflictPreparationVersion"] == "conflict_files_v1"
+    )
+    context_path = result_path.parent / "task-context.json"
+    if context_change == "drift":
+        changed = json.loads(context_path.read_bytes())
+        changed["prFollowup"]["wakeDigest"] = "f" * 64
+        changed["contextDigest"] = MODULE._task_context_digest(
+            changed, changed["prFollowup"]["preparedHeadSha"]
+        )
+        context_path.write_text(json.dumps(changed), encoding="utf-8")
+    elif context_change == "missing":
+        context_path.unlink()
+
+    broker_calls = []
+
+    def stop_at_broker(ledger, actual_request_id, *, review_context=None, **kwargs):
+        assert actual_request_id == request_id
+        assert review_context == context
+        review = MODULE._controller_review_result(
+            SimpleNamespace(runtime_root=tmp_path), value, review_context=review_context
+        )
+        assert review["verdict"] == "PASS"
+        broker_calls.append(actual_request_id)
+        return {"pending": True, "audit": {"reason": "TEST_STOP_AT_PROVIDER_AUDIT"}}
+
+    monkeypatch.setattr(MODULE, "broker_publication_request", stop_at_broker)
+    monkeypatch.setattr(
+        MODULE,
+        "_executor",
+        lambda *_args, **_kwargs: pytest.fail("must stop before public effects"),
+    )
+    queued = MODULE.run_publication_queue(SimpleNamespace(ledger=store.path))
+    assert queued["published"] == []
+    if context_change is None:
+        assert queued["errors"] == [], queued
+        assert broker_calls == [request_id]
+        assert queued["pending"] == [
+            {"requestId": request_id, "reason": "TEST_STOP_AT_PROVIDER_AUDIT"}
+        ]
+    else:
+        assert broker_calls == []
+        assert queued["errors"] == [
+            {
+                "requestId": request_id,
+                "error": "publication independent review signed context mismatch",
+            }
+        ]
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "intent",
+        "thread",
+        "worktree",
+        "branch",
+        "pr",
+        "snapshot",
+        "body",
+        "missing_body",
+        "managed_head",
+    ],
+)
+def test_tracking_merge_metadata_rejects_foreign_or_changed_source(monkeypatch, tmp_path, mismatch):
+    store, managed, worktree, result_path, context, source = _published_tracking_merge_fixture(
+        monkeypatch, tmp_path
+    )
+    candidate = store.task_result_candidates()[0]
+    before = result_path.read_bytes()
+    value = json.loads(before)
+    if mismatch in {"intent", "thread", "worktree", "branch", "snapshot"}:
+        field = {
+            "intent": "intentId",
+            "thread": "threadId",
+            "worktree": "worktreePath",
+            "branch": "branch",
+            "snapshot": "evidenceDigest",
+        }[mismatch]
+        source[field] = "foreign-source"
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+                (json.dumps(source), source["requestId"]),
+            )
+    elif mismatch == "pr":
+        value["publication"]["prUrl"] = "https://github.com/a/b/pull/99"
+    elif mismatch in {"body", "missing_body"}:
+        body_path = Path(source["publication"]["bodyPath"])
+        if mismatch == "body":
+            body_path.write_text("Fixes #1\nDifferent body.\n", encoding="utf-8")
+        else:
+            body_path.unlink()
+    else:
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE managed_prs SET head_sha=? WHERE pr_key='a/b#9'", ("a" * 40,)
+            )
+    with MODULE._task_worktree_private_descriptor(candidate) as opened:
+        with pytest.raises((RuntimeError, ValueError)):
+            MODULE._published_followup_publication_metadata(
+                store,
+                managed,
+                candidate=candidate,
+                context=context,
+                value=value,
+                raw=before,
+                result_access=opened,
+            )
+    assert result_path.read_bytes() == before
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("shape", ["complete", "new_pr", "unknown", "not_finalized"])
+def test_publication_metadata_recovery_is_only_the_tracking_merge_shape(shape):
+    value = {
+        "stage": "FIX_READY",
+        "handoffMode": "controller_merge_complete",
+        "publication": {
+            "baseBranch": "main",
+            "branch": "fix/1-runtime-boundary",
+            "commitSha": "a" * 40,
+            "prUrl": "https://github.com/a/b/pull/9",
+            "status": "PR_OPEN",
+        },
+    }
+    candidate = {"stage": "PR_OPEN"}
+    if shape == "complete":
+        value["publication"].update(
+            {"headOwner": "Oxygen56", "title": "Existing title", "bodyFile": "existing-body"}
+        )
+    elif shape == "new_pr":
+        candidate["stage"] = "DISPATCHED"
+    elif shape == "unknown":
+        value["publication"]["unrecognized"] = "value"
+    else:
+        value["handoffMode"] = "controller_merge_required"
+    assert (
+        MODULE._published_followup_publication_metadata(
+            None,
+            None,
+            candidate=candidate,
+            context={},
+            value=value,
+            raw=b"",
+            result_access=None,
+        )
+        is None
+    )
+
+
+def _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch):
+    from oss_pr_radar.independent_review import _context_review_binding_digest
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path, monkeypatch, target_base_bound=True, complete_normal_validation_audit=True
+    )
+    source_raw = input_path.read_bytes()
+    source = json.loads(source_raw)
+    context_path = result_path.parent / "task-context.json"
+    old_context = json.loads(context_path.read_text())
+    assert source["contextDigest"] == old_context["contextDigest"]
+    assert source["targetBase"] == old_context["targetBase"]
+    assert old_context["liveAudit"]["evidence"]["digest"] == "c" * 64
+    assert old_context["liveAudit"]["evidence"]["complete"] is True
+    assert old_context["liveAudit"]["evidence"]["completeness"] == {
+        "repositoryPolicy": "COMPLETE",
+        "issue": "COMPLETE",
+    }
+    assert old_context["liveAudit"]["evidence"]["policy"]["status"] == "NORMAL"
+    assert MODULE._controller_policy_verification(old_context) is not None
+    review = _write_explicit_controller_review(tmp_path, source)
+    review.update(
+        verdict="FAIL",
+        summary="Full retrieval path is not fixed.",
+        findings=[
+            {
+                "severity": "P2",
+                "file": "runtime.py",
+                "line": 1,
+                "message": "Refill stops on duplicate eligible rows and suppresses FAQ expansion.",
+            }
+        ],
+    )
+    review_path = _receipt_path(
+        tmp_path,
+        key=source["key"],
+        commit_sha=source["commitSha"],
+        source_digest=_source_digest(source),
+    )
+    envelope = json.loads(review_path.read_text())
+    envelope.update(
+        review=review,
+        contextReviewBindingDigest=_context_review_binding_digest(old_context, source),
+    )
+    review_path.write_text(json.dumps(envelope))
+    with store.connect() as connection:
+        sent = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        reserved = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+    digest = json.loads(sent[0])["resultDigest"]
+    binding = store.validation_followup_delivery_binding(
+        thread_id="thread-1",
+        result_digest=digest,
+        reservation_digest=reserved["reservationDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    rollout = tmp_path / "completed-review-feedback.jsonl"
+    thread_db = tmp_path / "completed-review-feedback-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT,git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(worktree),
+                0,
+                MODULE.issue_prompt(source["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    turn_id = "completed-validation-turn"
+    old_prompt = MODULE._validation_followup_prompt(
+        {
+            "missing": ["independent_review_passed"],
+            "worktreeInputPath": binding["worktreeInputPath"],
+        }
+    )
+    records = [
+        {"type": "session_meta", "payload": {"id": "thread-1"}},
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {"type": "task_started", "turn_id": turn_id},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": turn_id,
+                "item": {
+                    "type": "UserMessage",
+                    "content": [{"type": "text", "text": old_prompt, "text_elements": []}],
+                },
+            },
+        },
+    ]
+    failed_raw = result_path.read_bytes()
+    result_path.write_bytes(failed_raw)
+    records.append(
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {"type": "task_complete", "turn_id": turn_id},
+        }
+    )
+    rollout.write_text("".join(json.dumps(item) + "\n" for item in records))
+    with store.connect() as connection:
+        old_authority = connection.execute(
+            "SELECT payload_json FROM events WHERE opportunity_key=? "
+            "AND event_type='TASK_CONTEXT_AUTHORITY_BOUND' "
+            "AND json_extract(payload_json,'$.taskId')=? "
+            "AND json_extract(payload_json,'$.threadId')=? ORDER BY id DESC LIMIT 1",
+            ("a/b#1", "intent-1", "thread-1"),
+        ).fetchone()
+    assert old_authority is not None
+    assert json.loads(old_authority[0])["contextDigest"] == source["contextDigest"]
+    assert json.loads(context_path.read_text())["contextDigest"] == source["contextDigest"]
+    assert input_path.read_bytes() == source_raw and result_path.read_bytes() == failed_raw
+    with store.connect() as connection:
+        followup_times = {
+            row["event_type"]: parse_time(row["created_at"])
+            for row in connection.execute(
+                "SELECT event_type,created_at FROM events WHERE opportunity_key=? "
+                "AND event_type IN ('TASK_RESULT_VALIDATION_DEFERRED',"
+                "'VALIDATION_FOLLOWUP_RESERVED','VALIDATION_FOLLOWUP_SENT') "
+                "AND json_extract(payload_json,'$.intentId')=? "
+                "AND json_extract(payload_json,'$.threadId')=? "
+                "AND json_extract(payload_json,'$.resultDigest')=? ORDER BY id",
+                ("a/b#1", "intent-1", "thread-1", digest),
+            ).fetchall()
+        }
+    assert (
+        parse_time(json.loads(old_authority[0])["authorityObservedAt"])
+        < followup_times["TASK_RESULT_VALIDATION_DEFERRED"]
+        <= followup_times["VALIDATION_FOLLOWUP_RESERVED"]
+        <= followup_times["VALIDATION_FOLLOWUP_SENT"]
+    )
+    live_audit = json.loads(json.dumps(old_context["liveAudit"]))
+    live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+    live_audit["evidence"].update(
+        digest="b" * 64,
+        complete=True,
+        completeness={"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": live_audit,
+            "targetBase": old_context["targetBase"],
+            "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+        },
+        dedupe_key="intent-1:completed-review-feedback:current-audit",
+    )
+    MODULE.write_task_context(
+        store, issue_url=source["issueUrl"], thread_id="thread-1", cwd=worktree
+    )
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
+    current = json.loads(context_path.read_text())
+    with store.connect() as connection:
+        authority_digests = [
+            json.loads(row[0])["contextDigest"]
+            for row in connection.execute(
+                "SELECT payload_json FROM events WHERE opportunity_key=? "
+                "AND event_type='TASK_CONTEXT_AUTHORITY_BOUND' "
+                "AND json_extract(payload_json,'$.taskId')=? "
+                "AND json_extract(payload_json,'$.threadId')=? ORDER BY id",
+                ("a/b#1", "intent-1", "thread-1"),
+            ).fetchall()
+        ]
+    assert source["contextDigest"] in authority_digests
+    assert authority_digests[-1] == current["contextDigest"]
+    assert current["contextDigest"] != source["contextDigest"]
+    assert current["targetBase"] == old_context["targetBase"]
+    assert current["liveAudit"]["evidence"]["digest"] == "b" * 64
+    assert (
+        current["liveAudit"]["evidence"]["policy"] == old_context["liveAudit"]["evidence"]["policy"]
+    )
+    assert MODULE._controller_policy_verification(current) is not None
+    assert _context_review_binding_digest(current, source) == _context_review_binding_digest(
+        old_context, source
+    )
+    assert result_path.read_bytes() == failed_raw
+    return store, worktree, result_path, input_path, source_raw, review, review_path, binding
+
+
+def test_completed_validation_delivers_missing_exact_private_review_with_current_context(
+    tmp_path, monkeypatch
+):
+    store, worktree, result_path, input_path, old_input, review, _review_path, old_binding = (
+        _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
+    )
+    monkeypatch.setenv("RADAR_MAX_ACTIVE_TASKS", "5")
+    assert store.active_task_count() == 1
+    for number in range(2, 6):
+        intent = _enqueue_signed_intent(
+            store,
+            scanner_version=SCANNER_DECISION_REVISION,
+            intent_id=f"wip-intent-{number}",
+            key=f"wip/slots#{number}",
+        )
+        assert store.claim(intent["intentId"], "other-controller", max_active=5) is not None
+        reserved_creation = store.reserve_creation(intent["intentId"], owner="other-controller")
+        assert reserved_creation["intentId"] == intent["intentId"]
+    assert store.active_task_count() == 5
+    assert store.active_task_count(exclude_intent_id="intent-1") == 4
+    assert MODULE._global_task_wip(store) == (True, 5, 5)
+    assert MODULE._global_task_wip(store, exclude_intent_id="intent-1") == (False, 4, 5)
+    assert [item["key"] for item in store.task_result_candidates_for_ingestion()] == ["a/b#1"]
+    source_root = tmp_path / "immutable-release"
+    source_root.mkdir()
+    monkeypatch.setattr(MODULE, "ROOT", source_root)
+    assert MODULE.ROOT != MODULE.STATE.parent == tmp_path
+    assert _review_path.is_relative_to(MODULE.STATE)
+    assert not (MODULE.ROOT / "state" / "independent_reviews").exists()
+    assert (
+        MODULE._controller_review_result(SimpleNamespace(ledger=store.path), json.loads(old_input))
+        is None
+    )
+    original_raw = result_path.read_bytes()
+    original_quality = json.loads(original_raw)["quality"]
+    with store.connect() as connection:
+        original_events = [
+            tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+        ]
+    candidate = store.task_result_candidates_for_ingestion()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text())
+    assert (
+        MODULE._validation_result_context_refresh_proof(
+            store,
+            candidate=candidate,
+            context=context,
+            value=json.loads(original_raw),
+            worktree=worktree,
+            raw=original_raw,
+        )
+        is None
+    )
+    assert store.validation_followup_candidates() == []
+    args = SimpleNamespace(ledger=store.path, key="a/b#1", runtime_root=tmp_path)
+    traced_functions = {
+        str(SCRIPT): {
+            "_completed_dirty_controller_handoff_validation",
+            "_read_authenticated_validation_result",
+            "_completed_review_feedback_validation",
+            "_completed_validation_input_task_id",
+            "_controller_review_result",
+        },
+        RadarLedger.task_result_candidates_for_ingestion.__code__.co_filename: {
+            "task_result_candidates_for_ingestion",
+            "record_completed_review_feedback_no_progress",
+            "rearm_validation_no_progress_for_review",
+        },
+    }
+    diagnostics = {
+        "calls": {name: 0 for names in traced_functions.values() for name in names},
+        "returns": [],
+    }
+
+    def completion_trace(frame, event, returned):
+        name = frame.f_code.co_name
+        if name not in traced_functions.get(frame.f_code.co_filename, set()):
+            return None
+        if event == "call":
+            diagnostics["calls"][name] += 1
+        elif event == "return":
+            values = frame.f_locals
+            observed = {
+                "function": name,
+                "line": frame.f_lineno,
+                "returnKind": type(returned).__name__,
+            }
+            if isinstance(returned, bool):
+                observed["returned"] = returned
+            candidate = values.get("candidate")
+            if isinstance(candidate, dict):
+                observed["candidate"] = {
+                    key: candidate.get(key) for key in ("key", "intentId", "stage")
+                }
+            if name == "task_result_candidates_for_ingestion" and isinstance(returned, list):
+                observed["candidates"] = [
+                    {key: value.get(key) for key in ("key", "intentId", "stage")}
+                    for value in returned
+                ]
+            for key in ("prior", "historical_audit", "current_audit", "review", "delivery"):
+                if key in values:
+                    observed[key + "Present"] = values[key] is not None
+            authorities = values.get("authorities")
+            if isinstance(authorities, list):
+                observed["authorityCount"] = len(authorities)
+                observed["authorityDigests"] = [
+                    payload.get("contextDigest") for _row, payload in authorities
+                ]
+            for key in ("old_digest", "current_digest"):
+                if key in values:
+                    observed[key] = values[key]
+            diagnostics["returns"].append(observed)
+        return completion_trace
+
+    calls = []
+    intake = {}
+    listed = {}
+
+    def runner(root, operation):
+        assert root == tmp_path
+        calls.append(operation)
+        if operation == "context-recover":
+            return MODULE.recover_task_contexts(args)
+        if operation == "context-sync":
+            synced = MODULE.sync_task_contexts(args)
+            assert result_path.read_bytes() == original_raw
+            assert input_path.read_bytes() == old_input
+            return synced
+        if operation == "ingest-results":
+            with store.connect() as connection:
+                before = [
+                    tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+                ]
+            intake.update(MODULE.ingest_task_results(args))
+            with store.connect() as connection:
+                after = [
+                    tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+                ]
+            assert before == after
+            assert result_path.read_bytes() == original_raw
+            assert input_path.read_bytes() == old_input
+            return intake
+        if operation == "drain-once":
+            listed.update(MODULE.validation_followup_list(args))
+            # Stop at the external task provider; the native delivery and
+            # actual worker prompt are exercised below with this candidate.
+            return {"ok": listed["ok"], "action": "none", "errors": listed["errors"]}
+        assert operation in {
+            "independent-review-run",
+            "title-reconcile",
+            "cleanup-reconcile",
+            "publication-run",
+            "publication-feedback-list",
+            "recovery-list",
+        }
+        return {"ok": True, "updated": [], "published": [], "errors": []}
+
+    previous_trace = sys.gettrace()
+    try:
+        sys.settrace(completion_trace)
+        advanced = advance_once(tmp_path, runner=runner)
+    finally:
+        sys.settrace(previous_trace)
+    assert calls == [
+        "context-recover",
+        "context-sync",
+        "ingest-results",
+        "independent-review-run",
+        "title-reconcile",
+        "cleanup-reconcile",
+        "publication-run",
+        "publication-feedback-list",
+        "recovery-list",
+        "drain-once",
+    ]
+    assert advanced["ok"] and advanced["errors"] == [], json.dumps(
+        {"errors": advanced["errors"], "diagnostics": diagnostics}, indent=2
+    )
+    assert intake["ok"] and intake["errors"] == [], intake
+    assert advanced["resultsIngested"] == intake["ingested"] == []
+    assert advanced["publicationRequests"] == intake["publicationRequests"] == []
+    assert advanced["published"] == []
+    assert (
+        advanced["validationDeferred"]
+        == intake["validationDeferred"]
+        == [
+            {
+                "key": "a/b#1",
+                "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE",
+                "missing": ["independent_review_passed"],
+            }
+        ]
+    )
+    assert listed["ok"] and listed["errors"] == [], json.dumps(
+        {"errors": listed["errors"], "diagnostics": diagnostics}, indent=2
+    )
+    assert listed["queuedDeferred"] == []
+    assert listed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"}
+    ], json.dumps({"listed": listed, "diagnostics": diagnostics}, sort_keys=True)
+    candidate = listed["candidates"][0]
+    assert candidate["resultDigest"] == old_binding["resultDigest"]
+    reserve = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            runtime_root=tmp_path,
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserve["ok"] and not reserve.get("blocked"), reserve
+    assert store.active_task_count() == 5
+    assert store.active_task_count(exclude_intent_id="intent-1") == 4
+    assert reserve["reservationDigest"] != old_binding["reservationDigest"]
+    assert len(store.unresolved_validation_followups()) == 1
+    process = _FakeTaskTurnProcess()
+    original_popen = subprocess.Popen
+    observed = {}
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def response(_process, _selector, buffer, *, response_id, **_kwargs):
+        return buffer, {
+            "result": {"thread": {"id": "thread-1"}}
+            if response_id == 1
+            else {"turn": {"id": "new-exact-review-turn"}}
+        }
+
+    def completed(*_args, **_kwargs):
+        return {"turnId": "new-exact-review-turn", "status": "completed"}
+
+    def launch(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        worker_args = SimpleNamespace(
+            ledger=store.path,
+            runtime_root=Path(argv[argv.index("--runtime-root") + 1]),
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=candidate["resultDigest"],
+            delivery_attempt_digest=None,
+            intent_id=None,
+            worktree_path=None,
+            **{
+                option.replace("-", "_"): argv[argv.index("--" + option) + 1]
+                if "--" + option in argv
+                else None
+                for option in (
+                    "reservation-digest",
+                    "snapshot-id",
+                    "snapshot-path",
+                    "snapshot-digest",
+                    "worktree-input-path",
+                    "worktree-input-digest",
+                    "receipt",
+                )
+            },
+        )
+        assert worker_args.runtime_root == MODULE.STATE.parent == tmp_path
+        assert MODULE.ROOT != worker_args.runtime_root
+        observed["worker"] = MODULE.task_turn_worker_entry(worker_args)
+        observed["input"] = worktree / worker_args.worktree_input_path
+        assert observed["worker"]["ok"], observed["worker"]
+        return SimpleNamespace(pid=os.getpid())
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", response)
+    monkeypatch.setattr(MODULE, "_wait_for_app_server_terminal_turn", completed)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+    monkeypatch.setattr(MODULE.subprocess, "Popen", launch)
+    delivered = MODULE.validation_followup_deliver(
+        SimpleNamespace(
+            ledger=store.path,
+            runtime_root=tmp_path,
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
+    projected = observed["input"].read_bytes()
+    source = json.loads(projected)
+    assert source["independentReview"] == review
+    assert (
+        source["contextDigest"]
+        == json.loads((result_path.parent / "task-context.json").read_text())["contextDigest"]
+    )
+    assert MODULE._task_result_digest(source, projected) == candidate["resultDigest"]
+    assert projected != old_input and input_path.read_bytes() == old_input
+    prompts = [
+        item["params"]["input"][0]["text"]
+        for item in _task_turn_messages(process)
+        if item.get("method") == "turn/start"
+    ]
+    assert len(prompts) == 1 and review["findings"][0]["message"] in prompts[0]
+    assert (
+        "本轮身份的唯一来源" in prompts[0]
+        and "independent_review_passed 必须保留 false" in prompts[0]
+    )
+    assert store.unresolved_validation_followups() == []
+    repeated = MODULE.validation_followup_list(args)
+    assert repeated["rearmedReviewFeedback"] == [] and repeated["candidates"] == [], repeated
+    assert (
+        result_path.read_bytes() == original_raw
+        and json.loads(result_path.read_bytes())["quality"] == original_quality
+    )
+    with store.connect() as connection:
+        events = [tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")]
+        assert events[: len(original_events)] == original_events
+        sent = connection.execute(
+            "SELECT id,dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        reserved = connection.execute(
+            "SELECT id FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' AND dedupe_key=?",
+            (reserve["reservationDigest"],),
+        ).fetchone()
+        assert sent[0] > reserved[0] and sent[1] == reserve["reservationDigest"]
+        assert json.loads(sent[2])["resultDigest"] == candidate["resultDigest"]
+        assert json.loads(sent[2])["reservationDigest"] == reserve["reservationDigest"]
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "rejection", ["active", "uncompleted", "foreign_feedback", "wrong_receipt", "source_change"]
+)
+def test_completed_validation_missing_feedback_keeps_exact_proof_rejections(
+    tmp_path, monkeypatch, rejection
+):
+    store, worktree, _result_path, _input_path, _source, _review, review_path, binding = (
+        _completed_validation_missing_private_review_feedback(tmp_path, monkeypatch)
+    )
+    if rejection == "active":
+        monkeypatch.setattr(
+            MODULE, "_active_task_turn_for_result", lambda _candidate: {"turnId": "still-active"}
+        )
+    elif rejection in {"uncompleted", "wrong_receipt"}:
+        key = MODULE._task_turn_delivery_file_key(
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=binding["resultDigest"],
+            validation_reservation_digest=binding["reservationDigest"],
+        )
+        path = MODULE.STATE / "task_turn_receipts" / f"{key}.json"
+        receipt = json.loads(path.read_text())
+        receipt["turnStatus"] = "in_progress" if rejection == "uncompleted" else "completed"
+        if rejection == "wrong_receipt":
+            receipt["reservationDigest"] = "f" * 64
+        MODULE._atomic_private_json(path, receipt)
+    elif rejection == "foreign_feedback":
+        receipt = json.loads(review_path.read_text())
+        receipt["commitSha"] = "f" * 40
+        review_path.write_text(json.dumps(receipt))
+    else:
+        (worktree / "runtime.py").write_text("value = 3\n")
+    candidate = store.task_result_candidates_for_ingestion()[0]
+    assert (
+        MODULE._completed_review_feedback_validation(
+            store, candidate, SimpleNamespace(ledger=store.path)
+        )
+        is None
+    )
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+def _completed_dirty_controller_handoff_fixture(tmp_path, monkeypatch, *, renew_receipt=False):
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path,
+        monkeypatch,
+        target_base_bound=True,
+        complete_normal_validation_audit=True,
+        omit_commit_message=True,
+        bind_initial_implementation_receipt=True,
+    )
+    source_raw = input_path.read_bytes()
+    source = json.loads(source_raw)
+    assert source["handoffMode"] == "controller_commit_complete"
+    assert source["reproductionReceipt"]["bindingPurpose"] == "implementation-result-v1"
+    assert "commitMessage" not in source
+    assert source["quality"]["independent_review_passed"] is False
+    assert set(MODULE.assess_submit_ready(source["quality"]).missing) == {
+        "independent_review_passed"
+    }
+    with store.connect() as connection:
+        reserved = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+    binding = store.validation_followup_delivery_binding(
+        thread_id="thread-1",
+        result_digest=reserved["resultDigest"],
+        reservation_digest=reserved["reservationDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    current = json.loads(source_raw)
+    if renew_receipt:
+        from oss_pr_radar.repo_probe import rebind_probe_receipt
+
+        current["reproductionReceipt"] = rebind_probe_receipt(
+            source["reproductionReceipt"],
+            repo="a/b",
+            base_sha=source["selectedBaseSha"],
+            code_paths=source["codePaths"],
+            issue_url=source["issueUrl"],
+            task_id="intent-1",
+            thread_id="thread-1",
+            head_sha=source["headSha"],
+            commit_sha=source["commitSha"],
+            result_digest=reserved["resultDigest"],
+        )
+        assert current["reproductionReceipt"] != source["reproductionReceipt"]
+    assert (
+        current["reproductionReceipt"]["bindingPurpose"]
+        == source["reproductionReceipt"]["bindingPurpose"]
+    )
+    result_path.write_text(json.dumps(current))
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n")
+    assert MODULE._local_changed_files(worktree) == source["changedFiles"] == ["runtime.py"]
+    assert run_git(worktree, "rev-parse", "HEAD") == source["commitSha"]
+    rollout = tmp_path / "completed-dirty-handoff.jsonl"
+    thread_db = tmp_path / "completed-dirty-handoff-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT,git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(worktree),
+                0,
+                MODULE.issue_prompt(source["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    # Preserve the historical normal instruction shape, before the explicit
+    # dirty commit handoff instruction existed. No review pass is invented.
+    prompt = (
+        "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。\n"
+        f"读取不可变输入 {binding['worktreeInputPath']}，只补仍缺少的独立复核。"
+    )
+    records = [
+        {"type": "session_meta", "payload": {"id": "thread-1"}},
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {"type": "task_started", "turn_id": "completed-validation-turn"},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": "completed-validation-turn",
+                "item": {"type": "UserMessage", "content": [{"type": "text", "text": prompt}]},
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(datetime.now(UTC)),
+            "payload": {"type": "task_complete", "turn_id": "completed-validation-turn"},
+        },
+    ]
+    rollout.write_text("".join(json.dumps(record) + "\n" for record in records))
+    context_path = result_path.parent / "task-context.json"
+    old_context = json.loads(context_path.read_bytes())
+    assert source["contextDigest"] == old_context["contextDigest"]
+    live_audit = json.loads(json.dumps(old_context["liveAudit"]))
+    live_audit["capturedAt"] = iso_z(datetime.now(UTC))
+    live_audit["evidence"].update(
+        digest="b" * 64,
+        complete=True,
+        completeness={"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
+    )
+    current_raw = result_path.read_bytes()
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": live_audit,
+            "targetBase": old_context["targetBase"],
+            "authorization": {"status": "ALLOW", "evidence_digest": "b" * 64},
+        },
+        dedupe_key="intent-1:completed-dirty-handoff:current-audit",
+    )
+    MODULE.write_task_context(
+        store, issue_url=source["issueUrl"], thread_id="thread-1", cwd=worktree
+    )
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
+    context = json.loads(context_path.read_bytes())
+    assert context["contextDigest"] != source["contextDigest"]
+    assert context["targetBase"] == old_context["targetBase"]
+    assert (
+        context["liveAudit"]["evidence"]["policy"] == old_context["liveAudit"]["evidence"]["policy"]
+    )
+    assert result_path.read_bytes() == current_raw
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=reserved["resultDigest"],
+        validation_reservation_digest=reserved["reservationDigest"],
+    )
+    receipt_path = MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json"
+    return store, worktree, result_path, input_path, source, binding, receipt_path
+
+
+@pytest.mark.parametrize("renew_receipt", [False, True])
+def test_completed_dirty_handoff_uses_real_list_rearm_and_reserve_once(
+    tmp_path, monkeypatch, renew_receipt
+):
+    store, worktree, result_path, input_path, source, binding, _receipt = (
+        _completed_dirty_controller_handoff_fixture(
+            tmp_path, monkeypatch, renew_receipt=renew_receipt
+        )
+    )
+    context_path = result_path.parent / "task-context.json"
+    originals = {p: p.read_bytes() for p in (result_path, input_path, context_path)}
+    original_head = run_git(worktree, "rev-parse", "HEAD")
+    args = SimpleNamespace(ledger=store.path, min_age_minutes=90)
+    traced_functions = {
+        str(SCRIPT): {
+            "_completed_dirty_controller_handoff_validation",
+            "_completed_validation_input_task_id",
+            "_non_pr_validation_parent",
+            "_read_authenticated_validation_result",
+            "_controller_policy_verification",
+            "_publication_block_reason",
+            "_task_live_audit_refresh_due",
+            "_active_task_turn_for_result",
+            "_task_context_digest",
+        },
+        RadarLedger.record_completed_dirty_handoff_no_progress.__code__.co_filename: {
+            "record_completed_dirty_handoff_no_progress",
+        },
+    }
+    diagnostics = {
+        "calls": {name: 0 for names in traced_functions.values() for name in names},
+        "observations": [],
+    }
+
+    def completion_trace(frame, event, returned):
+        name = frame.f_code.co_name
+        if name not in traced_functions.get(frame.f_code.co_filename, set()):
+            return None
+        if event not in {"call", "return", "exception"}:
+            return completion_trace
+        if event == "call":
+            diagnostics["calls"][name] += 1
+        observed = {"event": event, "function": name, "line": frame.f_lineno}
+        if event == "return":
+            observed["returnKind"] = type(returned).__name__
+            observed["returnIsNone"] = returned is None
+            if returned is None or isinstance(returned, (str, bool, int)):
+                observed["returned"] = returned
+        elif event == "exception":
+            error_type, error, _traceback = returned
+            observed["exception"] = {"type": error_type.__name__, "message": str(error)[:300]}
+        values = frame.f_locals
+        context = values.get("context")
+        if isinstance(context, dict):
+            observed["context"] = {
+                key: context[key]
+                for key in ("schemaVersion", "stage", "taskStage", "contextDigest")
+                if key in context
+                and (context[key] is None or isinstance(context[key], (str, bool, int)))
+            }
+            for key in ("publicationReceipt", "prFollowup", "codePathTombstoneReceipt"):
+                observed["context"][key + "IsNone"] = context.get(key) is None
+            live_audit = context.get("liveAudit")
+            evidence = live_audit.get("evidence") if isinstance(live_audit, dict) else None
+            policy = evidence.get("policy") if isinstance(evidence, dict) else None
+            policy_status = policy.get("status") if isinstance(policy, dict) else None
+            if policy_status is None or isinstance(policy_status, (str, bool, int)):
+                observed["context"]["liveAuditEvidencePolicyStatus"] = policy_status
+        candidate = values.get("candidate")
+        if isinstance(candidate, dict):
+            observed["candidate"] = {
+                key: candidate.get(key) for key in ("key", "intentId", "stage")
+            }
+        for envelope_name in ("value", "source"):
+            value = values.get(envelope_name)
+            if isinstance(value, dict):
+                quality = value.get("quality")
+                observed[envelope_name] = {
+                    "stage": value.get("stage"),
+                    "handoffMode": value.get("handoffMode"),
+                    "commitMessageIsNone": value.get("commitMessage") is None,
+                    "taskIdMatchesIntent": (
+                        value.get("taskId") == candidate.get("intentId")
+                        if isinstance(candidate, dict)
+                        else None
+                    ),
+                    "qualityFlags": (
+                        {
+                            field: quality[field]
+                            for field in QUALITY_FIELDS
+                            if isinstance(quality.get(field), bool)
+                        }
+                        if isinstance(quality, dict)
+                        else None
+                    ),
+                }
+        if isinstance(candidate, dict):
+            missing = candidate.get("missing")
+            if isinstance(missing, list) and all(isinstance(field, str) for field in missing):
+                observed["candidateMissing"] = list(missing)
+        for key in ("old_digest", "current_digest", "expected_context_digest", "head", "parent"):
+            value = values.get(key)
+            if key in values and (value is None or isinstance(value, (str, bool, int, float))):
+                observed[key] = value
+        for key in ("prior", "historical", "historical_audit", "current_audit"):
+            if key in values:
+                observed[key + "Present"] = values[key] is not None
+        authorities = values.get("authorities")
+        if isinstance(authorities, list):
+            observed["authorityCount"] = len(authorities)
+        for key in ("dirty", "declared", "committed_paths"):
+            value = values.get(key)
+            if isinstance(value, list) and all(isinstance(path, str) for path in value):
+                observed[key] = list(value)
+        completion = values.get("completion")
+        receipt = (
+            completion.get("receipt") if isinstance(completion, dict) else values.get("receipt")
+        )
+        if isinstance(receipt, dict):
+            observed["completionReceipt"] = {
+                "ok": receipt.get("ok"),
+                "turnStatus": receipt.get("turnStatus"),
+                "turnErrorPresent": bool(receipt.get("turnError")),
+                "errorPresent": bool(receipt.get("error")),
+            }
+        diagnostics["observations"].append(observed)
+        return completion_trace
+
+    previous_trace = sys.gettrace()
+    try:
+        sys.settrace(completion_trace)
+        listed = MODULE.validation_followup_list(args)
+    finally:
+        sys.settrace(previous_trace)
+    assert listed["ok"] and listed["errors"] == [], listed
+    assert listed["controllerReviewPending"] == []
+    assert listed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "WORKTREE_PROGRESS_PENDING_RESULT"}
+    ], json.dumps({"listed": listed, "diagnostics": diagnostics}, indent=2)
+    candidate = listed["candidates"][0]
+    assert candidate["resultDigest"] == source["resultDigest"]
+    assert candidate["intentId"] == "intent-1" and candidate["threadId"] == "thread-1"
+    assert MODULE._local_changed_files(worktree) == ["runtime.py"]
+    repeated = MODULE.validation_followup_list(args)
+    assert repeated["errors"] == [] and repeated["rearmedReviewFeedback"] == []
+    assert repeated["candidates"] == listed["candidates"]
+    with store.connect() as connection:
+        completion = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'"
+            ).fetchone()[0]
+        )
+        assert completion["reason"] == "COMPLETED_WITH_DIRTY_CONTROLLER_COMMIT_HANDOFF"
+        assert "reviewFeedbackCorrection" not in completion
+        proof = completion["dirtyHandoffCompletion"]
+        assert proof["kind"] == "DIRTY_CONTROLLER_COMMIT_HANDOFF"
+        assert proof["sourceContextDigest"] == source["contextDigest"]
+        assert proof["contextDigest"] == json.loads(originals[context_path])["contextDigest"]
+        assert proof["sourceContextDigest"] != proof["contextDigest"]
+        assert proof["headSha"] == original_head and proof["dirtyFiles"] == ["runtime.py"]
+        assert proof["rawSha256"] == hashlib.sha256(originals[result_path]).hexdigest()
+        assert proof["inputSha256"] == hashlib.sha256(originals[input_path]).hexdigest()
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    assert all(p.read_bytes() == raw for p, raw in originals.items())
+    reserve = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            runtime_root=tmp_path,
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserve["ok"] and not reserve.get("blocked"), reserve
+    assert reserve["reservationDigest"] != binding["reservationDigest"]
+    queued = store.unresolved_validation_followups()[0]
+    assert queued["attempt"] == 2
+    assert queued["resultDigest"] == candidate["resultDigest"]
+    prompt = MODULE._validation_followup_prompt(queued)
+    assert "未提交源码改动必须交回 controller_commit_required" in prompt
+    assert "previousControllerCommitSha" in prompt and "单行、至多120字符" in prompt
+    assert "codePaths 保留原授权复现范围" in prompt
+    assert "复核结论仍由系统填写，保持未通过" in prompt
+    assert "没有未提交源码改动，则保留 controller_commit_complete" in prompt
+    assert result_path.read_bytes() == originals[result_path]
+    assert input_path.read_bytes() == originals[input_path]
+    assert json.loads(result_path.read_bytes())["quality"] == source["quality"]
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+
+    assert queued["dirtyHandoffContract"] == MODULE.DIRTY_HANDOFF_CONTRACT
+    new_reservation = reserve["reservationDigest"]
+    snapshot = MODULE._ensure_validation_snapshot(queued, reservation_digest=new_reservation)
+    new_binding = {
+        "reservationDigest": new_reservation,
+        **snapshot,
+        **MODULE._validation_worktree_input_binding(
+            candidate=queued,
+            reservation_digest=new_reservation,
+            snapshot_digest=snapshot["snapshotDigest"],
+        ),
+    }
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id=queued["threadId"],
+        delivery_token=queued["resultDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        reservation_digest=new_reservation,
+        snapshot_id=new_binding["snapshotId"],
+        snapshot_path=new_binding["snapshotPath"],
+        snapshot_digest=new_binding["snapshotDigest"],
+        worktree_input_path=new_binding["worktreeInputPath"],
+        worktree_input_digest=new_binding["worktreeInputDigest"],
+    )
+    MODULE._ensure_validation_worktree_input(
+        candidate=queued,
+        reservation_digest=new_reservation,
+        snapshot_id=new_binding["snapshotId"],
+        snapshot_path=new_binding["snapshotPath"],
+        snapshot_digest=new_binding["snapshotDigest"],
+        worktree_input_path=new_binding["worktreeInputPath"],
+        worktree_input_digest=new_binding["worktreeInputDigest"],
+    )
+    new_input_path = worktree / new_binding["worktreeInputPath"]
+    new_input_raw = new_input_path.read_bytes()
+    new_input = json.loads(new_input_raw)
+    assert new_input_path != input_path
+    assert new_input["resultDigest"] == source["resultDigest"]
+    assert new_input["contextDigest"] == json.loads(originals[context_path])["contextDigest"]
+    assert new_input["contextDigest"] != source["contextDigest"]
+    assert hashlib.sha256(new_input_raw).hexdigest() == new_binding["snapshotDigest"]
+    commit_args = SimpleNamespace(
+        ledger=store.path,
+        thread_id=queued["threadId"],
+        result_digest=queued["resultDigest"],
+        reservation_digest=new_reservation,
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    committed = MODULE.validation_followup_commit(commit_args)
+    assert committed["ok"], committed
+    assert store.unresolved_validation_followups() == []
+    with store.connect() as connection:
+        sent_rows = connection.execute(
+            "SELECT dedupe_key,payload_json FROM events "
+            "WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id"
+        ).fetchall()
+    assert len(sent_rows) == 2
+    old_sent, new_sent = (json.loads(row[1]) for row in sent_rows)
+    assert sent_rows[0][0] == source["resultDigest"]
+    assert old_sent["resultDigest"] == source["resultDigest"]
+    assert "dirtyHandoffContract" not in old_sent and "reservationDigest" not in old_sent
+    assert sent_rows[1][0] == new_reservation
+    assert new_sent["dirtyHandoffContract"] == MODULE.DIRTY_HANDOFF_CONTRACT
+    assert new_sent["reservationDigest"] == new_reservation
+    assert new_sent["resultDigest"] == source["resultDigest"]
+    duplicate_commit = MODULE.validation_followup_commit(commit_args)
+    assert duplicate_commit["ok"], duplicate_commit
+    assert store.unresolved_validation_followups() == []
+    with store.connect() as connection:
+        repeated_sent_rows = connection.execute(
+            "SELECT dedupe_key,payload_json FROM events "
+            "WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id"
+        ).fetchall()
+    assert repeated_sent_rows == sent_rows
+    assert new_input_path.read_bytes() == new_input_raw
+    assert all(p.read_bytes() == raw for p, raw in originals.items())
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+
+    assert MODULE._local_changed_files(worktree) == ["runtime.py"]
+    check = subprocess.run(
+        [sys.executable, "runtime.py"], cwd=worktree, capture_output=True, text=True
+    )
+    assert check.returncode == 0, check.stderr
+    unsigned = dict(new_input)
+    unsigned.update(
+        stage="controller_commit_required",
+        reason="controller_commit_required",
+        handoffMode="controller_commit_required",
+        commitSha=None,
+        headSha=original_head,
+        previousControllerCommitSha=original_head,
+        commitMessage="fix: preserve completed validation change",
+        tests=[
+            *new_input["tests"],
+            {
+                "command": f"{sys.executable} runtime.py",
+                "exitCode": check.returncode,
+                "result": check.stdout + check.stderr,
+            },
+        ],
+    )
+    for field in ("reproductionReceipt", "probeReceipt", "resultDigest", "independentReview"):
+        unsigned.pop(field, None)
+    assert unsigned["quality"] == source["quality"]
+    assert unsigned["quality"]["independent_review_passed"] is False
+    assert unsigned["contextDigest"] == json.loads(originals[context_path])["contextDigest"]
+    result_path.write_text(json.dumps(unsigned), encoding="utf-8")
+    unsigned_raw = result_path.read_bytes()
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+    assert MODULE._local_changed_files(worktree) == ["runtime.py"]
+
+    ingestion_args = SimpleNamespace(ledger=store.path, key="a/b#1")
+    ingested = MODULE.ingest_task_results(ingestion_args)
+    assert ingested["ok"] and ingested["errors"] == [], ingested
+    assert ingested.get("workBlocked", []) == []
+    assert ingested["publicationRequests"] == []
+    assert ingested["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["independent_review_passed"],
+        }
+    ], ingested
+    committed_head = run_git(worktree, "rev-parse", "HEAD")
+    assert committed_head != original_head
+    assert run_git(worktree, "rev-parse", "HEAD^") == original_head
+    assert run_git(worktree, "status", "--porcelain") == ""
+    normalized_raw = result_path.read_bytes()
+    normalized = json.loads(normalized_raw)
+    assert normalized_raw != unsigned_raw
+    assert normalized["stage"] == "FIX_READY"
+    assert normalized["handoffMode"] == "controller_commit_complete"
+    assert normalized["commitSha"] == normalized["headSha"] == committed_head
+    assert normalized["previousControllerCommitSha"] == original_head
+    assert normalized["taskId"] == source["taskId"] == "intent-1"
+    assert normalized["quality"] == unsigned["quality"]
+    assert normalized["quality"]["independent_review_passed"] is False
+    assert normalized["resultDigest"] != source["resultDigest"]
+    assert normalized["reproductionReceipt"]["bindingPurpose"] == "implementation-result-v1"
+    assert normalized["reproductionReceipt"]["resultDigest"] == normalized["resultDigest"]
+    assert normalized["reproductionReceipt"]["headSha"] == committed_head
+    assert normalized["reproductionReceipt"]["commitSha"] == committed_head
+    ordinary = store.validation_followup_candidates()
+    assert len(ordinary) == 1
+    assert ordinary[0]["resultDigest"] == normalized["resultDigest"]
+    assert ordinary[0]["missing"] == ["independent_review_passed"]
+    assert "dirtyHandoffContract" not in ordinary[0]
+    assert input_path.read_bytes() == originals[input_path]
+    assert new_input_path.read_bytes() == new_input_raw
+    assert context_path.read_bytes() == originals[context_path]
+
+    repeated_ingestion = MODULE.ingest_task_results(ingestion_args)
+    assert repeated_ingestion["ok"] and repeated_ingestion["errors"] == [], repeated_ingestion
+    assert repeated_ingestion["ingested"] == []
+    assert repeated_ingestion["publicationRequests"] == []
+    assert run_git(worktree, "rev-parse", "HEAD") == committed_head
+    assert run_git(worktree, "status", "--porcelain") == ""
+    assert result_path.read_bytes() == normalized_raw
+    assert input_path.read_bytes() == originals[input_path]
+    assert new_input_path.read_bytes() == new_input_raw
+    assert context_path.read_bytes() == originals[context_path]
+    with store.connect() as connection:
+        ingestion_sent_rows = connection.execute(
+            "SELECT dedupe_key,payload_json FROM events "
+            "WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id"
+        ).fetchall()
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    assert ingestion_sent_rows == sent_rows
+
+
+@pytest.mark.parametrize("rejection", ["active", "foreign_receipt", "wrong_parent"])
+def test_completed_dirty_handoff_keeps_real_completion_and_parent_rejections(
+    tmp_path, monkeypatch, rejection
+):
+    store, worktree, result_path, input_path, _source, _binding, receipt_path = (
+        _completed_dirty_controller_handoff_fixture(tmp_path, monkeypatch)
+    )
+    if rejection == "active":
+        monkeypatch.setattr(
+            MODULE, "_active_task_turn_for_result", lambda _candidate: {"turnId": "still-active"}
+        )
+    elif rejection == "foreign_receipt":
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["threadId"] = "foreign-thread"
+        MODULE._atomic_private_json(receipt_path, receipt)
+    else:
+        run_git(worktree, "commit", "--allow-empty", "-m", "chore: foreign parent")
+    assert MODULE._local_changed_files(worktree) == ["runtime.py"]
+    originals = {p: p.read_bytes() for p in (result_path, input_path)}
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path, min_age_minutes=90))
+    assert listed["errors"] == [] and listed["candidates"] == [], listed
+    assert listed["rearmedReviewFeedback"] == []
+    assert all(p.read_bytes() == raw for p, raw in originals.items())
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    ("damaged", "recovery_only"), [(False, False), (False, True), (True, False)]
+)
+def test_original_recovery_refreshes_stale_published_validation_resources(
+    tmp_path, monkeypatch, damaged, recovery_only
+):
+    store, worktree, result_path, _pr = _ingested_pending_published_commit(tmp_path, monkeypatch)
+    candidate = store.task_context_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_bytes())
+    value = json.loads(result_path.read_bytes())
+    value["controllerFormalChecks"] = {
+        "status": "blocked",
+        "reason": "COMPLETED_IMMUTABLE_VALIDATION_INPUT_REQUIRED",
+    }
+    with MODULE._task_worktree_private_descriptor(candidate) as opened:
+        MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=opened,
+            managed_ledger=ManagedLedger(store.path),
+        )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    pending = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=pending["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserved["ok"]
+    queued = store.unresolved_validation_followups()[0]
+    reservation = queued["reservationDigest"]
+    snapshot = MODULE._ensure_validation_snapshot(queued, reservation_digest=reservation)
+    binding = {
+        "reservationDigest": reservation,
+        **snapshot,
+        **MODULE._validation_worktree_input_binding(
+            candidate=queued,
+            reservation_digest=reservation,
+            snapshot_digest=snapshot["snapshotDigest"],
+        ),
+    }
+    delivery_binding = {
+        "reservation_digest": reservation,
+        "snapshot_id": binding["snapshotId"],
+        "snapshot_path": binding["snapshotPath"],
+        "snapshot_digest": binding["snapshotDigest"],
+        "worktree_input_path": binding["worktreeInputPath"],
+        "worktree_input_digest": binding["worktreeInputDigest"],
+    }
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=pending["resultDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        **delivery_binding,
+    )
+    MODULE._ensure_validation_worktree_input(candidate=queued, **delivery_binding)
+    MODULE.validation_followup_commit(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=pending["resultDigest"],
+            reservation_digest=reservation,
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    context_path = result_path.parent / "task-context.json"
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=pending["resultDigest"],
+        validation_reservation_digest=reservation,
+    )
+    receipt = {
+        "ok": True,
+        "deliveryKind": "validation-followup",
+        "threadId": "thread-1",
+        "deliveryToken": pending["resultDigest"],
+        "reservationDigest": reservation,
+        "turnId": "fresh-published-validation",
+        "turnStatus": "completed",
+    }
+    receipt_path = MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json"
+    MODULE._atomic_private_json(receipt_path, receipt)
+
+    source_raw = result_path.read_bytes()
+    source = json.loads(source_raw)
+    directory = result_path.parent / "validation-real-mcp-oauth-cross-replica"
+    directory.mkdir(mode=0o700)
+    resource_path = directory / "local-resources.json"
+    resources = {
+        "worktree": str(worktree),
+        "baseSha": source["selectedBaseSha"],
+        "headSha": source["previousCommitSha"],
+        "ports": [21001, 21002],
+        "taskPassword": "private-fixture-retained",
+        "preparedAt": "original-preparation",
+        "purpose": "original-real-scenario",
+    }
+    MODULE._atomic_private_json(resource_path, resources)
+    tests = [
+        {
+            "phase": phase,
+            "cwd": str(worktree),
+            "command": str(worktree / ".venv/bin/python")
+            + " "
+            + str(directory / "run_current_real_no_redis_phase.py")
+            + " --phase "
+            + phase,
+            "exitCode": 1,
+        }
+        for phase in ("before_fix", "after_fix")
+    ] + [
+        {
+            "phase": "formal",
+            "cwd": str(worktree),
+            "command": ".venv/bin/python -m pytest real_related_suite",
+            "exitCode": 0,
+        }
+    ]
+    failed = dict(source, stage="PR_OPEN", reason="VALIDATION_BINDING_STALE", tests=tests)
+    failed.pop("reproductionReceipt", None)
+    failed.pop("resultDigest", None)
+    failed_raw = json.dumps(failed).encode()
+    journal = tmp_path / "completed-original-pr.jsonl"
+    now = iso_z(datetime.now(UTC))
+    records = [
+        {
+            "type": "event_msg",
+            "timestamp": now,
+            "payload": {"type": "task_started", "turn_id": receipt["turnId"]},
+        }
+    ]
+    for test in tests:
+        output = (
+            "STOP: actual HEAD/base differs from the bound real source"
+            if test["exitCode"]
+            else "passed"
+        )
+        records.append(
+            {
+                "type": "event_msg",
+                "timestamp": now,
+                "payload": {
+                    "type": "item_completed",
+                    "thread_id": "thread-1",
+                    "turn_id": receipt["turnId"],
+                    "item": {
+                        "type": "CommandExecution",
+                        "status": "failed" if test["exitCode"] else "completed",
+                        "command": ["/bin/zsh", "-lc", test["command"]],
+                        "cwd": worktree.as_uri(),
+                        "exit_code": test["exitCode"],
+                        "stdout": output,
+                        "stderr": "",
+                        "aggregated_output": output,
+                    },
+                },
+            }
+        )
+    records.append(
+        {
+            "type": "event_msg",
+            "timestamp": now,
+            "payload": {"type": "task_complete", "turn_id": receipt["turnId"]},
+        }
+    )
+    with journal.open("a") as stream:
+        stream.write("".join(json.dumps(record) + "\n" for record in records))
+    result_path.write_bytes(failed_raw)
+    if damaged:
+        resources["baseSha"] = "f" * 40
+        MODULE._atomic_private_json(resource_path, resources)
+    before_context = context_path.read_bytes()
+    before_head = run_git(worktree, "rev-parse", "HEAD")
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    if damaged:
+        assert result_path.read_bytes() == failed_raw
+        assert json.loads(resource_path.read_bytes()) == resources
+        assert not recovered["pendingCommitsRestored"]
+        return
+    assert result_path.read_bytes() == source_raw, recovered
+    assert json.loads(resource_path.read_bytes()) == dict(resources, headSha=source["commitSha"])
+    assert context_path.read_bytes() == before_context
+    assert run_git(worktree, "rev-parse", "HEAD") == before_head
+    assert source["quality"]["relevant_tests_green"] is False
+    assert source["quality"]["independent_review_passed"] is False
+    assert store.validation_followup_candidates(), recovered
+    # The real controller's formal refresh changed only this blocked reason
+    # after the restored input expired, producing a distinct signed result.
+    derived = dict(
+        source,
+        controllerFormalChecks={
+            **source["controllerFormalChecks"],
+            "reason": "FRESH_NATIVE_CORE_VALIDATION_REQUIRED",
+        },
+    )
+    candidate = store.task_context_candidates()[0]
+    with MODULE._task_worktree_private_descriptor(candidate) as opened:
+        MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=derived,
+            result_access=opened,
+            managed_ledger=ManagedLedger(store.path),
+        )
+    with monkeypatch.context() as old_runtime:
+        if recovery_only:
+            old_runtime.setattr(
+                MODULE, "_rearm_refreshed_published_validation_projection", lambda *_a, **_k: False
+            )
+        ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["ok"], ingested
+    derived_raw = result_path.read_bytes()
+    derived_value = json.loads(derived_raw)
+    assert derived_value["resultDigest"] != pending["resultDigest"]
+    assert derived_value["tests"] == source["tests"]
+    assert derived_value["quality"] == source["quality"]
+    if recovery_only:
+        assert not store.validation_followup_candidates()
+        recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+        assert recovered["ok"], recovered
+    next_pending = store.validation_followup_candidates()[0]
+    assert next_pending["validationResourceBindingRefresh"]
+    assert next_pending["resultDigest"] == derived_value["resultDigest"]
+    # Also exercise an already ingested projection, as in the deployed run.
+    with store.connect() as connection:
+        transferred = connection.execute(
+            "SELECT count(*) FROM events WHERE event_type='PUBLISHED_VALIDATION_PROJECTION_REFRESH_AUTHORIZED'"
+        ).fetchone()[0]
+    MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM events WHERE event_type='PUBLISHED_VALIDATION_PROJECTION_REFRESH_AUTHORIZED'"
+            ).fetchone()[0]
+            == transferred
+            == 1
+        )
+    pending = next_pending
+    next_result = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=pending["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert next_result["ok"] and not next_result.get("blocked"), next_result
+    next_candidate = store.unresolved_validation_followups()[0]
+    next_reservation = next_candidate["reservationDigest"]
+    assert next_reservation != reservation
+    next_snapshot = MODULE._ensure_validation_snapshot(
+        next_candidate, reservation_digest=next_reservation
+    )
+    next_binding = {
+        "reservation_digest": next_reservation,
+        "snapshot_id": next_snapshot["snapshotId"],
+        "snapshot_path": next_snapshot["snapshotPath"],
+        "snapshot_digest": next_snapshot["snapshotDigest"],
+        "worktree_input_path": MODULE._validation_worktree_input_binding(
+            candidate=next_candidate,
+            reservation_digest=next_reservation,
+            snapshot_digest=next_snapshot["snapshotDigest"],
+        )["worktreeInputPath"],
+        "worktree_input_digest": next_snapshot["snapshotDigest"],
+    }
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=pending["resultDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        **next_binding,
+    )
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        assert json.loads(resource_path.read_bytes())["headSha"] == source["commitSha"]
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": "thread-1"}}}
+        return buffer, {"result": {"turn": {"id": "resource-refreshed-validation"}}}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(
+        MODULE,
+        "_wait_for_app_server_terminal_turn",
+        lambda *_a, **_k: {"turnId": "resource-refreshed-validation", "status": "completed"},
+    )
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+    worker = MODULE._app_server_task_turn_worker(
+        SimpleNamespace(
+            ledger=store.path,
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=pending["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+            receipt=str(MODULE.STATE / "task_turn_receipts" / "next-resource-validation.json"),
+            **next_binding,
+        )
+    )
+    assert worker["ok"], worker
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest=pending["resultDigest"],
+        reservation_digest=next_reservation,
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    assert not store.unresolved_validation_followups()
+    with store.connect() as connection:
+        sent = connection.execute(
+            "SELECT dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert sent[0] == next_reservation
+    assert json.loads(sent[1])["reservationDigest"] == next_reservation
+    with store.connect() as connection:
+        event = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='PUBLISHED_VALIDATION_INPUT_RESTORATION_AUTHORIZED'"
+        ).fetchone()
+    assert base64.b64decode(json.loads(event[0])["failedResultBytesBase64"]) == failed_raw
+    MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert result_path.read_bytes() == derived_raw

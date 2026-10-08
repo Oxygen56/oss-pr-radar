@@ -2091,6 +2091,13 @@ def test_title_state_advances_from_go_to_fix_ready(tmp_path):
     )
     assert store.title_candidates() == []
 
+    store.record_stage("a/b#1", "CLOSED", evidence={})
+    closed = store.title_candidates()[0]
+    assert closed["titleState"] == "CLOSED"
+    assert closed["titleNonce"] != candidate["titleNonce"]
+    store.commit_title(thread_id="thread-1", state="CLOSED", nonce=closed["titleNonce"])
+    assert store.title_candidates() == []
+
 
 def test_synced_title_can_be_invalidated_after_desktop_drift(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
@@ -2533,7 +2540,7 @@ def test_historical_state_drift_migration_rejects_published_opportunity(tmp_path
         store.invalidate_state_drift_intent("a/b#1", intent_id="intent-1", historical_terminal=True)
 
 
-def test_task_context_recovers_disclosure_policy_from_live_audit(tmp_path):
+def test_task_context_does_not_turn_authorized_disclosure_into_a_conflict(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent(autoSubmitAuthorized=False, publicSubmissionAllowed=False))
     store.claim("intent-1", "worker")
@@ -2556,7 +2563,7 @@ def test_task_context_recovers_disclosure_policy_from_live_audit(tmp_path):
 
     context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
 
-    assert context["submissionPolicy"] == "ai_disclosure_conflict"
+    assert context["submissionPolicy"] == "normal"
     assert context["publicSubmissionAllowed"] is False
 
 
@@ -5921,6 +5928,8 @@ def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
         missing=["relevant_tests_green", "regression_test_verified"],
     )
     store.record_stage("a/b#1", "VALIDATION_PENDING")
+    pending_title = store.title_bindings()[0]
+    assert pending_title["titleState"] == "VALIDATION_PENDING"
     store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
     store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
 
@@ -5941,6 +5950,15 @@ def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
     ]
     assert blocked[0]["reason"] == "UNCHANGED_VALIDATION_GAP"
     assert store.reconcile_validation_no_progress() == 0
+    stopped_title = store.title_bindings()[0]
+    assert stopped_title["titleState"] == "VALIDATION_BLOCKED"
+    assert stopped_title["titleNonce"] != pending_title["titleNonce"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "VALIDATION_PENDING"
+    )
 
     assert (
         store.rearm_validation_no_progress_for_review(
@@ -5953,6 +5971,9 @@ def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
     )
     assert store.validation_no_progress() == []
     assert store.validation_followup_candidates()[0]["resultDigest"] == "result-digest-2"
+    resumed_title = store.title_bindings()[0]
+    assert resumed_title["titleState"] == "VALIDATION_PENDING"
+    assert resumed_title["titleNonce"] == pending_title["titleNonce"]
     assert (
         store.rearm_validation_no_progress_for_review(
             key="a/b#1",
@@ -5962,6 +5983,72 @@ def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
         )
         is False
     )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-2")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest-2")
+    assert store.title_bindings()[0]["titleState"] == "VALIDATION_PENDING"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("intentId", "old-intent"),
+        ("threadId", "old-thread"),
+        ("worktreePath", "/tmp/old-worktree"),
+        ("resultDigest", "old-result"),
+        (None, None),
+    ],
+)
+def test_stopped_validation_title_requires_current_exact_binding_and_result(tmp_path, field, value):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="current-result",
+        missing=["relevant_tests_green"],
+    )
+    binding = {
+        "intentId": "intent-1",
+        "threadId": "thread-1",
+        "worktreePath": "/tmp/worktree",
+    }
+    payload = binding | {
+        "resultDigest": "current-result",
+        "reason": "UNCHANGED_VALIDATION_GAP",
+    }
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_NO_PROGRESS",
+        dedupe_key="current-result",
+        payload=payload | {field: value} if field else payload,
+    )
+    if field:
+        assert store.title_bindings()[0]["titleState"] == "VALIDATION_PENDING"
+        return
+    assert store.title_bindings()[0]["titleState"] == "VALIDATION_BLOCKED"
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_SENT",
+        dedupe_key="foreign-sent",
+        payload=binding | {"threadId": "old-thread", "resultDigest": "current-result"},
+    )
+    assert store.title_bindings()[0]["titleState"] == "VALIDATION_BLOCKED"
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_SENT",
+        dedupe_key="current-result",
+        payload=binding | {"resultDigest": "current-result"},
+    )
+    assert store.title_bindings()[0]["titleState"] == "VALIDATION_PENDING"
 
 
 def test_validation_followup_continues_when_check_evidence_changes(tmp_path):
@@ -9220,6 +9307,347 @@ def test_pr_followup_candidates_allow_same_head_update(tmp_path, request_status)
     assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
 
 
+def _authenticated_pr_update_revalidation_fixture(tmp_path, *, mismatch=True, invalid=None):
+    import base64
+
+    from oss_pr_radar.managed_lifecycle import ManagedLedger
+    from oss_pr_radar.repo_probe import rebind_probe_receipt
+    from oss_pr_radar.util import canonical_json
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    worktree, base, head, branch, authorization, _, evidence_path = legal_publication_probe(
+        tmp_path
+    )
+    key = _make_pr_followup_candidate(
+        store, thread_id="intent-1", worktree_path=str(worktree), head_sha=base
+    )
+    with store.transaction() as connection:
+        for table in ("publication_requests", "publication_permits"):
+            connection.execute(
+                f"UPDATE {table} SET branch=? WHERE request_id='request-intent-1'", (branch,)
+            )
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    managed.upsert_opportunity(
+        opportunity_key=key,
+        owner="a",
+        repo="b",
+        issue_number=1,
+        issue_url="https://github.com/a/b/issues/1",
+        state="PR_OPEN",
+        source="native-test",
+        provenance={},
+        metadata={"selectedBaseSha": base, "codePaths": ["runtime.py"]},
+    )
+    task = managed.bind_task(
+        task_id="intent-1",
+        opportunity_key=key,
+        thread_id="intent-1",
+        worktree_path=str(worktree),
+        state="IMPLEMENTATION_READY",
+        provenance={
+            "probeReceipt": authorization,
+            "probeReceiptDigest": authorization["receiptDigest"],
+            "threadFingerprint": authorization["threadFingerprint"],
+            "headSha": authorization["headSha"],
+            "commitSha": authorization["commitSha"],
+            "resultDigest": authorization["resultDigest"],
+        },
+    )
+    assert task["state"] == "IMPLEMENTATION_READY"
+    with store.connect() as connection:
+        followup = connection.execute(
+            "SELECT * FROM pr_followups WHERE opportunity_key=?", (key,)
+        ).fetchone()
+    source_wake = followup["wake_digest"]
+    quality = {field: True for field in QUALITY_FIELDS}
+    if invalid == "quality":
+        quality["independent_review_passed"] = False
+    store.record_stage(key, "FIX_READY", evidence=quality)
+    publication = {"title": "fix: native update", "body": "body"}
+    value = {
+        "schemaVersion": "radar-task-result-v1",
+        "stage": "FIX_READY",
+        "handoffMode": "controller_merge_complete",
+        "key": key,
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "taskId": "intent-1",
+        "threadId": "intent-1",
+        "worktreePath": str(worktree),
+        "branch": branch,
+        "commitSha": head,
+        "headSha": head,
+        "previousCommitSha": base,
+        "selectedBaseSha": base,
+        "mergeBaseSha": base,
+        "codePaths": ["runtime.py"],
+        "followupDigest": source_wake,
+        "contextDigest": "0" * 64,
+        "prUrl": "https://github.com/a/b/pull/9",
+        "quality": quality,
+        "publication": publication,
+    }
+    result_digest = sha256_json({k: v for k, v in value.items() if k != "contextDigest"})
+    receipt = rebind_probe_receipt(
+        authorization,
+        repo="a/b",
+        base_sha=base,
+        code_paths=["runtime.py"],
+        issue_url=value["issueUrl"],
+        task_id="intent-1",
+        thread_id="intent-1",
+        head_sha=head,
+        commit_sha=head,
+        result_digest=result_digest,
+    )
+    if invalid == "unsigned":
+        receipt = dict(receipt)
+        receipt.pop("signature")
+    raw = canonical_json(value | {"resultDigest": result_digest, "reproductionReceipt": receipt})
+    evidence_path.write_text(raw)
+    if mismatch:
+        observed = iso_z(datetime.now(UTC))
+        store.import_pr_followups(
+            {
+                "version": "pr_followup_v3",
+                "generatedAt": observed,
+                "items": [
+                    {
+                        "url": value["prUrl"],
+                        "headSha": base,
+                        "checkedAt": observed,
+                        "actionDigest": "second-action",
+                        "taskActionDigest": "second-task-action",
+                        "taskFollowupRequired": True,
+                        "taskActions": ["merge conflict"],
+                        "evidence": {"mergeConflict": True, "baseSha": base},
+                    }
+                ],
+            }
+        )
+    request = store.create_publication_request(
+        issue_url=value["issueUrl"],
+        thread_id="intent-1",
+        intent_id="intent-1",
+        commit_sha=head,
+        branch=branch,
+        worktree_path=str(worktree),
+        evidence_digest=sha256_text(raw),
+        evidence_path=str(evidence_path),
+        evidence_raw_base64=base64.b64encode(raw.encode()).decode(),
+        publication=publication,
+        probe_receipt=receipt,
+        result_digest=result_digest,
+        head_sha=head,
+        selected_base_sha=base,
+        code_paths=["runtime.py"],
+        followup_wake_digest=None if mismatch else source_wake,
+    )
+    if invalid == "permit":
+        store.grant_publication_request(
+            request["request_id"],
+            issue_url=value["issueUrl"],
+            commit_sha=head,
+            branch=branch,
+            evidence={"verified": True},
+        )
+    store.block_publication_request(request["request_id"], "BLOCKED_REPRODUCTION_REQUIRED")
+    return store, key, request, receipt
+
+
+@pytest.mark.parametrize(
+    ("mismatch", "concurrent_writer"), [(True, False), (False, False), (False, True)]
+)
+def test_authenticated_pr_update_retirement_requires_new_observation(
+    tmp_path, monkeypatch, mismatch, concurrent_writer
+):
+    import sqlite3
+
+    import oss_pr_radar.ledger as ledger_module
+    import oss_pr_radar.repo_probe as probe_module
+
+    store, key, request, receipt = _authenticated_pr_update_revalidation_fixture(
+        tmp_path, mismatch=mismatch
+    )
+    expired_now = parse_time(receipt["expiresAt"]) + timedelta(seconds=1)
+
+    class ExpiredClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return expired_now.astimezone(tz or UTC)
+
+    monkeypatch.setattr(ledger_module, "datetime", ExpiredClock)
+    monkeypatch.setattr(probe_module, "datetime", ExpiredClock)
+    assert store.pr_followup_candidates() == []
+    with store.connect() as connection:
+        before = dict(
+            connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?", (request["request_id"],)
+            ).fetchone()
+        )
+        original_events = [
+            dict(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+        ]
+        followup = dict(
+            connection.execute(
+                "SELECT * FROM pr_followups WHERE opportunity_key=?", (key,)
+            ).fetchone()
+        )
+    competitor = None
+    writer_attempts = []
+    if concurrent_writer:
+        with store.connect() as connection:
+            connection.execute("CREATE TABLE revalidation_competitor (value INTEGER)")
+        competitor = sqlite3.connect(store.path, timeout=0, isolation_level=None)
+        native_revalidation_reason = ledger_module._pr_update_revalidation_reason
+
+        def classify_with_competing_writer(connection, **kwargs):
+            if not writer_attempts:
+                # The original row has already been read. Use a real second
+                # connection to contend before the native revalidation UPDATE.
+                try:
+                    competitor.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError as exc:
+                    assert exc.sqlite_errorcode == sqlite3.SQLITE_BUSY
+                    writer_attempts.append("busy")
+                else:
+                    competitor.execute("INSERT INTO revalidation_competitor VALUES (1)")
+                    competitor.execute("COMMIT")
+                    writer_attempts.append("committed")
+            return native_revalidation_reason(connection, **kwargs)
+
+        monkeypatch.setattr(
+            ledger_module, "_pr_update_revalidation_reason", classify_with_competing_writer
+        )
+    try:
+        reopened = RadarLedger(store.path)
+    finally:
+        if competitor is not None:
+            if competitor.in_transaction:
+                competitor.execute("ROLLBACK")
+            competitor.close()
+    if concurrent_writer:
+        assert writer_attempts == ["busy"]
+        with reopened.connect() as connection:
+            assert (
+                connection.execute("SELECT COUNT(*) FROM revalidation_competitor").fetchone()[0]
+                == 0
+            )
+    reason = (
+        "PR_UPDATE_SOURCE_WAKE_MISMATCH" if mismatch else "PR_UPDATE_AUTHENTICATED_PROBE_EXPIRED"
+    )
+    assert reopened.pr_followup_candidates() == []
+    # Reimporting the observation from before the barrier remains ineligible.
+    state = {
+        "version": "pr_followup_v3",
+        "generatedAt": followup["checked_at"],
+        "items": [
+            {
+                "url": followup["pr_url"],
+                "headSha": followup["head_sha"],
+                "actionDigest": followup["action_digest"],
+                "taskActionDigest": followup["task_action_digest"],
+                "taskFollowupRequired": True,
+                "taskActions": json.loads(followup["actions_json"]),
+                "evidence": json.loads(followup["evidence_json"]),
+                "checkedAt": followup["checked_at"],
+            }
+        ],
+    }
+    reopened.import_pr_followups(state)
+    assert reopened.pr_followup_candidates() == []
+    observed = iso_z(expired_now + timedelta(seconds=1))
+    state["generatedAt"] = observed
+    state["items"][0]["checkedAt"] = observed
+    reopened.import_pr_followups(state)
+    candidates = reopened.pr_followup_candidates()
+    assert len(candidates) == 1 and candidates[0]["key"] == key
+    assert candidates[0]["wakeDigest"] != followup["wake_digest"]
+    with reopened.connect() as connection:
+        after = dict(
+            connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?", (request["request_id"],)
+            ).fetchone()
+        )
+        assert after["status"] == "BLOCKED" and after["reason"] == reason
+        assert {k: v for k, v in after.items() if k not in {"reason", "updated_at"}} == {
+            k: v for k, v in before.items() if k not in {"reason", "updated_at"}
+        }
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM publication_permits WHERE request_id=?",
+                (request["request_id"],),
+            ).fetchone()[0]
+            == 0
+        )
+        assert all(
+            dict(connection.execute("SELECT * FROM events WHERE id=?", (event["id"],)).fetchone())
+            == event
+            for event in original_events
+        )
+    assert len(RadarLedger(store.path).pr_followup_candidates()) == 1
+    # The immutable expired update itself is never grantable or renewed.
+    with pytest.raises(LedgerError, match="not grantable"):
+        reopened.grant_publication_request(
+            request["request_id"],
+            issue_url=request["request"]["issueUrl"],
+            commit_sha=request["request"]["commitSha"],
+            branch=request["request"]["branch"],
+            evidence={},
+        )
+
+
+@pytest.mark.parametrize("invalid", ["unsigned", "quality", "permit", "foreign_head"])
+def test_pr_update_revalidation_preserves_other_native_denials(tmp_path, invalid):
+    store, key, request, _ = _authenticated_pr_update_revalidation_fixture(
+        tmp_path, invalid=invalid
+    )
+    if invalid == "foreign_head":
+        observed = iso_z(datetime.now(UTC))
+        store.import_pr_followups(
+            {
+                "version": "pr_followup_v3",
+                "generatedAt": observed,
+                "items": [
+                    {
+                        "url": "https://github.com/a/b/pull/9",
+                        "headSha": "f" * 40,
+                        "checkedAt": observed,
+                        "actionDigest": "foreign",
+                        "taskActionDigest": "foreign",
+                        "taskFollowupRequired": True,
+                        "taskActions": ["merge conflict"],
+                        "evidence": {"mergeConflict": True},
+                    }
+                ],
+            }
+        )
+    with store.connect() as connection:
+        before = dict(
+            connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?", (request["request_id"],)
+            ).fetchone()
+        )
+    reopened = RadarLedger(store.path)
+    assert reopened.pr_followup_candidates() == []
+    with reopened.connect() as connection:
+        assert (
+            dict(
+                connection.execute(
+                    "SELECT * FROM publication_requests WHERE request_id=?",
+                    (request["request_id"],),
+                ).fetchone()
+            )
+            == before
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='PR_FOLLOWUP_REARM_OBSERVATION_BARRIER' AND dedupe_key=?",
+                (request["request_id"],),
+            ).fetchone()[0]
+            == 0
+        )
+
+
 def test_pr_followup_candidates_allow_consumed_different_head_update(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     key = _make_pr_followup_candidate(store, head_sha="b" * 40)
@@ -9920,6 +10348,138 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path, publicati
             ).fetchone()[0]
             == 1
         )
+
+
+def test_pr_update_request_preserves_result_wake_after_followup_refresh(tmp_path):
+    import base64
+    import hashlib
+    import sqlite3
+
+    from oss_pr_radar.repo_probe import rebind_probe_receipt
+
+    store, args = publication_request_fixture(tmp_path)
+    published = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        published["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    pr_url = "https://github.com/a/b/pull/9"
+    store.consume_publication_permit(permit["permit_id"], pr_url)
+    checked_at = iso_z(datetime.now(UTC))
+    item = {
+        "url": pr_url,
+        "headSha": args["commit_sha"],
+        "actionDigest": "original-action",
+        "taskActionDigest": "original-task-action",
+        "taskFollowupRequired": True,
+        "taskActions": ["当前分支检查失败"],
+        "evidence": {"actionableCheckNames": ["Ruff"]},
+        "checkedAt": checked_at,
+    }
+    store.import_pr_followups(
+        {"version": "pr_followup_v3", "generatedAt": checked_at, "items": [item]}
+    )
+    source_wake = store.pr_followup_candidates()[0]["wakeDigest"]
+    store.reserve_pr_followup(
+        thread_id=args["thread_id"],
+        wake_digest=source_wake,
+        prepared_head_sha=args["commit_sha"],
+    )
+
+    value = json.loads(Path(args["evidence_path"]).read_text())
+    value.pop("reproductionReceipt")
+    value["followupDigest"] = source_wake
+    result_digest = sha256_json(value)
+    receipt = rebind_probe_receipt(
+        args["probe_receipt"],
+        repo="a/b",
+        base_sha=args["selected_base_sha"],
+        code_paths=args["code_paths"],
+        issue_url=args["issue_url"],
+        task_id="intent-1",
+        thread_id="intent-1",
+        head_sha=args["head_sha"],
+        commit_sha=args["commit_sha"],
+        result_digest=result_digest,
+    )
+    raw = json.dumps(
+        value | {"resultDigest": result_digest, "reproductionReceipt": receipt}
+    ).encode()
+    args = args | {
+        "evidence_digest": hashlib.sha256(raw).hexdigest(),
+        "evidence_raw_base64": base64.b64encode(raw).decode(),
+        "probe_receipt": receipt,
+        "result_digest": result_digest,
+    }
+    refreshed_at = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": refreshed_at,
+            "items": [
+                item
+                | {
+                    "actionDigest": "refreshed-action",
+                    "taskActionDigest": "refreshed-task-action",
+                    "checkedAt": refreshed_at,
+                }
+            ],
+        }
+    )
+    with store.connect() as connection:
+        mutable_wake = connection.execute(
+            "SELECT wake_digest FROM pr_followups WHERE opportunity_key='a/b#1'"
+        ).fetchone()[0]
+        historical_requests = [
+            dict(row) for row in connection.execute("SELECT * FROM publication_requests")
+        ]
+        historical_events = [dict(row) for row in connection.execute("SELECT * FROM events")]
+        with sqlite3.connect(tmp_path / "legacy.sqlite3") as copied:
+            connection.backup(copied)
+    assert mutable_wake != source_wake
+
+    legacy_store = RadarLedger(tmp_path / "legacy.sqlite3")
+    legacy = legacy_store.create_publication_request(**args)
+    assert legacy["request"]["followupWakeDigest"] == mutable_wake
+    update = store.create_publication_request(**args, followup_wake_digest=source_wake)
+    assert update["request_id"] == legacy["request_id"]
+    assert update["status"] == "PENDING"
+    assert update["request"]["publicationKind"] == "PR_UPDATE"
+    assert update["request"]["followupWakeDigest"] == json.loads(raw)["followupDigest"]
+    with store.connect() as connection:
+        for row in historical_requests:
+            assert (
+                dict(
+                    connection.execute(
+                        "SELECT * FROM publication_requests WHERE request_id=?",
+                        (row["request_id"],),
+                    ).fetchone()
+                )
+                == row
+            )
+        for row in historical_events:
+            assert (
+                dict(connection.execute("SELECT * FROM events WHERE id=?", (row["id"],)).fetchone())
+                == row
+            )
+    saved_legacy = legacy_store.publication_request(legacy["request_id"])
+    returned_legacy = legacy_store.create_publication_request(
+        **args, followup_wake_digest=source_wake
+    )
+    assert returned_legacy["request"] == legacy["request"]
+    assert legacy_store.publication_request(legacy["request_id"]) == saved_legacy
+
+
+def test_publication_request_rejects_invalid_explicit_followup_wake(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    for invalid in ("", "not-a-wake"):
+        with pytest.raises(LedgerError, match="publication follow-up wake digest is invalid"):
+            store.create_publication_request(**args, followup_wake_digest=invalid)
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
 
 
 def test_existing_publication_request_without_snapshot_upgrades_idempotently(tmp_path):
@@ -11052,6 +11612,160 @@ def test_pr_followup_task_drift_rebinds_wake_and_invalidates_preparation(tmp_pat
     )
     assert repeated == {**rebound, "created": False}
     assert store.pr_followup_rebind_status("a/b#1")["observedHeadSha"] == "d" * 40
+
+
+def _published_parent_drift_refresh_fixture(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="a" * 40)
+    original = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id=original["threadId"],
+        wake_digest=original["wakeDigest"],
+        prepared_head_sha=original["headSha"],
+    )
+    store.complete_pr_followup_reservation(
+        thread_id=original["threadId"], wake_digest=original["wakeDigest"]
+    )
+    store.commit_pr_followup(thread_id=original["threadId"], wake_digest=original["wakeDigest"])
+    store.rearm_pr_followup_after_task_drift(
+        key, expected_prepared_head_sha=original["headSha"], observed_head_sha="c" * 40
+    )
+    with store.connect() as connection:
+        old_gate = dict(
+            connection.execute(
+                "SELECT * FROM task_quarantines WHERE opportunity_key=? AND status='ACTIVE'",
+                (key,),
+            ).fetchone()
+        )
+        old_events = [dict(row) for row in connection.execute("SELECT * FROM events ORDER BY id")]
+        old_requests = [
+            dict(row) for row in connection.execute("SELECT * FROM publication_requests")
+        ]
+    state = {
+        "version": "pr_followup_v3",
+        "generatedAt": iso_z(datetime.now(UTC)),
+        "items": [
+            {
+                "url": original["prUrl"],
+                "headSha": original["headSha"],
+                "actionDigest": "fresh-action",
+                "taskActionDigest": "fresh-ci-diagnosis",
+                "taskFollowupRequired": True,
+                "taskActions": ["current branch check failed", "integrate current base"],
+                "evidence": {
+                    "actionableCheckNames": [
+                        "All Other Providers / Run tests",
+                        "enterprise-routing / Run tests",
+                        "misc / Run tests",
+                    ],
+                    "baseIntegrationRequired": True,
+                    "baseCompareStatus": "diverged",
+                    "baseSha": "d" * 40,
+                    "baseMergeBaseSha": "b" * 40,
+                },
+                "checkedAt": iso_z(datetime.now(UTC)),
+            }
+        ],
+    }
+    return store, key, old_gate, old_events, old_requests, state
+
+
+@pytest.mark.parametrize("already_refreshed", [False, True])
+def test_pr_followup_fresh_import_preserves_parent_drift_gate_and_allows_reprepare(
+    tmp_path, already_refreshed
+):
+    store, key, old_gate, old_events, old_requests, state = _published_parent_drift_refresh_fixture(
+        tmp_path
+    )
+    if already_refreshed:
+        # The observed failure had already imported a fresh snapshot while the
+        # durable gate retained its earlier replacement wake.
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE pr_followups SET wake_digest=?,task_action_digest=?,checked_at=? "
+                "WHERE opportunity_key=?",
+                (
+                    "7" * 64,
+                    state["items"][0]["taskActionDigest"],
+                    state["items"][0]["checkedAt"],
+                    key,
+                ),
+            )
+        assert store.pr_followup_candidates() == []
+    store.import_pr_followups(state)
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["key"] == key
+    new_wake = candidate["wakeDigest"]
+    assert new_wake != json.loads(old_gate["payload_json"])["replacementWakeDigest"]
+    new_gate = store.active_task_quarantine(key)
+    assert new_gate["payload"]["replacementWakeDigest"] == new_wake
+    with store.connect() as connection:
+        retained = dict(
+            connection.execute(
+                "SELECT * FROM task_quarantines WHERE quarantine_id=?", (old_gate["quarantine_id"],)
+            ).fetchone()
+        )
+        assert retained["status"] == "CLEARED"
+        assert all(
+            retained[field] == old_gate[field]
+            for field in old_gate
+            if field not in {"status", "cleared_at", "clear_payload_json"}
+        )
+        assert [dict(row) for row in connection.execute("SELECT * FROM events ORDER BY id")][
+            : len(old_events)
+        ] == old_events
+        assert [dict(row) for row in connection.execute("SELECT * FROM publication_requests")] == (
+            old_requests
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    store.import_pr_followups(state)
+    assert store.active_task_quarantine(key) == new_gate
+    reserved = store.reserve_pr_followup(
+        thread_id=candidate["threadId"],
+        wake_digest=new_wake,
+        prepared_head_sha="e" * 40,
+        prepared_base_sha="d" * 40,
+        quarantine_reason="PR_FOLLOWUP_REBIND_REQUIRED",
+    )
+    assert reserved["wakeDigest"] == new_wake
+    assert store.active_task_quarantine(key) is not None
+    store.complete_pr_followup_reservation(
+        thread_id=candidate["threadId"],
+        wake_digest=new_wake,
+        quarantine_reason="PR_FOLLOWUP_REBIND_REQUIRED",
+        evidence={"revalidated": True, "preparedHeadSha": "e" * 40},
+    )
+    assert store.active_task_quarantine(key) is None
+    with store.connect() as connection:
+        assert [dict(row) for row in connection.execute("SELECT * FROM publication_requests")] == (
+            old_requests
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("damage", ["foreign_head", "unknown_gate"])
+def test_pr_followup_fresh_import_keeps_unverified_parent_drift_blocked(tmp_path, damage):
+    store, key, old_gate, _, _, state = _published_parent_drift_refresh_fixture(tmp_path)
+    if damage == "foreign_head":
+        state["items"][0]["headSha"] = "f" * 40
+    else:
+        with store.connect() as connection:
+            payload = json.loads(old_gate["payload_json"]) | {"unknown": True}
+            connection.execute(
+                "UPDATE task_quarantines SET payload_json=? WHERE quarantine_id=?",
+                (json.dumps(payload), old_gate["quarantine_id"]),
+            )
+    store.import_pr_followups(state)
+    assert store.pr_followup_candidates() == []
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT status FROM task_quarantines WHERE quarantine_id=?",
+                (old_gate["quarantine_id"],),
+            ).fetchone()[0]
+            == "ACTIVE"
+        )
+        assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 1
 
 
 def test_task_quarantine_blocks_pending_publication_until_cleared(tmp_path):

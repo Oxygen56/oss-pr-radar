@@ -127,8 +127,11 @@ def test_run_bridge_requires_explicit_boolean_success(monkeypatch, tmp_path, res
         )
 
 
-def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
+@pytest.mark.parametrize("audit_refreshed", [False, True])
+def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path, audit_refreshed):
     calls = []
+    context_digest = "old-audit"
+    authority_digest = context_digest
     responses = {
         "context-recover": {"ok": True, "verified": 1, "errors": []},
         "ingest-results": {
@@ -158,6 +161,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
         "context-sync": {
             "ok": True,
             "written": [{"key": "a/b#1", "path": "/tmp/task-context.json"}],
+            "refreshed": [{"key": "a/b#1", "status": "ALLOW"}] if audit_refreshed else [],
             "errors": [],
         },
         "publication-feedback-list": {
@@ -176,13 +180,22 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     }
 
     def runner(root: Path, operation: str):
+        nonlocal context_digest, authority_digest
         calls.append((root, operation))
+        if operation == "context-sync" and audit_refreshed:
+            context_digest = "refreshed-audit"
+        elif operation == "context-recover":
+            authority_digest = context_digest
+        elif operation == "ingest-results":
+            assert authority_digest == context_digest
         return responses[operation]
 
     result = advance_once(tmp_path, runner=runner)
 
     assert [operation for _, operation in calls] == [
         "context-recover",
+        "context-sync",
+        *(["context-recover"] if audit_refreshed else []),
         "ingest-results",
         "independent-review-run",
         "title-reconcile",
@@ -200,6 +213,28 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
     assert result["contextsSynced"][0]["key"] == "a/b#1"
     assert result["drain"]["threadId"] == "thread-3"
+    assert bool(result["contextRecoveryAfterSync"]) is audit_refreshed
+
+
+def test_refreshed_context_recovery_failure_stops_before_ingestion(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-sync":
+            return {"ok": True, "refreshed": [{"key": "a/b#1"}], "errors": []}
+        assert operation == "context-recover"
+        if len(calls) == 1:
+            return {"ok": True, "errors": []}
+        return {"ok": False, "errors": [{"key": "a/b#1", "error": "invalid signed context"}]}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls == ["context-recover", "context-sync", "context-recover"]
+    assert result["ok"] is False
+    assert result["errors"] == [{"key": "a/b#1", "error": "invalid signed context"}]
+    assert result["resultsIngested"] == []
+    assert result["published"] == []
 
 
 def test_implementation_context_is_synced_before_followup_drain(tmp_path):
@@ -247,7 +282,10 @@ def test_implementation_context_is_synced_before_followup_drain(tmp_path):
 
     result = advance_once(tmp_path, runner=runner)
 
-    assert calls.index("context-sync") < calls.index("drain-once")
+    assert calls.index("context-sync") < calls.index("ingest-results")
+    assert calls.index("context-sync", calls.index("ingest-results") + 1) < calls.index(
+        "drain-once"
+    )
     assert result["ok"] is True
     assert result["contextsSynced"][0]["key"] == "a/b#1"
     assert result["drain"]["action"] == "implementation_followup_dispatched"
@@ -755,6 +793,7 @@ def test_fast_publication_surfaces_title_reconciliation_failure(tmp_path):
 
     assert calls == [
         "context-recover",
+        "context-sync",
         "ingest-results",
         "independent-review-run",
         "title-reconcile",
@@ -829,6 +868,7 @@ def test_missing_historical_worktree_does_not_stop_fast_publication(tmp_path):
 
     assert calls == [
         "context-recover",
+        "context-sync",
         "ingest-results",
         "independent-review-run",
         "title-reconcile",
@@ -878,8 +918,9 @@ def test_independent_review_update_is_reingested_before_publication(tmp_path):
 
     result = advance_once(tmp_path, runner=runner)
 
-    assert calls[:4] == [
+    assert calls[:5] == [
         "context-recover",
+        "context-sync",
         "ingest-results",
         "independent-review-run",
         "ingest-results",
@@ -990,8 +1031,9 @@ def test_review_update_continues_when_an_older_candidate_is_invalid(tmp_path):
 
     result = advance_once(tmp_path, runner=runner)
 
-    assert calls[:4] == [
+    assert calls[:5] == [
         "context-recover",
+        "context-sync",
         "ingest-results",
         "independent-review-run",
         "ingest-results",
@@ -1087,13 +1129,13 @@ def test_ingestion_failure_stops_publication(tmp_path):
 
     def runner(_root: Path, operation: str):
         calls.append(operation)
-        if operation == "context-recover":
+        if operation in {"context-recover", "context-sync"}:
             return {"ok": True, "verified": 0, "errors": []}
         return {"ok": False, "errors": [{"error": "invalid result"}]}
 
     result = advance_once(tmp_path, runner=runner)
 
-    assert calls == ["context-recover", "ingest-results"]
+    assert calls == ["context-recover", "context-sync", "ingest-results"]
     assert result["ok"] is False
     assert result["published"] == []
     assert result["errors"] == [{"error": "invalid result"}]
@@ -1626,6 +1668,8 @@ def test_slow_worker_retries_stale_owner_when_persisted_retry_elapsed(monkeypatc
             return {"ok": True, "errors": []}
         if operation == "context-recover":
             return {"ok": True, "verified": 0, "unavailable": [], "quarantined": [], "errors": []}
+        if operation == "context-sync":
+            return {"ok": True, "written": [], "errors": []}
         if operation == "ingest-results":
             return {
                 "ok": True,
@@ -1691,6 +1735,8 @@ def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch
             return {"ok": True, "errors": []}
         if operation == "context-recover":
             return {"ok": True, "verified": 0, "unavailable": [], "quarantined": [], "errors": []}
+        if operation == "context-sync":
+            return {"ok": True, "written": [], "errors": []}
         if operation == "ingest-results":
             return {
                 "ok": True,
@@ -1743,6 +1789,8 @@ def test_slow_worker_does_not_back_off_for_persisted_task_evidence_block(monkeyp
             return {"ok": True, "errors": []}
         if operation == "context-recover":
             return {"ok": True, "verified": 0, "unavailable": [], "errors": []}
+        if operation == "context-sync":
+            return {"ok": True, "written": [], "errors": []}
         if operation == "ingest-results":
             ingestion_count += 1
             return {
@@ -1805,6 +1853,8 @@ def test_slow_worker_marks_terminal_missing_worktree_skip_as_success(monkeypatch
             return {"ok": True, "errors": []}
         if operation == "context-recover":
             return {"ok": True, "verified": 0, "unavailable": [], "errors": []}
+        if operation == "context-sync":
+            return {"ok": True, "written": [], "errors": []}
         if operation == "ingest-results":
             return {
                 "ok": True,
@@ -2243,6 +2293,7 @@ def test_synced_actionable_pr_followup_is_exposed_to_the_serial_drain(tmp_path):
         calls.append(operation)
         responses = {
             "context-recover": {"ok": True, "errors": [], "unavailable": []},
+            "context-sync": {"ok": True, "written": [], "errors": []},
             "ingest-results": {"ok": True},
             "independent-review-run": {"ok": True, "updated": []},
             "title-reconcile": {"ok": True},
@@ -2388,6 +2439,7 @@ def test_replayed_pr_followup_without_a_candidate_does_not_retrigger_drain(tmp_p
         calls.append(operation)
         responses = {
             "context-recover": {"ok": True, "errors": [], "unavailable": []},
+            "context-sync": {"ok": True, "written": [], "errors": []},
             "ingest-results": {"ok": True},
             "independent-review-run": {"ok": True, "updated": []},
             "title-reconcile": {"ok": True},
@@ -2484,6 +2536,7 @@ def test_synced_pending_work_triggers_the_existing_serial_drain(tmp_path):
         calls.append(operation)
         responses = {
             "context-recover": {"ok": True, "errors": [], "unavailable": []},
+            "context-sync": {"ok": True, "written": [], "errors": []},
             "ingest-results": {"ok": True},
             "independent-review-run": {"ok": True, "updated": []},
             "title-reconcile": {"ok": True},

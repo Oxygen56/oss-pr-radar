@@ -14,6 +14,11 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.local_publication import slow_advance_once
+from oss_pr_radar.operational_auth import (
+    authorization_path,
+    staged_worker_receipt_path,
+    worker_staging_authorization_path,
+)
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "install_local_publication_workers.py"
 sys.path.insert(0, str(SCRIPT.parent))
@@ -328,6 +333,17 @@ def test_uninstall_bootout_failure_restores_all_three_workers(
     launch_dir = home / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True)
     worker_specs = specs(tmp_path)
+    (tmp_path / "state").mkdir()
+    authorization_before = {
+        path: b"keep authorization"
+        for path in (
+            authorization_path(tmp_path),
+            worker_staging_authorization_path(tmp_path),
+            staged_worker_receipt_path(tmp_path),
+        )
+    }
+    for path, content in authorization_before.items():
+        path.write_bytes(content)
     before: dict[Path, bytes] = {}
     modes: dict[Path, int] = {}
     for index, spec in enumerate(worker_specs):
@@ -353,6 +369,7 @@ def test_uninstall_bootout_failure_restores_all_three_workers(
     assert {path: path.stat().st_mode & 0o777 for path in before} == modes
     assert fake.loaded == set(services)
     assert not list(launch_dir.glob(".*.tmp"))
+    assert {path: path.read_bytes() for path in authorization_before} == authorization_before
 
 
 def test_uninstall_unlink_failure_restores_all_three_workers(
@@ -362,6 +379,17 @@ def test_uninstall_unlink_failure_restores_all_three_workers(
     launch_dir = home / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True)
     worker_specs = specs(tmp_path)
+    (tmp_path / "state").mkdir()
+    authorization_before = {
+        path: b"keep authorization"
+        for path in (
+            authorization_path(tmp_path),
+            worker_staging_authorization_path(tmp_path),
+            staged_worker_receipt_path(tmp_path),
+        )
+    }
+    for path, content in authorization_before.items():
+        path.write_bytes(content)
     before: dict[Path, bytes] = {}
     modes: dict[Path, int] = {}
     for index, spec in enumerate(worker_specs):
@@ -396,6 +424,7 @@ def test_uninstall_unlink_failure_restores_all_three_workers(
     assert {path: path.stat().st_mode & 0o777 for path in before} == modes
     assert fake.loaded == services
     assert not list(launch_dir.glob(".*.tmp"))
+    assert {path: path.read_bytes() for path in authorization_before} == authorization_before
 
 
 @pytest.mark.parametrize(
@@ -492,6 +521,13 @@ def test_uninstall_removes_all_workers_when_slow_worker_is_quiescent(
     worker_specs = specs(tmp_path)
     _write_staged_plists(home, worker_specs)
     (tmp_path / "state").mkdir()
+    authorization_records = (
+        authorization_path(tmp_path),
+        worker_staging_authorization_path(tmp_path),
+        staged_worker_receipt_path(tmp_path),
+    )
+    for path in authorization_records:
+        path.write_bytes(b"existing authorization")
     domain = "gui/4242"
     services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
     fake = FakeLaunchctl(domain, services)
@@ -504,6 +540,7 @@ def test_uninstall_removes_all_workers_when_slow_worker_is_quiescent(
     assert result["ok"] is True
     assert fake.loaded == set()
     assert all(not plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
+    assert all(not path.exists() for path in authorization_records)
 
 
 def test_uninstall_requires_runtime_binding_and_authorization_before_launchctl(
@@ -554,6 +591,9 @@ def test_worker_write_modes_require_authorization_before_any_launchctl_or_plist_
             ),
         )
     else:
+        authorization = authorization_path(tmp_path)
+        authorization.parent.mkdir(parents=True, exist_ok=True)
+        authorization.write_bytes(b"invalid existing authorization")
         monkeypatch.setattr(
             INSTALL,
             "require_operational_authorization",
@@ -573,6 +613,48 @@ def test_worker_write_modes_require_authorization_before_any_launchctl_or_plist_
     assert INSTALL.main() == 1
     assert fake.calls == []
     assert not list((home / "Library" / "LaunchAgents").glob("*.plist"))
+
+
+def test_original_uninstall_cli_observes_already_uninstalled_workers_after_auth_revocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "path": str(tmp_path / "release")},
+    )
+    monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: specs(tmp_path))
+    calls = []
+
+    def observe(*arguments, check=True):
+        calls.append(arguments)
+        assert arguments[0] == "print" and check is False
+        return subprocess.CompletedProcess([], 113, "", "Could not find service")
+
+    monkeypatch.setattr(INSTALL, "launchctl", observe)
+    monkeypatch.setattr(
+        INSTALL,
+        "revoke_operational_authorization",
+        lambda *_args, **_kwargs: pytest.fail("already uninstalled observation must not revoke"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["install_local_publication_workers.py", "--runtime-root", str(tmp_path), "--uninstall"],
+    )
+
+    assert INSTALL.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is True and result["uninstalled"] is True
+    assert result["changed"] is False and len(result["workers"]) == 4
+    assert {call[1].split("/")[-1] for call in calls} == set(INSTALL.FIXED_WORKER_LABELS)
+    assert all(call[0] == "print" for call in calls)
+    assert not list((home / "Library" / "LaunchAgents").glob("*.plist"))
+    assert not authorization_path(tmp_path).exists()
+    assert not worker_staging_authorization_path(tmp_path).exists()
+    assert not staged_worker_receipt_path(tmp_path).exists()
 
 
 def test_authorized_stage_uses_only_the_current_required_worker_specs(

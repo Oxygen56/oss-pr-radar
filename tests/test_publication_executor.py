@@ -1063,6 +1063,168 @@ def test_ensure_fork_creates_once_and_returns_a_validated_remote(monkeypatch, tm
     assert sum(call[:3] == ["gh", "repo", "fork"] for call in calls) == 1
 
 
+def test_fork_name_collision_continues_original_executor_with_real_git(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    target = tmp_path / "target.git"
+    worktree.mkdir()
+
+    def git(*arguments, cwd=worktree):
+        return subprocess.run(
+            ["git", *arguments], cwd=cwd, capture_output=True, text=True, check=True
+        )
+
+    git("init", "-b", "main")
+    git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "fixture",
+    )
+    commit = git("rev-parse", "HEAD").stdout.strip()
+    git("init", "--bare", str(target))
+    args = SimpleNamespace(
+        permit_id="permit-1",
+        issue_url="https://github.com/vercel-labs/skills/issues/2424",
+        commit_sha=commit,
+        branch="fix/2424-search-relevance",
+        head_owner="Oxygen56",
+        repo="vercel-labs/skills",
+        worktree=str(worktree),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "ensure_permit",
+        lambda *_args, **_kwargs: {"status": "ACTIVE", "request_id": "request-1"},
+    )
+    monkeypatch.setattr(
+        MODULE, "permit_publication", lambda _permit: {"headOwner": args.head_owner}
+    )
+    monkeypatch.setattr(MODULE, "permit_request", lambda *_args: {"publicationKind": "PR_CREATE"})
+    monkeypatch.setattr(MODULE, "recheck_new_effect", lambda *_args: None)
+    calls = []
+    created = False
+    real_run = MODULE.run
+    fork_url = "https://github.com/Oxygen56/vercel-labs-skills.git"
+
+    def transport(arguments, **kwargs):
+        nonlocal created
+        calls.append(arguments)
+        if arguments[:2] == ["gh", "api"]:
+            if arguments[2] == "repos/Oxygen56/skills":
+                metadata = {
+                    "full_name": "Oxygen56/skills",
+                    "fork": True,
+                    "parent": {"full_name": "anthropics/skills"},
+                }
+            elif arguments[2].casefold() == "repos/oxygen56/vercel-labs-skills":
+                if not created:
+                    return subprocess.CompletedProcess(arguments, 1, "", "HTTP 404")
+                metadata = {
+                    "full_name": "Oxygen56/vercel-labs-skills",
+                    "fork": True,
+                    "parent": {"full_name": "vercel-labs/skills"},
+                }
+            else:
+                raise AssertionError(arguments)
+            return subprocess.CompletedProcess(arguments, 0, json.dumps(metadata), "")
+        if arguments[:3] == ["gh", "repo", "fork"]:
+            assert arguments == [
+                "gh",
+                "repo",
+                "fork",
+                "vercel-labs/skills",
+                "--clone=false",
+                "--fork-name",
+                "vercel-labs-skills",
+            ]
+            created = True
+            return subprocess.CompletedProcess(arguments, 0, "", "")
+        if arguments[:2] in (["git", "push"], ["git", "ls-remote"]):
+            arguments = ["git", "-c", f"url.{target}.insteadOf={fork_url}", *arguments[1:]]
+        return real_run(arguments, **kwargs)
+
+    monkeypatch.setattr(MODULE, "run", transport)
+
+    class RecordingStore(ActiveStore):
+        def __init__(self):
+            super().__init__()
+            self.request_digests = []
+
+        def publication_effect(self, **kwargs):
+            self.request_digests.append(kwargs["request_digest"])
+            return super().publication_effect(**kwargs)
+
+    store = RecordingStore()
+    fork = MODULE.ensure_fork(args, store)
+    args.remote = fork["remote"]
+    assert fork["forkRepo"] == "Oxygen56/vercel-labs-skills"
+    assert git("remote", "get-url", args.remote).stdout.strip() == fork_url
+    assert MODULE.push(args, store)["remoteSha"] == commit
+    assert git("rev-parse", f"refs/heads/{args.branch}", cwd=target).stdout.strip() == commit
+    assert MODULE.ensure_fork(args, store)["created"] is False
+    assert MODULE.push(args, store)["reconciled"] is True
+    assert sum(call[:3] == ["gh", "repo", "fork"] for call in calls) == 1
+    assert sum(call[:2] == ["git", "push"] for call in calls) == 1
+    expected_request = {
+        "issueUrl": args.issue_url,
+        "commitSha": commit,
+        "branch": args.branch,
+        "remote": "oxygen56/vercel-labs-skills",
+        "publicationKind": "PR_CREATE",
+        "existingPrUrl": None,
+        "previousCommitSha": None,
+    }
+    assert store.request_digests == [MODULE.sha256_json(expected_request)] * 2
+
+
+def test_named_fork_rejects_another_upstream_before_publication_effect(monkeypatch, tmp_path):
+    args = SimpleNamespace(
+        permit_id="permit-1",
+        issue_url="https://github.com/vercel-labs/skills/issues/2424",
+        commit_sha="a" * 40,
+        branch="fix/2424-search-relevance",
+        head_owner="Oxygen56",
+        repo="vercel-labs/skills",
+        worktree=str(tmp_path),
+        remote="radar-fork",
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "ensure_permit",
+        lambda *_args, **_kwargs: {"status": "ACTIVE", "request_id": "request-1"},
+    )
+    monkeypatch.setattr(
+        MODULE, "permit_publication", lambda _permit: {"headOwner": args.head_owner}
+    )
+    monkeypatch.setattr(MODULE, "permit_request", lambda *_args: {"publicationKind": "PR_CREATE"})
+
+    def transport(arguments, **kwargs):
+        if arguments[:2] == ["gh", "api"]:
+            metadata = {
+                "full_name": arguments[2].removeprefix("repos/"),
+                "fork": True,
+                "parent": {"full_name": "anthropics/skills"},
+            }
+            return subprocess.CompletedProcess(arguments, 0, json.dumps(metadata), "")
+        if arguments[:3] == ["git", "remote", "get-url"]:
+            return subprocess.CompletedProcess(
+                arguments, 0, "https://github.com/Oxygen56/vercel-labs-skills.git\n", ""
+            )
+        pytest.fail(f"incorrect upstream must not cause a GitHub or Git write: {arguments}")
+
+    monkeypatch.setattr(MODULE, "run", transport)
+    store = ActiveStore()
+    with pytest.raises(RuntimeError, match="does not belong to the target upstream"):
+        MODULE.ensure_fork(args, store)
+    with pytest.raises(RuntimeError, match="does not belong to the target upstream"):
+        MODULE.push(args, store)
+    assert store.completed == []
+
+
 def test_publication_cli_rejects_wrong_release_binding_before_external_process(
     monkeypatch, tmp_path, capsys
 ):

@@ -940,6 +940,68 @@ def test_expired_worker_staging_reset_preserves_bound_plists_and_allows_reissue(
     assert renewed["state"] == "ACTIVE"
 
 
+def test_original_uninstall_cli_removes_expired_signed_unloaded_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "staging-uninstall-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    receipt = _consume_signed_staging_fixture(runtime, home, specs)
+    receipt_path = staged_worker_receipt_path(runtime)
+    before = {
+        path: path.read_bytes()
+        for path in [
+            token_path,
+            receipt_path,
+            *[Path(str(item["plistPath"])) for item in receipt["workers"]],
+        ]
+    }
+    later = utc_now() + timedelta(minutes=20)
+
+    class AfterStaging(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return later.astimezone(tz) if tz is not None else later.replace(tzinfo=None)
+
+    monkeypatch.setattr(operational_auth_module, "datetime", AfterStaging)
+    reports = [
+        {"label": spec["Label"], "loaded": False, "actualConfigMatch": True} for spec in specs
+    ]
+    assert not verify_staged_worker_receipt(runtime, specs=specs, worker_reports=reports, home=home)
+    assert verify_staged_worker_receipt(
+        runtime, specs=specs, worker_reports=reports, home=home, require_current=False
+    )
+    assert {path: path.read_bytes() for path in before} == before
+    assert not authorization_path(runtime).exists()
+    calls = []
+
+    def observe(*arguments, check=True):
+        calls.append(arguments)
+        assert arguments[0] == "print" and check is False
+        return subprocess.CompletedProcess([], 113, "", "Could not find service")
+
+    monkeypatch.setattr(workers_module.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(workers_module, "launchctl", observe)
+    monkeypatch.setattr(
+        workers_module,
+        "finalize_operational_authorization",
+        lambda *_args, **_kwargs: pytest.fail("staged uninstall must never activate authorization"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["install_local_publication_workers.py", "--runtime-root", str(runtime), "--uninstall"],
+    )
+    assert workers_module.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is True and result["uninstalled"] is True
+    assert len(result["workers"]) == 4
+    assert all(not path.exists() for path in before)
+    assert not authorization_path(runtime).exists()
+    assert {call[1].split("/")[-1] for call in calls} == set(workers_module.FIXED_WORKER_LABELS)
+    assert all(call[0] == "print" for call in calls)
+
+
 def test_expired_worker_staging_reset_is_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1781,7 +1843,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert automation["schema"] == "oss-pr-radar.stage7-automation-snapshot.v3"
     assert automation["generator"] == "stage7-automation-toml-v3"
     assert automation["dailyWarRoom"]["kind"] == "heartbeat"
-    assert automation["heartbeat"]["targetThreadId"] == "019f71c3-4f26-7030-b126-25f8cfbac4c4"
+    assert automation["heartbeat"]["targetThreadId"] == "01a11091-6498-73f2-bffb-1bd114e4347a"
     assert automation["dailyWarRoom"]["targetThreadId"] == ("01a047a5-88da-7113-8355-218215cd037a")
     assert automation["dailyWarRoom"]["targetThreadId"] != automation["heartbeat"]["targetThreadId"]
     assert {
@@ -2248,7 +2310,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     daily_toml.write_text(daily_text, encoding="utf-8")
     heartbeat_toml.write_text(
         heartbeat_text.replace(
-            'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
+            'target_thread_id = "01a11091-6498-73f2-bffb-1bd114e4347a"',
             'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
         ),
         encoding="utf-8",
@@ -2259,7 +2321,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     daily_toml.write_text(
         daily_text.replace(
             'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
-            'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
+            'target_thread_id = "01a11091-6498-73f2-bffb-1bd114e4347a"',
         ),
         encoding="utf-8",
     )
@@ -2571,7 +2633,7 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert contracts["heartbeat"]["releaseCommand"][1].endswith("/scripts/controller_cycle.py")
     assert contracts["heartbeat"]["kind"] == "heartbeat"
     assert contracts["dailyWarRoom"]["kind"] == "heartbeat"
-    assert contracts["heartbeat"]["targetThreadId"] == ("019f71c3-4f26-7030-b126-25f8cfbac4c4")
+    assert contracts["heartbeat"]["targetThreadId"] == ("01a11091-6498-73f2-bffb-1bd114e4347a")
     assert contracts["dailyWarRoom"]["targetThreadId"] == ("01a047a5-88da-7113-8355-218215cd037a")
     assert contracts["dailyWarRoom"]["targetThreadId"] != contracts["heartbeat"]["targetThreadId"]
     assert contracts["dailyWarRoom"]["rrule"] == ("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0")
