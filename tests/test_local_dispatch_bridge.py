@@ -14798,12 +14798,19 @@ def _published_followup_store(
 
 
 @pytest.mark.parametrize(
-    ("result_error_field", "different_shared_wake", "missing_private_followup", "task_scoped"),
+    (
+        "result_error_field",
+        "different_shared_wake",
+        "missing_private_followup",
+        "task_scoped",
+        "advanced_head",
+    ),
     [
-        ("contextDigest", False, False, True),
-        ("worktreePath", False, False, False),
-        ("contextDigest", True, False, False),
-        ("contextDigest", False, True, True),
+        ("contextDigest", False, False, True, False),
+        ("worktreePath", False, False, False, False),
+        ("contextDigest", True, False, False, False),
+        ("contextDigest", False, True, True, False),
+        ("contextDigest", False, True, True, True),
     ],
 )
 def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
@@ -14813,6 +14820,7 @@ def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
     different_shared_wake,
     missing_private_followup,
     task_scoped,
+    advanced_head,
 ):
     """Use the recovery entry point with the retained PR_OPEN envelope shape."""
 
@@ -14854,10 +14862,18 @@ def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
     MODULE._atomic_json(shared_path, shared)
     shared_raw = shared_path.read_bytes()
     replacement_followup = None
+    current_head = published_head
     if missing_private_followup:
         private = dict(context, prFollowup=None)
         local_path.write_text(MODULE.canonical_json(private), encoding="utf-8")
         private_raw = local_path.read_bytes()
+        if advanced_head:
+            # An ordinary update of this same PR leaves the old wake and
+            # rejected result behind; it does not replace the task identity.
+            (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
+            run_git(worktree, "add", "runtime.py")
+            run_git(worktree, "commit", "-m", "fix: update the existing PR")
+            current_head = run_git(worktree, "rev-parse", "HEAD")
         checked_at = iso_z(datetime.now(UTC))
         store.import_pr_followups(
             {
@@ -14866,7 +14882,7 @@ def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
                 "items": [
                     {
                         "url": pr_url,
-                        "headSha": published_head,
+                        "headSha": current_head,
                         "actionDigest": "replacement-action",
                         "taskActionDigest": "replacement-task-action",
                         "taskFollowupRequired": True,
@@ -14929,7 +14945,7 @@ def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
     assert local_path.read_bytes() == private_raw
     assert shared_path.read_bytes() == shared_raw
     assert artifact_path.read_bytes() == artifact_raw
-    assert run_git(worktree, "rev-parse", "HEAD") == published_head
+    assert run_git(worktree, "rev-parse", "HEAD") == current_head
     current = store.task_context(issue_url=context["issueUrl"], thread_id=context["threadId"])
     assert current["publicationReceipt"]["prUrl"] == pr_url
     assert current["publicationReceipt"]["commitSha"] == published_head

@@ -5598,10 +5598,7 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                                 r"[0-9a-f]{64}", str(shared_followup.get("wakeDigest") or "")
                             )
                             or current_followup["wakeDigest"] == shared_followup["wakeDigest"]
-                            or any(
-                                current_followup.get(field) != shared_followup.get(field)
-                                for field in ("prUrl", "headSha")
-                            )
+                            or current_followup.get("prUrl") != shared_followup.get("prUrl")
                             or parse_time(str(current_followup.get("checkedAt") or ""))
                             <= parse_time(str(shared_followup.get("checkedAt") or ""))
                             or not _private_context_matches_current_ledger(
@@ -5609,6 +5606,9 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                             )
                         ):
                             raise RuntimeError("published result quarantine follow-up is invalid")
+                        # The same PR can advance its head between these wakes.
+                        # Exact current-ledger agreement and the full mirror
+                        # comparison below still bind the original task.
                         # Only the comparison copy loses the obsolete wake.
                         # Neither mirror, the active follow-up nor the rejected
                         # result is rewritten or accepted by this quarantine.
