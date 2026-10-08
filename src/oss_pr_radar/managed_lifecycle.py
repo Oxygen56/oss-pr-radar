@@ -6119,6 +6119,7 @@ def reconcile_managed_pr_states(
     observed_at: str | None = None,
     source: str = "github-authoritative-reconciliation",
     require_all_managed: bool = True,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
     """Reconcile every managed PR from exact read-only API evidence.
 
@@ -6127,7 +6128,7 @@ def reconcile_managed_pr_states(
     state, URL, head SHA and response digest before any row is updated.
     """
 
-    ledger = ManagedLedger(path, ensure_schema=True)
+    ledger = ManagedLedger(path, ensure_schema=ensure_schema)
     normalized: dict[str, dict[str, Any]] = {}
     for observation in observations:
         pr_url = str(observation.get("url") or observation.get("prUrl") or "")

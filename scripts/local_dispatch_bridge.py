@@ -79,6 +79,7 @@ from oss_pr_radar.managed_adapter import (  # noqa: E402
     ManagedAdapter,
 )
 from oss_pr_radar.managed_lifecycle import (  # noqa: E402
+    MANAGED_SCHEMA_VERSION,
     ManagedLedger,
     pr_key_from_url,
     reconcile_managed_pr_states,
@@ -127,7 +128,7 @@ from oss_pr_radar.repo_probe import (  # noqa: E402
     verify_merge_resolution_scope_receipt,
     verify_probe_receipt,
 )
-from oss_pr_radar.runtime import RuntimeLockBusy, exclusive_lock  # noqa: E402
+from oss_pr_radar.runtime import REQUIRED_WORKERS, RuntimeLockBusy, exclusive_lock  # noqa: E402
 from oss_pr_radar.target_branch import (  # noqa: E402
     TargetBranchError,
     resolve_target_base,
@@ -30925,6 +30926,9 @@ def _reconcile_managed_pr_snapshot(
     path: Path,
     state: dict[str, Any],
     client: GitHubClient,
+    *,
+    before_apply: Callable[[], None] | None = None,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
     """Reconcile the complete managed PR set from this live observation cycle."""
 
@@ -30981,8 +30985,85 @@ def _reconcile_managed_pr_snapshot(
                 },
             }
         )
-    result = reconcile_managed_pr_states(path, observations, require_all_managed=True)
+    if before_apply is not None:
+        before_apply()
+    result = reconcile_managed_pr_states(
+        path, observations, require_all_managed=True, ensure_schema=ensure_schema
+    )
     return result | {"exactReads": exact_reads}
+
+
+def refresh_startup_pr_states(args: argparse.Namespace) -> dict[str, Any]:
+    """Sync real PR identities while publication and all business workers are stopped."""
+    from oss_pr_radar.operational_auth import worker_staging_transaction_lock
+    from oss_pr_radar.stage7_acceptance import check
+
+    runtime_root = args.runtime_root.resolve()
+    binding = bind_runtime(runtime_root)
+    if Path(__file__).resolve().parents[1] != binding.code_root.resolve():
+        raise RuntimeError("startup PR refresh must run from the active immutable release")
+
+    def stopped_snapshot() -> dict[str, Any]:
+        report = check(runtime_root, strict=True, require_workers_loaded=False)
+        required = (
+            "runtimeReleasePolicyIdentityMatch",
+            "releaseActivationJournalClear",
+            "automationContractsMatch",
+            "noRuntimeCodeDrift",
+            "noSharedGitWrites",
+            "pendingPublicationEffectsClear",
+            "diskRestartSafe",
+            "signingCapabilityAvailable",
+        )
+        if any(report.get(key) is not True for key in required):
+            raise RuntimeError("startup PR refresh requires a stopped, valid runtime with space")
+        if (
+            report.get("launchctlError") is not None
+            or report.get("dangerousBridgeReachable") is not False
+            or report.get("oldMonolithicWorkerReachable") is not False
+        ):
+            raise RuntimeError("startup PR refresh cannot verify absent business workers")
+        pause = report.get("publicationPause") or {}
+        ledger_state = report.get("ledger") or {}
+        if pause.get("valid") is not True or (
+            ledger_state.get("pointerValid") is not True
+            or ledger_state.get("integrity") != "ok"
+            or ledger_state.get("managedSchema") != MANAGED_SCHEMA_VERSION
+        ):
+            raise RuntimeError("startup PR refresh requires a valid pause and managed ledger")
+        workers = report.get("workers") or []
+        if len(workers) != len(REQUIRED_WORKERS) or any(
+            item.get("loaded") is not False
+            or item.get("processAlive") is not False
+            or (Path.home() / "Library" / "LaunchAgents" / f"{item['label']}.plist").exists()
+            or (Path.home() / "Library" / "LaunchAgents" / f"{item['label']}.plist").is_symlink()
+            for item in workers
+        ):
+            raise RuntimeError("startup PR refresh requires all business workers uninstalled")
+        return {
+            "pause": pause["sha256"],
+            "release": report["release"]["manifestSha256"],
+            "ledgerPath": ledger_state["path"],
+        }
+
+    with worker_staging_transaction_lock(runtime_root):
+        initial = stopped_snapshot()
+
+        def require_same_stopped_runtime() -> None:
+            if stopped_snapshot() != initial:
+                raise RuntimeError("startup PR refresh runtime changed during live reads")
+
+        result = _reconcile_managed_pr_snapshot(
+            args.ledger,
+            {},
+            GitHubClient(retry_delays=(1.0, 3.0, 8.0)),
+            before_apply=require_same_stopped_runtime,
+            ensure_schema=False,
+        )
+        require_same_stopped_runtime()
+        if result.get("allManagedKeysObserved") is not True or result.get("headMismatches"):
+            raise RuntimeError("startup PR refresh did not synchronize the complete managed set")
+        return {"ok": True, "action": "startup_pr_states_refreshed", "reconciliation": result}
 
 
 def _refresh_followup_projections(
@@ -32431,6 +32512,7 @@ def main() -> int:
     title_commit_parser.add_argument("--intent-id")
     title_commit_parser.add_argument("--worktree-path")
     subparsers.add_parser("refresh-prs")
+    subparsers.add_parser("refresh-startup-pr-states")
     recovery_list_parser = subparsers.add_parser("recovery-list")
     recovery_list_parser.add_argument("--min-age-minutes", type=int, default=90)
     recovery_list_parser.add_argument("--delivery-min-age-minutes", type=int, default=5)
@@ -32539,6 +32621,13 @@ def main() -> int:
                 "readOnly": True,
                 "error": f"{type(exc).__name__}:{str(exc)[:300]}",
             }
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0 if result.get("ok") is True else 2
+    if args.operation == "refresh-startup-pr-states":
+        try:
+            result = refresh_startup_pr_states(args)
+        except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+            result = {"ok": False, "error": f"startup PR refresh failed: {str(exc)[:300]}"}
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0 if result.get("ok") is True else 2
     try:

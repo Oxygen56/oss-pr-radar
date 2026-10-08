@@ -373,7 +373,27 @@ snapshot, verify the Stage 6 report and detached envelope, run the Stage 6
 rehearsal, prepare the managed ledger without any live-state input, rehearse Git
 preservation restore in an isolated clone, activate the pointer (which revokes
 any old operational authorization), **pause outbound publication and wait for
-the workflow to become idle**, generate and validate managed-counts evidence
+the workflow to become idle**. For a code-only upgrade, refresh the retained
+managed PR records before generating a new rehearsal baseline:
+
+```bash
+python <runtime-root>/current-release/scripts/local_dispatch_bridge.py \
+  --runtime-root <runtime-root> refresh-startup-pr-states
+```
+
+This startup-only operation requires the active immutable release, an effective
+publication pause, all four business workers and their plists uninstalled,
+restart-safe disk space and no pending publication effects. It reads the complete
+managed PR set from GitHub and applies the original PR reconciliation without
+schema initialization, task dispatch, reply preparation or publication. The
+pause and stopped-worker conditions are checked before and after the live reads
+and after synchronization. A failure remains a failure and may leave an already
+synchronized prefix; retry the same original operation after resolving its
+reported cause. Uninstall an expired staged configuration using the original
+worker installer before activating another release; resetting the staging
+records first loses the receipt needed to authenticate that uninstall.
+
+Then create a fresh live snapshot and rehearsal, generate and validate managed-counts evidence
 against the exact Stage 6 projection, issue the short-lived worker-staging
 authorization, stage the four worker plists unloaded, update the two automations,
 generate the automation snapshot from the actual TOML files and staged plist bytes,
