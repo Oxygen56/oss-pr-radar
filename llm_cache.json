@@ -51436,6 +51436,43 @@
     ],
     "why": "Issue reports a heap-corruption abort in the idle invariant walk with a full traceback and environment, but the root cause is explicitly unknown ('most plausibly from a free/ownership bug') and the report itself defers py-spy/full logs to a possible recurrence. The supplied duplicate assessment flags PR #42072 as semantic overlap on streaming_session.py with unresolved coverage, and the pre-review gate failed on base_sha_changed and duplicate_changed. These are materially blocking unknowns for deciding whether new code work is actionable."
   },
+  "58587cd0311cc152ca7116f5f92ca7a76e3bae697f10bc7ff7a5914c6e5fee27": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue body references two open PRs (#34900, #33549) while open_pr_assessment and preTaskEvidence report no related open PRs"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/types/llms/base.py schema serializer handling",
+      "logprobs assignment path in core utils handler",
+      "SAP AI Core provider path for empty logprobs"
+    ],
+    "risks": [
+      "Referenced PRs #34900 and #33549 may already cover the fix, creating duplicate work",
+      "Scope ambiguity between SAP-specific and generic logprobs fix could cause maintainer rejection",
+      "Broadening logprobs handling may affect other providers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with POST /v1/messages?beta=true streaming tool-call request; assert HTTP 200, no mid-stream error event, and terminal message_stop event",
+      "Add regression test for empty logprobs {} on SAP path",
+      "Run targeted unit tests for litellm/types/llms and streaming translation"
+    ],
+    "unknowns": [
+      "Whether PRs #34900/#33549 are still open, merged, or closed",
+      "Whether maintainers prefer SAP-specific vs generic logprobs fix"
+    ],
+    "why": "Issue provides a concrete reproduction path (streaming /v1/messages with tool call), explicit pass/fail criteria, and code anchors in litellm/types/llms/base.py. Two referenced PRs (#34900, #33549) are described as conflicting in scope, but the supplied duplicate assessment reports no open PRs, so coverage is not established as merged or duplicate. The bug is a user-visible streaming failure on the agent/inference path, making a targeted fix actionable."
+  },
   "586eaf6b21103c7d6f23544acd4b5c3e4ec6df55a491a4031ea5657e59f508f4": {
     "confidence": 0.7,
     "contradictions": [
@@ -118714,6 +118751,36 @@
       "Maintainer preference on the protocol extension shape and whether to split the three layers into separate issues"
     ],
     "why": "Issue requests reject-with-reason feedback to the model. Triage and an independent collaborator verification both anchor the gap in concrete code: ToolConfirmationPayload.cancelMessage exists (tools.ts:1062) but no UI sets it; coreToolScheduler.ts:4356-4360 falls back to 'User did not allow tool call'; resolvePermissionOutcome (permissionUtils.ts:230-235) collapses the ACP response to an enum with no reason. The ACP response-level _meta extension point is already live on this exact response (bridgeClient.ts:578-593, bridgeTypes.ts:1093-1102), so no upstream protocol change is required. This is a concrete, actionable code change with a clear validation path."
+  },
+  "cb099e3b3736cf4f6cada4e94c859062c3a3f82bbffa878e7b56e271cb42a539": {
+    "confidence": 0.6,
+    "contradictions": [
+      "candidate claims root_cause_signal true and probe_ready true, but the traceback points to third-party library internals with no LlamaFactory-side root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "dependency version constraint or environment compatibility check, if any LlamaFactory-side change is warranted"
+    ],
+    "risks": [
+      "Fixing upstream accelerate/transformers behavior inside LlamaFactory would be out of scope",
+      "Without version pins the failure may not be reproducible"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reported Qwen3-27B DeepSpeed config and pinned accelerate/transformers versions to confirm the AttributeError and identify the incompatible pair"
+    ],
+    "unknowns": [
+      "Exact accelerate/transformers/torch versions in use",
+      "Full training config and DeepSpeed config",
+      "Whether the failure is reproducible on current main"
+    ],
+    "why": "Issue is a version-mismatch AttributeError inside accelerate/transformers (AcceleratorState.mixed_precision), not a LlamaFactory code defect; no reproduction steps, config, or version info supplied, and the fix likely belongs upstream or in dependency pinning, so code work is not clearly actionable."
   },
   "cb1abe1806220c0f2ad4f551d7a4ed9f9ff55af363b9fc43277e9ad9d2a97019": {
     "confidence": 0.8,
