@@ -13281,6 +13281,37 @@
     ],
     "why": "The issue documents a real API asymmetry with a deterministic reproduction, but the required change is an API design decision (removal keyed by session, user, or memory entry) that the reporter explicitly declines to propose, and the repository policy requires assignment before work. The supplied evidence does not establish an agreed API shape or an assigned owner, so the concrete code change is not yet determined."
   },
+  "18a6c22c8662ee970376780f58f668f7c5b0015864f1cfdb33a9cc058c25025f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docker-compose / deployment config: bump paradedb base image to 0.26.x-pg17",
+      "migration or startup step to run ALTER EXTENSION pg_search UPDATE and REINDEX embeddings_search_idx"
+    ],
+    "risks": [
+      "pg_search 0.22.6 -> 0.26.0 may require schema/index compatibility checks beyond REINDEX",
+      "Upstream paradedb#4935 fix status and exact minimum safe version need confirmation",
+      "Changing default image affects existing deployments and upgrade path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce bulk import against v0.22.6-pg17 and confirm PANIC/crash recovery loop",
+      "Apply image bump + extension update + REINDEX, rerun equivalent bulk import for 10+ minutes and confirm zero PANIC and successful task completion",
+      "Verify BM25 and vector search still function after upgrade"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer pinning a specific 0.26.x patch vs latest",
+      "Whether an automated migration path is acceptable for existing users"
+    ],
+    "why": "Issue provides a concrete reproduction (bulk import with paradedb v0.22.6-pg17), a specific PANIC signature, and a validated fix path (upgrade to v0.26.0-pg17 + ALTER EXTENSION + REINDEX), with corroborating evidence ruling out OOM and disk corruption. This is an actionable infra/config change in the repo's compose defaults, not an algorithm-track item."
+  },
   "18adb2717e9d720cd47c9a987ccd6018369953839f7fac3ebaaabf6dfec6212c": {
     "confidence": 0.8,
     "contradictions": [
@@ -79877,6 +79908,41 @@
       "Whether maintainers consider the duplicate coverage sufficient"
     ],
     "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps and code anchors, but the supplied evidence shows an open PR #42740 that directly overlaps the same code path and distinctive identifier (x_override_priority), and the duplicate assessment is unresolved (human_review_required). Whether independent implementation space exists is a materially blocking unknown."
+  },
+  "888475d5046cb30e9016477576310db062b3dcc1d45f9513903ae3a3c7467380": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR #23430 is marked technical_complete=true but root_cause_coverage=false, while the issue itself supplies clear root-cause evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "llama-index-core/llama_index/core/retrievers/recursive_retriever.py: replace `score or 1.0` with explicit None check",
+      "llama-index-core/llama_index/core/base/base_retriever.py: same fix in sync and async expansion paths",
+      "llama-index-core/llama_index/core/indices/base_retriever.py: verify/align score handling"
+    ],
+    "risks": [
+      "Open PR #23430 already targets the same fix; competing work may be redundant",
+      "Behavior change could affect downstream score-based filtering if any code relied on the falsy fallback"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting a parent IndexNode with score=0.0 yields child NodeWithScore.score == 0.0",
+      "Add test asserting score=None still defaults to 1.0",
+      "Run targeted pytest for retrievers and base_retriever modules"
+    ],
+    "unknowns": [
+      "Whether maintainers consider PR #23430 sufficient or want a distinct implementation",
+      "Whether the full package test suite passes with the proposed change"
+    ],
+    "why": "Issue provides a concrete minimal reproduction, expected/actual pair, and identifies the exact falsy-fallback root cause (`score or 1.0`) across RecursiveRetriever and BaseRetriever sync/async expansion paths. This is a real score-propagation bug on the RAG retrieval path with a clear, testable fix."
   },
   "8884cb4d331a16d38ae9ce7c984924aad75c4c3aa65bd9780deac1178878074d": {
     "confidence": 0.8,
