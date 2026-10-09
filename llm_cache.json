@@ -2627,6 +2627,38 @@
     ],
     "why": "Issue provides a concrete, reproducible root cause for the primary defect: _engine_inputs_from_video() omits response_format=req.response_format, so the formatter defaults to url and drops b64_json. Code anchors, ordered reproduction steps, an executable curl command, and a minimal diff are supplied. The secondary FFmpeg color defect is isolated with a model-free RGB-quadrant reproduction and controlled cpuflags comparisons, giving a concrete validation path. No duplicate or merged-fix coverage is reported."
   },
+  "05eec7d3192ac9f31cd27aa44c02c38ffc8073c449bdd12c6d8a619540f97d3f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue body claims no fix exists, but collaborator comment states PR #12726 already addresses it and a contributor confirmed the fix works"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ui/desktop/src/components/GooseMessage.tsx: render copy button when rendered response text is non-empty rather than requiring all content blocks to be type `text`"
+    ],
+    "risks": [
+      "Duplicate/competing work with maintainer-owned draft PR #12726",
+      "Repository requires assignment before contribution; issue is unassigned",
+      "Change is trivial UI plumbing with low independent value"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add a component regression test rendering an assistant message with a thinking block plus text and asserting the copy button is present",
+      "Manually reproduce per issue steps with a thinking-capable model and confirm copy button appears on hover"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept an external contribution given the collaborator-owned PR #12726",
+      "Whether assignment will be granted"
+    ],
+    "why": "Issue is a clear, well-scoped desktop UI bug with a stated root cause (copy button only renders when all content blocks are type `text` in GooseMessage.tsx), but it is already covered by open PR #12726 authored by a repo COLLABORATOR, which directly references the issue and touches the same file. The issue also requires assignment (policy: needs_assignment) and no assignment exists. Remaining work is a one-line UI condition change, not an algorithm/infra contribution."
+  },
   "05f342629ef107eb04218c5641bd7019a297f261562904392fa412d8543cf7d2": {
     "confidence": 0.82,
     "contradictions": [],
@@ -8135,6 +8167,40 @@
       "Maintainer preference for fix vs documentation update"
     ],
     "why": "The issue provides a clear behavioral bug with reproduction steps, expected vs actual behavior, and timing evidence. Recent comments confirm correct serialization of parallel_tool_calls and local concurrency flags, isolating the issue to provider-hosted MCP orchestration. This is actionable for a fix or documentation update."
+  },
+  "0f37afeb0c04f74886afd48e126b772686e8b2c411c16b977cc58833ce086a74": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/mcp/server/mcpserver/resolve.py: avoid eager annotation evaluation when only parameter names are needed (FORWARDREF / __code__-based names)",
+      "src/mcp/server/mcpserver/tools/base.py: defer or harden Tool.from_function schema building",
+      "src/mcp/server/mcpserver/utilities/context_injection.py and func_metadata.py: stop silently swallowing unresolvable hints; surface InvalidSignature naming tool and missing name",
+      "src/mcp/server/mcpserver/server.py: same eager pattern in resource decorator"
+    ],
+    "risks": [
+      "Deferring schema building changes registration-time validation semantics and could affect existing error timing",
+      "Maintainer may prefer a narrower fix (only resolve.py:229) over full deferral, so scope should be confirmed before large refactor",
+      "Behavior differences between 3.13 __future__ annotations and 3.14 PEP 649 need consistent handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test module defining tool param/return BaseModels below the @app.tool() function, run on Python 3.14 in the existing CI matrix",
+      "Assert list_tools() succeeds and call_tool validates/returns correctly for the forward-referenced models",
+      "Assert unresolved annotations raise InvalidSignature naming the tool and missing name rather than a bare NameError"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer full deferral vs. minimal FORWARDREF patch at the name-only call sites"
+    ],
+    "why": "Issue provides a concrete, reproducible NameError on Python 3.14+ caused by eager inspect.signature(fn) in Tool.from_function (resolve.py:229) forcing deferred annotations to evaluate before later-defined types exist. Traceback, exact code anchors, version matrix, and a verified workaround (deferring add_tool) establish root cause and a validation path. No open PR or duplicate covers it."
   },
   "0f3d1f5102ea8fde2428e32a4807062b069511a426173083d5ad88051c0741d5": {
     "confidence": 0.85,
