@@ -23295,6 +23295,40 @@
     "wait_reason": null,
     "why": "Issue clearly identifies an unbounded query in view_spend_logs causing OOM, with concrete code anchors and suggested fixes. No competing PR or maintainer assignment found."
   },
+  "295b205d9e352e70d569c94ef448e72e80f0952eee4867f93b00db920116ad83": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims a clear root cause and expected behavior, but actionability evidence reports root_cause_signal=false and reproductionPathPlan=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "megatron/core/optimizer/distrib_optimizer.py: avoid re-copying already-allocated optimizer state during load_state_dict",
+      "Preserve param-group hyperparameter update while skipping redundant state tensor reallocation"
+    ],
+    "risks": [
+      "PR #7288 may already cover the same root cause, making a new contribution duplicative",
+      "Fixing the copy path could silently drop legitimate state updates if the branch is not carefully scoped",
+      "Memory regression tests require GPU hardware and may be flaky"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: allocate optimizer state, load a torch_dist checkpoint in place, then call optimizer.load_state_dict and assert state tensor data_ptr() values are unchanged",
+      "Multi-rank regression: verify restored optimizer state matches reference and peak GPU memory does not double during checkpoint load"
+    ],
+    "unknowns": [
+      "Whether PR #7288 already fixes this exact root cause or only overlaps semantically",
+      "Whether a concrete reproduction/validation path exists beyond the linked PR's unit test",
+      "Whether maintainers require assignment or design confirmation before work"
+    ],
+    "why": "Issue describes a concrete distributed-optimizer checkpoint-load memory bug with a plausible root cause (load_state_dict copying already-allocated state onto itself), but the supplied evidence lacks a reproduction path (reproductionPathPlan=false, public_repro_signals=0, probe_ready=false) and an open PR (#7288) semantically overlaps the same code path and distinctive symbols (checkpoint, distributedoptimizer_load_state_dict) without being linked to the issue, leaving unresolved duplicate/coverage uncertainty."
+  },
   "295d25ecb6e490150a838bb3f00986df55f214101fc865df1f1d985829835026": {
     "confidence": 0.8,
     "contradictions": [
@@ -40807,6 +40841,40 @@
       "Root cause not yet identified"
     ],
     "why": "Issue reports a reproducible hybrid sparse attention + Eagle prefix-cache miss for specific prompt lengths, with concrete commands and cache-hit data. However, the deterministic gate is HUMAN_REVIEW, open PR lookup timed out, and related-issue audit failed, so competition and maintainer context are incomplete."
+  },
+  "486e030d979599dbf792fce306b258a9dcb962c7d9f3a3d600698b6136935bdd": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.algorithm_evidence claims qualified=true with 6 mechanisms, but the issue body describes only resource-cleanup bugs with no training objective, numerical method, or evaluation methodology."
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/export.py temp-dir cleanup",
+      "src/soup_cli/cans/run.py extraction cleanup",
+      "src/soup_cli/trainer/sft.py streaming runtime close on setup failure",
+      "src/soup_cli/eval/aider_polyglot.py container lifecycle",
+      "src/soup_cli/ui/app.py temp config deletion"
+    ],
+    "risks": [
+      "Treating keyword matches (lora/sft/adapter) as algorithm evidence would misclassify ordinary CLI resource-leak fixes as algorithm work.",
+      "Duplicate/overlap risk: sweep site already merged via #1640; Windows best-of-n site claimed by another contributor."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Not applicable for llm_algorithm track: no training objective, numerical regression, or controlled experiment is defined by this issue."
+    ],
+    "unknowns": [
+      "Whether any remaining site has an unclaimed, non-duplicated implementation path is not established by the supplied evidence."
+    ],
+    "why": "Issue #1464 is a resource-cleanup bug report (temp dirs, tracker rows, reader threads, Docker containers, temp files) in a CLI/training-wrapper repository, not an LLM algorithm contribution. The candidate's algorithm_evidence is keyword-matched noise (lora/sft/adapter/awq appear only as config surface, not as a training objective, kernel, quantization method, or evaluation methodology). Track=llm_algorithm requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology with a reference-vs-implementation or numerical regression path; this issue supports none of those. Additionally, the sweep site is already fixed by merged PR #1640, and the Windows best-of-n site is claimed by Guts1005 with an open PR, so remaining sites are ordinary plumbing cleanup."
   },
   "486e49399a5976be5cd88f2a9dff2a1c88984fa76bb65b4349049b39c541374a": {
     "confidence": 0.72,
@@ -131811,6 +131879,33 @@
       "Whether the bug reproduces with non-Ollama providers, which would localize it to Continue"
     ],
     "why": "The issue provides a strong reproduction (MCP tee log showing the second read_multiple_files call sends paths as a quoted string) but the root cause is explicitly unresolved: the reporter states the stringification could occur in Ollama's qwen3coder parser or in Continue after receiving the call. The only root-cause comment is an unverified, unexecuted hypothesis from a non-maintainer who could not build or test the extension, and the supplied code anchors (frontend React files, mcp-tee.js, qwen3coder.go) are not confirmed Continue source locations. No code path in continuedev/continue has been identified, so the fix site is unknown."
+  },
+  "e179afdc5f6936ee95906579cd4ee19211856b2cd1c9a9c8e930e6b640a8b25c": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ui/desktop/src/components/GooseMessage.tsx copy-button render condition"
+    ],
+    "risks": [
+      "Duplicating or conflicting with collaborator-owned PR #12726",
+      "No regression test currently guards the condition"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add a component test rendering an assistant message with a thinking block plus text and assert the copy button is present"
+    ],
+    "unknowns": [
+      "Whether PR #12726 will be merged as-is or superseded"
+    ],
+    "why": "Issue is a desktop UI copy-button rendering bug with a clear root cause (GooseMessage.tsx only renders copy button when all content blocks are type text), but it is already covered by open PR #12726 authored by a collaborator, which the reporter has independently verified as fixing the behavior. Remaining gaps (draft status, missing regression test) are being handled in that existing PR, so a competing contribution is low-value."
   },
   "e17d70d651699cf07da68f636808088082f1596fda9a8415fe8b35b92d73897b": {
     "confidence": 0.8,
