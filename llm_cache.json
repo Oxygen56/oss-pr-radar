@@ -38771,6 +38771,31 @@
     ],
     "why": "The issue describes a user-visible bug in cloud canvas file uploads where the agent is not informed of the file path. It is actionable but lacks a clear root cause and requires maintainer confirmation on the intended behavior and design. No competing PR exists, but the fix likely spans multiple components and needs design guidance."
   },
+  "44ac2e19f833f7b13e5a0eea32117e9d801fb492e6feadc0a7cdce6155fa907c": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER and actionability_evidence.needs_confirmation=true imply possible repo work, while the factory reproduction comment states the bug is outside the AI SDK codebase scope."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "A PR in vercel/ai could only alter client-side warning/metadata handling, which would not fix the advertised-vs-effective limit mismatch and would risk masking the service behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No repository-level regression test is actionable; the only validation path is against the hosted Gateway service, which is out of scope for this repo."
+    ],
+    "unknowns": [
+      "Whether maintainers want a client-side documentation or metadata change despite the root cause being in the hosted service."
+    ],
+    "why": "The supplied reproduction evidence establishes that the clamp originates in the hosted Vercel AI Gateway service, not in the vercel/ai repository: the SDK forwards maxOutputTokens: 128000 unchanged, and the SDK-independent raw /v1/responses request reproduces the same lowering warning. The factory reproduction comment explicitly concludes the bug is outside the AI SDK codebase scope, and the catalog/endpoint metadata that advertises 128000 is served by the hosted service. No code change in this repository can fix the effective limit."
+  },
   "44b397a07ebc028b2632b6086e59f7a31b6cb307dcda80696d173964af9bf277": {
     "confidence": 0.8,
     "contradictions": [],
@@ -38896,6 +38921,37 @@
       "Whether the AI disclosure policy conflict blocks automated contribution"
     ],
     "why": "Issue pinpoints a concrete numerical nondeterminism: moe_wna16_gemm_kernel combines split-K partial sums via 16-bit atomicAdd on a zeroed output, so results depend on block scheduling; the Triton path writes each tile once and is used as a control. Reproduction is kernel-level with fixed seed, M=16 vs M=64 to select CUDA vs Triton, and bitwise comparison across processes."
+  },
+  "44ca463320a04f4a8195e02678d18e9561ab27052b9bf65c6b2711e021ad9949": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugin-sandbox subprocess launch: set cwd to installed package root or configure module resolution base (createRequire/NODE_PATH) to the install directory",
+      "package-name mismatch handling between @cline/cli-windows-x64 and @cline/cli-windows"
+    ],
+    "risks": [
+      "Fix must not break non-Windows module resolution or the existing AppData\\Local\\Cline layout",
+      "Changing cwd or NODE_PATH could affect other sandbox-relative path assumptions",
+      "Package-name mismatch may require a separate fix beyond the cwd change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that launches the plugin-sandbox subprocess from a CWD outside the install tree and asserts 'jiti' and '@cline/shared' resolve successfully",
+      "Reproduce on Windows: install cline globally, start it, and confirm no 'Cannot find module jiti' ERROR entries accumulate in .cline/data/logs/code.log",
+      "Run targeted unit tests for the plugin-sandbox/module-resolution package plus static checks"
+    ],
+    "unknowns": [
+      "Exact source location of the plugin-sandbox spawn/module-resolution code is not pinned in the supplied evidence, though codePathsPlan lists candidate files"
+    ],
+    "why": "Issue provides a concrete Windows-only reproduction, exact error output, a verified workaround, and a specific root cause: the plugin-sandbox subprocess resolves 'jiti' and '@cline/shared' relative to its CWD (AppData\\Local\\Cline\\[eval]) instead of the installed package root, so Node never reaches the npm global prefix. Suggested fixes (set cwd to package root or point createRequire/NODE_PATH at install dir) are actionable. No open PR directly covers this path; PR #14888 is keyword-overlap only with no code-path or root-cause overlap."
   },
   "44d92b22e3dcb7bf902639c3510ff06fca1e450508ff1bf569aad558724156ac": {
     "confidence": 0.85,
@@ -60570,6 +60626,37 @@
     ],
     "why": "The issue reports a user-visible 404, but a contributor's end-to-end simulation on current main could not reproduce it and showed the error state (webhook row present, app_triggers row missing) does not arise through the normal draft-sync/publish paths. The reporter's version/commit is unknown, and the contributor explicitly asks for the self-hosted version, app_triggers row state, and whether undo/redo or node re-adding occurred. Without that, the root cause is not established and the fix is not actionable."
   },
+  "67fea0ef48b409410d6231f620eaee88de61f563a9e87b53651d23bf2e4b2596": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "dynamo_runtime::pipeline::network::tcp::client callback registration/removal ordering",
+      "worker request admission gating on response callback availability",
+      "ingress push_handler response publish path"
+    ],
+    "risks": [
+      "Fix may require coordination between frontend callback cancellation and worker admission, risking broader API behavior change",
+      "Race may be timing-sensitive and hard to reproduce deterministically in CI"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided Kubernetes manifest and aiperf script, then assert no 'Failed to publish response' warnings for requests admitted after callback cancellation",
+      "Add a targeted Rust test that removes a response callback concurrently with request admission and verifies the request is rejected before processing"
+    ],
+    "unknowns": [
+      "Whether the referenced steved/vllm-response-ack branch is intended as the canonical fix or just a probe"
+    ],
+    "why": "Issue describes a concrete race between worker discovery removal and TCP response callback establishment, with ordered reproduction steps, executable commands, expected/actual behavior, and log evidence showing response publish failure after callback cancellation. A proposed fix branch is referenced, and no open PR or duplicate issue covers it."
+  },
   "682022326b5a96b13b775f05b688685ffc630d2934289b1c90f161ffe22971c0": {
     "confidence": 0.8,
     "contradictions": [
@@ -67336,6 +67423,37 @@
       "Exact provider stream format and chunking details not fully specified, but root cause hypothesis is sufficient for initial investigation."
     ],
     "why": "Issue provides a clear user-visible bug with a concrete root-cause hypothesis (provider-specific reasoning stream not routed into repetition detectors) and a suggested fix. Code anchors and validation path are supplied, making the work actionable."
+  },
+  "71abcb88cd8e02ff996943930fb1f98783e3254181b82fca7ffd2ca953c0f95a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/discovery/kube.rs: resubscribe under list_state read lock after lag Resync so receiver starts at snapshot",
+      "regression test in kube.rs using client_with 16-slot channel and current-thread runtime"
+    ],
+    "risks": [
+      "Open PR #15767 already targets the same file with a similar fix but lacks tests; competing PR may land first",
+      "Potential overlap with issue #16095 (discovery/endpoint signals) is weak and likely unrelated (IPv6 URL bug)",
+      "Fix must preserve Discovery::list_and_watch contract without widening API behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit test: 16 workers flap Removed->Added (32 events) before watch task runs, then worker 17 joins; assert next event after Resync is Added(instance_id 17), not stale Removed/Added pairs for workers 9-16",
+      "Run cargo test -p dynamo-runtime --lib on current-thread runtime"
+    ],
+    "unknowns": [
+      "Whether PR #15767 will be merged before an independent fix, making the work redundant"
+    ],
+    "why": "Issue provides a precise root cause (lagged broadcast receiver resumes at oldest buffered event, replaying pre-Resync history), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a concrete unit-test reproduction on a current-thread runtime with the 16-slot channel, and a proposed fix matching the mem.rs resubscribe-under-lock pattern. This is a runtime/discovery correctness bug with a clear reference-vs-implementation validation path."
   },
   "71b0dbf806f5473285418ed9cfe4ae6215a1b07eadf310067dc8d5e31644ba28": {
     "confidence": 0.7,
@@ -107190,6 +107308,39 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a systemic JSON parsing failure in the Memory MCP server. A maintainer-triggered bot investigation claims a root cause (console.error stderr interference on Windows) and a fix commit, but the fix is not yet merged and the issue remains open. The candidate is actionable but requires maintainer review of the proposed fix and confirmation of the root cause before new work starts."
+  },
+  "b7d4c348da3a825c6d307844366f083b5cded4df08d5155524b7edd6221a7052": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/nonInteractiveCli.ts: stop gating emitResult on memory task promises",
+      "packages/cli/src/nonInteractive/session.ts: extend waitForAllPendingWork() to drain retained memory promises with a bounded timeout",
+      "packages/cli/src/nonInteractiveCli.test.ts: add emit-order and shutdown-drain assertions"
+    ],
+    "risks": [
+      "Naive removal of the await can truncate memory writes on one-shot exit or stream-json EOF",
+      "Open PR #12561 touches auto-memory and config.ts with large scope; needs comparison before duplicating work",
+      "Behavior change to terminal result timing may need maintainer design preference"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Deferred memory promise must not delay emitResult (emit-order assertion)",
+      "Shutdown drains pending memory promises before exit and gives up after the bound",
+      "Regression: one-shot qwen -p and stream-json EOF do not truncate memory writes"
+    ],
+    "unknowns": [
+      "Whether PR #12561 already covers the same root cause or is only adjacent auto-memory work"
+    ],
+    "why": "Issue provides a concrete, source-verified root cause: headless nonInteractiveCli.ts awaits consumePendingMemoryTaskPromises() before emitResult, while TUI fire-and-forgets and ACP never queues them. Triage bot and a collaborator independently verified all cited locations against main @ 1e1c4a4a, including the durability constraint that waitForAllPendingWork() has no memory drain. Reproduction steps, timing table, and suggested fix with bounded shutdown drain are all supplied."
   },
   "b7d6b48fb100891f74f4b2c8850a5ced0a1ef4727399dd686a0e4bf4156308e1": {
     "confidence": 0.85,
