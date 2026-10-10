@@ -32771,6 +32771,35 @@
     "unknowns": [],
     "why": "Issue #42306 is a pure UI/UX enhancement request for missing tooltips on workflow editor toolbar buttons. It contains no agent/inference/RAG runtime behavior, no training objective, model mechanism, distributed invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. Under track=agent_ai_infra this is ordinary frontend plumbing, and an open PR #42307 already covers the same tooltip change, making this a low-value/covered opportunity."
   },
+  "3a040a4329cbb13a4e36082cf4d848afe6499a44f4d07c4f6079eed1d7644263": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/providers/formats/bedrock.rs: drop ActionRequired/ToolConfirmationRequest content instead of emitting blank text blocks",
+      "crates/goose/src/providers/bedrock.rs: ensure messages left with no content are skipped"
+    ],
+    "risks": [
+      "Changing content filtering could affect other providers sharing conversion helpers",
+      "Maintainer may prefer filtering at the provider level rather than the format level"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test in formats/bedrock.rs asserting ActionRequired/ToolConfirmationRequest produce no ContentBlock",
+      "Add a regression test replaying a session history containing an elicitation response and asserting no blank text block is sent",
+      "Run targeted package tests and static checks for the bedrock provider"
+    ],
+    "unknowns": [
+      "Repository requires assignment before contribution (policy status needs_assignment), which is a process gate rather than a technical blocker"
+    ],
+    "why": "Issue provides a concrete root cause: to_bedrock_message_content in crates/goose/src/providers/formats/bedrock.rs converts ActionRequired/ToolConfirmationRequest to ContentBlock::Text(\"\"), and the provider only skips messages with empty content lists, so a blank text block is sent and Bedrock rejects it on replay. Reproduction steps are explicit and a validation path exists (unit test on the format conversion plus session replay)."
+  },
   "3a1fa83deeea1277742efe00e74f91e33d5870b8df794850073623e5a37fcde8": {
     "confidence": 0.8,
     "contradictions": [
@@ -47428,6 +47457,40 @@
     ],
     "why": "Issue pinpoints the hardcoded English disfluency sentence in steering_instructions() and its unconditional append in resolve_expressive_options, with a concrete reproduction and a proposed minimal fix path; no duplicate or merged coverage found."
   },
+  "5268ec5acd3550e5047b34333db38a2014618977eb2f69fb4411d07b86853a87": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "TCP response callback registration/acknowledgment path in dynamo-runtime",
+      "Worker request admission gating on callback establishment",
+      "Discovery removal handling to prevent processing after callback cancellation"
+    ],
+    "risks": [
+      "Fix may require API or protocol changes to the TCP response plane",
+      "Race may be timing-sensitive and hard to reproduce deterministically in CI",
+      "Maintainer may prefer a different synchronization approach"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided Kubernetes manifest and aiperf script under concurrent load while removing the discovery endpoint",
+      "Add a regression test that cancels a pending response callback and asserts the worker does not begin processing",
+      "Run targeted dynamo-runtime Rust unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact code location of callback establishment vs. worker admission is not confirmed from supplied evidence",
+      "Whether the referenced proposed fix branch is acceptable to maintainers"
+    ],
+    "why": "Issue describes a concrete race between worker discovery removal and TCP response callback establishment, with ordered reproduction steps, executable commands, expected/actual behavior, and log evidence showing response publish failure after callback cancellation. Track is agent_ai_infra, not llm_algorithm, so algorithm-specific requirements do not apply. No open PR or duplicate issue covers the fix."
+  },
   "527da83e36c8aae7249cfdb73e872454f176323d9a0e95242b1eea1bae5efdb5": {
     "confidence": 0.8,
     "contradictions": [],
@@ -48566,6 +48629,43 @@
     ],
     "unknowns": [],
     "why": "Issue is a pure UI/UX enhancement request for missing tooltips on workflow editor header buttons; no algorithm, training, inference, RAG, or kernel mechanism is involved. Track is agent_ai_infra but the work is ordinary frontend plumbing, and an open PR #42307 already covers the same change, making this low-value/covered."
+  },
+  "545a86c6c63e514f59988e0cf2c427d5283302bc98782f6796404162510d6eaf": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/mcp/server/mcpserver/tools/base.py: defer Tool.from_function schema build until first list/get/call",
+      "src/mcp/server/mcpserver/resolve.py: avoid eager annotation evaluation at lines 229/376 (FORWARDREF or name-only extraction)",
+      "src/mcp/server/mcpserver/utilities/context_injection.py: stop silently swallowing unresolvable hints",
+      "src/mcp/server/mcpserver/utilities/func_metadata.py: surface unresolved names as InvalidSignature naming tool and missing name",
+      "tests: add regression module defining tool param/return models after the decorated function on 3.14+"
+    ],
+    "risks": [
+      "Deferring schema build changes registration-time validation semantics and public add_tool subclass hook timing",
+      "Duplicate tool registration ownership across eager/pending paths could regress",
+      "Resources/prompts share the eager pattern and are out of scope for a narrow tools-only fix",
+      "Maintainer may prefer a common server-start build phase over decorator-only deferral"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal repro on Python 3.14.8: define Query/Hit after @app.tool() and assert list_tools() returns the tool",
+      "Regression: quoted annotation q: \"Query\" and from __future__ import annotations on 3.13.5 should yield InvalidSignature, not bare NameError",
+      "Regression: ctx: Context and Annotated[_, Resolve(...)] with later-defined types must not be silently dropped",
+      "Run focused/adjacent mcpserver tool tests plus static checks on the pinned base SHA"
+    ],
+    "unknowns": [
+      "Whether maintainers accept decorator-only deferral versus a server-start build phase (design preference, not a blocker)",
+      "Whether the commenter's patch will be submitted as a PR"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: eager Tool construction in @app.tool() forces annotation evaluation via inspect.signature(fn) at resolve.py:229, raising bare NameError on Python 3.14+ PEP 649/749 deferred annotations; traceback, code anchors, and a verified local patch/workaround are supplied. A commenter independently reproduced on main @91941ed and reports a tools-only deferral patch passing 436 focused/adjacent tests, establishing an actionable validation path."
   },
   "547b883d62594798b1a13026c39ed29616e6e5c0f8966371a51ce8e12fad56ce": {
     "confidence": 0.9,
@@ -82115,6 +82215,37 @@
     ],
     "why": "Issue provides a clear root cause (EventedAgent overrides executeWorkflow and never calls deleteRunSnapshots), a concrete reproduction path with expected/actual behavior, and a suggested fix direction. The bug is user-visible and impactful, with no duplicate PRs or issues found."
   },
+  "8c39672b6ab667c004c9a6c12d37d2f55514e99fb5e32d5d69b2897964195d58": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/agent/templates/chunk_summary.json: migrate Extractor params to modular format",
+      "internal/agent/templates/title_chunker.json: migrate Extractor params to modular format",
+      "internal/ingestion/pipeline/pipeline_params.go: optionally extend extractorValidParamKeys or add migration handling for legacy fields"
+    ],
+    "risks": [
+      "Changing extractorValidParamKeys could unintentionally accept other legacy params; prefer template migration over broad whitelist expansion",
+      "Maintainer may prefer a migration shim versus template-only fix",
+      "Template schema changes could affect other consumers of these JSON files"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that loads chunk_summary.json and title_chunker.json, runs CleanComponentParams, and asserts the summarization prompt/sys_prompt is preserved rather than dropped",
+      "Run targeted Go unit tests for internal/ingestion/pipeline and template loading",
+      "Manually reproduce by selecting Chunk Summary template, parsing a document, and verifying summaries are produced"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing the templates, the whitelist, or adding a legacy-param migration path"
+    ],
+    "why": "Issue identifies a concrete root cause: legacy Extractor fields (field_name, prompts, sys_prompt, tenant_llm_id) in chunk_summary.json and title_chunker.json are not in extractorValidParamKeys, so CleanComponentParams silently drops them, causing empty/default prompts. Reproduction steps and expected behavior are provided, and the fix is a bounded template/whitelist change with a clear validation path."
+  },
   "8c47761129f72eab6a141a725f87254a51e24d5393db6f3fe4fb2fb528cf3bbe": {
     "confidence": 0.7,
     "contradictions": [
@@ -105656,6 +105787,37 @@
       "Whether the contributor's claim to take the issue is authoritative"
     ],
     "why": "The issue describes a concrete, code-anchored defect: use_flash_attn/use_liger are validated and auto-enabled for every task but only consumed by SFT's _setup_transformers. However, the supplied evidence shows an open PR #983 with the same title and overlapping paths, and a contributor comment claiming to be actively taking the fix. This unresolved duplicate/coverage conflict is a materially blocking unknown for whether new code work is actionable."
+  },
+  "b5b87b1cb7ac56cf9c4a129b4300ea82a3ff7de261508d044a49bba2f9b9a4ce": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/service/agent.go: reuse terminal/source selection for the persisted answer instead of first-nonempty map iteration",
+      "session persistence path for assistant messages / DSL history"
+    ],
+    "risks": [
+      "Changing answer selection could alter behavior for workflows with multiple terminal outputs or display-only Message wrappers",
+      "Map iteration nondeterminism may make the bug intermittent, so the regression test must force ordering or run enough iterations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build Begin -> query-rewrite Agent -> answer Agent -> Message with distinguishable intermediate JSON and final prose; disable citations",
+      "Run repeatedly with model stubs and assert saved session assistant message equals final answer node content",
+      "Continue the session and assert subsequent turns receive the correct assistant history"
+    ],
+    "unknowns": [
+      "No maintainer design preference is recorded for which terminal/source selection should be authoritative"
+    ],
+    "why": "Issue provides a concrete root cause: RunAgent in internal/service/agent.go selects the first nonempty answer/content/result while ranging over the unordered state.Snapshot() map, so an intermediate node output can be persisted as the assistant answer even when the streamed Message is correct. Reproduction steps and a validation path (deterministic stubs, repeated runs, inspect saved session history) are supplied, and no duplicate/merged fix or assignment blocker is present."
   },
   "b5bb0e3609affd0db5fb17b8723a97e8c430b0fe8ace3ff51991d4b1f62c5734": {
     "confidence": 0.9,
