@@ -125589,6 +125589,37 @@
     ],
     "why": "Issue describes a real user-visible bug with a concrete repro and expected behavior, but the proposed fix (client-side bounded retry) is undermined by a collaborator's finding that the shared-tier path does not honor clientMessageId, so idempotency is not guaranteed. This requires design confirmation on server-side deduplication or a narrower retry scope before implementation."
   },
+  "d619596fa5f81466f42c50856e629f7a1e261117b673171b7e0bdb57f324ff50": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/ai/src/model/resolve-model.ts: invoke resolveSpeechTranslationModel, resolveVideoModel, and resolveRerankingModel factories with the provider receiver (member call or .call(provider, model))",
+      "Add class-based provider regression tests for all three resolvers, preserving direct-model and closure-based provider behavior"
+    ],
+    "risks": [
+      "Draft PR #22672 overlaps the reproduction path and may later expand into a fix, requiring comparison before submitting",
+      "Changing invocation style could subtly alter behavior for providers relying on current unbound semantics, though the decision-model resolver precedent suggests .call(provider, model) is intended"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's mocked repro.mjs against the patched build and assert each string-ID call equals its direct-model control for speech translation, video, and reranking",
+      "Add unit tests in packages/ai covering class-based providers whose factories read instance state via #private fields, plus closure-based providers as a non-regression control",
+      "Run targeted package unit tests and TypeScript checks for packages/ai"
+    ],
+    "unknowns": [
+      "Whether maintainers intend a specific fix style (member call vs .call) beyond the existing decision-model precedent"
+    ],
+    "why": "Issue provides a concrete, mocked reproduction against ai@7.0.137 and upstream, identifies the exact unbound-factory pattern in resolve-model.ts for three resolvers, and notes the decision-model resolver already uses factory.call(provider, model) as a reference pattern. Reproduction was independently confirmed by the factory bot. The overlapping draft PR #22672 is a reproduction-only draft with no test files and no root-cause coverage, so it does not cover the fix."
+  },
   "d6247da43698161fd6974094e3285a450e5c8cc7d562f7ba8436e52821c59bcd": {
     "confidence": 0.8,
     "contradictions": [],
@@ -132366,6 +132397,39 @@
     ],
     "why": "Issue describes a plausible silent-drop bug with a concrete repro, but the pre-task evidence shows no code surface plan, no reproduction path plan, and an assignment requirement, so the actionable code location and validation path are not established."
   },
+  "e17ee69e7eda935108defda793f7879867aeb2e5956442f7c3e314a5bed761ca": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue says #15482 has CPU regressions for this case, while the PR assessment marks it technically complete with root-cause coverage false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "NIXL receiver batch-preparation error path in the multimodal runtime",
+      "pooled descriptor return/cleanup logic preserving original sizes and registration handles"
+    ],
+    "risks": [
+      "Overlapping open PR #15482 may already cover the same fix, risking duplicate work",
+      "Changing cleanup behavior could break active transfer cleanup semantics",
+      "No code anchors or reproduction evidence means the exact failure path is unverified"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test with two pooled descriptors where a later larger allocation fails, asserting both descriptors are returned with original sizes and registration handles",
+      "Run the targeted package tests and static checks after the minimal fix"
+    ],
+    "unknowns": [
+      "Exact code path/module where pooled descriptors are lost",
+      "Whether PR #15482 already resolves the issue or is insufficient",
+      "Concrete reproduction steps or failing test from the issue"
+    ],
+    "why": "The issue describes a plausible NIXL pooled-buffer leak on batch-preparation failure, but the supplied evidence lacks code anchors, a concrete reproduction, and root-cause confirmation; the only related PR (#15482) is open and its root-cause coverage is explicitly false, so duplicate/coverage status is unresolved."
+  },
   "e18b59e7b07891626fb1872274cd8ebe16467a233733d34a4258d0151ef0a9f3": {
     "confidence": 0.55,
     "contradictions": [],
@@ -133807,6 +133871,38 @@
       "Exact code location for the bug (frontend vs CPU plugin) is not pinpointed, but the issue provides enough to start investigation."
     ],
     "why": "Issue provides a minimal ONNX model, exact reproduction script, and expected vs observed outputs, clearly identifying a rank/shape handling bug in OpenVINO CPU for Expand with empty target shape. Root cause is localized to Expand op implementation, and a concrete validation path exists via the provided script."
+  },
+  "e3931f2cc3f3e8b0532704773322c5296917fd42fdcf5ae4c533fb0cf5dd78aa": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/ai/src/registry/provider-registry.ts: stop copying v4 providers into a prototype-only object; retain the original instance or delegate methods/getters to the original receiver",
+      "Add regression test covering a v4 class provider with private state exposing both languageModel and videoModel, plus a control provider without video support"
+    ],
+    "risks": [
+      "Open draft PR #22583 overlaps the same reproduction path and may already cover the root cause; compare implementation boundaries before duplicating work",
+      "Fix must not broaden public API behavior or break existing adapter-based providers that legitimately need wrapping",
+      "Maintainer may prefer a specific delegation strategy over simply retaining the instance"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.mjs against the patched build; assert registry.languageModel('example:test').provider === 'example' and registry.videoModel('example:test').provider === 'example'",
+      "Add a unit test in packages/ai for createProviderRegistry with a private-field class provider with and without videoModel",
+      "Run targeted package tests and typecheck for packages/ai"
+    ],
+    "unknowns": [
+      "Whether PR #22583 already implements the root-cause fix or only adds a reproduction, which affects duplicate-work risk"
+    ],
+    "why": "Issue provides a credential-free minimal reproduction, a precise root cause in packages/ai/src/registry/provider-registry.ts (prototype-based copy via Object.assign(Object.create(...)) loses private fields, so languageModel is invoked with a receiver lacking #name), and a concrete proposed fix plus regression-test plan. Reproduction was independently confirmed by the factory bot against ai@7.0.137 and upstream main."
   },
   "e3b00cd8945f0522f62672ae4aa95e71d162b695c16f7885b25d40dcffba8155": {
     "confidence": 0.85,
@@ -142778,6 +142874,40 @@
       "Whether maintainers prefer a config option for scopes or default to omitting scope; exact location of scope construction code"
     ],
     "why": "The issue provides a detailed root cause for Bug 1 (missing hydration of persisted client credentials) and Bug 3 (over-broad scope from discovery), with concrete code anchors and a clear reproduction path. Recent comments indicate Bug 1's hydration is already fixed on the default branch, but Bug 3 remains unaddressed and is actionable. The issue is technically valuable and not fully covered by existing PRs."
+  },
+  "f1e2228636e824b92b97ee18352518538bd97025f3ddf915220720d96f2bd9ac": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/mcp/src/tool/mcp-client.ts: handle late responses for completed/cancelled request IDs without throwing out of transport.onmessage",
+      "Route genuinely invalid-ID diagnostics through the configured onError/onUncaughtError path",
+      "Bound retention of cancelled request IDs to avoid unbounded growth"
+    ],
+    "risks": [
+      "Fix must not silently swallow genuinely invalid protocol responses",
+      "Cancelled-ID tracking must be bounded to avoid a memory leak",
+      "Draft PR #22655 overlaps the reproduction path and may later expand scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: abort a callTool request, then deliver a late response via transport.onmessage; assert no throw escapes and onUncaughtError is not spuriously invoked",
+      "Add regression test for timeout/response race mirroring the abort case",
+      "Add test that a normal active request still resolves correctly",
+      "Add test that a genuinely unknown message ID is still surfaced through the error callback"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for cancelled-ID tracking vs. silent ignore"
+    ],
+    "why": "Issue provides a self-contained reproduction (no server/credentials), a concrete root cause in packages/mcp/src/tool/mcp-client.ts (abort cleanup deletes the response handler; onResponse then throws 'unknown message ID' directly from transport.onmessage without routing to onError), and a clear expected behavior. A reproduction PR (#22655) exists but is a draft with no regression test and no root-cause fix, so it does not cover the actionable fix work."
   },
   "f1f130af1744f5925898a60ee07ccefe3fdd6423528ac2efaef11c654cf04694": {
     "confidence": 0.6,
