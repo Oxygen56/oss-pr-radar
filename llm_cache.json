@@ -20474,6 +20474,38 @@
     ],
     "why": "The issue provides a clear root cause (strict schema gate, runtime normalizer, and preview formatter all assume the 'command' key), a concrete reproduction (object-form commands with guessed keys), and a validated patch with expected behavior. The maintainer's comment indicates a fix in v4.1.11, but the issue remains open and the patch is still actionable for verification or further improvement."
   },
+  "25343ae3a8329f687777a9afc7ad09ea91404f60178821b59c551f2861c0d04a": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "web/app/components/workflow/block-selector/snippets/use-insert-snippet.ts: generate hyphen-free node IDs including the collision fallback",
+      "api/core/prompt/utils/prompt_template_parser.py: align node-ID character class if regex widening is chosen",
+      "api/services/workflow_variable_reference_validator.py and api/core/app/app_config/workflow_ui_based_app/variables/manager.py: keep regex copies consistent"
+    ],
+    "risks": [
+      "Multiple independent regex copies could drift if only one is widened",
+      "Frontend-only fix does not repair already-saved graphs with hyphenated IDs",
+      "Widening the regex may have unintended effects on other template consumers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test asserting VARIABLE_PATTERN matches a hyphenated selector like {{#1791619342702-1791622662711-1.text#}} (or that generated IDs contain no hyphens)",
+      "Regression test on remapSnippetGraph verifying generated IDs match the backend-accepted character class, including the collision path",
+      "Run targeted backend prompt-template parser tests and frontend snippet-insert tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer hyphen-free ID generation over regex widening (design preference, not a blocker)"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: remapSnippetGraph in use-insert-snippet.ts generates hyphenated node IDs, while the backend template regexes (prompt_template_parser, workflow_variable_reference_validator, app_config variables manager, generator runner) only accept [a-zA-Z0-9_] in the node-ID segment, so {{#id.var#}} passes through unsubstituted. A minimal backend repro (VARIABLE_PATTERN.search on hyphenated vs non-hyphenated selector) and a clear validation path exist. No open PR or duplicate coverage found; no assignment or AI-disclosure blocker."
+  },
   "254c2495fcb7783b97f21f4a45c65dec5497b58b0f6e65fba88e8fbf6b7e6d19": {
     "confidence": 0.55,
     "contradictions": [
@@ -75205,6 +75237,33 @@
     ],
     "why": "The issue provides a clear root cause: a DeepGEMM revision regression between e21c821 and 8b1392b causes CUDA graph capture failure on SM90/H20. The A/B test in the comments isolates the regression and confirms the fix in PR #52035. This is a concrete, actionable algorithm/kernel bug with a validation path."
   },
+  "7fb70d4d7ecbff4d1d85dd5e2456fd9f43627d21d521df343fb0bea9b7bcaa5c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "McpServerImpl legacy wire-tool reshaping must recognize tools that delegate to an AIFunctionMcpServerTool (e.g. internal accessor or virtual negotiated-version Tool member)",
+      "DelegatingMcpServerTool must forward or expose the inner tool's legacy wire schema while preserving overridden ProtocolTool behavior"
+    ],
+    "risks": [
+      "Changing the reshaping condition could alter behavior for custom McpServerTool subclasses that intentionally build their own Tool",
+      "A delegating tool that overrides ProtocolTool must still have its own Tool reshaped, not blindly the inner tool's"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test registering an int-returning tool both directly and behind a pass-through DelegatingMcpServerTool, then assert tools/list outputSchema is the object-wrapped schema for 2025-11-25 and 2025-06-18",
+      "Assert tools/call structuredContent matches the advertised outputSchema for both registrations",
+      "Run the existing ModelContextProtocol.Core server tests and the TypeScript SDK client listTools validation against the stdio repro"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a precise root cause: McpServerImpl reshapes non-object outputSchema only when the registered tool is AIFunctionMcpServerTool, while DelegatingMcpServerTool forwards the inner tool's natural schema but the inner tool still wraps structuredContent, producing a schema/content mismatch for pre-2026-07-28 clients. Concrete code anchors, a full reproduction, and a 1.4.1 regression comparison are supplied."
+  },
   "7fb9b0128031ea27f0be98d838efbe1d19f949255acae565042e94e1471b2951": {
     "confidence": 0.85,
     "contradictions": [],
@@ -82304,6 +82363,36 @@
       "Exact fix approach (skip vs. reject) not yet decided; maintainer approval is conditional on PR review."
     ],
     "why": "Issue provides a precise, reproducible bug in ZeRO-1/2 with a clear root cause: zero-sized trainable parameters are omitted from param_to_partition_ids but still enter gradient reduction, causing KeyError. The fix is a small, well-scoped change in stage_1_and_2.py with a concrete validation path (reproducer and regression test)."
+  },
+  "8c4e0d33133777e2c1e0b67003a15cde3df1d439c1b14a236ceff967e54f820c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "web/app/components/base/chat/chat/hooks.ts onThought handler: locate existing thought by id anywhere in agent_thoughts and merge in place, else push",
+      "web/app/components/base/chat/chat/hooks.ts send-message handler: apply the same id-based merge logic"
+    ],
+    "risks": [
+      "Fix touches shared chat streaming logic used by other app types; must not regress single-tool or sequential tool-call flows",
+      "Maintainer may prefer a different merge strategy or backend-side ordering guarantee"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with an Agent app using two parallel tool calls; confirm 2N entries with stuck spinners and empty duplicates",
+      "Add a regression test asserting that a tool result with a matching tool_call_id updates the existing thought entry rather than appending a duplicate",
+      "Run targeted frontend unit tests and static checks for the chat hooks module"
+    ],
+    "unknowns": [
+      "No maintainer confirmation of the proposed frontend fix location or design preference"
+    ],
+    "why": "Issue provides a concrete reproduction (parallel tool calls in Agent app) and the bot comment supplies a specific root cause: frontend merge logic in web/app/components/base/chat/chat/hooks.ts only merges incoming thoughts into the last agent_thoughts entry, so out-of-order tool results are appended as duplicates instead of updating the matching tool_call_id row. This is a user-visible bug on the agent runtime path with a clear minimal fix (findIndex by id, merge in place) and a defined validation path."
   },
   "8c6447b5dff376c12bbb5ad9d77967b5265bc37d45b29f42baed86393343bacb": {
     "confidence": 0.8,
@@ -104306,6 +104395,33 @@
       "No explicit maintainer decision on which fix option (merge-and-reset vs rename) is preferred; but issue asks for comment before PR, so contributor can clarify"
     ],
     "why": "Issue provides concrete algorithmic bugs with root cause, reproduction, and maintainer confirmation. Claim A: ReLoRA callback prunes adapters without merging, causing function discontinuity (MSE 142 vs 8.77e-13 control). Claim B: strict threshold mask can zero both factors under ties, killing gradients. Both are validated with code snippets and maintainer reproduction. Fix options are clear: implement merge-and-reset or rename feature; fix tie handling with topk. This is a high-value algorithm correctness contribution."
+  },
+  "b3cced2ba05bed7117930a7bada4ae16cf9463ddd741eaf9f98ab5b336549f9c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/smolagents/tools.py: GradioToolWrapper.__init__ must initialize base Tool state (e.g. call super().__init__ or set is_initialized) so Tool.__call__ lifecycle works",
+      "tests/fixtures/tools.py or tests: add regression test wrapping a local Gradio-style tool and asserting wrapped(value=4) == '8'"
+    ],
+    "risks": [
+      "Fix must not alter public Tool API semantics beyond initializing wrapper state",
+      "GradioToolWrapper may need to preserve existing metadata/forward wiring while adding base initialization"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's gradio_wrapper.py against the base commit to confirm AttributeError: 'GradioToolWrapper' object has no attribute 'is_initialized'",
+      "After fix, run the same script and assert wrapped(value=4) == '8'",
+      "Run targeted smolagents tool unit tests and static checks to ensure no regression in Tool lifecycle behavior"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a minimal executable reproduction, full traceback, and a concrete root cause: GradioToolWrapper.__init__ never initializes the base Tool state (is_initialized), so Tool.__call__ raises AttributeError before reaching forward. This is a clear, actionable bug in the agent tooling path with a straightforward reference-vs-implementation validation."
   },
   "b3e2e92851db034a879006923f6f53df535e28e68fcd2fda9c1433279330732e": {
     "confidence": 0.7,
@@ -137387,6 +137503,37 @@
     ],
     "why": "The issue reports tokenizer misbehavior on Windows CPU but lacks a clear root cause; a collaborator could not reproduce on Linux CPU, suggesting platform-specific or environment-dependent factors. The candidate's algorithm evidence is generic and not tied to a concrete mechanism or validation path."
   },
+  "ea177f79df145fcdc1e14720aefb559da9562a805453eab6ff321b485d764cdb": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/smolagents/tools.py: preserve AgentAudio samplerate/type through Tool.__call__ sanitization for audio state references",
+      "src/smolagents/agents.py: fix final output conversion in _run_stream so AgentAudio is not coerced to AgentText",
+      "src/smolagents/agent_types.py: ensure audio output conversion does not default to 16000 Hz when source samplerate is known"
+    ],
+    "risks": [
+      "Fix may alter AgentAudio/AgentText conversion semantics for other output types; scope change to audio path",
+      "Maintainer may prefer a different design for state-reference substitution vs. sanitization",
+      "Need to confirm no other call sites rely on the current 16000 Hz default behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test reproducing the issue's audio_finalization.py scenario: Waveform tool returning (8000, samples), ToolCallingAgent with a scripted model calling waveform then final_answer, assert result is AgentAudio with samplerate 8000",
+      "Run targeted unit tests for smolagents tools and agents modules",
+      "Verify direct tool call still returns AgentAudio at 8000 Hz (existing behavior preserved)"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a self-contained, no-live-inference reproducer with expected/actual pair, traceback, ordered steps, and executable command. Root cause is concretely traced through Tool.__call__ sanitizing AgentAudio to a raw tensor (losing samplerate), output conversion defaulting to 16000 Hz, and _run_stream's generic conversion returning AgentText. Code anchors point to specific lines in tools.py, agents.py, and agent_types.py. No open PR or duplicate issue covers this."
+  },
   "ea1eba67af7eb7bbc75d98db3951af66785d474aa89adec8bff8f2d66830e4c6": {
     "confidence": 0.8,
     "contradictions": [],
@@ -150443,6 +150590,36 @@
       "Whether maintainers consider the omission intentional"
     ],
     "why": "Issue describes a concrete discovery-vs-inference mismatch for Team-member allowed_models, with code anchors and a reproduction outline. However, the supplied duplicate assessment reports semantic overlap with open PR #41349 (best_score 46) and other open PRs touching the same auth/model-listing paths, and the duplicate status is 'semantic_overlap_requires_review'. Whether an existing PR already covers this root cause is a materially blocking unknown that determines whether new code work is actionable."
+  },
+  "ffd29f25a8f79324daf537352cb34cabc77ea86e48899e136181f9120156ee0e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/smolagents/agents.py: execute_tool_call validation/sanitization ordering for typed media state references",
+      "src/smolagents/tools.py: validate_tool_arguments type derivation for AgentImage/AgentAudio wrappers",
+      "tests covering image and audio state-reference tool calls"
+    ],
+    "risks": [
+      "Fix must not weaken validation for genuinely mismatched argument types.",
+      "Avoid broad API behavior changes beyond the typed-media wrapper path."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test mirroring the issue reproducer: ToolCallingAgent with an image-input tool, state['image.png'] = AgentImage(...), assert execute_tool_call returns [3, 2].",
+      "Add the equivalent AgentAudio/audio-input regression test.",
+      "Run the targeted smolagents agent/tool unit tests plus static checks."
+    ],
+    "unknowns": [],
+    "why": "Issue provides a minimal executable reproducer, full traceback, and a precise root cause: execute_tool_call substitutes the state reference with AgentImage, then validate_tool_arguments derives the schema type from the wrapper class ('object') before input sanitization converts it to the declared 'image' type. Direct calls with sanitize_inputs_outputs=True succeed, confirming the ordering bug. No open PR or duplicate issue covers it, and no assignment or AI-use prohibition is present."
   },
   "ffe35624046908ede7668605c1451ca1ee4da0eb71a5645c065e66b7afcdfab4": {
     "confidence": 0.85,
