@@ -17204,6 +17204,42 @@
     ],
     "why": "Issue #826 documents a concrete, verifiable defect: Soup resolves torchao configs by name (NVFP4Config, Int8DynActInt4Config, Float8DynActFloat8Config) that torchao 0.18.0 does not export, with exact file/line anchors, a real-hardware reproduction transcript, and a clear acceptance-criteria list. This is a numerics/quantization mechanism with a concrete reference-vs-implementation validation path (import real torchao, assert every configured class name resolves). The overlapping PR #947 is a doctor diagnostics feature that does not cover the root cause (root_cause_coverage=false, direct_code_overlap=false), and issue #829 is a related but distinct doctor-visibility issue, so neither is a blocking duplicate."
   },
+  "20200b11cea8835e31ec27a71dd350c056bca367bb17c491f257b2cde76f00a0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR assessment reports semantic overlap on nonInteractiveCli.ts but direct_code_overlap=false and no issue linkage, so coverage of the root cause is unconfirmed"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/nonInteractiveCli.ts: stop gating emitResult on memory task promises",
+      "packages/cli/src/nonInteractive/session.ts: drain retained memory promises in waitForAllPendingWork with bounded timeout",
+      "one-shot exit / stream-json EOF path: preserve pending memory writes"
+    ],
+    "risks": [
+      "Naive removal of the await can truncate memory writes on one-shot exit or stream-json EOF",
+      "Unbounded shutdown drain could hang exit on a slow gateway",
+      "Open PRs #13885/#13886 overlap the same path and may already cover the root cause"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: a deferred memory promise must not delay emitResult (emit-order assertion)",
+      "Shutdown test: pending memory promises are drained before exit and abandoned after the bound",
+      "Regression: one-shot qwen -p and stream-json EOF do not truncate memory writes"
+    ],
+    "unknowns": [
+      "Whether PR #13885/#13886 already implement the shutdown-drain durability fix or only the emit-order change",
+      "Whether maintainers require a specific design (opt-in gating vs. shutdown drain) before accepting a fix"
+    ],
+    "why": "Issue provides a concrete, source-verified root cause: headless nonInteractiveCli.ts awaits consumePendingMemoryTaskPromises() before emitResult, while TUI/ACP do not; maintainer triage and a collaborator independently confirmed all cited locations and the durability constraint (waitForAllPendingWork lacks a memory drain). A concrete validation path exists (deferred-promise emit-order assertion plus bounded shutdown drain test)."
+  },
   "202b344842a4ec5613a48d2e72306776ddeaf97fdbbc05eff03b3f7c3bbb30ea": {
     "confidence": 0.8,
     "contradictions": [],
@@ -27669,6 +27705,39 @@
       "Which MCore revision should be used to retest is unanswered"
     ],
     "why": "Issue reports two intermittent, non-deterministic CUDA runtime errors (cudaErrorInvalidValue in cuDNN SM90 DSA backward, cudaErrorUnknown in packed-THD build_attention_indices) with no small deterministic reproducer; the reporter explicitly states the root cause is unknown and that the two incidents may not share one. Successful retries of identical batches argue against a deterministic shape-only failure, and CUDA_LAUNCH_BLOCKING was off so the reported call may not be the originating kernel. This is a triage/uncertainty report, not an actionable algorithm fix."
+  },
+  "31470bbe73570b36e5c27c082013212d5ec20a6432537ec981a38f098a39c28c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/ai/src/types/usage.ts aggregation semantics (completeness indicator or strict mode)",
+      "totalUsage type/behavior in packages/ai/src/types/usage.ts",
+      "regression test covering zero vs missing, all-known/all-missing, mixed providers, cache/reasoning details"
+    ],
+    "risks": [
+      "API behavior change to totalUsage may need maintainer design preference (indicator vs strict mode)",
+      "Backward compatibility for existing partial-sum consumers",
+      "Draft PR #22893 may later expand scope and overlap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.mjs against ai@7.0.137 and locally built ba05943b to confirm identical totalUsage for missing vs zero",
+      "Add a unit test asserting aggregate distinguishes missing from reported zero while preserving existing partial sums",
+      "Run targeted package tests for packages/ai usage aggregation and static checks"
+    ],
+    "unknowns": [
+      "Maintainer preference between per-field completeness indicators and a strict aggregation mode"
+    ],
+    "why": "Issue provides a concrete synthetic reproduction showing addTokenCounts collapses undefined into zero, making totalUsage indistinguishable from a complete total; root cause is anchored in packages/ai/src/types/usage.ts and a validation path exists via the proposed assertion. Open PR #22893 is a draft reproduction-only PR with no regression test and no root-cause coverage, so it does not cover the fix."
   },
   "3152700fea989b9269ac23de7e468f844b83970e373e03cce7002870109d96b4": {
     "confidence": 0.95,
@@ -63581,6 +63650,36 @@
       "Exact code path in scheduler.py where budget check should be inserted; maintainer preference for fix approach."
     ],
     "why": "Issue provides a clear root cause: scheduler fails to check chunk budget after resuming a chunked request, leading to unnecessary waiting-queue scans and potential host-cache load-back. Reproduction steps are concrete and deterministic at scheduler level. Existing PR #35645 addresses the same issue but lacks tests, leaving room for a more complete contribution."
+  },
+  "6bb907c6583f4223d5c51dc8a8b77942fb4ddd2542668c7bc0b785ae18d17e2e": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/backend_args.py (wire mm_prompt_template into prompt construction, or remove flag)",
+      "recipes/qwen3-vl-32b-fp8/vllm/hetero_hardware_disagg/deploy.yaml (drop flag if retired)",
+      "docs/fern/pages/reference/backends/vllm-configuration.mdx (update or remove docs)"
+    ],
+    "risks": [
+      "Choosing the wrong direction (re-wire vs retire) produces a PR the maintainers reject",
+      "Removing the flag breaks the shipped recipe deployment if docs/recipe are not updated together"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test asserting the configured template is applied to the constructed multimodal prompt (or that the flag is rejected/removed)",
+      "Run targeted vllm backend_args unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to restore the template consumer or retire the flag",
+      "Which change originally dropped the consumer (not pinned down by reporter)"
+    ],
+    "why": "Issue documents a real dead-config bug (--mm-prompt-template parsed but never read) with grep evidence and a shipped recipe depending on it, but the reporter explicitly states the intended direction is undecided: either re-wire the template into the processor or remove the flag plus recipe/docs. The fix shape is a maintainer product decision, and the issue itself asks which path to take before a patch is sent."
   },
   "6bbe2156f55dda7088b8137cd9948d13eead74965b9cc449c2e691d47009935d": {
     "confidence": 0.85,
@@ -101875,6 +101974,41 @@
       "Whether the repository's AI disclosure policy permits the required public contribution workflow"
     ],
     "why": "The issue reports an SM110 illegal memory access in the Qwen GDN prefill warmup path, and a commenter proposes a concrete root cause (SM110 missing from FUSED_GDN_DECODE_ARCHS in CMakeLists.txt) with a workaround (VLLM_GDN_DECODE_KERNEL=triton). However, a maintainer/contributor comment states the SM110 fused GDN build gap is already addressed by merged PR #53835, and explicitly asks whether the prefill warmup failure remains on current main/nightly. That unresolved duplicate/merged-fix coverage question determines whether any new code work is actionable, so the evidence is materially incomplete."
+  },
+  "ae84e66ad6a66eecd24b115aac499be933c2cfe77a6f77dff128b71eea2c2be0": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/web-shell/client/components/SplitView.tsx - per-pane DaemonSessionProvider/SSE lifecycle",
+      "packages/web-shell/client/components/artifacts/SubagentDetail.tsx - own SSE stream",
+      "packages/cli/src/serve/local-control/service.ts - HTTP/1.1 listener / SSE endpoint",
+      "packages/cli/src/serve/acp-http/index.ts - existing WebSocketServer multiplexing as transport for session events"
+    ],
+    "risks": [
+      "Transport choice (WebSocket vs multiplexed SSE vs client-side budget) is an open design decision flagged need-discussion; picking the wrong path may require rework",
+      "Repro requires macOS Tauri/WKWebView desktop environment, which may not be available in CI",
+      "Changing the session-events transport could affect existing SSE consumers and Last-Event-ID replay semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with 4-5 split panes each running a turn on macOS Tauri/WKWebView and confirm 'Connection lost: Fetch is aborted' banners",
+      "Verify via daemon log and lsof that concurrent SSE streams reach the 6-connection per-origin ceiling",
+      "After fix, confirm 4-5 panes plus a subagent-detail view keep receiving live events with no banners and no pool saturation",
+      "Add a regression test asserting the number of concurrent per-origin HTTP/1.1 connections stays below the browser cap for N panes"
+    ],
+    "unknowns": [
+      "Which of the three candidate transport fixes maintainers prefer (design decision still open)",
+      "Whether a macOS WKWebView environment is available for end-to-end validation"
+    ],
+    "why": "Issue provides a concrete, source-verified root cause: per-pane DaemonSessionProvider opens one long-lived SSE per pane (SplitView.tsx, SubagentDetail.tsx), daemon is HTTP/1.1-only (local-control/service.ts createServer), and WebKit caps HTTP/1.1 at 6 connections per origin, so 4-5 panes + subagent-detail saturate the pool and abort fetches. Triage bot independently confirmed the same code anchors and that a WebSocketServer with per-connection session multiplexing already exists in acp-http/index.ts, giving a concrete implementation path. This is a real user-visible bug with clear module-level changes and a defined validation path."
   },
   "ae89e6f9369d1cdbb22b702619da4e6608bf738e30cd016ea758340f731e26ee": {
     "confidence": 0.7,
