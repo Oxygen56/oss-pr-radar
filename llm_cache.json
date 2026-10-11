@@ -31252,6 +31252,39 @@
     ],
     "why": "Issue describes a reproducible bug in subagent completion event routing, but lacks a clear root cause and requires maintainer design confirmation for the intended session injection behavior."
   },
+  "37583b5a4f63528d00fd1e89210495e1c9536c368bd7f1b6ec871902f8fe0da0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/ai/src/realtime/realtime-session.ts: finalize active text parts on disconnect/transport failure/disposal",
+      "packages/ai/src/realtime/realtime-event-reducer.ts: clear accumulation state for finalized parts",
+      "regression test covering disconnect, transport failure, disposal, normal completion, and reconnect"
+    ],
+    "risks": [
+      "Semantic overlap with open PR #22869 (draft reproduction, no regression test) and PR #22681 (failed tool executions, different symptom) requires comparing implementation boundaries before writing code",
+      "Changing 'done' semantics for interrupted text could conflict with maintainer design preference for distinguishing interruption from successful completion"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.mjs against ai@7.0.137 and local build to confirm part.state === 'streaming' after disconnect",
+      "Add a unit test asserting partial text is preserved with state 'done' after disconnect()",
+      "Add regression tests for transport failure, dispose(), normal completion, and reconnect not reviving stale streaming parts"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a distinct interrupted state rather than reusing 'done' for retired connections",
+      "Whether PR #22869 or #22681 already covers this exact root cause in a non-draft form"
+    ],
+    "why": "Issue provides a network-free reproduction, exact code anchors (realtime-session.ts disconnect, realtime-event-reducer.ts finalizeText), and a concrete root cause: disconnect retires the transport without finalizing active text parts, so no completion event can arrive. Reproduction was independently confirmed on main at ba05943. This is a user-visible state bug on the realtime agent path with a clear reference-vs-implementation test."
+  },
   "37795d4dd563794790b970ea63e8d0b6abeb7ce54ae73a003be2b58a1ad7f79f": {
     "confidence": 0.8,
     "contradictions": [],
@@ -74285,6 +74318,39 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a TP>=2 MTP drafter weight shape mismatch with concrete repro and evidence of world-size divergence, but an open PR #46003 overlaps the same code path and semantics without referencing this issue. The issue also shares stack signatures with potential duplicate #21336. Need maintainer comparison of PR coverage and duplicate status before starting new work."
   },
+  "7d665d880b30bf1912364a3511937fb3d48ee0fc7ad16896dc919030b0bb7537": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/shared/src/nodeSqliteClient.ts: use BEGIN IMMEDIATE (or retry) for event-write transactions",
+      "RunExecutionService.startRootRun: interrupt/close live provider session when ingest fails",
+      "ClaudeAdapterV2.interruptTurn invocation on failure path"
+    ],
+    "risks": [
+      "BEGIN IMMEDIATE increases write-lock contention and may need retry/backoff tuning",
+      "Interrupting provider on ingest failure could mask recoverable transient errors if not scoped to terminal failures",
+      "Related #14856/#15488 overlap may change the fix surface"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with node:sqlite: deferred BEGIN upgrade under concurrent writer returns database is locked in ~0ms while BEGIN IMMEDIATE waits ~5s with busy_timeout=5000",
+      "Integration test: force EventSink.write failure during providerTurnStart and assert provider session is interrupted/closed and run reaches terminal state",
+      "Regression: concurrent t3 auth session issue/revoke writes during a long first turn no longer fail the run"
+    ],
+    "unknowns": [
+      "Maintainer has not yet chosen between BEGIN IMMEDIATE and write retry",
+      "Whether the fix should also cover the #15447 Cursor path in the same change"
+    ],
+    "why": "Maintainer triage on main confirms two concrete root causes: deferred BEGIN in packages/shared/src/nodeSqliteClient.ts causes immediate SQLITE_BUSY on read-to-write upgrade (busy_timeout bypassed), and RunExecutionService.startRootRun never calls ClaudeAdapterV2.interruptTurn on ingest failure, orphaning the provider process. Reproduction and validation paths are concrete (node:sqlite BEGIN IMMEDIATE vs deferred timing test; orphaned-process regression)."
+  },
   "7d751fcbb3631f37eee3c5440e45baa5fad3e12f0c05f10aef53019a5f56f5a2": {
     "confidence": 0.8,
     "contradictions": [],
@@ -102333,6 +102399,38 @@
     ],
     "why": "Issue identifies a concrete root cause: cleanupOrphanedWorkflows in tests/integration/n8n-api/utils/cleanup-helpers.ts:25 performs an instance-wide sweep of workflows matching the shared cleanup prefix/tag, and 18 test files call it from afterAll while Vitest runs files in parallel, so the first finisher deletes in-flight workflows of other files. Observed 404/N8nNotFoundError failures across three runs in different files, each passing in isolation, support the race. Suggested fix (move sweep to globalSetup, optional age guard) is concrete and testable."
   },
+  "aeff937e0dc69d3806b2e354e86584814f111bf74bf36d48fb25061ca44f2c92": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/provider/src/errors/get-error-message.ts: guard JSON.stringify and return a safe string fallback for cyclic values, BigInt, symbols, functions, and throwing serialization hooks",
+      "Preserve existing formatting for normal Error and string values",
+      "Add regression tests for generateText tool-error handling and for the getErrorMessage utility"
+    ],
+    "risks": [
+      "Changing getErrorMessage fallback behavior could alter existing error message text relied on by downstream consumers",
+      "Draft PR #22820 touches the same reproduction path and may later expand into a competing fix, requiring comparison before submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.mjs against a locally built ai package to confirm all three thrown values (Error, cyclic object, BigInt) complete with readable error-text results",
+      "Add a unit test for getErrorMessage covering cyclic objects, BigInt, symbols, functions, and a toJSON that throws",
+      "Add a generateText-level regression test asserting the tool failure is surfaced as an error-text tool result rather than rejecting"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fallback format for unserializable thrown values"
+    ],
+    "why": "Issue provides a self-contained synthetic reproduction, a concrete source anchor (packages/provider/src/errors/get-error-message.ts), and a clear root cause: getErrorMessage's JSON.stringify path throws replacement TypeErrors for cyclic objects and BigInt, causing generateText to reject instead of returning an error-text tool result. The bot reproduction confirms the failure at the pinned commit. The only competing PR (#22820) is a draft reproduction-only PR with no test files and no root-cause coverage, so it does not cover the fix."
+  },
   "af14f7d278c0511e454d90474ac89e2b78725dca9ee80b647b1debe84075f05c": {
     "confidence": 0.82,
     "contradictions": [],
@@ -104476,6 +104574,41 @@
       "Whether maintainers prefer the #18019-style port or the #18044 useCloseOnEscape integration for Escape handling"
     ],
     "why": "Issue provides a concrete, reproducible keyboard-accessibility defect in agent-profile-actions-menu.tsx with file:line root causes (mount-only focus effect behind portal, arrow navigation not skipping disabled items, Escape/Tab not restoring focus), a merged sibling fix (#18019) as a reference implementation, and a validated local patch with 6 new tests (5 failing pre-patch). This is a well-scoped, actionable UI fix with a clear reference-vs-implementation validation path."
+  },
+  "b366a9a4b8c7b4e64a954a59217c46bbc0b924f0ba560831feebb3e9c4f2ae7d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "kvbm v1 connector leader: `VllmConnectorSlot::acquire_local_matches` must re-run Host/Disk matching against the current local offset instead of returning stale staged external hits",
+      "staging lifecycle: retain previous staging references until both lookups succeed, then atomically replace staged source blocks and count",
+      "leader early-return path when less than one complete block remains must still clear obsolete staging references",
+      "preserve aligned-tail compute rule"
+    ],
+    "risks": [
+      "Timing-dependent reproduction window may make the standalone workload flaky; deterministic pool regressions are the primary guard",
+      "Changing staging replacement semantics could affect other connector paths that rely on `OnboardStaged` behavior",
+      "Requires GPU with enough memory for Qwen3-0.6B and specific vLLM 0.31.0 / Dynamo commit environment for end-to-end validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add deterministic pool regression tests that drive a repoll where local grows from 0 to 480 while external was previously 480, asserting the connector returns (0, false) and releases obsolete staging references",
+      "Run the 8 pool regressions and 51 binding tests on the pinned base and latest main",
+      "Run the standalone Qwen3-0.6B APC workload (64 requests) and assert no scheduler invariant failure and external=0 on observed local=0→480 repolls",
+      "With batch invariance enabled, compare all 64 outputs token-for-token against a plain-vLLM APC control"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for staging reconciliation versus the proposed atomic replace",
+      "Whether the draft PR #16121 is intended to cover this issue despite not referencing it"
+    ],
+    "why": "Issue provides a concrete root cause in the v1 KVBM connector: `VllmConnectorSlot::acquire_local_matches` skips a new lookup while `OnboardStaged`, so the saved external source range stays anchored to an earlier local prefix; the leader's early return when less than one block remains also bypasses staging cleanup. This yields double-counted cached tokens (local=480, external=480 for a 512-token request) and trips vLLM's `num_computed_tokens <= request.num_tokens` invariant. A standalone reproduction with executable commands and expected/actual observations is supplied, and the proposed fix (refresh Host/Disk matching against current local offset, retain old refs until both lookups succeed, replace staged source blocks and count together, clear staging on empty residual matches) is a concrete, testable code change with a stated regression path (8 pool regressions, 51 binding tests, 64-request model run)."
   },
   "b39866e1686fdbd0138d607052280c14ff3adb45c53daeac4985aaf75c74221b": {
     "confidence": 0.8,
@@ -149057,6 +149190,39 @@
       "Whether the dispatch failure itself still reproduces on current main or only the unhelpful error message remains"
     ],
     "why": "Issue reports a concrete CLI hook-dispatch failure with verbatim stderr and three reproduction variants; a commenter confirms the schema path (apps/cli/src/utils/hooks.ts, HookEventPayloadSchema) and proposes a scoped fix (surface failing field paths in the session.hook error) with a test in run-handlers.test.ts. The open PR #14856 is keyword-overlap only (no code-path or semantic overlap, does not reference the issue), so it does not establish coverage. No algorithm-track requirement applies (track=agent_ai_infra)."
+  },
+  "fc1f2cf768ef5879f234e600bf3890c3d072be31fa485b17f08eebf4bf94a928": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/langchain/src/adapter.ts: key streamEvents model state by run_id with stable per-run text/reasoning IDs",
+      "close only the matching run on on_chat_model_end and flush unfinished runs at EOF",
+      "add streaming regression tests for interleaved text/reasoning, late chunk IDs, nested runs, and sequential controls"
+    ],
+    "risks": [
+      "Behavior change to text-part ID assignment could affect consumers relying on a single merged part",
+      "Nested run handling and late-arriving chunk IDs may need explicit ordering rules",
+      "Draft PR #22875 overlaps the reproduction path and should be compared before duplicating work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.mjs asserting parallel.parts deep-equals { a: 'Aa', b: 'Bb' } and sequential.parts deep-equals { a: 'A', b: 'B' }",
+      "Add a package-level unit test in packages/langchain covering interleaved text and reasoning deltas with distinct run_ids",
+      "Regression test that sequential-turn behavior and EOF flushing of unfinished runs remain unchanged"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred state-keying design for the adapter"
+    ],
+    "why": "Issue provides a concrete, network-free reproduction with real AIMessageChunk instances, a specific code anchor (processStreamEventsEvent in packages/langchain/src/adapter.ts), and a clear root cause: shared text/reasoning state across overlapping streamEvents runs. Sequential vs parallel control cases establish a reference-vs-implementation test. The open draft PR #22875 is a reproduction-only artifact with no test files and no root-cause coverage, so it does not cover the fix."
   },
   "fc218c9da843331f587869de20b0af67bc06830cca7f3949c8640984bba7cacf": {
     "confidence": 0.85,
