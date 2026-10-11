@@ -52617,6 +52617,40 @@
     ],
     "why": "Issue provides a concrete, code-anchored root cause: `_watch_backend_health_sweeps` in src/kiro_crew/apps/backend.py treats an exited Popen as terminal, demoting the record and scrubbing MCP without any respawn path. Reproduction steps and log output are supplied, and a maintainer-adjacent comment confirms the analysis against main. The fix is a bounded supervisor behavior with a clear validation path (kill backend, observe respawn, verify /health and MCP promotion)."
   },
+  "59ead916c7bf0a3273630a26de1f99142160e4f16869036bc229ef6599786a63": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports status 'none' while listing a MERGED PR (#7165) that touches search_web gating, leaving duplicate/coverage status ambiguous"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "search_web tool invocation path in Agent mode",
+      "provider/auth gating for search_web with local Ollama"
+    ],
+    "risks": [
+      "Fixing the wrong layer if the failure is auth gating rather than tool plumbing",
+      "Behavior/API changes to search_web gating may conflict with the merged #7165 approach"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's Ollama config in Agent mode and capture the actual search_web error/response",
+      "Add a regression test asserting search_web returns results (or a clear error) for a local provider configuration"
+    ],
+    "unknowns": [
+      "Actual error/log from the failed search_web call",
+      "Whether the failure is caused by the signed-in gating introduced in #7165",
+      "Whether the issue is already resolved on main after 2.0.0"
+    ],
+    "why": "Issue reports search_web returning no usable results with a local Ollama model, but supplies no logs, no error output, and no root-cause signal; the only code anchor is the tool name `search_web`. A merged historical PR (#7165) gated search_web to signed-in users, which is a plausible but unconfirmed explanation for local/unauthenticated setups, so duplicate/coverage status is unresolved rather than clearly absent."
+  },
   "59f6c9a08a512b2ca933f5aa0c91707544d3ed319aa8f8c62064c45cecf5b4b5": {
     "confidence": 0.6,
     "contradictions": [
@@ -102594,6 +102628,40 @@
       "Exact current state of the stacked PRs and whether they fully address the issue's acceptance criteria."
     ],
     "why": "Issue clearly identifies a root cause: provisioning reader uses newest-created ordering instead of execution-tier authority, and mutation chain lacks fail-closed Shared-tier boundaries. Concrete acceptance criteria and evidence plan are provided. Multiple stacked PRs (e.g., #24312, #24362, #25046) show active maintainer collaboration and incremental progress, indicating the issue is actionable and valuable."
+  },
+  "afb3f5ddc9d2b82fdb4c266a559c2dcd618600abc60867348f4f7242e34e8a3e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add isStreaming flag to the React stream hook, true on active submission start and false when stream consumption settles before history reconciliation/error callbacks",
+      "Expose the flag through standard and custom React transports",
+      "Reset isStreaming on thread switch and handle queued submissions, cancellation, errors, and run rejoining consistently"
+    ],
+    "risks": [
+      "Changing isLoading semantics could break existing consumers; the proposal preserves isLoading/onFinish semantics, but compatibility should be confirmed",
+      "Queued-submission and rejoin edge cases may be subtle",
+      "The reporter's original 0.x application was not reproduced; validation is on current SDK source"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test asserting isStreaming === false while isLoading === true during pending history reconciliation",
+      "Test that a queued submission not yet started does not set isStreaming true",
+      "Tests for cancellation, error callbacks, and thread reset behavior",
+      "Run manager/React-hook unit tests, SDK TypeScript check, and lint/format checks"
+    ],
+    "unknowns": [
+      "Whether maintainers require assignment before accepting a community PR (policy status is needs_assignment)",
+      "Whether maintainers prefer this isStreaming approach over alternative lifecycle hooks"
+    ],
+    "why": "Issue reports a concrete user-visible bug: isLoading stays true after stream completion because StreamManager.enqueue awaits the success handler, which in useStreamLGP awaits history.mutate(). A commenter supplies code anchors (manager.ts L1117-L1145, stream.lgp.tsx L656-L677), a proposed isStreaming flag, and a reference implementation with unit-test validation. This is a concrete, actionable fix on the agent/inference UI path."
   },
   "afe8ba7789d4bad3784087063d5f793e051477c42f71789fc2e5ab87135ab6c9": {
     "confidence": 0.85,
