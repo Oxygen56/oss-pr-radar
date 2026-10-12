@@ -5231,6 +5231,58 @@ def _restore_stale_published_validation_input(
     return restored, errors
 
 
+def _retired_pr_followup_allows_result_quarantine(
+    store: RadarLedger,
+    context: dict[str, Any],
+    shared_followup: Any,
+) -> bool:
+    """Recognize a newer suspended wake without accepting its old result."""
+
+    publication = context.get("publicationReceipt")
+    binding = _task_context_binding(context)
+    if (
+        binding is None
+        or context.get("prFollowup") is not None
+        or not isinstance(publication, dict)
+        or not isinstance(shared_followup, dict)
+        or not isinstance(shared_followup.get("evidence"), dict)
+        or not re.fullmatch(r"[0-9a-f]{64}", str(shared_followup.get("wakeDigest") or ""))
+        or not _private_context_matches_current_ledger(store, context)
+    ):
+        return False
+    with store.connect() as connection:
+        row = connection.execute(
+            """SELECT * FROM pr_followups
+               WHERE opportunity_key=? AND followup_required=0""",
+            (str(context.get("key") or ""),),
+        ).fetchone()
+    if row is None:
+        return False
+    if (
+        _task_context_binding(
+            {
+                "key": row["opportunity_key"],
+                "intentId": row["intent_id"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+            }
+        )
+        != binding
+        or not publication.get("prUrl")
+        or row["pr_url"] != publication["prUrl"]
+        or row["pr_url"] != shared_followup.get("prUrl")
+        or not re.fullmatch(r"[0-9a-f]{64}", str(row["wake_digest"] or ""))
+        or row["wake_digest"] == shared_followup["wakeDigest"]
+    ):
+        return False
+    try:
+        return parse_time(str(row["checked_at"] or "")) > parse_time(
+            str(shared_followup.get("checkedAt") or "")
+        )
+    except (ValueError, TypeError):
+        return False
+
+
 def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     """Recover task state with exact worktree mirrors ahead of the singleton.
 
@@ -5592,7 +5644,13 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                         )
                         current_followup = current.get("prFollowup") if current else None
                         shared_followup = mirrors[1].get("prFollowup")
-                        if (
+                        retired_followup = (
+                            current_followup is None
+                            and _retired_pr_followup_allows_result_quarantine(
+                                store, context, shared_followup
+                            )
+                        )
+                        if not retired_followup and (
                             not isinstance(current_followup, dict)
                             or not isinstance(shared_followup, dict)
                             or not isinstance(current_followup.get("evidence"), dict)

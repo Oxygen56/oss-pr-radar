@@ -14956,6 +14956,190 @@ def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
         assert current["prFollowup"]["wakeDigest"] == replacement_followup["wake_digest"]
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "active",
+        "missing_row",
+        "intent_id",
+        "thread_id",
+        "worktree_path",
+        "pr_url",
+        "same_wake",
+        "unchanged_checked_at",
+        "mirror_drift",
+    ],
+)
+def test_published_result_context_mismatch_after_followup_suspension_keeps_old_evidence(
+    monkeypatch, tmp_path, mutation
+):
+    """Recover the original split with a real newer wake suspended by the ledger."""
+
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, published_head, pr_url = _published_followup_store(
+        tmp_path / "original", worktree=worktree
+    )
+    local_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(local_path.read_bytes())
+    store.restore_task_context(
+        context,
+        source_updated_at=iso_z(datetime.fromtimestamp(local_path.stat().st_mtime, UTC)),
+    )
+    local_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(local_path.read_bytes())
+    assert context["probeRequired"] is False
+    shared = copy.deepcopy(context)
+    shared["prFollowup"]["checkedAt"] = iso_z(datetime.now(UTC) - timedelta(minutes=1))
+    shared["prFollowup"]["evidence"]["pullResponseDigest"] = "e" * 64
+    if mutation == "mirror_drift":
+        shared["unexpectedMirrorField"] = "retained drift outside the obsolete follow-up"
+    shared_path = MODULE.shared_context_path(context["issueUrl"])
+    MODULE._atomic_json(shared_path, shared)
+    shared_raw = shared_path.read_bytes()
+
+    checked_at = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": published_head,
+                    "actionDigest": "replacement-action",
+                    "taskActionDigest": "replacement-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["当前分支检查失败"],
+                    "evidence": {"actionableCheckNames": ["Ruff"]},
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+    fresh = store.active_pr_followup(context["key"])
+    assert fresh["wake_digest"] != shared["prFollowup"]["wakeDigest"]
+    assert store.suspend_pr_followups(source_generated_at=checked_at, reason="source_stale") == [
+        context["key"]
+    ]
+    assert store.active_pr_followup(context["key"]) is None
+    private = dict(context, prFollowup=None)
+    local_path.write_text(MODULE.canonical_json(private), encoding="utf-8")
+    private_raw = local_path.read_bytes()
+    assert MODULE._private_context_matches_current_ledger(store, private)
+
+    with store.transaction() as connection:
+        if mutation == "missing_row":
+            connection.execute(
+                "DELETE FROM pr_followups WHERE opportunity_key=?", (context["key"],)
+            )
+        elif mutation == "active":
+            connection.execute(
+                "UPDATE pr_followups SET followup_required=1 WHERE opportunity_key=?",
+                (context["key"],),
+            )
+        elif mutation in {"intent_id", "thread_id", "worktree_path", "pr_url"}:
+            replacement = {
+                "intent_id": "other-intent",
+                "thread_id": "other-thread",
+                "worktree_path": str(tmp_path / "other-worktree"),
+                "pr_url": "https://github.com/a/b/pull/10",
+            }[mutation]
+            connection.execute(
+                f"UPDATE pr_followups SET {mutation}=? WHERE opportunity_key=?",
+                (replacement, context["key"]),
+            )
+        elif mutation == "same_wake":
+            connection.execute(
+                "UPDATE pr_followups SET wake_digest=? WHERE opportunity_key=?",
+                (shared["prFollowup"]["wakeDigest"], context["key"]),
+            )
+        elif mutation == "unchanged_checked_at":
+            connection.execute(
+                "UPDATE pr_followups SET checked_at=? WHERE opportunity_key=?",
+                (shared["prFollowup"]["checkedAt"], context["key"]),
+            )
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM pr_followups WHERE opportunity_key=?", (context["key"],)
+        ).fetchone()
+        retained_row = dict(row) if row is not None else None
+
+    assert MODULE._retired_pr_followup_allows_result_quarantine(
+        store, private, shared["prFollowup"]
+    ) is (mutation in {None, "mirror_drift"})
+    result_path = Path(context["resultPath"])
+    result_raw = json.dumps(
+        {
+            "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+            "key": context["key"],
+            "issueUrl": context["issueUrl"],
+            "taskId": context["intentId"],
+            "threadId": context["threadId"],
+            "worktreePath": str(worktree),
+            "contextDigest": "f" * 64,
+            "followupDigest": context["prFollowup"]["wakeDigest"],
+            "stage": "PR_OPEN",
+            "commitSha": published_head,
+        }
+    ).encode("utf-8")
+    result_path.write_bytes(result_raw)
+    result_digest = hashlib.sha256(result_raw).hexdigest()
+    original_gate = MODULE._quarantine_shared_context(
+        store,
+        shared_path,
+        RuntimeError("published task result mismatch: contextDigest"),
+        raw=shared_raw,
+        source_stat=shared_path.stat(),
+    )
+    artifact_path = Path(original_gate["artifactPath"])
+    artifact_raw = artifact_path.read_bytes()
+
+    first = MODULE.recover_shared_task_contexts(store)
+    second = MODULE.recover_shared_task_contexts(store)
+
+    # The established active-wake branch remains valid; an active row must
+    # never be mistaken for evidence of a suspended follow-up by the helper.
+    if mutation in {None, "active"}:
+        assert first["errors"] == second["errors"] == []
+        assert first["privateErrors"] == second["privateErrors"] == []
+        assert first["quarantined"] == second["quarantined"] == [original_gate | {"new": False}]
+    else:
+        assert first["errors"][0]["source"] == second["errors"][0]["source"] == "private"
+        assert first["quarantined"] == second["quarantined"] == []
+    assert first["resultReceiptsRestored"] == second["resultReceiptsRestored"] == 0
+    assert first["restored"] == second["restored"] == []
+    assert not store.task_result_digest_seen(
+        context["key"],
+        result_digest,
+        intent_id=context["intentId"],
+        thread_id=context["threadId"],
+        worktree_path=str(worktree),
+    )
+    assert result_path.read_bytes() == result_raw
+    assert local_path.read_bytes() == private_raw
+    assert shared_path.read_bytes() == shared_raw
+    assert artifact_path.read_bytes() == artifact_raw
+    assert run_git(worktree, "rev-parse", "HEAD") == published_head
+    assert store.active_task_quarantine(context["key"])["reason"] == "SHARED_CONTEXT_INVALID"
+    assert store.publication_work_items() == []
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM pr_followups WHERE opportunity_key=?", (context["key"],)
+        ).fetchone()
+        assert (dict(row) if row is not None else None) == retained_row
+
+
 def test_late_pr_followup_result_unblocks_pending_new_issue_claim(monkeypatch, tmp_path):
     store, _worktree, head_sha, _pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
