@@ -30042,6 +30042,42 @@
     ],
     "why": "Issue describes a concrete M-RoPE off-by-one in Qwen3-Omni position bookkeeping with a synthetic reproduction path, but supplied evidence shows an open maintainer-owned PR #59842 ('Fix Qwen3-Omni interleaved M-RoPE boundary positions') touching the same two files and the same m_rope/qwen3_omni semantics, plus a proposed fix PR #58890. Whether the root cause is already covered by an existing open PR is unresolved and directly determines whether new code work is actionable."
   },
+  "3564341c63f53b2805eb1b70a71c92f485cd040069bc6d0de1c2541153418717": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter sees consistent failure on macOS while maintainer bot reports clean reproduction on Linux, indicating platform-dependent behavior not yet isolated"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "command file watcher/reload path (platform-specific FSEvents backend)",
+      "registry reconciliation between startup snapshot and incremental file events"
+    ],
+    "risks": [
+      "Platform-specific FSEvents behavior may not be reproducible in CI or on Linux dev machines",
+      "Possible overlap with #49982 (failed plugin reload drops file-loaded commands) could mean the fix belongs elsewhere",
+      "Fixing watcher resubscription (#53393/#50594) may already cover part of this"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on macOS with OPENCODE_LOG_LEVEL=DEBUG and capture `watcher ...` plus WARN/ERROR lines around batch and single-file writes",
+      "Repeat with the headroom plugin disabled to rule out plugin reload interference",
+      "Compare behavior immediately after restart vs after long uptime, and verify /api/command matches on-disk files after each create/delete"
+    ],
+    "unknowns": [
+      "DEBUG watcher logs from the failing macOS run",
+      "Whether the headroom plugin contributes to the dropped registrations",
+      "Whether the failure correlates with service uptime or watcher resubscription events",
+      "Whether #49982/#53393/#50594 already cover this failure mode"
+    ],
+    "why": "The report describes intermittent macOS FSEvents watcher behavior, but the maintainer bot could not reproduce it on Linux and explicitly asked for DEBUG watcher logs, plugin-disabled retest, and timing relative to restart. No root cause is established, and the reproduction is platform-dependent and non-deterministic, so a concrete code fix cannot yet be scoped."
+  },
   "356a153664eaed69327e0ac9233a8ac4342ce66ea35c38cd3a5eff58373c6e2d": {
     "confidence": 0.8,
     "contradictions": [
@@ -103197,6 +103233,42 @@
     ],
     "why": "Issue clearly identifies a root cause: provisioning reader uses newest-created ordering instead of execution-tier authority, and mutation chain lacks fail-closed Shared-tier boundaries. Concrete acceptance criteria and evidence plan are provided. Multiple stacked PRs (e.g., #24312, #24362, #25046) show active maintainer collaboration and incremental progress, indicating the issue is actionable and valuable."
   },
+  "afaf37c5fde69adbe7c6bf529f930e4356b42050fd8098c16fe23a1960fb5bdc": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims service 'recycled' on its own, but maintainer bot suggests the client may have killed a stalled service, which is a different root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/dev/host.js service lifecycle/watchdog handling",
+      "packages/plugin/src/host.ts or packages/core/src/plugin/host.ts shutdown/abort error propagation",
+      "logging of service restart reason at default level"
+    ],
+    "risks": [
+      "Fixing the wrong layer (client watchdog vs service crash vs OOM) without root cause",
+      "Overlapping with existing issues #52049/#54181/#51216 may make the change redundant",
+      "Memory-pressure environment may not be reproducible in CI"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with OPENCODE_LOG_LEVEL=DEBUG and capture the log lines immediately before a new run= id",
+      "Determine whether 'event stream disconnected'/'Event stream stalled'/'Background service is unresponsive'/'background service starting reason=' appear before restart",
+      "Check whether opencode serve --service was still running at restart time to distinguish watchdog replacement from external OOM kill"
+    ],
+    "unknowns": [
+      "Whether the restart was client watchdog replacement or external OOM kill",
+      "Whether existing issues #52049/#54181/#51216 already cover this exact failure",
+      "Whether the failure is reproducible outside the memory-constrained PRoot host"
+    ],
+    "why": "The issue reports intermittent service restarts under memory pressure, but the root cause is explicitly unconfirmed: no panic/fatal in logs, dmesg unreadable, OOM attribution unconfirmed, and the maintainer bot asks for additional log lines to distinguish client watchdog replacement from external OOM kill. Related issues #52049, #54181, #51216, #54028, #52599, #51647 may already cover the same behavior, so duplicate coverage is unresolved."
+  },
   "afb3f5ddc9d2b82fdb4c266a559c2dcd618600abc60867348f4f7242e34e8a3e": {
     "confidence": 0.8,
     "contradictions": [],
@@ -134666,6 +134738,39 @@
       "Maintainer preference between forwarding the param versus raising UnsupportedParamsError under drop_params"
     ],
     "why": "Issue describes a concrete user-visible bug with a reproducible path, but the supplied duplicate assessment flags semantic overlap with open PR #40919 and other open PRs touching reasoning_effort; the overlap is unresolved and directly determines whether new code work is actionable."
+  },
+  "e3df931b68de6c1ca191e9f8b2362e552c1dfd9e819c84570918080a23b86ffa": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "KV router cost/weighting formula in the routing decision path (overlap credit vs decode-load term)",
+      "Possibly default weights or a new option to discount soon-to-finish decode load / weight resident overlap more",
+      "Investigate non_max_overlap_selections_total counter semantics"
+    ],
+    "risks": [
+      "Changing default weights could regress heavier/skewed-load scenarios where the load term legitimately helps",
+      "Open PR #15600 (sticky min-load policy) may overlap in intent though not in code paths; coordinate to avoid duplicate/conflicting approaches",
+      "Counter semantics may be a separate bug from the weighting issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's two-worker vLLM setup and 16x12 multi-turn workload; compare recomputed prefill (vllm:request_prefill_kv_computed_tokens_sum) and worker moves against round-robin and session-affinity baselines",
+      "Add a regression test asserting that when the index shows a worker holds nearly all of a resumed request's prefix and the alternative's advantage is only transient decode load, the request stays on the cache-holding worker",
+      "Verify non_max_overlap_selections_total behavior matches the documented semantics"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer changing defaults vs adding an option (design preference, not blocking)",
+      "Exact intended semantics of non_max_overlap_selections_total"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: the KV router's overlap credit only offsets the prefill term (max(0, raw_prefill - credit)), so transient decode load on the cache-holding worker can outweigh prefix locality, moving multi-turn sessions off the worker holding their prefix. Evidence includes per-request Formula logs, block counts, and controlled A/B runs against round-robin and session affinity."
   },
   "e3dff57dcd72583c143ba263ea1dfda078cefc91af24743330bcee81d7027c04": {
     "confidence": 0.8,
