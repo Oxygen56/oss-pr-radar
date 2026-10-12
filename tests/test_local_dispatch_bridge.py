@@ -23126,9 +23126,84 @@ def test_published_validation_rebinds_exact_expired_source_receipt(monkeypatch, 
     assert restored["publicationReceipt"]["prUrl"] == pr_url
 
 
+@pytest.mark.parametrize(
+    "invalid_evidence",
+    [
+        "missing_output",
+        "non_string_output",
+        "non_string_stream",
+        "wrong_session",
+        "wrong_turn",
+        "wrong_command",
+        "wrong_cwd",
+        "wrong_exit",
+        "missing_phase",
+    ],
+)
+def test_expired_native_command_proof_rejects_incomplete_or_unbound_output(
+    monkeypatch, tmp_path, invalid_evidence
+):
+    journal = tmp_path / "native-turn.jsonl"
+    receipt = {"threadId": "thread-1", "turnId": "turn-1"}
+    events = [{"type": "session_meta", "payload": {"id": "thread-1"}}]
+    tests = []
+    for phase in ("before_fix", "after_fix", "formal"):
+        item = {
+            "type": "CommandExecution",
+            "status": "completed",
+            "exit_code": 0,
+            "command": ["/bin/zsh", "-lc", "echo " + phase],
+            "cwd": tmp_path.as_uri(),
+            "aggregated_output": "native " + phase,
+        }
+        events.append(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "thread_id": receipt["threadId"],
+                    "turn_id": receipt["turnId"],
+                    "item": item,
+                },
+            }
+        )
+        tests.append(
+            {"command": item["command"][2], "cwd": str(tmp_path), "phase": phase, "exitCode": 0}
+        )
+    monkeypatch.setattr(MODULE, "_validated_task_turn_thread", lambda _candidate: (None, journal))
+    value = {"tests": tests}
+    journal.write_text("\n".join(json.dumps(event) for event in events) + "\n")
+    assert MODULE._expired_validation_command_proof({}, receipt, value)["tests"][0] == (
+        tests[0] | {"result": "native before_fix"}
+    )
+    payload = events[1]["payload"]
+    first = payload["item"]
+    if invalid_evidence == "missing_output":
+        first.pop("aggregated_output")
+    elif invalid_evidence == "non_string_output":
+        first["aggregated_output"] = None
+    elif invalid_evidence == "non_string_stream":
+        first["stdout"] = None
+    elif invalid_evidence == "wrong_session":
+        events[0]["payload"]["id"] = "other-thread"
+    elif invalid_evidence == "wrong_turn":
+        payload["turn_id"] = "other-turn"
+    elif invalid_evidence == "wrong_command":
+        first["command"][2] = "echo another-command"
+    elif invalid_evidence == "wrong_cwd":
+        first["cwd"] = (tmp_path / "another-directory").as_uri()
+    elif invalid_evidence == "wrong_exit":
+        first["exit_code"] = 1
+    elif invalid_evidence == "missing_phase":
+        tests[0]["phase"] = "read_only"
+    journal.write_text("\n".join(json.dumps(event) for event in events) + "\n")
+    assert MODULE._expired_validation_command_proof({}, receipt, value) is None
+
+
 @pytest.mark.parametrize("task_id_present", [False, True])
+@pytest.mark.parametrize("separate_streams", [False, True])
 def test_native_expired_pr_create_requires_real_completed_validation(
-    monkeypatch, tmp_path, task_id_present
+    monkeypatch, tmp_path, task_id_present, separate_streams
 ):
     import oss_pr_radar.ledger as ledger_module
     import oss_pr_radar.repo_probe as repo_probe
@@ -23384,6 +23459,9 @@ def test_native_expired_pr_create_requires_real_completed_validation(
             "stderr": actual.stderr,
             "aggregated_output": output,
         }
+        if not separate_streams:
+            item.pop("stdout")
+            item.pop("stderr")
         with rollout.open("a") as journal:
             journal.write(
                 json.dumps(
@@ -23399,7 +23477,7 @@ def test_native_expired_pr_create_requires_real_completed_validation(
                 )
                 + "\n"
             )
-        return {
+        check = {
             "command": command_text,
             "cwd": str(cwd),
             "phase": phase,
@@ -23408,6 +23486,10 @@ def test_native_expired_pr_create_requires_real_completed_validation(
             "stderr": actual.stderr,
             "result": output,
         }
+        if not separate_streams:
+            check.pop("stdout")
+            check.pop("stderr")
+        return check
 
     def execute_current_checks(*_args, **_kwargs):
         if turn_id == "native-expiry-copied-turn":
@@ -23440,6 +23522,9 @@ def test_native_expired_pr_create_requires_real_completed_validation(
                 for check in checks
             ],
         )
+        if not separate_streams:
+            for check in output["tests"]:
+                check.update(stdout="unverified task stdout", stderr="unverified task stderr")
         cache_proof["checks"] = checks
         result_path.write_text(json.dumps(output))
         # The same bytes are blocked before, and accepted only after, native completion.

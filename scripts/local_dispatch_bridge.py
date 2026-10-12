@@ -18098,11 +18098,17 @@ def _expired_validation_command_proof(
         used.add(matched)
         phases.add(test.get("phase"))
         item = commands[matched]
+        if not isinstance(item.get("aggregated_output"), str):
+            return None
+        check = {key: field for key, field in test.items() if key not in {"stdout", "stderr"}}
+        for stream in ("stdout", "stderr"):
+            if stream in item:
+                if not isinstance(item[stream], str):
+                    return None
+                check[stream] = item[stream]
         checks.append(
-            test
+            check
             | {
-                "stdout": item["stdout"],
-                "stderr": item["stderr"],
                 "result": item["aggregated_output"],
             }
         )
@@ -24054,8 +24060,9 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
             "tests 只能包含本轮真正执行的检查。每项逐字记录实际执行的完整 shell 命令 command"
             "（不得写摘要或命令说明）、绝对工作目录 cwd、phase（before_fix/after_fix/formal）、"
             "真实整数 exitCode。结果按实际可见输出如实记录，不猜测 stdout/stderr 分流。"
-            "系统严格核对实际 command/cwd/phase/exitCode 后，依据本轮原生完成项自动补齐"
-            "stdout、stderr 和 result（原生 aggregated_output），再正常签名。"
+            "系统严格核对实际 command/cwd/phase/exitCode 后，依据本轮原生完成项记录"
+            "result（原生 aggregated_output）；只有原生记录确实提供时才记录独立 stdout、stderr，"
+            "再正常签名。"
             "系统会按本轮 thread/turn 的原生完成记录逐条核对，写 JSON 的命令里提到旧命令"
             "不能作为执行证明。不能重填当前 contextDigest 后复制旧 tests。"
             "未执行或仍失败时诚实保留缺口，自动复核由系统写入。"
