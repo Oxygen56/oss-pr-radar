@@ -70,7 +70,9 @@ def test_creating_and_attempted_effects_are_retained_and_idempotent(tmp_path):
     assert restarted.publication_request("request-1")["status"] == "BLOCKED"
 
 
-def test_enospc_write_is_a_stop_condition(tmp_path, monkeypatch):
+def test_actual_enospc_write_failure_remains_an_error_after_capacity_rule_removal(
+    tmp_path, monkeypatch
+):
     def no_space(*_args, **_kwargs):
         raise OSError(errno.ENOSPC, "disk full")
 
@@ -93,7 +95,9 @@ def test_enospc_write_is_a_stop_condition(tmp_path, monkeypatch):
             "logBytes": 0,
         }
     )
-    assert {"ENOSPC", "DISK_STOP_THRESHOLD"} <= set(replay["faults"])
+    assert replay["ok"] is False
+    assert "ENOSPC" in replay["faults"]
+    assert "DISK_STOP_THRESHOLD" not in replay["faults"]
 
 
 def test_log_rotation_handles_exact_limit_and_keeps_bounded_history(tmp_path):

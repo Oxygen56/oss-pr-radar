@@ -881,7 +881,7 @@ def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_al
     assert statuses[1]["workerRuntimeHealth"]["lastExitCode"] == 1
 
 
-def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
+def test_worker_status_reports_unrestricted_capacity_without_failing_loaded_workers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
@@ -942,7 +942,8 @@ def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
         INSTALL,
         "disk_snapshot",
         lambda _root: {
-            "level": "warning",
+            "level": "unrestricted",
+            "capacityLimitsEnabled": False,
             "freeBytes": 50 * 1024 * 1024 * 1024,
             "usedFraction": 0.93,
         },
@@ -966,7 +967,7 @@ def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
     assert [status["ok"] for status in statuses] == [True, True, True, True]
     assert statuses[0]["runtimeHealth"]["healthy"] is True
     assert statuses[0]["runtimeHealth"]["issues"] == []
-    assert statuses[0]["runtimeHealth"]["warnings"] == ["DISK_WARNING_THRESHOLD"]
+    assert statuses[0]["runtimeHealth"]["warnings"] == []
 
 
 def test_status_top_level_ok_aggregates_worker_health(

@@ -376,11 +376,11 @@ def test_fault_replay_covers_runtime_failure_matrix():
         "CREATING_PUBLICATION_EFFECT_AFTER_CRASH",
         "SQLITE_INTERRUPTED",
         "ENOSPC",
-        "DISK_STOP_THRESHOLD",
         "LOG_LIMIT_EXCEEDED",
         "DIRTY_OR_UNVERIFIED_DEPLOYMENT",
         "POLICY_DIGEST_CHANGED",
     } <= set(result["faults"])
+    assert "DISK_STOP_THRESHOLD" not in result["faults"]
 
 
 def test_fault_replay_is_clean_for_verified_healthy_runtime():
@@ -404,14 +404,16 @@ def test_fault_replay_is_clean_for_verified_healthy_runtime():
     assert result["faults"] == []
 
 
-def test_runtime_audit_exposes_and_blocks_an_active_disk_pressure_episode():
+def test_runtime_audit_exposes_historical_disk_pressure_without_capacity_blocking():
     now = time.time()
     gate = {
-        "ok": False,
-        "blocked": True,
-        "reason": "DISK_STOP_THRESHOLD",
-        "active": True,
-        "gateActive": True,
+        "ok": True,
+        "blocked": False,
+        "reason": None,
+        "active": False,
+        "gateActive": False,
+        "capacityLimitsEnabled": False,
+        "historicalActive": True,
         "episode": 7,
     }
     result = audit_snapshot(
@@ -434,9 +436,10 @@ def test_runtime_audit_exposes_and_blocks_an_active_disk_pressure_episode():
         now=now,
     )
 
-    assert result["ok"] is False
-    assert "DISK_STOP_THRESHOLD" in result["faults"]
+    assert result["ok"] is True
+    assert result["faults"] == []
     assert result["health"]["diskPressureGate"] == gate
+    assert result["health"]["diskPressureGate"]["historicalActive"] is True
 
 
 def test_fault_replay_accepts_successful_short_lived_workers_without_pid():
