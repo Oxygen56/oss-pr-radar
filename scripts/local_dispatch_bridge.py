@@ -30545,7 +30545,9 @@ def _current_stopped_attempt(
     """Read one exact exhausted attempt; grant no execution or publication authority."""
     if candidate.get("stage") and candidate["stage"] not in {"DISPATCHED", "VALIDATION_PENDING"}:
         return None
-    if not hasattr(store, "task_context_candidates"):
+    if not hasattr(store, "task_context_candidates") or not callable(
+        getattr(store, "connect", None)
+    ):
         return None
     try:
         with store.connect() as connection:
