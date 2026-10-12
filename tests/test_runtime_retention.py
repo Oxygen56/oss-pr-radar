@@ -694,7 +694,7 @@ def test_fast_worker_rechecks_disk_after_retention(monkeypatch, tmp_path):
     assert calls == ["local-receipt-enqueue"]
 
 
-def test_fast_worker_retention_does_not_bypass_restart_margin(monkeypatch, tmp_path):
+def test_fast_worker_does_not_enforce_the_removed_restart_margin(monkeypatch, tmp_path):
     snapshots = iter(
         [
             {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
@@ -720,7 +720,43 @@ def test_fast_worker_retention_does_not_bypass_restart_margin(monkeypatch, tmp_p
         runner=lambda _root, operation: calls.append(operation) or {"ok": True},
     )
 
-    assert result["ok"] is False
-    assert result["reason"] == "DISK_STOP_THRESHOLD"
+    assert result["ok"] is True
     assert result["storageMaintenance"]["freedBytes"] == 123
-    assert calls == []
+    assert calls == ["local-receipt-enqueue"]
+
+
+def test_low_capacity_observation_does_not_trigger_automatic_report_deletion(monkeypatch, tmp_path):
+    now = time.time()
+    run = _stage6_run(
+        tmp_path,
+        "deadbeef-20260819T000000Z",
+        mtime=now - 3 * 24 * 60 * 60,
+    )
+    before = (run / "source-ledger.sqlite3").read_bytes()
+
+    class Usage:
+        total = 1_000
+        used = 999
+        free = 1
+
+    monkeypatch.setattr("oss_pr_radar.runtime.shutil.disk_usage", lambda _root: Usage())
+    monkeypatch.setattr(
+        runtime_retention,
+        "require_operational_authorization",
+        lambda _root: (_ for _ in ()).throw(AssertionError("automatic retention must not run")),
+    )
+    operations = []
+
+    def runner(_root, operation):
+        operations.append(operation)
+        return {"ok": True, "queued": [], "errors": []}
+
+    result = fast_advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["storageMaintenance"]["attempted"] is False
+    assert result["storageMaintenance"]["disk"]["freeBytes"] == 1
+    assert result["storageMaintenance"]["disk"]["capacityLimitsEnabled"] is False
+    assert operations == ["local-receipt-enqueue"]
+    assert (run / "source-ledger.sqlite3").read_bytes() == before
+    assert not (tmp_path / "reports" / "stage6-archives").exists()

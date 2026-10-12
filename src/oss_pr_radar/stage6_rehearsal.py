@@ -68,17 +68,16 @@ def resolve_observation_time(
 
 def require_free_space(
     root: Path, projected_bytes: int, *, minimum_bytes: int = MIN_FREE_BYTES
-) -> dict[str, int]:
-    """Fail before creating rehearsal files if the safety reserve would be crossed."""
+) -> dict[str, Any]:
+    """Measure projected writes without enforcing a free-space reserve."""
 
     usage = os.statvfs(root)
     free_bytes = usage.f_bavail * usage.f_frsize
-    if free_bytes - max(0, projected_bytes) < minimum_bytes:
-        raise OSError("insufficient free space for compact Stage 6 rehearsal")
     return {
         "freeBytes": free_bytes,
         "projectedBytes": max(0, projected_bytes),
-        "minimumFreeBytes": minimum_bytes,
+        "minimumFreeBytes": None,
+        "capacityLimitsEnabled": False,
         "remainingAfterProjection": free_bytes - max(0, projected_bytes),
     }
 

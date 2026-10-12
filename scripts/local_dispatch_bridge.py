@@ -31186,11 +31186,10 @@ def refresh_startup_pr_states(args: argparse.Namespace) -> dict[str, Any]:
             "noRuntimeCodeDrift",
             "noSharedGitWrites",
             "pendingPublicationEffectsClear",
-            "diskRestartSafe",
             "signingCapabilityAvailable",
         )
         if any(report.get(key) is not True for key in required):
-            raise RuntimeError("startup PR refresh requires a stopped, valid runtime with space")
+            raise RuntimeError("startup PR refresh requires a stopped, valid runtime")
         if (
             report.get("launchctlError") is not None
             or report.get("dangerousBridgeReachable") is not False

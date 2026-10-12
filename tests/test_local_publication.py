@@ -1254,14 +1254,11 @@ def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_pat
     assert slow["consecutiveSuccesses"] == 0
 
 
-def test_slow_worker_disk_stop_does_not_create_exponential_backoff(monkeypatch, tmp_path):
-    levels = iter(
-        [
-            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
-            {"level": "warning", "freeBytes": 100 * 1024**3, "usedFraction": 0.93},
-        ]
+def test_slow_worker_low_capacity_runs_without_creating_backoff(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {"level": "unrestricted", "freeBytes": 1, "usedFraction": 0.999},
     )
-    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(levels))
     calls = []
 
     def runner(_root: Path, operation: str):
@@ -1277,29 +1274,17 @@ def test_slow_worker_disk_stop_does_not_create_exponential_backoff(monkeypatch, 
     first = slow_advance_once(tmp_path, runner=runner)
     second = slow_advance_once(tmp_path, runner=runner)
 
-    assert first["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
-    assert second["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
-    assert second["deferred"] is True
-    assert not (tmp_path / "state" / "slow-worker-backoff.json").exists()
-    assert calls == []
-
-    gate_path = tmp_path / "state" / "disk-pressure-gate.json"
-    gate = json.loads(gate_path.read_text())
-    gate["nextCheckAtEpoch"] = time.time() - 1
-    gate["nextCheckAt"] = datetime.fromtimestamp(gate["nextCheckAtEpoch"], UTC).isoformat()
-    gate_path.write_text(json.dumps(gate) + "\n", encoding="utf-8")
-    gate_path.chmod(0o600)
-    recovered = slow_advance_once(tmp_path, runner=runner)
-
-    assert recovered["ok"] is True
-    assert calls == ["reproduction-probe"]
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert calls == ["reproduction-probe", "reproduction-probe"]
     backoff = json.loads((tmp_path / "state" / "slow-worker-backoff.json").read_text())
     assert backoff["failureCount"] == 0
+    assert not (tmp_path / "state" / "disk-pressure-gate.json").exists()
     health = json.loads((tmp_path / "state" / "runtime-health.json").read_text())
     assert health["workers"]["slow"]["lastExitCode"] == 0
 
 
-def test_slow_worker_disk_stop_preserves_real_network_backoff(monkeypatch, tmp_path):
+def test_slow_worker_low_capacity_preserves_real_network_backoff(monkeypatch, tmp_path):
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     backoff_path = state_dir / "slow-worker-backoff.json"
@@ -1313,51 +1298,19 @@ def test_slow_worker_disk_stop_preserves_real_network_backoff(monkeypatch, tmp_p
         "inFlight": False,
     }
     backoff_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
-    levels = iter(
-        [
-            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
-            {
-                "level": "warning",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": 0.945,
-            },
-            {
-                "level": "warning",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": 0.93,
-            },
-        ]
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {"level": "unrestricted", "freeBytes": 1, "usedFraction": 0.999},
     )
-    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(levels))
 
     def must_not_run(_root: Path, _operation: str):
-        raise AssertionError("disk or backoff must not run slow work")
+        raise AssertionError("persisted network backoff must not run slow work")
 
     result = slow_advance_once(tmp_path, runner=must_not_run)
 
-    assert result["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
+    assert result["reason"] == "PERSISTED_BACKOFF"
     assert json.loads(backoff_path.read_text()) == original
-
-    gate_path = state_dir / "disk-pressure-gate.json"
-    gate = json.loads(gate_path.read_text())
-    gate["nextCheckAtEpoch"] = time.time() - 1
-    gate["nextCheckAt"] = datetime.fromtimestamp(gate["nextCheckAtEpoch"], UTC).isoformat()
-    gate_path.write_text(json.dumps(gate) + "\n", encoding="utf-8")
-    gate_path.chmod(0o600)
-    still_stopped = slow_advance_once(tmp_path, runner=must_not_run)
-
-    assert still_stopped["reason"] == "DISK_STOP_THRESHOLD"
-    assert json.loads(backoff_path.read_text()) == original
-
-    gate = json.loads(gate_path.read_text())
-    gate["nextCheckAtEpoch"] = time.time() - 1
-    gate["nextCheckAt"] = datetime.fromtimestamp(gate["nextCheckAtEpoch"], UTC).isoformat()
-    gate_path.write_text(json.dumps(gate) + "\n", encoding="utf-8")
-    gate_path.chmod(0o600)
-    deferred = slow_advance_once(tmp_path, runner=must_not_run)
-
-    assert deferred["reason"] == "PERSISTED_BACKOFF"
-    assert json.loads(backoff_path.read_text()) == original
+    assert not (state_dir / "disk-pressure-gate.json").exists()
 
 
 def test_slow_worker_recovers_exact_legacy_disk_backoff(monkeypatch, tmp_path):

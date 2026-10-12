@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import multiprocessing
 import os
 import time
@@ -65,7 +64,7 @@ def test_health_rejects_stale_success_and_consecutive_failures():
     } <= set(result["issues"])
 
 
-def test_health_covers_queue_effect_disk_log_and_policy_boundaries():
+def test_health_keeps_noncapacity_queue_log_and_policy_boundaries():
     now = time.time()
     state = healthy_state(now) | {
         "queueImportSuccessAt": _iso(now - 901),
@@ -88,12 +87,11 @@ def test_health_covers_queue_effect_disk_log_and_policy_boundaries():
         "RELEASE_VERSION_MISMATCH",
         "POLICY_DIGEST_CHANGED",
         "DIRTY_OR_UNVERIFIED_DEPLOYMENT",
-        "DISK_STOP_THRESHOLD",
         "LOG_LIMIT_EXCEEDED",
     } <= set(result["issues"])
 
 
-def test_disk_warning_is_reported_without_marking_workers_unhealthy():
+def test_low_disk_capacity_is_measured_without_marking_workers_unhealthy():
     now = time.time()
 
     result = evaluate_health(
@@ -106,10 +104,11 @@ def test_disk_warning_is_reported_without_marking_workers_unhealthy():
 
     assert result["healthy"] is True
     assert result["issues"] == []
-    assert result["warnings"] == ["DISK_WARNING_THRESHOLD"]
+    assert result["warnings"] == []
+    assert result["disk"]["freeBytes"] == 50 * 1024 * 1024 * 1024
 
 
-def test_health_keeps_persisted_disk_episode_unhealthy_during_live_warning():
+def test_health_does_not_fail_on_a_historical_disk_capacity_episode():
     now = time.time()
     gate = {
         "ok": False,
@@ -128,8 +127,9 @@ def test_health_keeps_persisted_disk_episode_unhealthy_during_live_warning():
         disk_pressure_gate=gate,
     )
 
-    assert result["healthy"] is False
-    assert "DISK_STOP_THRESHOLD" in result["issues"]
+    assert result["healthy"] is True
+    assert result["issues"] == []
+    assert result["warnings"] == []
     assert result["diskPressureGate"] == gate
 
 
@@ -390,7 +390,9 @@ def test_log_rotation_keeps_bounded_history(tmp_path: Path):
     assert path.with_name("agent.log.2").read_bytes() == b"old"
 
 
-def test_disk_snapshot_uses_free_space_and_capacity_limits(monkeypatch, tmp_path: Path):
+def test_disk_snapshot_reports_actual_bytes_with_capacity_limits_disabled(
+    monkeypatch, tmp_path: Path
+):
     class Usage:
         total = 100
         used = 96
@@ -407,135 +409,47 @@ def test_disk_snapshot_uses_free_space_and_capacity_limits(monkeypatch, tmp_path
         ),
     )
 
-    assert result["level"] == "stop"
+    assert result["level"] == "unrestricted"
+    assert result["capacityLimitsEnabled"] is False
+    assert result["path"] == str(tmp_path)
+    assert result["totalBytes"] == 100
     assert result["freeBytes"] == 4
-    assert result["restartFreeBytes"] == 5 + 8 * 1024**3
-    assert result["restartUsedFraction"] == 0.94
+    assert result["usedFraction"] == 0.96
+    assert not any(
+        name in result
+        for name in (
+            "warningFreeBytes",
+            "stopFreeBytes",
+            "stopUsedFraction",
+            "restartFreeBytes",
+            "restartUsedFraction",
+        )
+    )
 
 
-def test_disk_snapshot_keeps_unrounded_fraction_for_restart_decision(monkeypatch, tmp_path: Path):
+def test_disk_snapshot_keeps_the_actual_unrounded_fraction(monkeypatch, tmp_path: Path):
     class Usage:
         total = 10_000_000
         used = 9_400_004
         free = 599_996
 
-    thresholds = DiskThresholds(
-        warning_free_bytes=0,
-        stop_free_bytes=0,
-        warning_used_fraction=0.90,
-        stop_used_fraction=0.95,
-        restart_free_margin_bytes=0,
-        restart_used_fraction=0.94,
-    )
     monkeypatch.setattr("oss_pr_radar.runtime.shutil.disk_usage", lambda _path: Usage())
 
-    result = disk_snapshot(tmp_path, thresholds)
+    result = disk_snapshot(tmp_path)
 
     assert result["usedFraction"] > 0.94
     assert result["usedFraction"] != 0.94
-    assert disk_restart_safe(result, thresholds) is False
+    assert result["level"] == "unrestricted"
+    assert result["capacityLimitsEnabled"] is False
 
 
 @pytest.mark.parametrize(
-    ("snapshot", "expected"),
+    "snapshot",
     [
-        (
-            {
-                "level": "warning",
-                "freeBytes": 24 * 1024**3,
-                "usedFraction": 0.94,
-            },
-            True,
-        ),
-        (
-            {
-                "level": "warning",
-                "freeBytes": 24 * 1024**3,
-                "usedFraction": 0.940001,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "warning",
-                "freeBytes": 24 * 1024**3 - 1,
-                "usedFraction": 0.93,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "stop",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": 0.5,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "ok",
-                "freeBytes": 100 * 1024**3,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "ok",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": float("nan"),
-            },
-            False,
-        ),
-        (
-            {
-                "level": "ok",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": -math.ulp(1.0),
-            },
-            False,
-        ),
-        (
-            {
-                "level": "stop",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": math.nextafter(1.0, math.inf),
-            },
-            False,
-        ),
-        (
-            {
-                "level": "ok",
-                "freeBytes": -1,
-                "usedFraction": 0.0,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "ok",
-                "freeBytes": True,
-                "usedFraction": 0.0,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "warning",
-                "freeBytes": 24 * 1024**3,
-                "usedFraction": math.nextafter(0.94, math.inf),
-            },
-            False,
-        ),
-        (
-            {
-                "level": "warning",
-                "freeBytes": 24 * 1024**3,
-                "usedFraction": 0.94,
-                "stopFreeBytes": 1,
-            },
-            False,
-        ),
+        {"level": "stop", "freeBytes": 0, "usedFraction": 1.0},
+        {"level": "warning", "freeBytes": 24 * 1024**3, "usedFraction": 0.940001},
+        {"level": "unrestricted", "freeBytes": 1, "usedFraction": 0.99},
     ],
 )
-def test_disk_restart_safe_requires_real_headroom(snapshot, expected):
-    assert disk_restart_safe(snapshot) is expected
+def test_disk_restart_compatibility_helper_no_longer_imposes_capacity_rules(snapshot):
+    assert disk_restart_safe(snapshot) is True

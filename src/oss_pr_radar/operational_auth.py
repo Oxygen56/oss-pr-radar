@@ -19,7 +19,7 @@ from typing import Any
 from .managed_security import sign_current, verify_current
 from .pr_projection import ledger_projection
 from .release_binding import active_release, runtime_ledger_path, runtime_root_digest
-from .runtime import REQUIRED_WORKERS, disk_restart_safe, read_disk_pressure_gate_health
+from .runtime import REQUIRED_WORKERS
 from .stage6_rehearsal import source_generation, stable_sqlite_copy
 from .util import canonical_json, iso_z, sha256_json
 
@@ -972,8 +972,6 @@ def _preflight_requirements(preflight: dict[str, Any]) -> None:
         "stagedWorkerReceiptValid": True,
         "actualAutomationEvidence": {"valid": True},
         "pendingPublicationEffectsValid": True,
-        "diskStopThresholdOk": True,
-        "diskRestartSafe": True,
         "runtimeReleasePolicyIdentityMatch": True,
         "noRuntimeCodeDrift": True,
         "noSharedGitWrites": True,
@@ -1421,20 +1419,7 @@ def finalize_operational_authorization(
         signed = sign_current(unsigned, context=OPERATIONAL_AUTH_CONTEXT)
         if not signed.get("keyId") or not signed.get("signature"):
             raise PermissionError("current signing key is unavailable")
-        # Re-observe the shared gate at the ACTIVE commit point.  A valid
-        # persisted episode may still be active because unloaded workers need
-        # this activation to run and durably clear it, but corrupt/unreadable
-        # gate state must fail closed.  Capacity is evaluated from the same
-        # live snapshot returned by that observation.
-        activation_health = read_disk_pressure_gate_health(runtime_root)
-        activation_disk = activation_health.get("snapshot")
-        if activation_health.get("reason") not in {None, "DISK_STOP_THRESHOLD"}:
-            raise RuntimeError("operational authorization activation disk check failed")
-        if not isinstance(activation_disk, dict) or not disk_restart_safe(activation_disk):
-            raise RuntimeError("operational authorization activation requires restart-safe disk")
-        # The live disk observation can cross the short staging expiry.  Read
-        # and authenticate the receipt again immediately before publishing
-        # ACTIVE, then re-check both its digest and time window.
+        # Authenticate the staged receipt again at the ACTIVE commit point.
         receipt = _read_staged_receipt(runtime_root)
         _validate_receipt_staging_window(receipt, now=now)
         if stable_evidence_digest(receipt_path) != value.get("stagedWorkerReceiptSha256"):

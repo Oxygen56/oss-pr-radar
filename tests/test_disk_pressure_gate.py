@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from oss_pr_radar import runtime
 from oss_pr_radar.local_publication import fast_advance_once, queue_import_once, slow_advance_once
 from oss_pr_radar.runtime import (
     DISK_PRESSURE_GATE_SCHEMA,
@@ -17,285 +18,6 @@ from oss_pr_radar.runtime import (
 
 def _stop_snapshot(_root: Path) -> dict:
     return {"level": "stop", "freeBytes": 1, "usedFraction": 0.96}
-
-
-def _concurrent_gate_worker(root: str, output) -> None:
-    output.put(
-        disk_pressure_gate(
-            Path(root),
-            worker="fast",
-            snapshot_fn=_stop_snapshot,
-            recheck_seconds=300,
-            now=100,
-        )
-    )
-
-
-def test_disk_pressure_gate_persists_first_stop_and_defers_without_resnapshot(tmp_path: Path):
-    calls: list[int] = []
-
-    def snapshot(_root: Path) -> dict:
-        calls.append(1)
-        return {"level": "stop", "freeBytes": 1, "usedFraction": 0.96}
-
-    first = disk_pressure_gate(
-        tmp_path,
-        worker="fast",
-        snapshot_fn=snapshot,
-        recheck_seconds=300,
-        now=100,
-    )
-    second = disk_pressure_gate(
-        tmp_path,
-        worker="queue-importer",
-        snapshot_fn=snapshot,
-        recheck_seconds=300,
-        now=101,
-    )
-
-    assert first["allowed"] is False
-    assert first["firstStop"] is True
-    assert first["recordStop"] is True
-    assert second["allowed"] is False
-    assert second["deferred"] is True
-    assert second["recordStop"] is False
-    assert calls == [1]
-
-    state = json.loads((tmp_path / "state" / "disk-pressure-gate.json").read_text())
-    assert state["active"] is True
-    assert state["firstStoppedAtEpoch"] == 100.0
-    assert state["nextCheckAtEpoch"] == 400.0
-    assert state["stoppedBy"] == "fast"
-
-
-@pytest.mark.parametrize(
-    "snapshot",
-    [
-        {
-            "level": "stop",
-            "freeBytes": 15 * 1024**3,
-            "usedFraction": 0.5,
-            "stopFreeBytes": 16 * 1024**3,
-            "stopUsedFraction": 0.95,
-        },
-        {
-            "level": "stop",
-            "freeBytes": 100 * 1024**3,
-            "usedFraction": 0.95,
-            "stopFreeBytes": 16 * 1024**3,
-            "stopUsedFraction": 0.95,
-        },
-    ],
-)
-def test_disk_pressure_gate_honors_both_hard_stop_measurements(tmp_path: Path, snapshot: dict):
-    result = disk_pressure_gate(
-        tmp_path,
-        snapshot_fn=lambda _root: snapshot,
-        thresholds=DiskThresholds(),
-        now=100,
-    )
-
-    assert result["allowed"] is False
-    assert result["reason"] == "DISK_STOP_THRESHOLD"
-    assert result["recordStop"] is True
-
-
-def test_disk_pressure_gate_persists_until_restart_margin_is_reached(tmp_path: Path):
-    snapshots = iter(
-        [
-            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
-            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
-            {
-                "level": "warning",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": 0.945,
-            },
-            {
-                "level": "warning",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": 0.94,
-            },
-            {"level": "warning", "freeBytes": 100 * 1024**3, "usedFraction": 0.93},
-        ]
-    )
-    calls: list[int] = []
-
-    def snapshot(_root: Path) -> dict:
-        calls.append(1)
-        return next(snapshots)
-
-    disk_pressure_gate(tmp_path, snapshot_fn=snapshot, recheck_seconds=10, now=100)
-    deferred = disk_pressure_gate(tmp_path, snapshot_fn=snapshot, recheck_seconds=10, now=101)
-    still_stop = disk_pressure_gate(tmp_path, snapshot_fn=snapshot, recheck_seconds=10, now=110)
-    margin_pending = disk_pressure_gate(tmp_path, snapshot_fn=snapshot, recheck_seconds=10, now=120)
-    recovered = disk_pressure_gate(tmp_path, snapshot_fn=snapshot, recheck_seconds=10, now=130)
-    normal = disk_pressure_gate(tmp_path, snapshot_fn=snapshot, recheck_seconds=10, now=131)
-
-    assert deferred["deferred"] is True
-    assert still_stop["allowed"] is False
-    assert still_stop["recordStop"] is False
-    assert margin_pending["allowed"] is False
-    assert margin_pending["gateActive"] is True
-    assert margin_pending["recordRecovery"] is False
-    assert recovered["allowed"] is True
-    assert recovered["recovered"] is True
-    assert recovered["recordRecovery"] is True
-    assert normal["allowed"] is True
-    assert normal["recovered"] is False
-    assert calls == [1, 1, 1, 1, 1]
-
-    state = json.loads((tmp_path / "state" / "disk-pressure-gate.json").read_text())
-    assert state["active"] is False
-    assert state["clearedAtEpoch"] == 130.0
-    assert state["nextCheckAtEpoch"] is None
-
-
-def test_disk_pressure_gate_force_recheck_cannot_bypass_restart_margin(tmp_path: Path):
-    snapshots = iter(
-        [
-            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
-            {
-                "level": "warning",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": 0.945,
-            },
-            {
-                "level": "warning",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": 0.93,
-            },
-        ]
-    )
-
-    first = disk_pressure_gate(
-        tmp_path,
-        snapshot_fn=lambda _root: next(snapshots),
-        recheck_seconds=300,
-        now=100,
-    )
-    still_blocked = disk_pressure_gate(
-        tmp_path,
-        snapshot_fn=lambda _root: next(snapshots),
-        recheck_seconds=300,
-        now=101,
-        force_recheck=True,
-    )
-    recovered = disk_pressure_gate(
-        tmp_path,
-        snapshot_fn=lambda _root: next(snapshots),
-        recheck_seconds=300,
-        now=102,
-        force_recheck=True,
-    )
-
-    assert first["allowed"] is False
-    assert still_blocked["allowed"] is False
-    assert still_blocked["gateActive"] is True
-    assert recovered["allowed"] is True
-    assert recovered["recovered"] is True
-    state = json.loads((tmp_path / "state" / "disk-pressure-gate.json").read_text())
-    assert state["active"] is False
-
-
-def test_disk_pressure_gate_fails_closed_for_nan_snapshot(tmp_path: Path):
-    for value in (float("nan"), float("inf"), float("-inf")):
-        result = disk_pressure_gate(
-            tmp_path,
-            snapshot_fn=lambda _root, value=value: {
-                "level": "ok",
-                "usedFraction": value,
-            },
-            now=100,
-        )
-
-        assert result["allowed"] is False
-        assert result["reason"] == "DISK_PRESSURE_GATE_UNAVAILABLE"
-        assert result["recordStop"] is False
-        assert not (tmp_path / "state" / "disk-pressure-gate.json").exists()
-
-
-def test_disk_pressure_gate_fails_closed_for_corrupt_state(tmp_path: Path):
-    state_dir = tmp_path / "state"
-    state_dir.mkdir(mode=0o700)
-    state_path = state_dir / "disk-pressure-gate.json"
-    state_path.write_text("{not-json\n", encoding="utf-8")
-    state_path.chmod(0o600)
-
-    result = disk_pressure_gate(
-        tmp_path,
-        snapshot_fn=lambda _root: (_ for _ in ()).throw(AssertionError("must not sample")),
-        now=100,
-    )
-
-    assert result["allowed"] is False
-    assert result["reason"] == "DISK_PRESSURE_GATE_UNAVAILABLE"
-    assert result["recordStop"] is False
-
-
-def test_disk_pressure_gate_concurrent_first_stop_is_claimed_once(tmp_path: Path):
-    context = multiprocessing.get_context("fork")
-    output = context.Queue()
-    processes = [
-        context.Process(target=_concurrent_gate_worker, args=(str(tmp_path), output))
-        for _ in range(2)
-    ]
-    for process in processes:
-        process.start()
-    results = [output.get(timeout=10) for _ in processes]
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
-
-    assert sum(result["firstStop"] is True for result in results) == 1
-    assert sum(result["recordStop"] is True for result in results) == 1
-    state = json.loads((tmp_path / "state" / "disk-pressure-gate.json").read_text())
-    assert state["active"] is True
-
-
-def test_workers_share_one_stop_record_and_do_not_repeat_it(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot",
-        lambda _root: {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
-    )
-
-    fast = fast_advance_once(
-        tmp_path,
-        runner=lambda _root, _operation: {"ok": True, "queued": [], "rejected": [], "errors": []},
-    )
-    queue = queue_import_once(
-        tmp_path,
-        runner=lambda _root, _operation: {"ok": True, "verified": 0, "inserted": 0},
-    )
-    slow = slow_advance_once(tmp_path, runner=lambda *_args: {"ok": True})
-
-    assert fast["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
-    assert queue["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
-    assert slow["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
-    operations = (tmp_path / "state" / "runtime-operations" / "operations.ndjson").read_text()
-    assert operations.count("\n") == 1
-
-
-@pytest.mark.parametrize(
-    "snapshot",
-    [
-        {"level": "ok"},
-        {"level": "warning", "freeBytes": 100 * 1024**3},
-        {
-            "level": "warning",
-            "freeBytes": 100 * 1024**3,
-            "usedFraction": 0.93,
-            "stopUsedFraction": 0.99,
-        },
-    ],
-)
-def test_disk_pressure_gate_rejects_incomplete_or_forged_live_evidence(
-    tmp_path: Path, snapshot: dict
-):
-    result = disk_pressure_gate(tmp_path, snapshot_fn=lambda _root: snapshot, now=100)
-
-    assert result["allowed"] is False
-    assert result["reason"] == "DISK_PRESSURE_GATE_UNAVAILABLE"
-    assert not (tmp_path / "state" / "disk-pressure-gate.json").exists()
 
 
 def _persisted_episode_seven() -> dict:
@@ -326,132 +48,279 @@ def _persisted_episode_seven() -> dict:
     }
 
 
-def test_read_disk_pressure_gate_health_is_read_only_and_exposes_active_episode(tmp_path: Path):
-    state_dir = tmp_path / "state"
-    state_dir.mkdir(mode=0o700)
-    gate_path = state_dir / "disk-pressure-gate.json"
-    gate_path.write_text(json.dumps(_persisted_episode_seven()) + "\n", encoding="utf-8")
-    gate_path.chmod(0o600)
-    before_bytes = gate_path.read_bytes()
-    before_mtime = gate_path.stat().st_mtime_ns
-    before_entries = sorted(path.name for path in state_dir.iterdir())
-
-    health = read_disk_pressure_gate_health(
-        tmp_path,
-        snapshot_fn=lambda _root: {
-            "level": "warning",
-            "freeBytes": 100 * 1024**3,
-            "usedFraction": 0.93,
-        },
-    )
-
-    assert health["ok"] is False
-    assert health["blocked"] is True
-    assert health["reason"] == "DISK_STOP_THRESHOLD"
-    assert health["active"] is True
-    assert health["episode"] == 7
-    assert gate_path.read_bytes() == before_bytes
-    assert gate_path.stat().st_mtime_ns == before_mtime
-    assert sorted(path.name for path in state_dir.iterdir()) == before_entries
+def _persist_active_episode(root: Path, state: dict | None = None) -> Path:
+    state_dir = root / "state"
+    state_dir.mkdir(mode=0o700, exist_ok=True)
+    path = state_dir / "disk-pressure-gate.json"
+    path.write_text(json.dumps(state or _persisted_episode_seven()) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    return path
 
 
-def test_read_disk_pressure_gate_health_reads_episode_after_live_sample(tmp_path: Path):
-    safe_snapshot = {
-        "level": "warning",
-        "freeBytes": 100 * 1024**3,
-        "usedFraction": 0.93,
-    }
-
-    def activate_during_sample(_root: Path) -> dict:
-        result = disk_pressure_gate(
-            tmp_path,
+def _concurrent_gate_worker(root: str, output) -> None:
+    output.put(
+        disk_pressure_gate(
+            Path(root),
             worker="fast",
             snapshot_fn=_stop_snapshot,
             recheck_seconds=300,
             now=100,
         )
-        assert result["gateActive"] is True
-        return dict(safe_snapshot)
-
-    health = read_disk_pressure_gate_health(tmp_path, snapshot_fn=activate_during_sample)
-
-    assert health["snapshot"] == safe_snapshot
-    assert health["restartSafe"] is True
-    assert health["active"] is True
-    assert health["blocked"] is True
-    assert health["reason"] == "DISK_STOP_THRESHOLD"
+    )
 
 
-def test_legacy_six_decimal_episode_can_clear_on_due_restart_safe_probe(tmp_path: Path):
-    state_dir = tmp_path / "state"
-    state_dir.mkdir(mode=0o700)
-    gate_path = state_dir / "disk-pressure-gate.json"
-    gate_path.write_text(json.dumps(_persisted_episode_seven()) + "\n", encoding="utf-8")
-    gate_path.chmod(0o600)
-
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        {"level": "stop", "freeBytes": 0, "usedFraction": 1.0},
+        {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
+        {"level": "warning", "freeBytes": 24 * 1024**3 - 1, "usedFraction": 0.945},
+    ],
+)
+def test_disk_pressure_gate_does_not_stop_at_old_capacity_boundaries(
+    tmp_path: Path, snapshot: dict
+):
     result = disk_pressure_gate(
         tmp_path,
-        snapshot_fn=lambda _root: {
-            "level": "warning",
-            "freeBytes": 100 * 1024**3,
-            "usedFraction": 0.93,
-        },
-        now=1_300,
+        snapshot_fn=lambda _root: snapshot,
+        thresholds=DiskThresholds(),
+        now=100,
     )
 
     assert result["allowed"] is True
-    assert result["recovered"] is True
-    state = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert result["blocked"] is False
+    assert result["reason"] is None
+    assert result["snapshot"] == snapshot
+    assert result["gateActive"] is False
+    assert result["firstStop"] is False
+    assert result["recordStop"] is False
+    assert result["recordRecovery"] is False
+    assert result["recovered"] is False
+    assert not (tmp_path / "state" / "disk-pressure-gate.json").exists()
+
+
+def test_gate_clears_historical_active_episode_without_claiming_capacity_recovery(tmp_path: Path):
+    path = _persist_active_episode(tmp_path)
+    historical = json.loads(path.read_text())
+
+    result = disk_pressure_gate(
+        tmp_path,
+        worker="fast",
+        snapshot_fn=_stop_snapshot,
+        now=1_001,
+    )
+
+    assert result["allowed"] is True
+    assert result["gateActive"] is False
+    assert result["deferred"] is False
+    assert result["firstStop"] is False
+    assert result["recordStop"] is False
+    assert result["recovered"] is False
+    assert result["recordRecovery"] is False
+    state = json.loads(path.read_text())
     assert state["active"] is False
+    assert state["clearedReason"] == "limits_removed"
+    assert state["episode"] == historical["episode"]
+    assert state["firstStoppedAt"] == historical["firstStoppedAt"]
+    assert state["firstStoppedAtEpoch"] == historical["firstStoppedAtEpoch"]
+    assert state["lastSnapshot"] == historical["lastSnapshot"]
+    assert state["nextCheckAtEpoch"] is None
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert json.loads(path.read_text())["active"] is False
+
+
+def test_historical_capacity_removal_is_serialized_and_not_repeated(tmp_path: Path):
+    path = _persist_active_episode(tmp_path)
+    context = multiprocessing.get_context("fork")
+    output = context.Queue()
+    processes = [
+        context.Process(target=_concurrent_gate_worker, args=(str(tmp_path), output))
+        for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    results = [output.get(timeout=10) for _ in processes]
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+
+    assert all(result["allowed"] is True for result in results)
+    assert all(result["firstStop"] is False for result in results)
+    assert sum(result["limitsRemoved"] is True for result in results) == 1
+    assert all(result["recordRecovery"] is False for result in results)
+    state = json.loads(path.read_text())
+    assert state["active"] is False
+    assert state["clearedReason"] == "limits_removed"
     assert state["episode"] == 7
+    before = path.read_bytes()
+    before_mtime = path.stat().st_mtime_ns
+    again = disk_pressure_gate(tmp_path, snapshot_fn=_stop_snapshot, now=101)
+    assert again["allowed"] is True
+    assert path.read_bytes() == before
+    assert path.stat().st_mtime_ns == before_mtime
 
 
-def test_legacy_level_selected_before_rounding_can_clear_after_upgrade(tmp_path: Path):
+def test_removing_historical_capacity_limit_reports_actual_state_write_failure(
+    monkeypatch, tmp_path
+):
+    path = _persist_active_episode(tmp_path)
+    before = path.read_bytes()
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(runtime, "_atomic_write", fail_write)
+    result = disk_pressure_gate(tmp_path, snapshot_fn=_stop_snapshot, now=1_001)
+
+    assert result["allowed"] is False
+    assert result["reason"] == "RUNTIME_STATE_UNAVAILABLE"
+    assert "No space left on device" in result["error"]
+    assert result["recordStop"] is False
+    assert result["recordRecovery"] is False
+    assert path.read_bytes() == before
+    assert json.loads(path.read_text())["active"] is True
+
+
+def test_disk_pressure_gate_preserves_corrupt_state_and_exposes_the_error(tmp_path: Path):
     state_dir = tmp_path / "state"
     state_dir.mkdir(mode=0o700)
-    gate_path = state_dir / "disk-pressure-gate.json"
-    state = _persisted_episode_seven()
-    state["lastSnapshot"] = {
-        "path": "/legacy/runtime",
-        "totalBytes": 1_000_000_000_000,
-        "freeBytes": 50_000_400_000,
-        # Exact byte-derived use is 0.9499996, so legacy disk_snapshot chose
-        # warning before persisting the rounded value that old gate read as stop.
-        "usedFraction": 0.95,
-        "level": "warning",
-        "warningFreeBytes": 32 * 1024**3,
-        "stopFreeBytes": 16 * 1024**3,
-        "stopUsedFraction": 0.95,
-    }
-    gate_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
-    gate_path.chmod(0o600)
+    path = state_dir / "disk-pressure-gate.json"
+    path.write_text("{not-json\n", encoding="utf-8")
+    path.chmod(0o600)
+    before = path.read_bytes()
 
-    result = disk_pressure_gate(
-        tmp_path,
-        snapshot_fn=lambda _root: {
-            "level": "warning",
-            "freeBytes": 100 * 1024**3,
-            "usedFraction": 0.93,
-        },
-        now=1_300,
-    )
+    result = disk_pressure_gate(tmp_path, snapshot_fn=_stop_snapshot, now=100)
+
+    assert result["allowed"] is False
+    assert result["reason"] == "RUNTIME_STATE_UNAVAILABLE"
+    assert result["error"]
+    assert result["recordStop"] is False
+    assert path.read_bytes() == before
+
+
+def test_gate_refuses_symlinked_state_file_without_touching_target(tmp_path: Path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(mode=0o700)
+    target = tmp_path / "external.json"
+    target.write_text(json.dumps(_persisted_episode_seven()), encoding="utf-8")
+    target.chmod(0o600)
+    (state_dir / "disk-pressure-gate.json").symlink_to(target)
+    before = target.read_bytes()
+
+    result = disk_pressure_gate(tmp_path, snapshot_fn=_stop_snapshot, now=100)
+
+    assert result["allowed"] is False
+    assert result["reason"] == "RUNTIME_STATE_UNAVAILABLE"
+    assert target.read_bytes() == before
+    assert (state_dir / "disk-pressure-gate.json").is_symlink()
+
+
+def test_gate_reports_actual_disk_measurement_failure_without_capacity_blocking(tmp_path: Path):
+    def unreadable(_root):
+        raise OSError("disk measurement unavailable")
+
+    result = disk_pressure_gate(tmp_path, snapshot_fn=unreadable, now=100)
 
     assert result["allowed"] is True
-    assert result["recovered"] is True
-    assert json.loads(gate_path.read_text(encoding="utf-8"))["active"] is False
+    assert result["reason"] is None
+    assert result["snapshot"]["level"] == "unavailable"
+    assert "disk measurement unavailable" in result["snapshot"]["measurementError"]
+    assert result["recordStop"] is False
+    assert not (tmp_path / "state" / "disk-pressure-gate.json").exists()
 
 
-def test_read_disk_pressure_gate_health_fails_closed_without_creating_state(tmp_path: Path):
-    health = read_disk_pressure_gate_health(
-        tmp_path,
-        snapshot_fn=lambda _root: {
-            "level": "warning",
-            "freeBytes": 100 * 1024**3,
-            "usedFraction": 0.93,
-        },
-    )
+def test_worker_entries_continue_under_old_capacity_stop_without_recovery_marker(
+    monkeypatch, tmp_path
+):
+    path = _persist_active_episode(tmp_path)
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _stop_snapshot)
+    calls = []
+
+    def runner(_root, operation):
+        calls.append(operation)
+        return {
+            "ok": True,
+            "queued": [],
+            "rejected": [],
+            "errors": [],
+            "verified": 0,
+            "inserted": 0,
+        }
+
+    fast = fast_advance_once(tmp_path, runner=runner)
+    queue = queue_import_once(tmp_path, runner=runner)
+    slow = slow_advance_once(tmp_path, runner=runner)
+
+    assert fast["ok"] is True
+    assert queue["ok"] is True
+    assert slow["ok"] is True
+    assert "local-receipt-enqueue" in calls
+    assert "queue-import" in calls
+    assert "publication-run" in calls
+    assert json.loads(path.read_text())["clearedReason"] == "limits_removed"
+    operations = (tmp_path / "state" / "runtime-operations" / "operations.ndjson").read_text()
+    assert "disk-pressure-recovery" not in operations
+    assert "DISK_STOP_THRESHOLD" not in operations
+
+
+def test_read_capacity_health_exposes_history_without_blocking_or_mutating(tmp_path: Path):
+    path = _persist_active_episode(tmp_path)
+    before = path.read_bytes()
+    before_mtime = path.stat().st_mtime_ns
+    before_entries = sorted(item.name for item in path.parent.iterdir())
+
+    health = read_disk_pressure_gate_health(tmp_path, snapshot_fn=_stop_snapshot)
+
+    assert health["ok"] is True
+    assert health["capacityLimitsEnabled"] is False
+    assert health["blocked"] is False
+    assert health["active"] is False
+    assert health["gateActive"] is False
+    assert health["historicalActive"] is True
+    assert health["episode"] == 7
+    assert health["snapshot"] == _stop_snapshot(tmp_path)
+    assert health["restartSafe"] is None
+    assert path.read_bytes() == before
+    assert path.stat().st_mtime_ns == before_mtime
+    assert sorted(item.name for item in path.parent.iterdir()) == before_entries
+
+
+def test_read_capacity_health_without_history_preserves_empty_state_directory(tmp_path: Path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(mode=0o700)
+    health = read_disk_pressure_gate_health(tmp_path, snapshot_fn=_stop_snapshot)
+
+    assert health["ok"] is True
+    assert health["capacityLimitsEnabled"] is False
+    assert health["blocked"] is False
+    assert health["active"] is False
+    assert health["historicalActive"] is False
+    assert health["snapshot"] == _stop_snapshot(tmp_path)
+    assert health["restartSafe"] is None
+    assert list(state_dir.iterdir()) == []
+
+
+def test_read_capacity_health_reports_missing_runtime_directory_without_creating_it(tmp_path: Path):
+    health = read_disk_pressure_gate_health(tmp_path, snapshot_fn=_stop_snapshot)
 
     assert health["ok"] is False
-    assert health["blocked"] is True
-    assert health["reason"] == "DISK_PRESSURE_GATE_UNAVAILABLE"
+    assert health["reason"] == "RUNTIME_STATE_UNAVAILABLE"
+    assert health["capacityLimitsEnabled"] is False
     assert not (tmp_path / "state").exists()
+
+
+def test_read_capacity_health_keeps_actual_measurement_error_visible(tmp_path: Path):
+    path = _persist_active_episode(tmp_path)
+    before = path.read_bytes()
+
+    def unreadable(_root):
+        raise OSError("disk measurement unavailable")
+
+    health = read_disk_pressure_gate_health(tmp_path, snapshot_fn=unreadable)
+
+    assert health["ok"] is True
+    assert health["blocked"] is False
+    assert health["historicalActive"] is True
+    assert health["snapshot"]["level"] == "unavailable"
+    assert "disk measurement unavailable" in health["snapshot"]["measurementError"]
+    assert path.read_bytes() == before

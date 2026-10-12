@@ -25,6 +25,14 @@ independent.
   credentials or private filesystem paths, or falsely certify human review.
   Repository bans on AI-assisted or fully automated submissions still apply.
 
+## Capacity policy
+
+Disk capacity is measured and reported, but free-space, usage-percentage and
+restart-reserve limits do not gate automatic work. The previous stop record is
+retired with `limits_removed`, preserving its historical observations rather
+than claiming that space recovered. Actual filesystem and database write errors
+remain errors. Task files, ledgers and releases are not deleted by this change.
+
 ## One command
 
 From the fixed runtime root, run exactly; the script and package must come from

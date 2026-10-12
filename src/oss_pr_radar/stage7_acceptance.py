@@ -41,7 +41,6 @@ from .pr_projection import ledger_projection
 from .release_binding import bind_runtime, runtime_ledger_path, runtime_root_digest
 from .runtime import (
     REQUIRED_WORKERS,
-    disk_restart_safe,
     disk_snapshot,
     pending_publication_effects,
     read_disk_pressure_gate_health,
@@ -997,8 +996,6 @@ def check(
         and deployment.get("deploymentDirty") is not True
     )
     pending_ok = pending_effects == 0
-    disk_ok = disk.get("level") != "stop"
-    disk_restart_ok = disk_restart_safe(disk)
     runtime_git = runtime_root / ".git"
     code_git = binding.code_root / ".git"
     shared_git = (
@@ -1067,8 +1064,6 @@ def check(
         retry_reasons.append("automation_snapshot_invalid_or_changed")
     if strict and require_publication_pause and not acceptance_window_ok:
         retry_reasons.append("acceptance_window_changed_during_check")
-    if strict and require_workers_loaded and not disk_pressure_gate_clear:
-        retry_reasons.append("disk_pressure_gate_active_or_unavailable")
     if (
         strict
         and require_workers_loaded
@@ -1091,8 +1086,6 @@ def check(
             and no_runtime_code_drift
             and not shared_git
             and (not strict or launch_error is None)
-            and (not strict or disk_restart_ok)
-            and (not strict or not require_workers_loaded or disk_pressure_gate_clear)
             and (not strict or (pending_ok and pending_effects == 0))
             and (not strict or identity_ok)
             and (not strict or current_signing_key_available())
@@ -1124,8 +1117,9 @@ def check(
         "noRuntimeCodeDrift": no_runtime_code_drift,
         "noSharedGitWrites": not shared_git,
         "disk": disk,
-        "diskStopThresholdOk": disk_ok,
-        "diskRestartSafe": disk_restart_ok,
+        "capacityLimitsEnabled": False,
+        "diskStopThresholdOk": None,
+        "diskRestartSafe": None,
         "diskPressureGate": disk_pressure_gate,
         "diskPressureGateClear": disk_pressure_gate_clear,
         "pendingPublicationEffects": pending_effects,

@@ -28,15 +28,6 @@ def _runtime(monkeypatch, tmp_path):
         "active_release",
         lambda _root: (release, {"releaseId": "release-1"}),
     )
-    monkeypatch.setattr(
-        MODULE,
-        "disk_snapshot",
-        lambda _root: {
-            "level": "warning",
-            "freeBytes": 100 * 1024**3,
-            "usedFraction": 0.93,
-        },
-    )
     variables = {}
     monkeypatch.setattr(
         MODULE,
@@ -310,7 +301,7 @@ def test_resume_does_not_enable_remote_before_resuming_record_is_durable(monkeyp
     assert actions == []
 
 
-def test_resume_keeps_pause_when_disk_restart_margin_is_missing(monkeypatch, tmp_path):
+def test_resume_allows_low_capacity_when_other_resume_requirements_hold(monkeypatch, tmp_path):
     _release, state, _ledger = _runtime(monkeypatch, tmp_path)
     record_path = state / MODULE.FILENAME
     record = {
@@ -325,12 +316,12 @@ def test_resume_keeps_pause_when_disk_restart_margin_is_missing(monkeypatch, tmp
     record_path.chmod(0o600)
     monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: record)
     monkeypatch.setattr(
-        MODULE,
-        "disk_snapshot",
+        "oss_pr_radar.runtime.disk_snapshot",
         lambda _root: {
-            "level": "warning",
-            "freeBytes": 100 * 1024**3,
-            "usedFraction": 0.945,
+            "level": "unrestricted",
+            "freeBytes": 1,
+            "usedFraction": 0.999,
+            "capacityLimitsEnabled": False,
         },
     )
     actions = []
@@ -340,14 +331,17 @@ def test_resume_keeps_pause_when_disk_restart_margin_is_missing(monkeypatch, tmp
         lambda *_args, **_kwargs: actions.append("remote-enable"),
     )
 
-    with pytest.raises(RuntimeError, match="restart-safe disk capacity"):
-        MODULE.resume(tmp_path)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
 
-    assert actions == []
-    assert json.loads(record_path.read_text(encoding="utf-8"))["pauseState"] == "ACTIVE"
+    result = MODULE.resume(tmp_path)
+
+    assert result["ok"] is True
+    assert result["removed"] is True
+    assert actions == ["remote-enable"]
+    assert not record_path.exists()
 
 
-def test_resume_keeps_pause_until_worker_clears_persisted_disk_episode(monkeypatch, tmp_path):
+def test_resume_ignores_persisted_capacity_episode(monkeypatch, tmp_path):
     _release, state, _ledger = _runtime(monkeypatch, tmp_path)
     record_path = state / MODULE.FILENAME
     record = {
@@ -361,22 +355,10 @@ def test_resume_keeps_pause_until_worker_clears_persisted_disk_episode(monkeypat
     record_path.write_text(json.dumps(record), encoding="utf-8")
     record_path.chmod(0o600)
     monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: record)
-    monkeypatch.setattr(
-        MODULE,
-        "read_disk_pressure_gate_health",
-        lambda *_args, **_kwargs: {
-            "ok": False,
-            "blocked": True,
-            "reason": "DISK_STOP_THRESHOLD",
-            "active": True,
-            "restartSafe": True,
-            "snapshot": {
-                "level": "warning",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": 0.93,
-            },
-        },
-    )
+    gate_path = state / "disk-pressure-gate.json"
+    historical_gate = {"active": True, "reason": "DISK_STOP_THRESHOLD"}
+    gate_path.write_text(json.dumps(historical_gate), encoding="utf-8")
+    gate_path.chmod(0o600)
     actions = []
     monkeypatch.setattr(
         MODULE,
@@ -384,11 +366,14 @@ def test_resume_keeps_pause_until_worker_clears_persisted_disk_episode(monkeypat
         lambda *_args, **_kwargs: actions.append("remote-enable"),
     )
 
-    with pytest.raises(RuntimeError, match="clear disk pressure gate"):
-        MODULE.resume(tmp_path)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
 
-    assert actions == []
-    assert json.loads(record_path.read_text(encoding="utf-8"))["pauseState"] == "ACTIVE"
+    result = MODULE.resume(tmp_path)
+
+    assert result["ok"] is True
+    assert actions == ["remote-enable"]
+    assert not record_path.exists()
+    assert json.loads(gate_path.read_text(encoding="utf-8")) == historical_gate
 
 
 def test_resume_rollback_is_uncertain_if_active_record_is_not_durable(monkeypatch, tmp_path):

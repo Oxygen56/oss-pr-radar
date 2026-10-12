@@ -96,9 +96,22 @@ def test_public_manifest_excludes_restricted_recovery_from_safety_claim(tmp_path
     assert all(oct(path.stat().st_mode & 0o777) == "0o600" for path in tmp_path.iterdir())
 
 
-def test_free_space_guard_fails_before_reserve_is_crossed(tmp_path):
-    with pytest.raises(OSError, match="insufficient free space"):
-        require_free_space(tmp_path, projected_bytes=100, minimum_bytes=10**20)
+def test_projected_free_space_is_observed_without_capacity_reserve(tmp_path, monkeypatch):
+    class LowCapacity:
+        f_bavail = 1
+        f_frsize = 1
+
+    monkeypatch.setattr("oss_pr_radar.stage6_rehearsal.os.statvfs", lambda _root: LowCapacity())
+
+    result = require_free_space(tmp_path, projected_bytes=100, minimum_bytes=10**20)
+
+    assert result == {
+        "freeBytes": 1,
+        "projectedBytes": 100,
+        "minimumFreeBytes": None,
+        "capacityLimitsEnabled": False,
+        "remainingAfterProjection": -99,
+    }
 
 
 def test_sqlite_restore_target_is_private_at_creation(tmp_path):
