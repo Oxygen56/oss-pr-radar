@@ -123,6 +123,416 @@ def configure_permit(monkeypatch, args):
     )
 
 
+@pytest.fixture
+def denied_creation(tmp_path, monkeypatch, current_signing_key):
+    from test_publication import prepared_request
+
+    from oss_pr_radar import publication, repo_probe
+
+    monkeypatch.setattr(publication, "CONTROL_ROOT", tmp_path)
+    monkeypatch.setitem(repo_probe.TRUSTED_PROBE_PROFILES, "test-publication-real", {})
+    store, row, _ = prepared_request(tmp_path)
+    request = row["request"]
+    evidence = json.loads(Path(request["evidencePath"]).read_text())
+    permit = store.grant_publication_request(
+        row["request_id"],
+        issue_url=request["issueUrl"],
+        commit_sha=request["commitSha"],
+        branch=request["branch"],
+        evidence=evidence | {"publication": request["publication"]},
+    )
+    args = SimpleNamespace(
+        issue_url=request["issueUrl"],
+        repo="example/project",
+        worktree=request["worktreePath"],
+        body_file=request["publication"]["bodyPath"],
+        permit_id=permit["permit_id"],
+        commit_sha=request["commitSha"],
+        branch=request["branch"],
+        head_owner="Oxygen56",
+        base="main",
+        title=request["publication"]["title"],
+    )
+    detail = "GraphQL: Oxygen56 does not have the correct permissions to execute `CreatePullRequest` (createPullRequest)"
+    state = {"creates": 0, "gets": 0, "remote": None, "detail": detail, "prs": [], "invalid": None}
+    real_run = MODULE.run
+    monkeypatch.setattr(MODULE, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        MODULE,
+        "audit_publication_request",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status="ALLOW", reason="LIVE_PUBLICATION_GATES_PASSED"
+        ),
+    )
+    real_run(
+        ["git", "remote", "add", "radar-fork", "https://github.com/Oxygen56/project.git"],
+        cwd=Path(args.worktree),
+    )
+
+    def external(command, **kwargs):
+        if command[:3] == ["git", "ls-remote", "--heads"]:
+            sha = state["remote"]
+            return subprocess.CompletedProcess(
+                command, 0, f"{sha}\trefs/heads/{args.branch}\n" if sha else "", ""
+            )
+        if command[:2] == ["git", "push"]:
+            state["remote"] = args.commit_sha
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[:3] == ["gh", "pr", "create"]:
+            state["creates"] += 1
+            return subprocess.CompletedProcess(command, 1, "", state["detail"])
+        if command[:4] == ["gh", "api", "--method", "GET"]:
+            assert command[4] == "repos/example/project/pulls"
+            assert f"head=Oxygen56:{args.branch}" in command and "state=all" in command
+            state["gets"] += 1
+            if state["invalid"] == "query_failure":
+                return subprocess.CompletedProcess(command, 1, "", "HTTP 503")
+            body = state["prs"]
+            if state["invalid"] == "object":
+                body = {"message": "not a list"}
+            return subprocess.CompletedProcess(command, 0, json.dumps(body), "")
+        if command[:3] == ["gh", "api", "repos/Oxygen56/project"]:
+            parent = "foreign/project" if state["invalid"] == "fork_binding" else args.repo
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps(
+                    {"full_name": "Oxygen56/project", "fork": True, "parent": {"full_name": parent}}
+                ),
+                "",
+            )
+        assert command[0] == "git", command
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(MODULE, "run", external)
+    assert MODULE.push(SimpleNamespace(**vars(args), remote="radar-fork"), store)["ok"]
+    create_request = {
+        "issueUrl": args.issue_url,
+        "commitSha": args.commit_sha,
+        "branch": args.branch,
+        "repo": args.repo,
+        "headOwner": args.head_owner,
+        "base": args.base,
+        "title": args.title,
+        "bodyDigest": MODULE.sha256_json({"body": Path(args.body_file).read_text()}),
+        "publicationKind": "PR_CREATE",
+        "existingPrUrl": None,
+    }
+
+    def prior_denial():
+        effect = store.publication_effect(
+            permit_id=args.permit_id,
+            action="create_pr",
+            request_digest=MODULE.sha256_json(create_request),
+        )
+        store.mark_pull_request_creation_attempt(
+            effect_id=effect["effect_id"], permit_id=args.permit_id
+        )
+        store.complete_publication_effect(
+            effect["effect_id"],
+            status="RECONCILE_REQUIRED",
+            result={
+                "ok": False,
+                "reason": "PR_CREATION_NOT_RECONCILED",
+                "creationAttempted": True,
+                "detail": detail,
+            },
+        )
+        return effect
+
+    return args, store, row["request_id"], state, prior_denial, real_run
+
+
+@pytest.mark.parametrize("previous_attempt", [False, True])
+def test_native_permission_denial_blocks_only_exact_request_and_preserves_effects(
+    denied_creation, previous_attempt
+):
+    from oss_pr_radar.runtime import pending_publication_effects
+
+    args, store, request_id, state, prior, _ = denied_creation
+    if previous_attempt:
+        prior()
+    with store.connect() as connection:
+        push_before = dict(
+            connection.execute("SELECT * FROM publication_effects WHERE action='push'").fetchone()
+        )
+        request_bytes = connection.execute(
+            "SELECT request_json FROM publication_requests WHERE request_id=?", (request_id,)
+        ).fetchone()[0]
+    result = MODULE.create_pr(args, store)
+    assert result["ok"] is result["blocked"] is True
+    assert (
+        result["reason"] == "PUBLICATION_PERMISSION_DENIED" and result["creationAttempted"] is True
+    )
+    assert result["detail"] == state["detail"] and result["evidence"]["lookup"]["result"] == []
+    assert result["evidence"]["remoteSha"] == args.commit_sha
+    with store.connect() as connection:
+        create = dict(
+            connection.execute(
+                "SELECT * FROM publication_effects WHERE action='create_pr'"
+            ).fetchone()
+        )
+        assert create["status"] == "FAILED" and json.loads(create["result_json"]) == result
+        assert (
+            dict(
+                connection.execute(
+                    "SELECT * FROM publication_effects WHERE action='push'"
+                ).fetchone()
+            )
+            == push_before
+        )
+        assert (
+            connection.execute(
+                "SELECT request_json FROM publication_requests WHERE request_id=?", (request_id,)
+            ).fetchone()[0]
+            == request_bytes
+        )
+        event = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='PUBLICATION_BLOCKED'"
+            ).fetchone()[0]
+        )
+        assert event["auditEvidence"] == result["evidence"]
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 2
+    assert store.publication_request(request_id)["reason"] == "PUBLICATION_PERMISSION_DENIED"
+    assert store.publication_work_items() == []
+    assert state["creates"] == (0 if previous_attempt else 1)
+    assert MODULE.create_pr(args, store) == result
+    with store.connect() as connection:
+        assert (
+            dict(
+                connection.execute(
+                    "SELECT * FROM publication_effects WHERE action='create_pr'"
+                ).fetchone()
+            )
+            == create
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='PUBLICATION_BLOCKED'"
+            ).fetchone()[0]
+            == 1
+        )
+    assert pending_publication_effects(store.path) == 0
+    store.record_stage(
+        "example/project#7",
+        "AUDIT_NO_GO",
+        evidence=result["evidence"],
+        reason=result["reason"],
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=args.worktree,
+    )
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='example/project#7'"
+        ).fetchone()
+        assert dict(opportunity) == {
+            "stage": "AUDIT_NO_GO",
+            "terminal_reason": "PUBLICATION_PERMISSION_DENIED",
+        }
+        assert (
+            connection.execute("SELECT status FROM intents WHERE intent_id='intent-1'").fetchone()[
+                0
+            ]
+            == "REJECTED"
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='PUBLICATION_AUDIT_NO_GO_DEFERRED'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            dict(
+                connection.execute(
+                    "SELECT * FROM publication_effects WHERE action='create_pr'"
+                ).fetchone()
+            )
+            == create
+        )
+    assert pending_publication_effects(store.path) == 0
+
+
+@pytest.mark.parametrize("incomplete", ["proof", "block"])
+def test_native_permission_denial_cannot_end_task_before_complete_contraction(
+    denied_creation, monkeypatch, incomplete
+):
+    from oss_pr_radar.runtime import pending_publication_effects
+
+    args, store, _, state, _, _ = denied_creation
+    if incomplete == "block":
+        monkeypatch.setattr(
+            store,
+            "block_publication_request",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("block interrupted")),
+        )
+        with pytest.raises(RuntimeError, match="block interrupted"):
+            MODULE.create_pr(args, store)
+    else:
+        result = MODULE.create_pr(args, store)
+        result["evidence"].pop("remoteSha")
+        result["evidenceDigest"] = MODULE.sha256_json(result["evidence"])
+        with store.transaction() as connection:
+            connection.execute(
+                "UPDATE publication_effects SET result_json=? WHERE action='create_pr'",
+                (json.dumps(result),),
+            )
+    assert pending_publication_effects(store.path) == 1
+    store.record_stage(
+        "example/project#7",
+        "AUDIT_NO_GO",
+        reason="PUBLICATION_PERMISSION_DENIED",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=args.worktree,
+    )
+    with store.connect() as connection:
+        assert dict(
+            connection.execute(
+                "SELECT stage,terminal_reason FROM opportunities WHERE key='example/project#7'"
+            ).fetchone()
+        ) == {"stage": "FIX_READY", "terminal_reason": None}
+        assert (
+            connection.execute("SELECT status FROM intents WHERE intent_id='intent-1'").fetchone()[
+                0
+            ]
+            != "REJECTED"
+        )
+        deferred = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='PUBLICATION_AUDIT_NO_GO_DEFERRED'"
+            ).fetchone()[0]
+        )
+        assert deferred["effectStatus"] == "FAILED"
+        assert deferred["creationAttempted"] is True
+    assert pending_publication_effects(store.path) == 1
+    assert state["creates"] == 1
+
+
+@pytest.mark.parametrize("observe_pr", [False, True])
+@pytest.mark.parametrize("expired_permit", [False, True])
+def test_native_permission_denial_resumes_interrupted_block_without_another_create(
+    denied_creation, monkeypatch, observe_pr, expired_permit
+):
+    from datetime import UTC, datetime, timedelta
+
+    args, store, request_id, state, _, _ = denied_creation
+    block = store.block_publication_request
+    monkeypatch.setattr(
+        store,
+        "block_publication_request",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("block interrupted")),
+    )
+    with pytest.raises(RuntimeError, match="block interrupted"):
+        MODULE.create_pr(args, store)
+    with store.connect() as connection:
+        first = json.loads(
+            connection.execute(
+                "SELECT result_json FROM publication_effects WHERE action='create_pr'"
+            ).fetchone()[0]
+        )
+    assert store.publication_request(request_id)["status"] == "GRANTED"
+    monkeypatch.setattr(store, "block_publication_request", block)
+    if expired_permit:
+        with store.transaction() as connection:
+            connection.execute(
+                "UPDATE publication_permits SET expires_at=? WHERE permit_id=?",
+                ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), args.permit_id),
+            )
+    if observe_pr:
+        state["prs"] = [
+            {
+                "number": 42,
+                "html_url": "https://github.com/example/project/pull/42",
+                "state": "open",
+                "head": {
+                    "sha": args.commit_sha,
+                    "ref": args.branch,
+                    "repo": {"owner": {"login": args.head_owner}},
+                },
+                "base": {"ref": args.base, "repo": {"full_name": args.repo}},
+            }
+        ]
+    result = MODULE.create_pr(args, store)
+    assert result["ok"] is True and state["creates"] == 1
+    if observe_pr:
+        assert result["prUrl"] == "https://github.com/example/project/pull/42"
+        assert result["priorPermissionDenial"] == first
+        assert result["created"] is False
+        assert result["reconciled"] is True
+        assert store.publication_request(request_id)["status"] == "CONSUMED"
+    else:
+        assert result["blocked"] is True
+        assert store.publication_request(request_id)["reason"] == "PUBLICATION_PERMISSION_DENIED"
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "query_failure",
+        "object",
+        "foreign_pr",
+        "remote_head",
+        "local_head",
+        "fork_binding",
+        "push_binding",
+        "effect_binding",
+        "owner_binding",
+        "unknown_error",
+    ],
+)
+def test_native_permission_denial_keeps_uncertain_or_foreign_attempt_unresolved(
+    denied_creation, invalid
+):
+    args, store, request_id, state, prior, real_run = denied_creation
+    effect = prior()
+    if invalid in {"query_failure", "object", "fork_binding"}:
+        state["invalid"] = invalid
+    elif invalid == "foreign_pr":
+        state["prs"] = [{"head": {"ref": args.branch, "repo": {"owner": {"login": "foreign"}}}}]
+    elif invalid == "remote_head":
+        state["remote"] = "b" * 40
+    elif invalid == "local_head":
+        real_run(["git", "commit", "--allow-empty", "-m", "another head"], cwd=Path(args.worktree))
+    elif invalid in {"push_binding", "effect_binding"}:
+        with store.transaction() as connection:
+            connection.execute(
+                "UPDATE publication_effects SET request_digest=? WHERE action=?",
+                ("foreign", "push" if invalid == "push_binding" else "create_pr"),
+            )
+    elif invalid == "owner_binding":
+        args.head_owner = "foreign"
+    elif invalid == "unknown_error":
+        store.complete_publication_effect(
+            effect["effect_id"],
+            status="RECONCILE_REQUIRED",
+            result={
+                "ok": False,
+                "reason": "PR_CREATION_NOT_RECONCILED",
+                "creationAttempted": True,
+                "detail": "HTTP 403: Resource not accessible by integration",
+            },
+        )
+    with pytest.raises(RuntimeError):
+        MODULE.create_pr(args, store)
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_effects WHERE effect_id=?", (effect["effect_id"],)
+            ).fetchone()[0]
+            == "RECONCILE_REQUIRED"
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='PUBLICATION_BLOCKED'"
+            ).fetchone()[0]
+            == 0
+        )
+    assert store.publication_request(request_id)["status"] == "GRANTED"
+    assert state["creates"] == 0
+
+
 def test_create_pr_reconciles_previous_ambiguous_attempt_without_recreating(monkeypatch, tmp_path):
     args = pr_args(tmp_path)
     store = ReconcileStore()

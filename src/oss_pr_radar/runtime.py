@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -30,6 +31,7 @@ from .release_binding import (
     validate_runtime_file,
     validate_runtime_layout,
 )
+from .util import parse_time, sha256_json, sha256_text
 
 RUNTIME_STATE = "runtime-health.json"
 QUEUE_STATE = "queue-import-state.json"
@@ -1231,6 +1233,187 @@ def digest_policy(value: object) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _resolved_permission_denial(connection: sqlite3.Connection, effect: sqlite3.Row) -> bool:
+    """Recognize one retained, fully reconciled PR-create refusal."""
+
+    try:
+        if effect["status"] != "FAILED" or effect["action"] != "create_pr":
+            return False
+        result = json.loads(effect["result_json"])
+        if (
+            not isinstance(result, dict)
+            or result.get("reason") != "PUBLICATION_PERMISSION_DENIED"
+            or any(result.get(key) is not True for key in ("ok", "blocked", "creationAttempted"))
+        ):
+            return False
+        evidence = result.get("evidence")
+        if (
+            not isinstance(evidence, dict)
+            or evidence.get("schemaVersion") != "publication-permission-denial-v1"
+            or result.get("evidenceDigest") != sha256_json(evidence)
+            or evidence.get("exactHeadPrAbsent") is not True
+        ):
+            return False
+        permit = connection.execute(
+            "SELECT * FROM publication_permits WHERE permit_id=?", (effect["permit_id"],)
+        ).fetchone()
+        if permit is None:
+            return False
+        request = connection.execute(
+            "SELECT * FROM publication_requests WHERE request_id=?", (permit["request_id"],)
+        ).fetchone()
+        if (
+            request is None
+            or request["status"] != "BLOCKED"
+            or request["reason"] != result["reason"]
+            or request["permit_id"] != permit["permit_id"]
+        ):
+            return False
+        snapshot = json.loads(request["request_json"])
+        if not isinstance(snapshot, dict) or snapshot.get("publicationKind") != "PR_CREATE":
+            return False
+        publication = snapshot.get("publication")
+        if not isinstance(publication, dict):
+            return False
+        issue = re.fullmatch(
+            r"https://github\.com/([^/]+/[^/]+)/issues/([0-9]+)", snapshot["issueUrl"]
+        )
+        if issue is None:
+            return False
+        repo = issue.group(1)
+        expected = {
+            "requestId": request["request_id"],
+            "permitId": permit["permit_id"],
+            "effectId": effect["effect_id"],
+            "requestDigest": effect["request_digest"],
+            "repo": repo,
+            "headOwner": publication["headOwner"],
+            "branch": request["branch"],
+            "base": publication["baseBranch"],
+            "commitSha": request["commit_sha"],
+            "localHeadSha": request["commit_sha"],
+            "remoteSha": request["commit_sha"],
+        }
+        if any(
+            not isinstance(value, str) or not value or evidence.get(key) != value
+            for key, value in expected.items()
+        ):
+            return False
+        if (
+            snapshot.get("requestId") != request["request_id"]
+            or snapshot.get("opportunityKey") != request["opportunity_key"]
+            or snapshot.get("threadId") != request["thread_id"]
+            or snapshot.get("worktreePath") != request["worktree_path"]
+            or snapshot.get("evidenceDigest") != request["evidence_digest"]
+            or request["opportunity_key"] != f"{repo}#{issue.group(2)}"
+            or snapshot.get("branch") != request["branch"]
+            or snapshot.get("commitSha") != request["commit_sha"]
+            or permit["issue_url"] != snapshot["issueUrl"]
+            or permit["branch"] != request["branch"]
+            or permit["commit_sha"] != request["commit_sha"]
+            or re.fullmatch(r"[0-9a-f]{40}", request["commit_sha"]) is None
+            or re.fullmatch(r"[0-9a-f]{64}", effect["request_digest"]) is None
+            or effect["effect_id"]
+            != sha256_text(f"{permit['permit_id']}|create_pr|{effect['request_digest']}")
+        ):
+            return False
+        detail = result.get("detail")
+        refusal = (
+            re.search(
+                r"GraphQL: ([A-Za-z0-9-]+) does not have the correct permissions to execute "
+                r"`CreatePullRequest` \(createPullRequest\)$",
+                detail.strip(),
+            )
+            if isinstance(detail, str)
+            else None
+        )
+        if refusal is None or refusal.group(1).casefold() != publication["headOwner"].casefold():
+            return False
+        lookup = evidence.get("lookup")
+        if (
+            not isinstance(lookup, dict)
+            or lookup.get("ok") is not True
+            or lookup
+            != {
+                "method": "GET",
+                "endpoint": f"repos/{repo}/pulls",
+                "head": f"{publication['headOwner']}:{request['branch']}",
+                "state": "all",
+                "ok": True,
+                "result": [],
+            }
+        ):
+            return False
+        fork = evidence.get("forkRepo")
+        if (
+            not isinstance(fork, str)
+            or not fork
+            or fork.casefold()
+            not in {
+                f"{publication['headOwner']}/{repo.rsplit('/', 1)[1]}".casefold(),
+                f"{publication['headOwner']}/{repo.replace('/', '-')}".casefold(),
+            }
+        ):
+            return False
+        push = connection.execute(
+            "SELECT * FROM publication_effects WHERE effect_id=?", (evidence.get("pushEffectId"),)
+        ).fetchone()
+        push_digest = sha256_json(
+            {
+                "issueUrl": snapshot["issueUrl"],
+                "commitSha": request["commit_sha"],
+                "branch": request["branch"],
+                "remote": fork.casefold(),
+                "publicationKind": snapshot.get("publicationKind"),
+                "existingPrUrl": snapshot.get("existingPrUrl"),
+                "previousCommitSha": snapshot.get("previousCommitSha"),
+            }
+        )
+        if (
+            push is None
+            or push["permit_id"] != permit["permit_id"]
+            or push["action"] != "push"
+            or push["status"] != "SUCCEEDED"
+            or push["request_digest"] != push_digest
+            or evidence.get("pushRequestDigest") != push_digest
+            or push["effect_id"] != sha256_text(f"{permit['permit_id']}|push|{push_digest}")
+        ):
+            return False
+        push_result = json.loads(push["result_json"])
+        if (
+            not isinstance(push_result, dict)
+            or push_result.get("ok") is not True
+            or push_result.get("remoteSha") != request["commit_sha"]
+        ):
+            return False
+        observed = evidence.get("observedAt")
+        if not isinstance(observed, str) or datetime.fromisoformat(observed).tzinfo is None:
+            return False
+        if (
+            not parse_time(effect["created_at"])
+            <= parse_time(observed)
+            <= parse_time(effect["updated_at"])
+        ):
+            return False
+        events = connection.execute(
+            "SELECT payload_json,created_at FROM events WHERE opportunity_key=? "
+            "AND event_type='PUBLICATION_BLOCKED' AND dedupe_key=?",
+            (request["opportunity_key"], f"{request['request_id']}:{result['reason']}"),
+        ).fetchall()
+        return any(
+            json.loads(event["payload_json"])
+            == {
+                "requestId": request["request_id"],
+                "reason": result["reason"],
+                "auditEvidence": evidence,
+            }
+            and parse_time(event["created_at"]) >= parse_time(observed)
+            for event in events
+        )
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False
+
+
 def pending_publication_effects(ledger_path: Path) -> int:
     """Read unresolved publication effects without opening the production DB for writes."""
 
@@ -1238,6 +1421,7 @@ def pending_publication_effects(ledger_path: Path) -> int:
         return 0
     try:
         connection = sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True, timeout=2)
+        connection.row_factory = sqlite3.Row
         try:
             table = connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='publication_effects'"
@@ -1247,10 +1431,10 @@ def pending_publication_effects(ledger_path: Path) -> int:
             # drain; other database errors remain fail-closed below.
             if table is None:
                 return 0
-            row = connection.execute(
-                "SELECT COUNT(*) FROM publication_effects WHERE status <> 'SUCCEEDED'"
-            ).fetchone()
-            return int(row[0] if row else 0)
+            effects = connection.execute(
+                "SELECT * FROM publication_effects WHERE status <> 'SUCCEEDED'"
+            ).fetchall()
+            return sum(not _resolved_permission_denial(connection, effect) for effect in effects)
         finally:
             connection.close()
     except sqlite3.Error:

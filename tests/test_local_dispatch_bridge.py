@@ -24212,7 +24212,9 @@ def _sign_reproduction_certificate(
     return digest
 
 
-def _legal_queue_publication_fixture(tmp_path: Path, *, request_id: str = "request-1") -> dict:
+def _legal_queue_publication_fixture(
+    tmp_path: Path, *, request_id: str = "request-1", issue_number: int = 1
+) -> dict:
     """Build a real local commit plus a current-key reproduction receipt."""
 
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
@@ -24233,11 +24235,11 @@ def _legal_queue_publication_fixture(tmp_path: Path, *, request_id: str = "reque
     private_dir.mkdir()
     result_path = private_dir / "result.json"
     body_path = private_dir / "body.md"
-    body_path.write_text("Fixes #1\n\nFix the runtime boundary.\n", encoding="utf-8")
-    issue_url = "https://github.com/a/b/issues/1"
+    body_path.write_text(f"Fixes #{issue_number}\n\nFix the runtime boundary.\n", encoding="utf-8")
+    issue_url = f"https://github.com/a/b/issues/{issue_number}"
     value = {
         "schemaVersion": "radar-task-result-v1",
-        "key": "a/b#1",
+        "key": f"a/b#{issue_number}",
         "issueUrl": issue_url,
         "threadId": request_id,
         "taskId": request_id,
@@ -24298,7 +24300,7 @@ def _legal_queue_publication_fixture(tmp_path: Path, *, request_id: str = "reque
         "headSha": head_sha,
         "request": {
             "requestId": request_id,
-            "opportunityKey": "a/b#1",
+            "opportunityKey": f"a/b#{issue_number}",
             "issueUrl": issue_url,
             "taskId": request_id,
             "commitSha": head_sha,
@@ -36291,6 +36293,101 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
     assert [call[0] for call in calls] == ["ensure-fork", "push", "create-pr"]
     assert all(call[2] == ledger_path for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("publication_kind", "reason", "terminalized"),
+    [
+        ("PR_CREATE", "PUBLICATION_PERMISSION_DENIED", True),
+        ("PR_UPDATE", "PUBLICATION_PERMISSION_DENIED", False),
+        ("PR_CREATE", "ACTIVE_TASK_QUARANTINE", False),
+    ],
+)
+def test_publication_permission_block_preserves_other_request_progress(
+    monkeypatch, tmp_path, publication_kind, reason, terminalized
+):
+    denied = _legal_queue_publication_fixture(tmp_path, request_id="denied", issue_number=1)
+    healthy = _legal_queue_publication_fixture(tmp_path, request_id="healthy", issue_number=2)
+    denied["request"]["publicationKind"] = publication_kind
+    stages = []
+
+    class Store:
+        def publication_work_items(self):
+            return [
+                {"request_id": request["requestId"], "request": request}
+                for request in [denied["request"], healthy["request"]]
+            ]
+
+        def recover_failed_publication_preflight(self, *_args, **_kwargs):
+            return False
+
+        def prepare_ambiguous_publication_effect(self, _request_id, *, action):
+            assert action == "push"
+            return None
+
+        def prepare_post_push_reconciliation(self, _request_id):
+            return None
+
+        def record_stage(self, key, stage, **kwargs):
+            stages.append({"key": key, "stage": stage, **kwargs})
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(
+        MODULE,
+        "broker_publication_request",
+        lambda _store, request_id, **_kwargs: {
+            "granted": True,
+            "permit": {"permit_id": request_id},
+        },
+    )
+    calls = []
+    blocked_result = {
+        "ok": True,
+        "blocked": True,
+        "reason": reason,
+        "effectId": "denied-create-effect",
+        "creationAttempted": True,
+        "detail": "GitHub CreatePullRequest permission denied",
+    }
+
+    def executor(operation, arguments, *, ledger_path):
+        permit_id = arguments[arguments.index("--permit-id") + 1]
+        calls.append((operation, permit_id))
+        if operation == "ensure-fork":
+            return {"ok": True, "remote": "radar-fork"}
+        if operation == "push":
+            return {"ok": True, "reconciled": False}
+        if permit_id == "denied":
+            return blocked_result
+        return {"ok": True, "prUrl": "https://github.com/a/b/pull/3"}
+
+    monkeypatch.setattr(MODULE, "_executor", executor)
+    result = MODULE.run_publication_queue(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["blocked"] == [
+        {
+            "requestId": "denied",
+            "reason": reason,
+            **({"terminalized": True} if terminalized else {}),
+        }
+    ]
+    assert [item["requestId"] for item in result["published"]] == ["healthy"]
+    assert ("create-pr", "healthy") in calls
+    if terminalized:
+        assert stages == [
+            {
+                "key": "a/b#1",
+                "stage": "AUDIT_NO_GO",
+                "reason": reason,
+                "evidence": {"publicationExecution": blocked_result},
+                "dedupe_key": f"publication-terminal:denied:{reason}",
+                "worktree_path": denied["request"]["worktreePath"],
+            }
+        ]
+    else:
+        assert stages == []
 
 
 def test_publication_queue_requires_bound_snapshot_for_task_result(monkeypatch, tmp_path):

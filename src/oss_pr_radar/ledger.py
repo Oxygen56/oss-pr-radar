@@ -872,8 +872,7 @@ def _publication_ambiguous_effect_boundary(
     """
 
     rows = connection.execute(
-        """SELECT effect.effect_id,effect.action,effect.status,effect.result_json,
-                  effect.updated_at
+        """SELECT effect.*
            FROM publication_effects effect
            JOIN publication_permits permit ON permit.permit_id=effect.permit_id
            WHERE permit.request_id=?
@@ -889,6 +888,11 @@ def _publication_ambiguous_effect_boundary(
         creation_attempted = bool(
             isinstance(result, dict) and result.get("creationAttempted") is True
         )
+        if row["status"] == "FAILED" and creation_attempted:
+            from .runtime import _resolved_permission_denial
+
+            if _resolved_permission_denial(connection, row):
+                continue
         if row["status"] not in {"ATTEMPTED", "RECONCILE_REQUIRED"} and not creation_attempted:
             continue
         return {

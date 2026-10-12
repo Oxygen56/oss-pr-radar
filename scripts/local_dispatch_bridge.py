@@ -239,6 +239,7 @@ TRANSIENT_PUBLICATION_AUDIT_REASONS = {
 TERMINAL_PUBLICATION_BLOCK_REASONS = {
     "ACTIVE_OR_CONDITIONAL_CLAIM",
     "STRONG_EXISTING_PR",
+    "PUBLICATION_PERMISSION_DENIED",
 }
 RECOVERED_LIVE_TERMINAL_REASONS = frozenset(
     {
@@ -29492,10 +29493,25 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 continue
             if pr_result.get("blocked"):
+                reason = str(pr_result.get("reason") or "")
+                terminalized = bool(
+                    request.get("publicationKind", "PR_CREATE") == "PR_CREATE"
+                    and reason == "PUBLICATION_PERMISSION_DENIED"
+                )
+                if terminalized:
+                    store.record_stage(
+                        str(request["opportunityKey"]),
+                        "AUDIT_NO_GO",
+                        evidence={"publicationExecution": pr_result},
+                        reason=reason,
+                        dedupe_key=f"publication-terminal:{request_id}:{reason}",
+                        **_ledger_binding_kwargs(request),
+                    )
                 blocked.append(
                     {
                         "requestId": request_id,
-                        "reason": pr_result.get("reason"),
+                        "reason": reason,
+                        **({"terminalized": True} if terminalized else {}),
                     }
                 )
                 continue
