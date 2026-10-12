@@ -72204,6 +72204,38 @@
     ],
     "why": "The issue provides a clear, reproducible bug in streaming tool-call parsing for deepseekv32/deepseekv4, with a minimal script and expected vs actual behavior. The root cause is likely in the streaming parser's state handling across chunk boundaries, which is a concrete, actionable code fix."
   },
+  "78a0cde3e5ad3c57d051eebf9f725654b6f5c9b7dd7595708882b0eea2710bb6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "KV router cost/overlap weighting in the routing decision (prefill vs decode load terms)",
+      "possibly default weights or a new option to discount soon-to-finish decode load / weight resident overlap",
+      "clarify or fix dynamo_component_router_non_max_overlap_selections_total counter semantics"
+    ],
+    "risks": [
+      "Changing default weights may regress heavier/skewed-load scenarios where the load term is legitimately useful",
+      "Counter semantics for non_max_overlap_selections_total may be intentional, so a fix could be documentation-only",
+      "Maintainer may prefer session affinity as the recommended answer rather than changing defaults"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the public inference-under-pressure scripts (day2_cluster.sh, day2_run_matrix.sh) on two workers with --router-mode kv and default weights",
+      "Compare recomputed prefill (vllm:request_prefill_kv_computed_tokens_sum) and resumed-turn p95 TTFT against round-robin and hard session affinity",
+      "Add a regression test asserting the router keeps a resumed request on the worker whose index shows near-full prefix overlap when the alternative's advantage is only transient decode load"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the current overlap-credit formulation intended behavior or a bug",
+      "Whether non_max_overlap_selections_total staying 0 is expected"
+    ],
+    "why": "Issue provides a concrete, reproducible KV-router routing pathology with a clear mechanism: overlap credit only offsets the prefill term, so transient decode load on the cache-holding worker can outweigh prefix locality. Evidence includes a decision-formula trace, per-request placement, and a public reproduction repo, establishing root cause and a validation path."
+  },
   "78b780373cc5b91d292c029599a5e2d9a81d116bee700957a4ecfa1f123b62d2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -81837,6 +81869,41 @@
       "Whether the ±126 clamp is reachable in supported models or only in the reporter's custom model"
     ],
     "why": "The issue bundles three distinct problems: a numerically plausible ±126 clamp collapse in the fused intra-chunk KDA prefill kernel, a registry-vs-hardcoded mamba extra-buffer resolution bug, and an attn_backend_wrapper config-discard bug. The clamp analysis is concrete and testable, but the supplied evidence does not establish which of the three is the intended contribution, and the open-PR assessment flags PR #39972 (BerryLM) as carrying the proposed fixes with semantic overlap on exp2/intra_chunk/per_channel/prefill while not referencing this issue. That unresolved duplicate/coverage question materially determines whether independent code work is actionable."
+  },
+  "89ba62d0c29095825168d529d19efaf1abcee5d7d14ea6b85c9ecafa1b26f6d1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/pipeline/network/egress/tcp_client.rs: distinguish request-ack timeout from instance-down signal",
+      "lib/runtime/src/pipeline/network/ingress/shared_tcp_endpoint.rs: ack path independence from handler load",
+      "router/client.rs: queue or route to inhibited instance when all instances inhibited (single-instance endpoint)",
+      "lib/runtime/src/config/environment_names.rs: register/document DYN_TCP_* variables"
+    ],
+    "risks": [
+      "Changing inhibition semantics could mask genuinely dead peers and delay failover",
+      "Process-wide DYN_TCP_* settings affect all clients in the process",
+      "Exact upstream reproduction depends on a PoC video-encode patch not in upstream; minimal repro is suggested but not yet run"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a Python endpoint handler holding GIL with CPU work for several seconds, called via Endpoint.client().round_robin() with ~32 concurrent requests; assert no 'No workers available' window and no instance inhibition on slow ack",
+      "Regression test asserting a request-ack timeout does not call report_instance_down for a healthy registered worker",
+      "Test single-instance endpoint behavior when all instances inhibited: request queues/waits rather than failing fast with Unavailable"
+    ],
+    "unknowns": [
+      "Minimal reproduction was suggested but not actually run on upstream code",
+      "Whether maintainers prefer fix (b) configurable per-endpoint vs (c) queue-to-inhibited-instance design"
+    ],
+    "why": "Issue provides a detailed, code-anchored root cause: 5s TCP request-ack timeout (DYN_TCP_REQUEST_TIMEOUT) is treated as instance-down, inhibiting the only encode worker for DYN_RUNTIME_INHIBITED_DURATION_SECS, causing 'No workers available'. Concrete code anchors (tcp_client.rs, shared_tcp_endpoint.rs, push_router.rs, client.rs) and a verified workaround (DYN_TCP_REQUEST_TIMEOUT=600, DYN_RUNTIME_INHIBITED_DURATION_SECS=0) establish actionability. No open PR or duplicate covers it."
   },
   "89c2c47063fac8e1d3469fa0963a9fc7206d6765cdc1e27e4bb3d9949c27666d": {
     "confidence": 0.8,
