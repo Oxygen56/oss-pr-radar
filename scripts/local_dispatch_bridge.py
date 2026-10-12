@@ -207,6 +207,7 @@ ROOT_TASK_RECEIPT_WAIT_SECONDS = (
 )
 GITHUB_GIT_RETRY_DELAYS = (1.0, 3.0)
 VALIDATION_PREFETCH_TIMEOUTS = {
+    "dotnet_nuget_prepare": 600,
     "cargo_locked_fetch": 300,
     "go_locked_download": 300,
     "uv_locked_sync": 600,
@@ -6092,6 +6093,32 @@ def _record_stopped_quarantined_executions(store: RadarLedger) -> list[dict[str,
     """Release execution capacity only after an owned native turn has ended."""
     stopped = []
     for candidate in store.task_context_candidates():
+        if (
+            candidate.get("intentStatus") == "COMPLETED"
+            and candidate.get("stage") == "VALIDATION_PENDING"
+        ):
+            with opportunity_action_guard(ledger_action_guard_root(store.path), candidate["key"]):
+                evidence = _completed_unsupported_dependency(store, candidate)
+                if evidence is not None:
+                    with store.transaction() as connection:
+                        if evidence != _completed_unsupported_dependency(store, candidate):
+                            continue
+                        store._event(
+                            connection,
+                            candidate["key"],
+                            "TASK_EXECUTION_STOPPED",
+                            sha256_json(evidence),
+                            evidence,
+                            iso_z(datetime.now(UTC)),
+                        )
+                    stopped.append(
+                        {
+                            "key": candidate["key"],
+                            "turnStatus": "completed",
+                            "reason": evidence["reason"],
+                        }
+                    )
+            continue
         if candidate.get("intentStatus") != "DISPATCHED":
             continue
         gates = store.active_task_quarantines(candidate["key"])
@@ -21488,6 +21515,474 @@ def _is_validation_dependency_failure(item: dict[str, Any]) -> bool:
     return is_validation_dependency_failure(item)
 
 
+def _rag_native_dependency_capability(
+    worktree: Path, value: dict[str, Any], failure: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Describe only the two observed native prerequisites, never a test verdict."""
+    if (
+        not str(value.get("key") or "").startswith("infiniflow/ragflow#")
+        or failure.get("phase") == "before_fix"
+        or type(failure.get("exitCode")) is not int
+        or failure["exitCode"] == 0
+        or (failure.get("cwd") and Path(failure["cwd"]).resolve() != worktree)
+    ):
+        return None
+    text = "\n".join(str(failure.get(k) or "") for k in ("result", "summary", "stderr"))
+    try:
+        manifests = {}
+        for relative in ("go.mod", "build.sh"):
+            raw = _read_owned_regular_file(
+                worktree / relative,
+                label="native dependency manifest",
+                reject_dangerous_writes=True,
+            )
+            manifests[relative] = hashlib.sha256(raw).hexdigest()
+            if (
+                relative == "go.mod"
+                and re.search(r"(?m)^module\s+ragflow\s*$", raw.decode()) is None
+            ):
+                return None
+            if relative == "build.sh":
+                build = raw.decode()
+        if "simde/x86/sse4.1.h" in text and any(
+            marker in text for marker in ("file not found", "No such file")
+        ):
+            raw = _read_owned_regular_file(
+                worktree / "internal/binding/cpp/CMakeLists.txt",
+                label="native CMake manifest",
+                reject_dangerous_writes=True,
+            )
+            if "simde" not in raw.decode().casefold() or "--cpp" not in build:
+                return None
+            manifests["internal/binding/cpp/CMakeLists.txt"] = hashlib.sha256(raw).hexdigest()
+            brew = shutil.which("brew")
+            prefix = Path(brew).parent.parent if brew else None
+            if prefix not in {Path("/opt/homebrew"), Path("/usr/local")}:
+                return None
+            available = (prefix / "include/simde/x86/sse4.1.h").is_file()
+            return {
+                "kind": "RAGFLOW_SIMDE_HEADER",
+                "supported": available,
+                "manifestFingerprints": manifests,
+                "platform": sys.platform,
+                "includePrefix": str(prefix),
+            }
+        if (
+            "office_oxide" in text
+            and any(
+                marker in text
+                for marker in ("not found", "missing", "No such file", "native archive absent")
+            )
+            and "native-linux-x86_64.tar.gz" in build
+            and sys.platform == "darwin"
+        ):
+            if any(
+                (prefix / "lib/liboffice_oxide.a").is_file()
+                and (prefix / "include/office_oxide_c/office_oxide.h").is_file()
+                for prefix in (
+                    Path.home() / "ragflow-native-libs/office_oxide",
+                    Path("/opt/ragflow-native-libs/office_oxide"),
+                )
+            ):
+                # New actual native material makes the old unsupported conclusion
+                # unknown. Its version/platform still must pass the original build.
+                return None
+            # This original archive targets Linux. Go module download cannot supply
+            # a Darwin native library, and this reader never installs one.
+            return {
+                "kind": "RAGFLOW_OFFICE_OXIDE_PLATFORM",
+                "supported": False,
+                "manifestFingerprints": manifests,
+                "platform": sys.platform,
+            }
+    except (OSError, RuntimeError, ValueError, UnicodeError, TypeError):
+        return None
+    return None
+
+
+def _dotnet_validation_project(failure: dict[str, Any]) -> str | None:
+    import shlex
+
+    try:
+        words = shlex.split(str(failure.get("command") or ""))
+    except ValueError:
+        return None
+    if (
+        len(words) < 3
+        or words[0] not in {"dotnet", shutil.which("dotnet")}
+        or words[1] not in {"build", "test"}
+        or not words[2].endswith(".csproj")
+    ):
+        return None
+    ordinary = ["--no-restore", "--framework", "net10.0", "--verbosity", "minimal"]
+    filtered = [
+        "--no-restore",
+        "--framework",
+        "net10.0",
+        "--filter",
+        "FullyQualifiedName~DelegatingToolOutputSchemaTests",
+        "--verbosity",
+        "minimal",
+    ]
+    return (
+        words[2]
+        if words[3:] == ordinary or (words[1] == "test" and words[3:] == filtered)
+        else None
+    )
+
+
+def _dotnet_assets_prepared(worktree: Path, project: Path, assets: Path) -> bool:
+    try:
+        raw = _read_owned_regular_file(assets, label="NuGet assets", reject_dangerous_writes=True)
+        value = json.loads(raw)
+        if not isinstance(value, dict) or not isinstance(value.get("project"), dict):
+            return False
+        restore = value["project"].get("restore")
+        if not isinstance(restore, dict) or not isinstance(value.get("packageFolders"), dict):
+            return False
+        expected_packages = worktree / TASK_PRIVATE_DIR / "validation-nuget/packages"
+        return (
+            assets.resolve() == assets
+            and restore.get("projectPath") == str(project)
+            and isinstance(value.get("targets"), dict)
+            and bool(value["targets"])
+            and {Path(p).resolve() for p in value.get("packageFolders", {})} == {expected_packages}
+        )
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return False
+
+
+def _dotnet_nuget_preparation(worktree: Path, failure: dict[str, Any]) -> dict[str, Any] | None:
+    """Prepare only the observed missing assets through an owned, pinned project graph."""
+    import xml.etree.ElementTree as ET
+
+    text = "\n".join(str(failure.get(k) or "") for k in ("result", "summary", "stderr"))
+    if "NETSDK1004" not in text or "project.assets.json" not in text:
+        return None
+    try:
+        selected_project = _dotnet_validation_project(failure)
+        dotnet = shutil.which("dotnet")
+        if (
+            not dotnet
+            or not Path(dotnet).is_file()
+            or not os.access(dotnet, os.X_OK)
+            or selected_project is None
+            or (failure.get("cwd") and Path(failure["cwd"]).resolve() != worktree)
+        ):
+            return None
+        project_lexical = worktree / selected_project
+        if project_lexical.is_symlink():
+            return None
+        project = project_lexical.resolve()
+        if worktree not in project.parents:
+            return None
+        assets = worktree / "artifacts/obj" / project.stem / "project.assets.json"
+        reported_assets = re.findall(r"['\"]([^'\"]*/project\.assets\.json)['\"]", text)
+        if (worktree / "artifacts").resolve() != worktree / "artifacts":
+            return None
+        if any(
+            value
+            for key, value in os.environ.items()
+            if key.casefold().startswith(("restore", "dotnet_msbuild_sdk_resolver_"))
+            or key.casefold()
+            in {
+                "artifactsdir",
+                "artifactsobjdir",
+                "artifactsbindir",
+                "reporoot",
+                "outdirname",
+                "baseintermediateoutputpath",
+                "baseoutputpath",
+                "msbuildprojectextensionspath",
+                "outdir",
+                "outputpath",
+                "restoresources",
+                "restoreconfigfile",
+                "restorepackagespath",
+                "msbuildsdkspath",
+                "msbuildadditionalsdkresolversfolder",
+                "msbuildextensionspath",
+                "custombeforemicrosoftcommontargets",
+                "customaftermicrosoftcommontargets",
+                "directorybuildpropspath",
+                "directorybuildtargetspath",
+            }
+        ):
+            return None
+        manifests: dict[str, str] = {}
+
+        def owned(path: Path) -> bytes:
+            if path.is_symlink():
+                raise RuntimeError("NuGet manifest is a symlink")
+            path = path.resolve()
+            if worktree not in path.parents:
+                raise RuntimeError("NuGet manifest is outside the worktree")
+            raw = _read_owned_regular_file(
+                path, label="NuGet manifest", reject_dangerous_writes=True
+            )
+            manifests[str(path.relative_to(worktree))] = hashlib.sha256(raw).hexdigest()
+            return raw
+
+        sdk = json.loads(owned(worktree / "global.json"))["sdk"]
+        if not isinstance(sdk, dict) or not re.fullmatch(
+            r"\d+\.\d+\.\d+", str(sdk.get("version") or "")
+        ):
+            return None
+        desired = tuple(int(v) for v in sdk["version"].split("."))
+        executable = Path(dotnet).resolve()
+        sdk_roots = [executable.parent / "sdk", executable.parent.parent / "libexec/sdk"]
+        if sdk.get("rollForward") != "minor" or not any(
+            path.is_dir()
+            and (path / "MSBuild.dll").is_file()
+            and re.fullmatch(r"\d+\.\d+\.\d+", path.name)
+            and tuple(int(v) for v in path.name.split("."))[:2] == desired[:2]
+            and int(path.name.split(".")[2]) >= desired[2]
+            for sdk_root in sdk_roots
+            if sdk_root.is_dir()
+            for path in sdk_root.iterdir()
+        ):
+            return None
+        config = ET.fromstring(owned(worktree / "nuget.config"))
+        sources = config.find("packageSources")
+        if (
+            config.tag != "configuration"
+            or sources is None
+            or sources.find("clear") is None
+            or [(n.get("key"), n.get("value")) for n in sources.findall("add")]
+            != [("nuget", "https://api.nuget.org/v3/index.json")]
+            or any(n.tag not in {"packageSources", "packageSourceMapping"} for n in config)
+        ):
+            return None
+        pins = ET.fromstring(owned(worktree / "Directory.Packages.props"))
+        properties = {
+            n.tag: str(n.text or "").strip()
+            for group in pins.findall("PropertyGroup")
+            for n in group
+        }
+        if properties.get("ManagePackageVersionsCentrally") != "true":
+            return None
+        versions = {}
+        for node in pins.iter("PackageVersion"):
+            version = str(node.get("Version") or "")
+            if version.startswith("$(") and version.endswith(")"):
+                version = properties.get(version[2:-1], "")
+            if not re.fullmatch(r"\d+(?:\.\d+)+(?:[-+][A-Za-z0-9.-]+)?", version):
+                return None
+            versions[node.get("Include")] = version
+        if not versions:
+            return None
+        root_props = ET.fromstring(owned(worktree / "Directory.Build.props"))
+        layout_tags = {
+            "RepoRoot",
+            "ArtifactsDir",
+            "ArtifactsObjDir",
+            "ArtifactsBinDir",
+            "BaseIntermediateOutputPath",
+            "BaseOutputPath",
+            "MSBuildProjectExtensionsPath",
+            "OutDirName",
+            "OutDir",
+            "OutputPath",
+        }
+        direct_layout = [
+            n
+            for group in root_props.findall("PropertyGroup")
+            for n in group
+            if n.tag in layout_tags
+        ]
+        if any(
+            n not in direct_layout or sum(item.tag == n.tag for item in direct_layout) != 1
+            for n in root_props.iter()
+            if n.tag in layout_tags
+        ):
+            return None
+        layout = {
+            n.tag: str(n.text or "").strip()
+            for group in root_props.findall("PropertyGroup")
+            for n in group
+        }
+        if (
+            layout.get("RepoRoot")
+            != "$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)'))"
+            or "MSBuildProjectExtensionsPath" in layout
+            or layout.get("OutDirName") != "$(MSBuildProjectName)"
+            or layout.get("ArtifactsDir")
+            != "$([MSBuild]::NormalizeDirectory('$(RepoRoot)', 'artifacts'))"
+            or layout.get("ArtifactsObjDir")
+            != "$([MSBuild]::NormalizeDirectory('$(ArtifactsDir)', 'obj'))"
+            or layout.get("ArtifactsBinDir")
+            != "$([MSBuild]::NormalizeDirectory('$(ArtifactsDir)', 'bin'))"
+            or layout.get("BaseOutputPath")
+            != "$([System.IO.Path]::GetFullPath('$(ArtifactsBinDir)$(OutDirName)\\'))"
+            or any(k in layout for k in ("OutDir", "OutputPath"))
+            or next(n for n in direct_layout if n.tag == "ArtifactsDir")
+            .get("Condition", "")
+            .strip()
+            != "'$(ArtifactsDir)' == ''"
+            or layout.get("BaseIntermediateOutputPath")
+            != "$([System.IO.Path]::GetFullPath('$(ArtifactsObjDir)$(OutDirName)\\'))"
+        ):
+            return None
+        pending = [
+            project,
+            worktree / "Directory.Packages.props",
+            worktree / "Directory.Build.props",
+        ]
+        visited: set[Path] = set()
+        while pending:
+            lexical = pending.pop()
+            if lexical.is_symlink():
+                return None
+            path = lexical.resolve()
+            if path in visited:
+                continue
+            visited.add(path)
+            raw = owned(path)
+            value = ET.fromstring(raw)
+            if value.tag != "Project" or value.get("Sdk") not in {
+                None,
+                "Microsoft.NET.Sdk",
+                "Microsoft.NET.Sdk.Web",
+            }:
+                return None
+            for node in value.iter():
+                if node.tag == "Sdk" or (node is not value and "Sdk" in node.attrib):
+                    return None
+                expressions = " ".join([str(node.text or ""), *node.attrib.values()])
+                for owner, method in re.findall(r"\$\(\[([^]]+)\]::(\w+)", expressions):
+                    if (owner, method) not in {
+                        ("MSBuild", "NormalizeDirectory"),
+                        ("MSBuild", "GetPathOfFileAbove"),
+                        ("MSBuild", "IsTargetFrameworkCompatible"),
+                        ("MSBuild", "IsOSPlatform"),
+                        ("System.IO.Path", "GetFullPath"),
+                    }:
+                        return None
+                if node.tag.startswith("Restore") and node.tag != "RestoreEnablePackagePruning":
+                    return None
+                if path != worktree / "Directory.Build.props" and node.tag in {
+                    "RepoRoot",
+                    "ArtifactsDir",
+                    "ArtifactsObjDir",
+                    "ArtifactsBinDir",
+                    "BaseIntermediateOutputPath",
+                    "BaseOutputPath",
+                    "MSBuildProjectExtensionsPath",
+                    "OutDirName",
+                    "OutDir",
+                    "OutputPath",
+                }:
+                    return None
+                if node.tag in {"Exec", "UsingTask"}:
+                    return None
+                if node.tag == "Target" and not (
+                    path == worktree / "src/Directory.Build.targets"
+                    and hashlib.sha256(raw).hexdigest()
+                    == "7e01371bbbcb22ccf4379896ef8db1da6615023eafd0699ada7b15e7a49916f5"
+                ):
+                    return None
+                if node.tag == "PackageReference" and (
+                    node.get("Include") not in versions
+                    or node.get("Version")
+                    or node.get("VersionOverride")
+                ):
+                    return None
+                if node.tag in {"Import", "ProjectReference"}:
+                    relative = str(
+                        node.get("Project" if node.tag == "Import" else "Include") or ""
+                    ).replace("\\", "/")
+                    if (
+                        relative
+                        == "$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))"
+                    ):
+                        pending.append(worktree / "Directory.Build.props")
+                    elif not relative or "$" in relative or "*" in relative:
+                        return None
+                    else:
+                        pending.append(path.parent / relative)
+            if path.suffix == ".csproj":
+                for parent in (path.parent, *path.parent.parents):
+                    if parent != worktree and worktree not in parent.parents:
+                        break
+                    for name in ("Directory.Build.props", "Directory.Build.targets"):
+                        if (parent / name).is_file():
+                            pending.append(parent / name)
+                    if parent != worktree and (parent / "Directory.Packages.props").exists():
+                        return None
+                    if parent == worktree:
+                        break
+        graph_assets = {
+            str(p.relative_to(worktree)): str(
+                worktree / "artifacts/obj" / p.stem / "project.assets.json"
+            )
+            for p in visited
+            if p.suffix == ".csproj"
+        }
+        if any(Path(a).resolve() != Path(a) for a in graph_assets.values()):
+            return None
+        if any(str(Path(p).resolve()) not in graph_assets.values() for p in reported_assets):
+            return None
+        prepared_assets = {
+            p: _dotnet_assets_prepared(worktree, worktree / p, Path(a))
+            for p, a in graph_assets.items()
+        }
+        if any(
+            Path(graph_assets[p]).exists() and not ready for p, ready in prepared_assets.items()
+        ):
+            return None
+        # The original no-restore child reads this repository's ordinary ignored layout.
+        command(["git", "check-ignore", "--quiet", str(assets.relative_to(worktree))], cwd=worktree)
+        cache = worktree / TASK_PRIVATE_DIR / "validation-nuget"
+        prepared = {
+            "kind": "dotnet_nuget_prepare",
+            "cwd": str(worktree),
+            "argv": [
+                dotnet,
+                "restore",
+                str(project),
+                "--configfile",
+                str(worktree / "nuget.config"),
+                "--packages",
+                str(cache / "packages"),
+                "--disable-parallel",
+                "--verbosity",
+                "minimal",
+            ],
+            "project": str(project.relative_to(worktree)),
+            "assetsPath": str(assets),
+            "manifestFingerprints": manifests,
+            "graphAssets": graph_assets,
+        }
+        receipt_path = cache / f"{sha256_json(prepared)}.json"
+        try:
+            receipt = json.loads(
+                _read_owned_regular_file(
+                    receipt_path, label="NuGet preparation receipt", reject_dangerous_writes=True
+                )
+            )
+            ready = (
+                isinstance(receipt, dict)
+                and type(receipt.get("exitCode")) is int
+                and receipt["exitCode"] == 0
+                and receipt.get("binding") == prepared
+                and all(prepared_assets.values())
+                and receipt.get("assetDigests")
+                == {
+                    p: hashlib.sha256(
+                        _read_owned_regular_file(
+                            Path(a), label="NuGet assets", reject_dangerous_writes=True
+                        )
+                    ).hexdigest()
+                    for p, a in graph_assets.items()
+                }
+            )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            ready = False
+        return prepared | {"assetsAlreadyPrepared": ready}
+    except (OSError, RuntimeError, ValueError, TypeError, KeyError, StopIteration, ET.ParseError):
+        return None
+
+
 def _unresolved_validation_dependency_failures(
     commands: list[dict[str, Any]], failures: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -21501,9 +21996,32 @@ def _unresolved_validation_dependency_failures(
             f"{command_text}\n{failure.get('summary', '')}\n{failure.get('outcome', '')}\n"
             f"{failure.get('result', '')}"
         ).casefold()
+        dotnet_diagnostic = "\n".join(
+            str(failure.get(k) or "") for k in ("result", "summary", "stderr")
+        )
         covered = False
-        if "license-checker" in text:
+        if failure.get("failureType") == "UNSUPPORTED_NATIVE_CAPABILITY":
+            covered = False
+        elif "license-checker" in text:
             covered = "license_checker_local_install" in kinds
+        elif "NETSDK1004" in dotnet_diagnostic and "project.assets.json" in dotnet_diagnostic:
+            project = _dotnet_validation_project(failure)
+            for prepared in commands:
+                if prepared.get("kind") != "dotnet_nuget_prepare" or project is None:
+                    continue
+                cwd = Path(str(prepared.get("cwd") or ""))
+                if failure.get("cwd") and Path(failure["cwd"]).resolve() != cwd:
+                    continue
+                graph = prepared.get("graphAssets") or {}
+                reported = re.findall(
+                    r"['\"]([^'\"]*/project\.assets\.json)['\"]",
+                    dotnet_diagnostic,
+                )
+                covered = (cwd / project).resolve() in {(cwd / p).resolve() for p in graph} and all(
+                    str(Path(p).resolve()) in graph.values() for p in reported
+                )
+                if covered:
+                    break
         elif re.search(r"(?:^|\s)cargo\s", command_text):
             covered = "cargo_locked_fetch" in kinds
         elif re.search(r"(?:^|\s)go\s+(?:test|vet|build|run)\b", command_text):
@@ -21640,6 +22158,27 @@ def _validation_prefetch_plan(
             elif isinstance(item, str):
                 failed.append({"command": "", "summary": item, "exitCode": 127})
     dependency_failures = [item for item in failed if _is_validation_dependency_failure(item)]
+    dotnet_commands = []
+    for failure in failed:
+        native = _rag_native_dependency_capability(worktree, result, failure)
+        if native is not None:
+            if failure in dependency_failures:
+                dependency_failures.remove(failure)
+            if not native["supported"]:
+                dependency_failures.append(
+                    dict(failure, failureType="UNSUPPORTED_NATIVE_CAPABILITY", capability=native)
+                )
+            continue
+        prepared = _dotnet_nuget_preparation(worktree, failure)
+        if prepared is not None:
+            if prepared["assetsAlreadyPrepared"]:
+                if failure in dependency_failures:
+                    dependency_failures.remove(failure)
+                continue
+            if failure not in dependency_failures:
+                dependency_failures.append(failure)
+            if not any(item["project"] == prepared["project"] for item in dotnet_commands):
+                dotnet_commands.append(prepared)
     if candidate.get("generatedBuildContract") == GENERATED_BUILD_CONTRACT:
         channel_package = (worktree / "node_modules/@qwen-code/channel-base").resolve()
         if (
@@ -21674,7 +22213,7 @@ def _validation_prefetch_plan(
     if not dependency_failures:
         return [], []
 
-    commands: list[dict[str, Any]] = []
+    commands: list[dict[str, Any]] = list(dotnet_commands)
     combined = "\n".join(str(item.get("command") or "") for item in dependency_failures)
     failure_text = "\n".join(
         f"{item.get('command', '')}\n{item.get('summary', '')}\n{item.get('outcome', '')}\n{item.get('result', '')}"
@@ -22114,7 +22653,28 @@ def _execute_validation_prefetch(
         kind = item.get("kind")
         argv = item.get("argv")
         cwd_value = item.get("cwd")
-        if kind == "uv_locked_sync":
+        if kind == "dotnet_nuget_prepare":
+            current, _current_raw = _read_authenticated_validation_result(candidate)
+            matching = [
+                contract
+                for failure in unresolved_current_test_failures(current)
+                if (contract := _dotnet_nuget_preparation(worktree, failure)) is not None
+                and contract["project"] == item.get("project")
+            ]
+            contract = matching[0] if len(matching) == 1 else None
+            if contract is None or any(
+                contract.get(field) != item.get(field)
+                for field in (
+                    "argv",
+                    "cwd",
+                    "project",
+                    "assetsPath",
+                    "manifestFingerprints",
+                    "graphAssets",
+                )
+            ):
+                raise RuntimeError("NuGet preparation binding changed")
+        elif kind == "uv_locked_sync":
             base = ["uv", "sync", "--frozen", "--no-install-project"]
             extras = (
                 argv[len(base) :] if isinstance(argv, list) and argv[: len(base)] == base else None
@@ -22185,7 +22745,88 @@ def _execute_validation_prefetch(
         started = monotonic()
         timeout = VALIDATION_PREFETCH_TIMEOUTS[kind]
         try:
-            command(argv, cwd=cwd, timeout=timeout)
+            if kind == "dotnet_nuget_prepare":
+                cache = worktree / TASK_PRIVATE_DIR / "validation-nuget"
+                with _task_worktree_private_descriptor(candidate):
+                    if cache.resolve() != cache:
+                        raise RuntimeError("NuGet cache is outside the private worktree")
+                    cache.mkdir(mode=0o700, exist_ok=True)
+                    if any(
+                        (cache / name).resolve() != cache / name
+                        for name in ("packages", "http-cache", "scratch", "cli-home")
+                    ):
+                        raise RuntimeError("NuGet cache directory is an external alias")
+                head_before = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+                status_before = command(["git", "status", "--porcelain"], cwd=worktree)
+                if (
+                    current.get("commitSha") != head_before
+                    or current.get("headSha") != head_before
+                    or status_before
+                ):
+                    raise RuntimeError("NuGet preparation source head is not current and clean")
+                if not contract["assetsAlreadyPrepared"]:
+                    env = os.environ | {
+                        "NUGET_PACKAGES": str(cache / "packages"),
+                        "NUGET_HTTP_CACHE_PATH": str(cache / "http-cache"),
+                        "NUGET_SCRATCH": str(cache / "scratch"),
+                        "DOTNET_CLI_HOME": str(cache / "cli-home"),
+                        "DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE": "true",
+                    }
+                    executed = subprocess.run(
+                        argv,
+                        cwd=cwd,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                        check=False,
+                    )
+                    binding = {k: v for k, v in item.items() if k != "assetsAlreadyPrepared"}
+                    preparation_receipt = {
+                        "binding": binding,
+                        "exitCode": executed.returncode,
+                        "stdout": executed.stdout,
+                        "stderr": executed.stderr,
+                    }
+                    _atomic_json(cache / f"{sha256_json(binding)}.json", preparation_receipt)
+                    if executed.returncode != 0:
+                        raise RuntimeError(
+                            (executed.stderr or executed.stdout or "NuGet preparation failed")[:800]
+                        )
+                if (
+                    command(["git", "rev-parse", "HEAD"], cwd=worktree) != head_before
+                    or command(["git", "status", "--porcelain"], cwd=worktree) != status_before
+                    or any(
+                        hashlib.sha256(
+                            _read_owned_regular_file(
+                                worktree / relative,
+                                label="NuGet manifest",
+                                reject_dangerous_writes=True,
+                            )
+                        ).hexdigest()
+                        != digest
+                        for relative, digest in item["manifestFingerprints"].items()
+                    )
+                    or not all(
+                        _dotnet_assets_prepared(worktree, worktree / p, Path(a))
+                        for p, a in item["graphAssets"].items()
+                    )
+                ):
+                    raise RuntimeError(
+                        "NuGet preparation did not preserve the bound source or produce owned assets"
+                    )
+                if not contract["assetsAlreadyPrepared"]:
+                    preparation_receipt["assetDigests"] = {
+                        p: hashlib.sha256(
+                            _read_owned_regular_file(
+                                Path(a), label="NuGet assets", reject_dangerous_writes=True
+                            )
+                        ).hexdigest()
+                        for p, a in item["graphAssets"].items()
+                    }
+                    _atomic_json(cache / f"{sha256_json(binding)}.json", preparation_receipt)
+            else:
+                command(argv, cwd=cwd, timeout=timeout)
             if kind == "license_checker_local_install":
                 entry = (cwd / VALIDATION_LICENSE_CHECKER_ENTRY).resolve()
                 bin_dir = (cwd / "node_modules/.bin").resolve()
@@ -23637,7 +24278,16 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                         continue
                 else:
                     missing = set(blocked.get("missing") or [])
-                    if (
+                    prepared_nuget = [
+                        {k: v for k, v in prepared.items() if k != "assetsAlreadyPrepared"}
+                        for failure in unresolved_current_test_failures(value)
+                        if (prepared := _dotnet_nuget_preparation(worktree, failure)) is not None
+                        and prepared["assetsAlreadyPrepared"]
+                    ]
+                    if prepared_nuget:
+                        reason = "DEPENDENCY_PREPARATION_EVIDENCE_AVAILABLE"
+                        review_marker = sha256_json({"NuGetPreparation": prepared_nuget})
+                    elif (
                         current_progress_marker
                         and current_progress_marker != recorded_progress_marker
                     ):
@@ -24061,7 +24711,12 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
     missing_summary = _validation_gap_summary(candidate)
     prefetch = bool(candidate.get("prefetchCommands"))
     dependency_note = (
-        "系统已按项目锁文件补齐缺失依赖，请重新运行相关检查。"
+        "系统已按仓库集中声明的版本准备 NuGet 包和原 artifacts 资产；这不是测试通过证明，请离线重跑原 no-restore 检查。"
+        if any(
+            item.get("kind") == "dotnet_nuget_prepare"
+            for item in candidate.get("prefetchCommands") or []
+        )
+        else "系统已按项目锁文件补齐缺失依赖，请重新运行相关检查。"
         if prefetch
         else "请重新确认已准备的依赖环境并补齐证据。"
     )
@@ -30490,6 +31145,393 @@ def restore_commit(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "threadId": args.thread_id}
 
 
+def _rag_native_multistep_command(failure: dict[str, Any]) -> str | None:
+    """Recognize only the one observed read-only hooks and final native check."""
+    final = "GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off bash build.sh --test -run '^TestRetrievalPreservesCompilationMarkerWhenPresent$' ./internal/service/nlp/..."
+    if (
+        failure.get("command") != final
+        or type(failure.get("exitCode")) is not int
+        or failure["exitCode"] != 1
+        or (failure.get("capability") or {}).get("kind") != "RAGFLOW_OFFICE_OXIDE_PLATFORM"
+    ):
+        return None
+    return (
+        "python3 - <<'PY'\n"
+        "import importlib.util\n"
+        "from pathlib import Path\n"
+        "spec=importlib.util.spec_from_file_location('checks','tools/hooks/check_files.py');mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)\n"
+        "paths=[Path('internal/service/nlp/retrieval.go'),Path('internal/service/nlp/retrieval_test.go')]\n"
+        "for name,fn in mod.CHECKS.items():\n"
+        " code=fn(paths,fix=False); print(name,code); assert code==0\n"
+        "PY\n"
+        "gofmt -l internal/service/nlp/retrieval.go internal/service/nlp/retrieval_test.go\n"
+        "git diff --check\n" + final
+    )
+
+
+def _completed_unsupported_dependency(
+    store: RadarLedger, candidate: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Prove a completed, authenticated native-capability failure for this attempt."""
+    if (
+        not callable(getattr(store, "connect", None))
+        or not str(candidate.get("key") or "").startswith("infiniflow/ragflow#")
+        or candidate.get("stage") != "VALIDATION_PENDING"
+        or candidate.get("intentStatus") != "COMPLETED"
+    ):
+        return None
+    try:
+        with store.connect() as connection:
+            current = connection.execute(
+                "SELECT i.status,o.stage FROM intents i JOIN opportunities o ON o.key=i.opportunity_key WHERE o.key=? AND i.intent_id=? AND i.thread_id=? AND i.worktree_path=? AND i.rowid=(SELECT MAX(n.rowid) FROM intents n WHERE n.opportunity_key=o.key)",
+                tuple(candidate[k] for k in ("key", "intentId", "threadId", "worktreePath")),
+            ).fetchone()
+            if current is None or current[0] != "COMPLETED" or current[1] != "VALIDATION_PENDING":
+                return None
+            rows = connection.execute(
+                "SELECT id,event_type,dedupe_key,payload_json,created_at FROM events WHERE opportunity_key=? AND (json_extract(payload_json,'$.intentId')=? OR (event_type='TASK_RESULT_INGESTED' AND json_extract(payload_json,'$.taskId')=?)) AND json_extract(payload_json,'$.threadId')=? AND (json_extract(payload_json,'$.worktreePath')=? OR event_type='TASK_RESULT_INGESTED') ORDER BY id",
+                (
+                    candidate["key"],
+                    candidate["intentId"],
+                    candidate["intentId"],
+                    candidate["threadId"],
+                    candidate["worktreePath"],
+                ),
+            ).fetchall()
+            if connection.execute(
+                "SELECT 1 FROM publication_requests WHERE opportunity_key=? UNION SELECT 1 FROM managed_prs p JOIN managed_results r ON r.pr_key=p.pr_key JOIN managed_tasks t ON t.task_id=r.task_id WHERE t.opportunity_key=? UNION SELECT 1 FROM managed_publication_reservations WHERE opportunity_key=? LIMIT 1",
+                (candidate["key"],) * 3,
+            ).fetchone():
+                return None
+        events = {
+            kind: next((r for r in reversed(rows) if r["event_type"] == kind), None)
+            for kind in (
+                "TASK_RESULT_VALIDATION_DEFERRED",
+                "TASK_RESULT_INGESTED",
+                "TASK_TURN_DELIVERY_STARTED",
+            )
+        }
+        if any(row is None for row in events.values()) or store.active_task_quarantines(
+            candidate["key"]
+        ):
+            return None
+        deferred, ingested, delivery = events.values()
+        deferred_payload, ingested_payload, delivery_payload = (
+            json.loads(row["payload_json"]) for row in (deferred, ingested, delivery)
+        )
+        digest = deferred_payload.get("resultDigest")
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", str(digest or ""))
+            or ingested_payload.get("resultDigest") != digest
+        ):
+            return None
+        if any(
+            r["id"] > delivery["id"]
+            and r["event_type"]
+            in {
+                "VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED",
+                "THREAD_RECOVERY_RESERVED",
+                "PR_FOLLOWUP_RESERVED",
+            }
+            for r in rows
+        ):
+            return None
+        with _task_worktree_private_descriptor(candidate) as opened:
+            raw = _read_task_result_bytes_from_private(opened)
+            context_raw = _read_task_context_bytes_from_private(opened)
+            context, _ = _verified_private_context_with_singleton_guard(
+                store,
+                opened.worktree,
+                context_raw,
+                os.stat("task-context.json", dir_fd=opened.private_fd, follow_symlinks=False),
+            )
+            value = json.loads(raw)
+            if (
+                not isinstance(value, dict)
+                or value.get("stage") != "FIX_READY"
+                or value.get("handoffMode") != "controller_commit_complete"
+                or value.get("contextDigest") != context.get("contextDigest")
+                or value.get("selectedBaseSha") != context.get("selectedBaseSha")
+                or context.get("taskStage") != "IMPLEMENTATION_READY"
+                or context.get("publicationReceipt")
+                or context.get("prFollowup")
+                or not store.task_result_binding_gate(candidate, value)
+                or not store.task_result_binding_gate(candidate, context)
+                or _task_result_digest(value, raw) != digest
+                or not isinstance(value.get("quality"), dict)
+                or value["quality"].get("relevant_tests_green") is not False
+                or value.get("prUrl")
+                or value.get("publicationReceipt")
+                or value.get("prFollowup")
+                or (
+                    isinstance(value.get("publication"), dict) and value["publication"].get("prUrl")
+                )
+                or _local_changed_files(opened.worktree)
+                or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree)
+                != value.get("headSha")
+                or value.get("commitSha") != value.get("headSha")
+            ):
+                return None
+            receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+            if not isinstance(receipt, dict) or not verify_probe_receipt(
+                receipt,
+                repo=str(value["key"]).rsplit("#", 1)[0],
+                base_sha=str(value.get("selectedBaseSha") or ""),
+                code_paths=value.get("codePaths") or [],
+                required_level=REPRODUCED_VALIDATED,
+                issue_url=candidate["issueUrl"],
+                task_id=candidate["intentId"],
+                thread_id=candidate["threadId"],
+                head_sha=value["headSha"],
+                commit_sha=value["commitSha"],
+                result_digest=digest,
+                enforce_freshness=False,
+            ):
+                return None
+            queued = candidate | {"resultDigest": digest}
+            if (
+                _validation_policy_reassessment_needed(queued)
+                or deferred_payload.get("generatedBuildContract")
+                or deferred_payload.get("expiredPublication")
+            ):
+                return None
+            commands, failures = _validation_prefetch_plan(queued)
+            unsupported = [
+                f
+                for f in _unresolved_validation_dependency_failures(commands, failures)
+                if f.get("failureType") == "UNSUPPORTED_NATIVE_CAPABILITY"
+            ]
+            if not unsupported or any(c.get("kind") == "dotnet_nuget_prepare" for c in commands):
+                return None
+            kind = delivery_payload.get("deliveryKind")
+            token = delivery_payload.get("deliveryToken")
+            if kind == "validation-followup":
+                completion = {}
+                if (
+                    _completed_validation_input_task_id(
+                        store,
+                        ManagedLedger(store.path, ensure_schema=False),
+                        candidate=queued,
+                        context=context,
+                        value=value,
+                        result_access=opened,
+                        context_raw=context_raw,
+                        validation_context_digest=context["contextDigest"],
+                        completion_proof=completion,
+                    )
+                    != candidate["intentId"]
+                ):
+                    return None
+                native_receipt = completion["receipt"]
+                reservation = native_receipt["reservationDigest"]
+                receipt_key = _task_turn_delivery_file_key(
+                    delivery_kind=kind,
+                    thread_id=candidate["threadId"],
+                    delivery_token=token,
+                    validation_reservation_digest=reservation,
+                )
+                reserve_type, sent_type, attempt_field = (
+                    "VALIDATION_FOLLOWUP_RESERVED",
+                    "VALIDATION_FOLLOWUP_SENT",
+                    "reservationDigest",
+                )
+                attempt = reservation
+            elif kind == "implementation-followup":
+                attempt = _completed_implementation_followup_attempt_digest(
+                    store,
+                    candidate=candidate,
+                    context=dict(context, resultDigest=token),
+                    worktree=opened.worktree,
+                )
+                if attempt is None:
+                    return None
+                receipt_key = _task_turn_delivery_file_key(
+                    delivery_kind=kind,
+                    thread_id=candidate["threadId"],
+                    delivery_token=token,
+                    delivery_attempt_digest=attempt,
+                )
+                reserve_type, sent_type, attempt_field = (
+                    "IMPLEMENTATION_FOLLOWUP_RESERVED",
+                    "IMPLEMENTATION_FOLLOWUP_SENT",
+                    "attemptDigest",
+                )
+            else:
+                return None
+            native_raw = _read_owned_regular_file(
+                STATE / "task_turn_receipts" / f"{receipt_key}.json",
+                label="unsupported dependency completed receipt",
+                reject_dangerous_writes=True,
+            )
+            native_receipt = json.loads(native_raw)
+            if (
+                not isinstance(native_receipt, dict)
+                or native_receipt.get("ok") is not True
+                or native_receipt.get("deliveryKind") != kind
+                or native_receipt.get("threadId") != candidate["threadId"]
+                or native_receipt.get("deliveryToken") != token
+                or native_receipt.get("turnStatus") != "completed"
+                or native_receipt.get("turnError") is not None
+                or not native_receipt.get("turnId")
+                or native_receipt.get(
+                    "reservationDigest"
+                    if kind == "validation-followup"
+                    else "deliveryAttemptDigest"
+                )
+                != attempt
+                or _stopped_attempt_activity(candidate, native_receipt["turnId"]) is not None
+            ):
+                return None
+            reserved = next((r for r in reversed(rows) if r["event_type"] == reserve_type), None)
+            sent = next((r for r in reversed(rows) if r["event_type"] == sent_type), None)
+            if (
+                reserved is None
+                or sent is None
+                or not reserved["id"] < delivery["id"] < sent["id"] < ingested["id"]
+                or deferred["id"] < sent["id"]
+            ):
+                return None
+            sent_payload = json.loads(sent["payload_json"])
+            if (
+                json.loads(reserved["payload_json"]).get(attempt_field) != attempt
+                or json.loads(reserved["payload_json"]).get("resultDigest") != token
+                or sent_payload.get("resultDigest") != token
+                or (
+                    sent_payload.get(attempt_field) != attempt
+                    and not (
+                        kind == "validation-followup"
+                        and attempt_field not in sent_payload
+                        and sent["dedupe_key"] == token
+                    )
+                )
+            ):
+                return None
+            with closing(
+                sqlite3.connect(THREAD_DB.resolve().as_uri() + "?mode=ro", uri=True)
+            ) as native:
+                native.execute("PRAGMA query_only=ON")
+                journal_path = native.execute(
+                    "SELECT rollout_path FROM threads WHERE id=?", (candidate["threadId"],)
+                ).fetchone()[0]
+            journal = _read_owned_regular_file(
+                Path(journal_path),
+                label="unsupported dependency native journal",
+                reject_dangerous_writes=True,
+            )
+            records = [json.loads(line) for line in journal.splitlines() if line.strip()]
+            end = next(
+                (
+                    r
+                    for r in reversed(records)
+                    if r.get("type") == "event_msg"
+                    and (r.get("payload") or {}).get("type") == "task_complete"
+                    and (r.get("payload") or {}).get("turn_id") == native_receipt["turnId"]
+                ),
+                None,
+            )
+            if end is None or parse_time(ingested["created_at"]) < parse_time(end["timestamp"]):
+                return None
+            command_proofs = []
+            for failure in unsupported:
+                if kind == "validation-followup":
+                    command_proofs.append(
+                        {
+                            "source": "FULL_VALIDATION_COMPLETION_AUTHENTICATED_CURRENT_UNSUPPORTED",
+                            "reportedFailureDigest": sha256_json(failure),
+                            "capability": failure["capability"],
+                        }
+                    )
+                    continue
+                found = []
+                for record in records:
+                    payload = record.get("payload") or {}
+                    item = payload.get("item") or {}
+                    argv = item.get("command")
+                    output = item.get("aggregated_output")
+                    if (
+                        record.get("type") != "event_msg"
+                        or payload.get("type") != "item_completed"
+                        or payload.get("thread_id") != candidate["threadId"]
+                        or payload.get("turn_id") != native_receipt["turnId"]
+                        or item.get("type") != "CommandExecution"
+                        or item.get("status") not in {"completed", "failed"}
+                        or not isinstance(argv, list)
+                        or len(argv) != 3
+                        or argv[1] not in {"-c", "-lc"}
+                        or (
+                            argv[2] != failure.get("command")
+                            and argv[2] != _rag_native_multistep_command(failure)
+                        )
+                        or item.get("cwd") != opened.worktree.as_uri()
+                        or type(item.get("exit_code")) is not int
+                        or item["exit_code"] != failure["exitCode"]
+                        or not isinstance(output, str)
+                    ):
+                        continue
+                    actual_capability = _rag_native_dependency_capability(
+                        opened.worktree, value, dict(failure, result=output, summary="", stderr="")
+                    )
+                    if actual_capability == failure["capability"]:
+                        if argv[2] == failure.get("command"):
+                            found.append(
+                                {
+                                    "command": failure["command"],
+                                    "exitCode": failure["exitCode"],
+                                    "nativeItemDigest": sha256_json(item),
+                                    "capability": failure["capability"],
+                                }
+                            )
+                        else:
+                            found.append(
+                                {
+                                    "source": "MULTISTEP_NATIVE_COMPLETION_CURRENT_UNSUPPORTED",
+                                    "reportedFailureDigest": sha256_json(failure),
+                                    "nativeItemDigest": sha256_json(item),
+                                    "wholeCommandDigest": hashlib.sha256(
+                                        argv[2].encode()
+                                    ).hexdigest(),
+                                    "overallExitCode": item["exit_code"],
+                                    "capability": failure["capability"],
+                                }
+                            )
+                if not found:
+                    return None
+                command_proofs.append(found[-1])
+            if (
+                raw != _read_task_result_bytes_from_private(opened)
+                or context_raw != _read_task_context_bytes_from_private(opened)
+                or _stopped_attempt_activity(candidate, native_receipt["turnId"]) is not None
+            ):
+                return None
+        return {
+            **{k: candidate[k] for k in ("intentId", "threadId", "worktreePath")},
+            "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
+            "turnStatus": "completed",
+            "turnId": native_receipt["turnId"],
+            "completedAt": end["timestamp"],
+            "quarantines": [],
+            "journalSha256": hashlib.sha256(journal).hexdigest(),
+            "resultDigest": digest,
+            "rawDigest": hashlib.sha256(raw).hexdigest(),
+            "contextRawDigest": hashlib.sha256(context_raw).hexdigest(),
+            "deferredEventId": deferred["id"],
+            "deferredPayloadDigest": hashlib.sha256(deferred["payload_json"].encode()).hexdigest(),
+            "ingestedEventId": ingested["id"],
+            "ingestedPayloadDigest": hashlib.sha256(ingested["payload_json"].encode()).hexdigest(),
+            "deliveryEventId": delivery["id"],
+            "deliveryPayloadDigest": hashlib.sha256(delivery["payload_json"].encode()).hexdigest(),
+            "reservedEventId": reserved["id"],
+            "sentEventId": sent["id"],
+            "reservedPayloadDigest": hashlib.sha256(reserved["payload_json"].encode()).hexdigest(),
+            "sentPayloadDigest": hashlib.sha256(sent["payload_json"].encode()).hexdigest(),
+            "receiptFileKey": receipt_key,
+            "receiptRawDigest": hashlib.sha256(native_raw).hexdigest(),
+            "dependencyCapabilities": command_proofs,
+        }
+    except (OSError, RuntimeError, ValueError, TypeError, KeyError, IndexError, sqlite3.Error):
+        return None
+
+
 def _stopped_attempt_activity(
     candidate: dict[str, Any], completed_turn_id: str | None = None
 ) -> dict[str, Any] | None:
@@ -30643,6 +31685,19 @@ def _current_stopped_attempt(
                     "sourceRequestId": source["requestId"],
                     "sourceResultDigest": source["resultDigest"],
                 }
+            elif candidate["stage"] == "VALIDATION_PENDING":
+                dependency = _completed_unsupported_dependency(store, candidate)
+                if dependency is None:
+                    return None
+                stop = connection.execute(
+                    "SELECT id,event_type,payload_json FROM events WHERE opportunity_key=? AND event_type='TASK_EXECUTION_STOPPED' AND json_extract(payload_json,'$.intentId')=? AND json_extract(payload_json,'$.threadId')=? AND json_extract(payload_json,'$.worktreePath')=? ORDER BY id DESC LIMIT 1",
+                    binding,
+                ).fetchone()
+                if stop is None or json.loads(stop["payload_json"]) != dependency:
+                    return None
+                reason = "DEPENDENCY_ENVIRONMENT_UNAVAILABLE"
+                completed_turn = dependency["turnId"]
+                extra = {"dependencyEvidence": dependency}
             else:
                 if (
                     candidate["stage"] != "DISPATCHED"

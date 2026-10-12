@@ -21581,6 +21581,7 @@ class RadarLedger:
         if stop.get("reason") not in {
             "REPRODUCTION_ENVIRONMENT_BLOCKED",
             "EXPIRED_VALIDATION_CURRENT_CONTEXT_OR_EXECUTION_MISSING",
+            "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
         }:
             return None
         if stop.get("stopDigest") != sha256_json(
@@ -21696,6 +21697,108 @@ class RadarLedger:
                     or block is None
                     or json.loads(block["payload_json"]).get("reason") != stop["reason"]
                     or json.loads(block["provenance_json"]).get("threadId") != row["thread_id"]
+                ):
+                    return None
+            elif stop["reason"] == "DEPENDENCY_ENVIRONMENT_UNAVAILABLE":
+                if (
+                    row["stage"] != "VALIDATION_PENDING"
+                    or event["event_type"] != "TASK_EXECUTION_STOPPED"
+                    or payload != stop.get("dependencyEvidence")
+                    or payload.get("reason") != stop["reason"]
+                    or payload.get("turnStatus") != "completed"
+                    or payload.get("quarantines") != []
+                    or payload.get("turnId") != stop.get("turnId")
+                    or payload.get("rawDigest") != stop["rawDigest"]
+                    or payload.get("contextRawDigest") != stop["contextRawDigest"]
+                    or not re.fullmatch(r"[0-9a-f]{64}", str(payload.get("resultDigest") or ""))
+                    or not payload.get("dependencyCapabilities")
+                ):
+                    return None
+                references = (
+                    ("deferredEventId", "TASK_RESULT_VALIDATION_DEFERRED", "deferredPayloadDigest"),
+                    ("ingestedEventId", "TASK_RESULT_INGESTED", "ingestedPayloadDigest"),
+                    ("deliveryEventId", "TASK_TURN_DELIVERY_STARTED", "deliveryPayloadDigest"),
+                )
+                delivery_ref = connection.execute(
+                    "SELECT payload_json FROM events WHERE id=?", (payload.get("deliveryEventId"),)
+                ).fetchone()
+                if delivery_ref is None:
+                    return None
+                delivery_payload = json.loads(delivery_ref[0])
+                delivery_kind = delivery_payload.get("deliveryKind")
+                if delivery_kind not in {"validation-followup", "implementation-followup"}:
+                    return None
+                references += (
+                    (
+                        "reservedEventId",
+                        "VALIDATION_FOLLOWUP_RESERVED"
+                        if delivery_kind == "validation-followup"
+                        else "IMPLEMENTATION_FOLLOWUP_RESERVED",
+                        "reservedPayloadDigest",
+                    ),
+                    (
+                        "sentEventId",
+                        "VALIDATION_FOLLOWUP_SENT"
+                        if delivery_kind == "validation-followup"
+                        else "IMPLEMENTATION_FOLLOWUP_SENT",
+                        "sentPayloadDigest",
+                    ),
+                )
+                for field, kind, digest_field in references:
+                    referenced = connection.execute(
+                        "SELECT id,payload_json FROM events WHERE opportunity_key=? AND event_type=? AND (json_extract(payload_json,'$.intentId')=? OR (event_type='TASK_RESULT_INGESTED' AND json_extract(payload_json,'$.taskId')=?)) AND json_extract(payload_json,'$.threadId')=? AND (json_extract(payload_json,'$.worktreePath')=? OR event_type='TASK_RESULT_INGESTED') ORDER BY id DESC LIMIT 1",
+                        (
+                            row["key"],
+                            kind,
+                            row["intent_id"],
+                            row["intent_id"],
+                            row["thread_id"],
+                            row["worktree_path"],
+                        ),
+                    ).fetchone()
+                    if (
+                        referenced is None
+                        or referenced["id"] != payload.get(field)
+                        or sha256_text(referenced["payload_json"]) != payload.get(digest_field)
+                    ):
+                        return None
+                    if (
+                        kind in {"TASK_RESULT_VALIDATION_DEFERRED", "TASK_RESULT_INGESTED"}
+                        and json.loads(referenced["payload_json"]).get("resultDigest")
+                        != payload["resultDigest"]
+                    ):
+                        return None
+                    if kind.endswith(("_RESERVED", "_SENT")):
+                        ref_payload = json.loads(referenced["payload_json"])
+                        attempt_field = (
+                            "reservationDigest"
+                            if delivery_kind == "validation-followup"
+                            else "attemptDigest"
+                        )
+                        attempt = delivery_payload.get(
+                            "reservationDigest"
+                            if delivery_kind == "validation-followup"
+                            else "deliveryAttemptDigest"
+                        )
+                        if ref_payload.get("resultDigest") != delivery_payload.get(
+                            "deliveryToken"
+                        ) or (
+                            ref_payload.get(attempt_field) != attempt
+                            and not (
+                                kind == "VALIDATION_FOLLOWUP_SENT"
+                                and attempt_field not in ref_payload
+                            )
+                        ):
+                            return None
+                if any(
+                    type(payload.get(field)) is not int for field, _kind, _digest in references
+                ) or not (
+                    payload["reservedEventId"]
+                    < payload["deliveryEventId"]
+                    < payload["sentEventId"]
+                    < min(payload["ingestedEventId"], payload["deferredEventId"])
+                    <= max(payload["ingestedEventId"], payload["deferredEventId"])
+                    < stop["stopEventId"]
                 ):
                     return None
             else:

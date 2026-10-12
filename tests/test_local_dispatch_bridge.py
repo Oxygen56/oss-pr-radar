@@ -2158,7 +2158,9 @@ def test_radar_state_fetch_lock_serializes_independent_bridge_processes(
     assert actual_ref == expected_ref
 
 
-def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[RadarLedger, Path]:
+def registered_store(
+    tmp_path: Path, worktree: Path | None = None, *, repo: str = "a/b"
+) -> tuple[RadarLedger, Path]:
     worktree = worktree or tmp_path / "worktree"
     worktree.mkdir(parents=True)
     run_git(worktree, "init")
@@ -2168,10 +2170,10 @@ def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[Rada
     store.enqueue(
         {
             "intentId": "intent-1",
-            "key": "a/b#1",
-            "repo": "a/b",
+            "key": f"{repo}#1",
+            "repo": repo,
             "issueNumber": 1,
-            "issueUrl": "https://github.com/a/b/issues/1",
+            "issueUrl": f"https://github.com/{repo}/issues/1",
             "title": "Runtime bug",
             "mode": "canary",
             "score": 9,
@@ -2195,7 +2197,7 @@ def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[Rada
         title_time="08-05 16:00",
     )
     store.record_audit_snapshot(
-        "a/b#1",
+        f"{repo}#1",
         evidence={
             "authorization": {"status": "ALLOW"},
             "evidenceDigest": "live-evidence",
@@ -13427,7 +13429,10 @@ def _assert_stopped_attempt_native_archive_loop(monkeypatch, store, worktree):
     borrowed["stopDigest"] = sha256_json({k: v for k, v in borrowed.items() if k != "stopDigest"})
     borrowed_candidate = store.stopped_cleanup_candidate(borrowed)
     if borrowed_candidate is None:
-        assert stop["reason"] == "EXPIRED_VALIDATION_CURRENT_CONTEXT_OR_EXECUTION_MISSING"
+        assert stop["reason"] in {
+            "EXPIRED_VALIDATION_CURRENT_CONTEXT_OR_EXECUTION_MISSING",
+            "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
+        }
     else:
         assert stop["reason"] == "REPRODUCTION_ENVIRONMENT_BLOCKED"
         with pytest.raises(MODULE.LedgerError, match="stopped cleanup authorization changed"):
@@ -18531,11 +18536,14 @@ def _controller_commit_result(
     complete_normal_validation_audit: bool = False,
     omit_commit_message: bool = False,
     managed_opportunity_source: str = "test-legal-fixture",
+    fixture_repo: str = "a/b",
+    dependency_fixture: dict[str, str] | None = None,
+    validation_checks: list[dict[str, object]] | None = None,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
     MODULE.ROOT = tmp_path
-    store, worktree = registered_store(tmp_path, worktree=worktree)
+    store, worktree = registered_store(tmp_path, worktree=worktree, repo=fixture_repo)
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
     receipt_code_paths = list(probe_code_paths)
@@ -18547,6 +18555,11 @@ def _controller_commit_result(
         extra.write_text("value = 1\n", encoding="utf-8")
     changed_files = sorted(["runtime.py", *additional_changed_files])
     baseline_files = sorted([*changed_files, *additional_baseline_files])
+    for relative, content in (dependency_fixture or {}).items():
+        path = worktree / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        baseline_files.append(relative)
     if validation_generated_build_failure == "channel":
         workspace_package = worktree / "packages/channels/base"
         (workspace_package / "src").mkdir(parents=True)
@@ -18573,7 +18586,7 @@ def _controller_commit_result(
     run_git(worktree, "add", *baseline_files)
     run_git(worktree, "commit", "-m", "chore: baseline")
     run_git(worktree, "branch", "-M", "main")
-    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    run_git(worktree, "remote", "add", "origin", f"https://github.com/{fixture_repo}.git")
     run_git(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
     run_git(
         worktree,
@@ -18601,12 +18614,12 @@ def _controller_commit_result(
     }
     probe = run_reproduction_probe(
         checkout_path=probe_checkout,
-        repo="a/b",
+        repo=fixture_repo,
         default_branch="main",
         selected_base_sha=base_sha,
         code_paths=receipt_code_paths,
         profile_id=profile_id,
-        issue_url="https://github.com/a/b/issues/1",
+        issue_url=f"https://github.com/{fixture_repo}/issues/1",
         task_id="intent-1",
         thread_id="thread-1",
         head_sha=head_sha,
@@ -18647,7 +18660,7 @@ def _controller_commit_result(
             (json.dumps(payload, sort_keys=True),),
         )
     store.record_audit_snapshot(
-        "a/b#1",
+        f"{fixture_repo}#1",
         evidence={
             **(
                 {
@@ -18678,7 +18691,7 @@ def _controller_commit_result(
                 "capturedAt": iso_z(datetime.now(UTC)),
                 "evidence": {
                     "digest": "c" * 64,
-                    "repo": "a/b",
+                    "repo": fixture_repo,
                     "issue": {"number": 1, "state": "open"},
                     "completeness": {"repositoryPolicy": "COMPLETE"},
                     "policy": {
@@ -18705,7 +18718,7 @@ def _controller_commit_result(
                 completeness={"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
             )
         store.record_audit_snapshot(
-            "a/b#1",
+            f"{fixture_repo}#1",
             evidence=policy_audit,
             dedupe_key=(
                 "intent-1:controller-policy-complete"
@@ -18717,7 +18730,7 @@ def _controller_commit_result(
         run_git(worktree, "switch", "--detach", base_sha)
     context_path = MODULE.write_task_context(
         store,
-        issue_url="https://github.com/a/b/issues/1",
+        issue_url=f"https://github.com/{fixture_repo}/issues/1",
         thread_id="thread-1",
         cwd=worktree,
     )
@@ -18734,8 +18747,8 @@ def _controller_commit_result(
     result = {
         "schemaVersion": "radar-task-result-v1",
         "contextDigest": context["contextDigest"],
-        "key": "a/b#1",
-        "issueUrl": "https://github.com/a/b/issues/1",
+        "key": f"{fixture_repo}#1",
+        "issueUrl": f"https://github.com/{fixture_repo}/issues/1",
         "threadId": "thread-1",
         "worktreePath": str(worktree.resolve()),
         "stage": "FIX_READY",
@@ -18822,6 +18835,8 @@ def _controller_commit_result(
                 else "The real CLI development entry did not reach extension uninstall because "
                 "@qwen-code/channel-base/dist/index.js is missing."
             )
+    if validation_checks is not None:
+        result["tests"] = validation_checks
     signed_result = dict(result)
     signed_result["handoffMode"] = "controller_commit_complete"
     signed_result["publication"] = dict(result["publication"]) | {"baseBranch": "main"}
@@ -18848,12 +18863,12 @@ def _controller_commit_result(
     run_git(worktree, "worktree", "add", "--detach", str(probe_checkout), base_sha)
     probe = run_reproduction_probe(
         checkout_path=probe_checkout,
-        repo="a/b",
+        repo=fixture_repo,
         default_branch="main",
         selected_base_sha=base_sha,
         code_paths=receipt_code_paths,
         profile_id=profile_id,
-        issue_url="https://github.com/a/b/issues/1",
+        issue_url=f"https://github.com/{fixture_repo}/issues/1",
         task_id="intent-1",
         thread_id="thread-1",
         head_sha=head_sha,
@@ -18865,11 +18880,11 @@ def _controller_commit_result(
     result["reproductionReceipt"] = probe
     managed = ManagedLedger(store.path, ensure_schema=True)
     managed.upsert_opportunity(
-        opportunity_key="a/b#1",
-        owner="a",
-        repo="b",
+        opportunity_key=f"{fixture_repo}#1",
+        owner=fixture_repo.split("/")[0],
+        repo=fixture_repo.split("/")[1],
         issue_number=1,
-        issue_url="https://github.com/a/b/issues/1",
+        issue_url=f"https://github.com/{fixture_repo}/issues/1",
         state="SYSTEM_PROCESSING",
         source=managed_opportunity_source,
         provenance={"fixture": True},
@@ -18877,7 +18892,7 @@ def _controller_commit_result(
     )
     managed.bind_task(
         task_id="intent-1",
-        opportunity_key="a/b#1",
+        opportunity_key=f"{fixture_repo}#1",
         thread_id="thread-1",
         worktree_path=str(worktree),
         state="REPRODUCTION_REQUIRED",
@@ -18919,7 +18934,7 @@ def _controller_commit_result(
         )
     if target_base_bound:
         store.record_stage(
-            "a/b#1",
+            f"{fixture_repo}#1",
             "FIX_READY",
             evidence=quality,
             intent_id="intent-1",
@@ -18929,7 +18944,7 @@ def _controller_commit_result(
     context = json.loads(
         MODULE.write_task_context(
             store,
-            issue_url="https://github.com/a/b/issues/1",
+            issue_url=f"https://github.com/{fixture_repo}/issues/1",
             thread_id="thread-1",
             cwd=worktree,
         ).read_text(encoding="utf-8")
@@ -18946,7 +18961,7 @@ def _controller_commit_result(
         candidate_record = next(
             item
             for item in store.task_result_candidates()
-            if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
+            if item["key"] == f"{fixture_repo}#1" and item["threadId"] == "thread-1"
         )
         context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
         result, _raw = _finalize_controller_commit_for_test(
@@ -18969,6 +18984,7 @@ def _controller_commit_result(
             head_sha=head_sha,
             commit_sha=head_sha,
             store=store,
+            fixture_repo=fixture_repo,
         )
         if quality.get("independent_review_passed") is True:
             review_value = dict(result)
@@ -24722,6 +24738,7 @@ def _sign_reproduction_certificate(
     head_sha: str,
     commit_sha: str,
     store: RadarLedger | None = None,
+    fixture_repo: str = "a/b",
 ) -> str:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -24754,12 +24771,12 @@ def _sign_reproduction_certificate(
     run_git(worktree, "worktree", "add", "--detach", str(checkout), base_sha)
     receipt = run_reproduction_probe(
         checkout_path=checkout,
-        repo="a/b",
+        repo=fixture_repo,
         default_branch="main",
         selected_base_sha=base_sha,
         code_paths=receipt_code_paths,
         profile_id=profile_id,
-        issue_url="https://github.com/a/b/issues/1",
+        issue_url=f"https://github.com/{fixture_repo}/issues/1",
         task_id="intent-1",
         thread_id=str(value.get("threadId") or "thread-1"),
         head_sha=head_sha,
@@ -28881,6 +28898,1026 @@ class _FakeTaskTurnSelector:
 
     def close(self) -> None:
         return None
+
+
+def _nuget_dependency_fixture():
+    return {
+        ".gitignore": ".oss-pr-radar/\nartifacts/\n",
+        "global.json": json.dumps({"sdk": {"version": "10.0.101", "rollForward": "minor"}}),
+        "nuget.config": '<configuration><packageSources><clear/><add key="nuget" value="https://api.nuget.org/v3/index.json"/></packageSources><packageSourceMapping><packageSource key="nuget"><package pattern="*"/></packageSource></packageSourceMapping></configuration>',
+        "Directory.Packages.props": '<Project><PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup><ItemGroup><PackageVersion Include="FixtureUnusedPackage" Version="1.0.0"/></ItemGroup></Project>',
+        "Directory.Build.props": r"""<Project><PropertyGroup>
+<RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)'))</RepoRoot>
+<ArtifactsDir Condition="'$(ArtifactsDir)' == ''">$([MSBuild]::NormalizeDirectory('$(RepoRoot)', 'artifacts'))</ArtifactsDir>
+<ArtifactsObjDir>$([MSBuild]::NormalizeDirectory('$(ArtifactsDir)', 'obj'))</ArtifactsObjDir>
+<ArtifactsBinDir>$([MSBuild]::NormalizeDirectory('$(ArtifactsDir)', 'bin'))</ArtifactsBinDir>
+<OutDirName>$(MSBuildProjectName)</OutDirName>
+<BaseIntermediateOutputPath>$([System.IO.Path]::GetFullPath('$(ArtifactsObjDir)$(OutDirName)\'))</BaseIntermediateOutputPath>
+<BaseOutputPath>$([System.IO.Path]::GetFullPath('$(ArtifactsBinDir)$(OutDirName)\'))</BaseOutputPath>
+</PropertyGroup></Project>""",
+        "src/Fixture/Fixture.csproj": '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>',
+        "src/Fixture/Probe.cs": "public static class Probe { public static int Value => 1; }\n",
+    }
+
+
+def _nuget_failure(worktree):
+    return {
+        "command": "dotnet build src/Fixture/Fixture.csproj --no-restore --framework net10.0 --verbosity minimal",
+        "cwd": str(worktree),
+        "phase": "formal",
+        "exitCode": 1,
+        "result": "NETSDK1004: project.assets.json was not found; formal build did not compile.",
+    }
+
+
+def _nuget_supported_fixture(monkeypatch, tmp_path):
+    dotnet = shutil.which("dotnet")
+    sdk_roots = (
+        [
+            Path(dotnet).resolve().parent / "sdk",
+            Path(dotnet).resolve().parent.parent / "libexec/sdk",
+        ]
+        if dotnet
+        else []
+    )
+    if not any(
+        path.name.startswith("10.0.")
+        and path.name[5:].isdigit()
+        and int(path.name[5:]) >= 101
+        and (path / "MSBuild.dll").is_file()
+        for root in sdk_roots
+        if root.is_dir()
+        for path in root.iterdir()
+    ):
+        pytest.skip("Compatible .NET 10 SDK is not installed; no toolchain installation is allowed")
+    bind_validation_runtime(monkeypatch, tmp_path)
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        dependency_fixture=_nuget_dependency_fixture(),
+        validation_checks=[_nuget_failure(tmp_path / "worktree")],
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+    )
+    assert MODULE._dotnet_nuget_preparation(worktree, _nuget_failure(worktree)) is not None
+    assert MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))["ok"]
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    return store, worktree, result_path
+
+
+def test_nuget_preparation_generates_original_no_restore_assets_and_reserves_same_result(
+    monkeypatch, tmp_path
+):
+    store, worktree, result_path = _nuget_supported_fixture(monkeypatch, tmp_path)
+    candidate = store.validation_followup_candidates()[0]
+    commands, failures = MODULE._validation_prefetch_plan(candidate)
+    assert len(commands) == 1 and commands[0]["kind"] == "dotnet_nuget_prepare"
+    assert MODULE._unresolved_validation_dependency_failures(commands, failures) == []
+    original = result_path.read_bytes()
+    original_run = MODULE.subprocess.run
+    dotnet = commands[0]["argv"][0]
+
+    def sdk_run(argv, **kwargs):
+        if str(argv[0]) in {"dotnet", dotnet}:
+            assert shutil.which("sandbox-exec"), "SDK QA must deny networking"
+            env = kwargs.get("env") or os.environ | {
+                "DOTNET_CLI_HOME": str(worktree / ".oss-pr-radar/sdk-qa"),
+                "DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE": "true",
+            }
+            kwargs["env"] = env
+            argv = ["sandbox-exec", "-p", "(version 1) (allow default) (deny network*)", *argv]
+        return original_run(argv, **kwargs)
+
+    monkeypatch.setattr(MODULE.subprocess, "run", sdk_run)
+    before = sdk_run(
+        [
+            dotnet,
+            "build",
+            str(worktree / "src/Fixture/Fixture.csproj"),
+            "--no-restore",
+            "--framework",
+            "net10.0",
+            "--verbosity",
+            "minimal",
+        ],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert before.returncode != 0 and "NETSDK1004" in before.stdout + before.stderr
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+        )
+    )
+    assert reserved["ok"] and reserved["prefetch"][0]["kind"] == "dotnet_nuget_prepare"
+    after = sdk_run(
+        [
+            dotnet,
+            "build",
+            str(worktree / "src/Fixture/Fixture.csproj"),
+            "--no-restore",
+            "--framework",
+            "net10.0",
+            "--verbosity",
+            "minimal",
+        ],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert after.returncode == 0, after.stdout + after.stderr
+    assert MODULE._dotnet_assets_prepared(
+        worktree, worktree / "src/Fixture/Fixture.csproj", Path(commands[0]["assetsPath"])
+    )
+    assert result_path.read_bytes() == original
+    assert json.loads(original)["quality"]["relevant_tests_green"] is False
+    assert json.loads(original)["quality"]["independent_review_passed"] is False
+    assert MODULE._validation_prefetch_plan(candidate) == ([], [])
+    assert len(store.unresolved_validation_followups()) == 1
+    candidate = store.unresolved_validation_followups()[0]
+    thread_db = tmp_path / "nuget-threads.sqlite3"
+    rollout = tmp_path / "nuget-rollout.jsonl"
+    rollout.write_text("")
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT,git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?)",
+            (
+                candidate["threadId"],
+                str(worktree),
+                0,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
+    snapshot = MODULE._ensure_validation_snapshot(
+        candidate, reservation_digest=candidate["reservationDigest"]
+    )
+    binding = {k: snapshot[k] for k in ("snapshotId", "snapshotPath", "snapshotDigest")}
+    binding.update(
+        MODULE._validation_worktree_input_binding(
+            candidate=candidate,
+            reservation_digest=candidate["reservationDigest"],
+            snapshot_digest=binding["snapshotDigest"],
+        )
+    )
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id=candidate["threadId"],
+        delivery_token=candidate["resultDigest"],
+        reservation_digest=candidate["reservationDigest"],
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        return buffer, {
+            "result": {"thread": {"id": candidate["threadId"]}}
+        } if response_id == 1 else {"result": {"turn": {"id": "nuget-turn"}}}
+
+    original_which = MODULE.shutil.which
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(
+        MODULE,
+        "_wait_for_app_server_terminal_turn",
+        lambda *_a, **_k: {"turnId": "nuget-turn", "status": "completed"},
+    )
+    monkeypatch.setattr(
+        MODULE.shutil,
+        "which",
+        lambda name: "/usr/bin/codex" if name == "codex" else original_which(name),
+    )
+    result = MODULE._app_server_task_turn_worker(
+        SimpleNamespace(
+            ledger=store.path,
+            delivery_kind="validation-followup",
+            thread_id=candidate["threadId"],
+            delivery_token=candidate["resultDigest"],
+            reservation_digest=candidate["reservationDigest"],
+            snapshot_id=binding["snapshotId"],
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest=binding["snapshotDigest"],
+            worktree_input_path=binding["worktreeInputPath"],
+            worktree_input_digest=binding["worktreeInputDigest"],
+            receipt=str(tmp_path / "nuget-turn-receipt.json"),
+        )
+    )
+    assert result["ok"] is True and result["turnStatus"] == "completed"
+    prompt = next(
+        item for item in _task_turn_messages(process) if item.get("method") == "turn/start"
+    )["params"]["input"][0]["text"]
+    assert "不安装依赖" in prompt and "离线" in prompt
+    assert str(binding["worktreeInputPath"]) in prompt
+    assert result_path.read_bytes() == original
+    assert store.unresolved_validation_followups() == []
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+        sent = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT'"
+        ).fetchone()
+        assert json.loads(sent[0])["resultDigest"] == candidate["resultDigest"]
+    # Preparation is new evidence to rerun the check, not a green quality flag.
+    value = json.loads(original)
+    value["evidence"] = {
+        "summary": "No additional checks executed; missing-assets gate remains unverified."
+    }
+    digest = _sign_reproduction_certificate(
+        value,
+        result_path=result_path,
+        base_sha=value["selectedBaseSha"],
+        head_sha=value["headSha"],
+        commit_sha=value["commitSha"],
+        store=store,
+    )
+    assert MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))["ok"]
+    assert len(store.validation_no_progress()) == 1
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["ok"] and listed["rearmedReviewFeedback"] == [
+        {"key": candidate["key"], "reason": "DEPENDENCY_PREPARATION_EVIDENCE_AVAILABLE"}
+    ], listed
+    assert listed["candidates"][0]["resultDigest"] == digest
+    repeated = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert repeated["ok"] and repeated["rearmedReviewFeedback"] == []
+    assert json.loads(result_path.read_bytes())["quality"]["relevant_tests_green"] is False
+
+
+def test_unsupported_native_dependency_canonical_multistep_closes_original_attempt(
+    monkeypatch, tmp_path
+):
+    store, candidate, worktree, result_path, journal = _unsupported_native_completed_fixture(
+        monkeypatch, tmp_path, "implementation-followup", canonical_office=True
+    )
+    raw, context_raw = (
+        result_path.read_bytes(),
+        (result_path.parent / "task-context.json").read_bytes(),
+    )
+    evidence = MODULE._completed_unsupported_dependency(store, candidate)
+    assert evidence is not None
+    native = next(
+        record["payload"]["item"]
+        for record in map(json.loads, journal.read_text().splitlines())
+        if (record.get("payload") or {}).get("item", {}).get("type") == "CommandExecution"
+    )
+    reported = json.loads(raw)["tests"][0]["command"]
+    assert native["command"][2] != reported and native["command"][2].endswith("\n" + reported)
+    assert evidence["dependencyCapabilities"] == [
+        {
+            "source": "MULTISTEP_NATIVE_COMPLETION_CURRENT_UNSUPPORTED",
+            "reportedFailureDigest": evidence["dependencyCapabilities"][0]["reportedFailureDigest"],
+            "nativeItemDigest": MODULE.sha256_json(native),
+            "wholeCommandDigest": hashlib.sha256(native["command"][2].encode()).hexdigest(),
+            "overallExitCode": 1,
+            "capability": evidence["dependencyCapabilities"][0]["capability"],
+        }
+    ]
+    assert "exitCode" not in evidence["dependencyCapabilities"][0]
+    assert MODULE._record_stopped_quarantined_executions(store)
+    _assert_stopped_attempt_native_archive_loop(monkeypatch, store, worktree)
+    assert result_path.read_bytes() == raw
+    assert (result_path.parent / "task-context.json").read_bytes() == context_raw
+    assert json.loads(raw)["quality"]["relevant_tests_green"] is False
+
+
+@pytest.mark.parametrize(
+    "invalid", ["heredoc", "body", "control_flow", "trailing_command", "crlf", "overall_zero"]
+)
+def test_unsupported_native_dependency_multistep_rejects_unknown_shell_body(
+    monkeypatch, tmp_path, invalid
+):
+    store, candidate, _worktree, result_path, journal = _unsupported_native_completed_fixture(
+        monkeypatch, tmp_path, "implementation-followup", canonical_office=True
+    )
+    assert MODULE._completed_unsupported_dependency(store, candidate) is not None
+    raw = result_path.read_bytes()
+    records = list(map(json.loads, journal.read_text().splitlines()))
+    item = next(
+        record["payload"]["item"]
+        for record in records
+        if (record.get("payload") or {}).get("item", {}).get("type") == "CommandExecution"
+    )
+    body = item["command"][2]
+    if invalid == "heredoc":
+        item["command"][2] = body.replace("<<'PY'", "<<'OTHER'").replace("\nPY\n", "\nOTHER\n")
+    elif invalid == "body":
+        item["command"][2] = body.replace("fix=False", "fix=True")
+    elif invalid == "control_flow":
+        item["command"][2] = "if true; then\n" + body + "\nfi"
+    elif invalid == "trailing_command":
+        item["command"][2] = body + "\ntrue"
+    elif invalid == "crlf":
+        item["command"][2] = body.replace("\n", "\r\n")
+    else:
+        item["exit_code"] = 0
+    journal.write_text("".join(json.dumps(record) + "\n" for record in records))
+    assert MODULE._completed_unsupported_dependency(store, candidate) is None
+    assert MODULE._record_stopped_quarantined_executions(store) == []
+    assert MODULE._current_stopped_attempt(store, candidate) is None
+    assert result_path.read_bytes() == raw
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    ["root_choose", "nested_central", "obj_alias", "cache_alias", "sdk_override", "malformed_sdk"],
+)
+def test_nuget_preparation_parser_rejects_owned_path_and_sdk_overrides(
+    monkeypatch, tmp_path, invalid
+):
+    store, worktree, _result_path = _nuget_supported_fixture(monkeypatch, tmp_path)
+    if invalid == "root_choose":
+        path = worktree / "Directory.Build.props"
+        path.write_text(
+            path.read_text().replace(
+                "</Project>",
+                "<Choose><When Condition='true'><PropertyGroup><RepoRoot>/outside/</RepoRoot></PropertyGroup></When></Choose></Project>",
+            )
+        )
+    elif invalid == "nested_central":
+        (worktree / "src/Directory.Packages.props").write_text("<Project/>")
+    elif invalid == "obj_alias":
+        outside = tmp_path / "outside-obj"
+        outside.mkdir()
+        (worktree / "artifacts").mkdir()
+        (worktree / "artifacts/obj").symlink_to(outside, target_is_directory=True)
+    elif invalid == "cache_alias":
+        outside = tmp_path / "outside-packages"
+        outside.mkdir()
+        cache = worktree / ".oss-pr-radar/validation-nuget"
+        cache.mkdir()
+        (cache / "packages").symlink_to(outside, target_is_directory=True)
+        commands, _ = MODULE._validation_prefetch_plan(store.validation_followup_candidates()[0])
+        with pytest.raises(MODULE.ValidationPrefetchError, match="external alias"):
+            MODULE._execute_validation_prefetch(store.validation_followup_candidates()[0], commands)
+        return
+    elif invalid == "sdk_override":
+        monkeypatch.setenv("DOTNET_MSBUILD_SDK_RESOLVER_SDKS_DIR", str(tmp_path / "external-sdk"))
+    else:
+        (worktree / "global.json").write_text("[]")
+    assert MODULE._dotnet_nuget_preparation(worktree, _nuget_failure(worktree)) is None
+
+
+def test_office_oxide_linux_material_does_not_authorize_darwin_validation(monkeypatch, tmp_path):
+    (tmp_path / "go.mod").write_text("module ragflow\n")
+    (tmp_path / "build.sh").write_text("# native-linux-x86_64.tar.gz\n")
+    value = {"key": "infiniflow/ragflow#20834", "quality": {"relevant_tests_green": False}}
+    failure = {
+        "command": "go test ./internal/engine",
+        "cwd": str(tmp_path),
+        "phase": "formal",
+        "exitCode": 1,
+        "result": "Could not collect tests: local office_oxide native archive absent.",
+    }
+    monkeypatch.setattr(MODULE.sys, "platform", "darwin")
+    home = tmp_path / "private-home"
+    monkeypatch.setattr(MODULE.Path, "home", classmethod(lambda cls: home))
+    assert MODULE._rag_native_dependency_capability(tmp_path, value, failure)["supported"] is False
+    prefix = home / "ragflow-native-libs/office_oxide"
+    (prefix / "lib").mkdir(parents=True)
+    (prefix / "include/office_oxide_c").mkdir(parents=True)
+    (prefix / "lib/liboffice_oxide.a").write_bytes(b"!<arch>\n\x7fELF Linux x86_64 material")
+    (prefix / "include/office_oxide_c/office_oxide.h").write_text(
+        "/* newly available material */\n"
+    )
+    assert MODULE._rag_native_dependency_capability(tmp_path, value, failure) is None
+    assert value["quality"]["relevant_tests_green"] is False
+
+
+def test_nuget_coverage_binds_actual_filtered_project_and_reference_graph(monkeypatch, tmp_path):
+    store, worktree, _result_path = _nuget_supported_fixture(monkeypatch, tmp_path)
+    core = MODULE._dotnet_nuget_preparation(worktree, _nuget_failure(worktree))
+    tests_project = worktree / "tests/Fixture.Tests.csproj"
+    tests_project.parent.mkdir()
+    tests_project.write_text(
+        '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><ProjectReference Include="../src/Fixture/Fixture.csproj"/></ItemGroup></Project>'
+    )
+    failure = dict(
+        _nuget_failure(worktree),
+        command="dotnet test tests/Fixture.Tests.csproj --no-restore --framework net10.0 --filter 'FullyQualifiedName~DelegatingToolOutputSchemaTests' --verbosity minimal",
+    )
+    prepared = MODULE._dotnet_nuget_preparation(worktree, failure)
+    assert prepared is not None and set(prepared["graphAssets"]) == {
+        "tests/Fixture.Tests.csproj",
+        "src/Fixture/Fixture.csproj",
+    }
+    assert "--filter" not in prepared["argv"]
+    assert MODULE._unresolved_validation_dependency_failures([core], [failure]) == [failure]
+    assert MODULE._unresolved_validation_dependency_failures([prepared], [failure]) == []
+    foreign = dict(
+        failure,
+        command=failure["command"].replace("tests/Fixture.Tests.csproj", "outside/Foreign.csproj"),
+    )
+    assert MODULE._unresolved_validation_dependency_failures([prepared], [foreign]) == [foreign]
+    foreign_summary = dict(
+        failure,
+        summary="NETSDK1004: Assets file '/outside/project.assets.json' not found.",
+    )
+    assert MODULE._unresolved_validation_dependency_failures([prepared], [foreign_summary]) == [
+        foreign_summary
+    ]
+    stderr_only = dict(failure, result="", summary="", stderr=failure["result"])
+    assert MODULE._unresolved_validation_dependency_failures([prepared], [stderr_only]) == []
+    unknown = dict(
+        failure,
+        command=failure["command"].replace("DelegatingToolOutputSchemaTests", "UnknownFilter")
+        + " -p:RestoreSources=https://invalid.example",
+    )
+    assert MODULE._dotnet_nuget_preparation(worktree, unknown) is None
+    assert MODULE._unresolved_validation_dependency_failures([prepared], [unknown]) == [unknown]
+
+
+@pytest.mark.parametrize(
+    "invalid", ["wrong_source", "head_change", "custom_hook", "foreign_assets", "property_override"]
+)
+def test_nuget_preparation_rejects_changed_source_and_uncontrolled_graph(
+    monkeypatch, tmp_path, invalid
+):
+    store, worktree, result_path = _nuget_supported_fixture(monkeypatch, tmp_path)
+    candidate = store.validation_followup_candidates()[0]
+    commands, _failures = MODULE._validation_prefetch_plan(candidate)
+    original = result_path.read_bytes()
+    if invalid == "wrong_source":
+        path = worktree / "nuget.config"
+        path.write_text(
+            path.read_text().replace(
+                "https://api.nuget.org/v3/index.json", "https://invalid.example/private"
+            )
+        )
+    elif invalid == "head_change":
+        run_git(worktree, "commit", "--allow-empty", "-m", "different source")
+    elif invalid == "custom_hook":
+        path = worktree / "src/Fixture/Fixture.csproj"
+        path.write_text(
+            path.read_text().replace(
+                "</Project>",
+                '<Target Name="BeforeRestore"><Exec Command="echo unsafe"/></Target></Project>',
+            )
+        )
+    elif invalid == "property_override":
+        path = worktree / "Directory.Build.props"
+        path.write_text(
+            path.read_text().replace(
+                "</PropertyGroup>",
+                "<MSBuildProjectExtensionsPath>/outside/</MSBuildProjectExtensionsPath></PropertyGroup>",
+            )
+        )
+    else:
+        path = Path(commands[0]["assetsPath"])
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "project": {"restore": {"projectPath": "/foreign/Fixture.csproj"}},
+                    "targets": {"net10.0": {}},
+                    "packageFolders": {"/foreign/": {}},
+                }
+            )
+        )
+    original_run = MODULE.subprocess.run
+
+    def no_sdk(argv, **kwargs):
+        if str(argv[0]) == commands[0]["argv"][0]:
+            pytest.fail("invalid preparation must not execute SDK")
+        return original_run(argv, **kwargs)
+
+    monkeypatch.setattr(MODULE.subprocess, "run", no_sdk)
+    with pytest.raises((RuntimeError, MODULE.ValidationResultChanged)):
+        MODULE._execute_validation_prefetch(candidate, commands)
+    assert result_path.read_bytes() == original
+
+
+def _unsupported_native_completed_fixture(
+    monkeypatch, tmp_path, delivery_kind, *, native_wrapper=False, canonical_office=False
+):
+    bind_validation_runtime(monkeypatch, tmp_path)
+    repo = "infiniflow/ragflow"
+    worktree = MODULE.managed_worktree_path("intent-1", repo)
+    files = {
+        ".gitignore": ".oss-pr-radar/\nartifacts/\n",
+        "go.mod": "module ragflow\n",
+        "build.sh": "# --cpp\nclang++ -fsyntax-only internal/binding/cpp/missing.cc\n",
+        "internal/binding/cpp/CMakeLists.txt": "# original simde include prerequisite\n",
+        "internal/binding/cpp/missing.cc": "#include <simde/x86/sse4.1.h>\n",
+    }
+    if canonical_office:
+        files.update(
+            {
+                "build.sh": "# native-linux-x86_64.tar.gz\nprintf 'office_oxide native archive absent\\n'\nexit 1\n",
+                "internal/service/nlp/retrieval.go": "package nlp\n",
+                "internal/service/nlp/retrieval_test.go": "package nlp\n",
+                "tools/hooks/check_files.py": "def check(paths, fix=False):\n assert fix is False\n return 0 if all(p.is_file() for p in paths) else 1\nCHECKS={'files':check}\n",
+            }
+        )
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        fixture_repo=repo,
+        worktree=worktree,
+        missing_quality=("independent_review_passed",),
+        dependency_fixture=files,
+    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _p: store)
+    key = f"{repo}#1"
+    context_path = result_path.parent / "task-context.json"
+    if delivery_kind == "validation-followup":
+        assert MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))["ok"]
+        candidate = store.validation_followup_candidates()[0]
+        reserved = MODULE.validation_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path, thread_id="thread-1", result_digest=candidate["resultDigest"]
+            )
+        )
+        reservation = reserved["reservationDigest"]
+        candidate = store.unresolved_validation_followups()[0]
+        snapshot = MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation)
+        binding = MODULE._validation_worktree_input_binding(
+            candidate=candidate,
+            reservation_digest=reservation,
+            snapshot_digest=snapshot["snapshotDigest"],
+        )
+        store.authorize_task_turn_delivery(
+            delivery_kind=delivery_kind,
+            thread_id="thread-1",
+            delivery_token=candidate["resultDigest"],
+            reservation_digest=reservation,
+            snapshot_id=snapshot["snapshotId"],
+            snapshot_path=snapshot["snapshotPath"],
+            snapshot_digest=snapshot["snapshotDigest"],
+            worktree_input_path=binding["worktreeInputPath"],
+            worktree_input_digest=binding["worktreeInputDigest"],
+        )
+        MODULE._ensure_validation_worktree_input(
+            candidate=candidate,
+            reservation_digest=reservation,
+            snapshot_id=snapshot["snapshotId"],
+            snapshot_path=snapshot["snapshotPath"],
+            snapshot_digest=snapshot["snapshotDigest"],
+            worktree_input_path=binding["worktreeInputPath"],
+            worktree_input_digest=binding["worktreeInputDigest"],
+        )
+        assert MODULE.validation_followup_commit(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-1",
+                result_digest=candidate["resultDigest"],
+                reservation_digest=reservation,
+            )
+        )["ok"]
+        token = candidate["resultDigest"]
+        receipt_key = MODULE._task_turn_delivery_file_key(
+            delivery_kind=delivery_kind,
+            thread_id="thread-1",
+            delivery_token=token,
+            validation_reservation_digest=reservation,
+        )
+        receipt_extra = {"reservationDigest": reservation}
+        prompt = MODULE._validation_followup_prompt(candidate | snapshot | binding)
+    else:
+        context = json.loads(context_path.read_bytes())
+        token = context["resultDigest"]
+        store.record_task_result_ingested(
+            key,
+            digest=token,
+            stage="IMPLEMENTATION_READY",
+            task_id="intent-1",
+            thread_id="thread-1",
+        )
+        reserved = store.reserve_implementation_followup(thread_id="thread-1", result_digest=token)
+        attempt = reserved["implementationFollowupAttemptDigest"]
+        store.authorize_task_turn_delivery(
+            delivery_kind=delivery_kind,
+            thread_id="thread-1",
+            delivery_token=token,
+            delivery_attempt_digest=attempt,
+        )
+        store.commit_implementation_followup(thread_id="thread-1", result_digest=token)
+        receipt_key = MODULE._task_turn_delivery_file_key(
+            delivery_kind=delivery_kind,
+            thread_id="thread-1",
+            delivery_token=token,
+            delivery_attempt_digest=attempt,
+        )
+        receipt_extra = {"deliveryAttemptDigest": attempt}
+        prompt = "Run the bound original implementation and checks."
+    started = datetime.now(UTC)
+    command_text = (
+        "GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off bash build.sh --test -run '^TestRetrievalPreservesCompilationMarkerWhenPresent$' ./internal/service/nlp/..."
+        if canonical_office
+        else "bash build.sh --cpp"
+    )
+    executed = subprocess.run(
+        ["/bin/sh", "-c", command_text], cwd=worktree, capture_output=True, text=True
+    )
+    assert (
+        executed.returncode != 0
+        and ("office_oxide" if canonical_office else "simde/x86/sse4.1.h")
+        in executed.stdout + executed.stderr
+    )
+    completed = datetime.now(UTC)
+    turn = f"unsupported-{delivery_kind}"
+    item = {
+        "type": "CommandExecution",
+        "status": "completed",
+        "command": ["/bin/sh", "-c", command_text],
+        "cwd": worktree.as_uri(),
+        "exit_code": executed.returncode,
+        "aggregated_output": executed.stdout + executed.stderr,
+    }
+    if native_wrapper:
+        wrapper = "import subprocess,json; p=subprocess.run(['bash','build.sh','--cpp'],capture_output=True,text=True); print(json.dumps({'exitCode':p.returncode,'stdout':p.stdout,'stderr':p.stderr}))"
+        wrapper_command = shlex.join([sys.executable, "-c", wrapper])
+        wrapped = subprocess.run(
+            ["/bin/sh", "-c", wrapper_command], cwd=worktree, capture_output=True, text=True
+        )
+        assert (
+            wrapped.returncode == 0
+            and json.loads(wrapped.stdout)["exitCode"] == executed.returncode
+        )
+        item.update(
+            command=["/bin/sh", "-c", wrapper_command],
+            exit_code=wrapped.returncode,
+            aggregated_output=wrapped.stdout + wrapped.stderr,
+        )
+        completed = datetime.now(UTC)
+    if canonical_office:
+        canonical = (
+            "python3 - <<'PY'\n"
+            "import importlib.util\n"
+            "from pathlib import Path\n"
+            "spec=importlib.util.spec_from_file_location('checks','tools/hooks/check_files.py');mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)\n"
+            "paths=[Path('internal/service/nlp/retrieval.go'),Path('internal/service/nlp/retrieval_test.go')]\n"
+            "for name,fn in mod.CHECKS.items():\n"
+            " code=fn(paths,fix=False); print(name,code); assert code==0\n"
+            "PY\n"
+            "gofmt -l internal/service/nlp/retrieval.go internal/service/nlp/retrieval_test.go\n"
+            "git diff --check\n" + command_text
+        )
+        native_run = subprocess.run(
+            ["/bin/zsh", "-lc", canonical], cwd=worktree, capture_output=True, text=True
+        )
+        assert native_run.returncode == 1 and "office_oxide" in native_run.stdout
+        item.update(
+            command=["/bin/zsh", "-lc", canonical],
+            exit_code=native_run.returncode,
+            aggregated_output=native_run.stdout + native_run.stderr,
+        )
+        completed = datetime.now(UTC)
+    journal = tmp_path / "unsupported-native.jsonl"
+    records = [
+        {"type": "session_meta", "payload": {"id": "thread-1"}},
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(started),
+            "payload": {"type": "task_started", "turn_id": turn},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(started),
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": turn,
+                "item": {
+                    "type": "UserMessage",
+                    "content": [{"type": "text", "text": prompt, "text_elements": []}],
+                },
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(completed),
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": turn,
+                "item": item,
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_z(completed),
+            "payload": {"type": "task_complete", "turn_id": turn},
+        },
+    ]
+    journal.write_text("".join(json.dumps(r) + "\n" for r in records))
+    thread_db = tmp_path / "unsupported-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT,git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(MODULE.GITHUB_ROOT),
+                0,
+                MODULE.issue_prompt(f"https://github.com/{repo}/issues/1"),
+                str(journal),
+                f"https://github.com/{repo}.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    (MODULE.STATE / "task_turn_receipts").mkdir(parents=True, exist_ok=True, mode=0o700)
+    MODULE._atomic_private_json(
+        MODULE.STATE / "task_turn_receipts" / f"{receipt_key}.json",
+        {
+            "ok": True,
+            "deliveryKind": delivery_kind,
+            "threadId": "thread-1",
+            "deliveryToken": token,
+            "turnId": turn,
+            "turnStatus": "completed",
+            **receipt_extra,
+        },
+    )
+    value = json.loads(result_path.read_bytes())
+    value["contextDigest"] = json.loads(context_path.read_bytes())["contextDigest"]
+    value["tests"] = [
+        {
+            "command": command_text,
+            "cwd": str(worktree),
+            "phase": "formal",
+            "exitCode": executed.returncode,
+            "result": executed.stdout + executed.stderr,
+        }
+    ]
+    value["quality"]["relevant_tests_green"] = False
+    _sign_reproduction_certificate(
+        value,
+        result_path=result_path,
+        base_sha=value["selectedBaseSha"],
+        head_sha=value["headSha"],
+        commit_sha=value["commitSha"],
+        store=store,
+        fixture_repo=repo,
+    )
+    result_path.write_text(json.dumps(value))
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert result["ok"] and result["validationDeferred"], result
+    candidate = store.task_context_candidates()[0]
+    return store, candidate, worktree, result_path, journal
+
+
+@pytest.mark.parametrize(
+    "delivery_kind,native_wrapper",
+    [
+        ("validation-followup", False),
+        ("validation-followup", True),
+        ("implementation-followup", False),
+    ],
+)
+def test_unsupported_native_dependency_closes_original_attempt_and_stays_archived(
+    monkeypatch, tmp_path, delivery_kind, native_wrapper
+):
+    store, candidate, worktree, result_path, _journal = _unsupported_native_completed_fixture(
+        monkeypatch, tmp_path, delivery_kind, native_wrapper=native_wrapper
+    )
+    original = result_path.read_bytes()
+    diagnostics = []
+    original_trace = sys.gettrace()
+
+    def trace(frame, event, arg):
+        if (
+            frame.f_code.co_filename == str(SCRIPT)
+            and frame.f_code.co_name
+            in {"_completed_unsupported_dependency", "_completed_validation_input_task_id"}
+            and event in {"return", "exception"}
+        ):
+            diagnostics.append(
+                {
+                    "function": frame.f_code.co_name,
+                    "line": frame.f_lineno,
+                    "category": type(arg).__name__,
+                    "exception": str(arg[1]) if event == "exception" else None,
+                }
+            )
+        return trace
+
+    try:
+        sys.settrace(trace)
+        evidence = MODULE._completed_unsupported_dependency(store, candidate)
+    finally:
+        sys.settrace(original_trace)
+    assert evidence is not None, json.dumps(diagnostics)
+    assert evidence["reason"] == "DEPENDENCY_ENVIRONMENT_UNAVAILABLE"
+    if delivery_kind == "validation-followup":
+        assert all(
+            p["source"] == "FULL_VALIDATION_COMPLETION_AUTHENTICATED_CURRENT_UNSUPPORTED"
+            and "nativeItemDigest" not in p
+            and "exitCode" not in p
+            for p in evidence["dependencyCapabilities"]
+        )
+    if native_wrapper:
+        assert (
+            next(
+                json.loads(line)["payload"]["item"]["exit_code"]
+                for line in _journal.read_text().splitlines()
+                if (json.loads(line).get("payload") or {}).get("item", {}).get("type")
+                == "CommandExecution"
+            )
+            == 0
+        )
+    assert evidence["resultDigest"] != json.loads(original)["contextDigest"]
+    recorded = MODULE._record_stopped_quarantined_executions(store)
+    assert len(recorded) == 1 and recorded[0]["reason"] == evidence["reason"]
+    stop = MODULE._current_stopped_attempt(store, candidate)
+    assert stop is not None and stop["dependencyEvidence"] == evidence
+    _assert_stopped_attempt_native_archive_loop(monkeypatch, store, worktree)
+    assert result_path.read_bytes() == original
+    assert json.loads(original)["quality"]["relevant_tests_green"] is False
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type IN ('VALIDATION_FOLLOWUP_NO_PROGRESS','VALIDATION_PREFETCH_BLOCKED')"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "wrong_source",
+        "active",
+        "unknown",
+        "foreign_context",
+        "new_raw",
+        "new_reservation",
+        "publication",
+        "missing_native_item",
+        "wrong_input_token",
+    ],
+)
+def test_unsupported_native_dependency_does_not_close_unproved_attempt(
+    monkeypatch, tmp_path, invalid
+):
+    store, candidate, worktree, result_path, journal = _unsupported_native_completed_fixture(
+        monkeypatch,
+        tmp_path,
+        "implementation-followup" if invalid == "missing_native_item" else "validation-followup",
+    )
+    assert MODULE._completed_unsupported_dependency(store, candidate) is not None
+    if invalid == "active":
+        journal.write_text(
+            journal.read_text()
+            + json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(datetime.now(UTC)),
+                    "payload": {"type": "task_started", "turn_id": "new-active-turn"},
+                }
+            )
+            + "\n"
+        )
+    elif invalid == "unknown":
+        monkeypatch.setattr(MODULE, "THREAD_DB", tmp_path / "missing-native.sqlite3")
+    elif invalid == "new_reservation":
+        store.reserve_validation_followup(
+            thread_id=candidate["threadId"],
+            result_digest=json.loads(result_path.read_bytes())["resultDigest"],
+        )
+    elif invalid == "publication":
+        value = json.loads(result_path.read_bytes())
+        value["prUrl"] = "https://github.com/infiniflow/ragflow/pull/9"
+        digest = _sign_reproduction_certificate(
+            value,
+            result_path=result_path,
+            base_sha=value["selectedBaseSha"],
+            head_sha=value["headSha"],
+            commit_sha=value["commitSha"],
+            store=store,
+            fixture_repo="infiniflow/ragflow",
+        )
+        store.record_validation_deferred(
+            candidate["key"],
+            thread_id=candidate["threadId"],
+            result_digest=digest,
+            missing=["relevant_tests_green", "independent_review_passed"],
+            intent_id=candidate["intentId"],
+            worktree_path=str(worktree),
+        )
+        store.record_task_result_ingested(
+            candidate["key"],
+            digest=digest,
+            stage="VALIDATION_PENDING",
+            task_id=candidate["intentId"],
+            thread_id=candidate["threadId"],
+        )
+    elif invalid == "missing_native_item":
+        records = [json.loads(line) for line in journal.read_text().splitlines()]
+        journal.write_text(
+            "".join(
+                json.dumps(r) + "\n"
+                for r in records
+                if (r.get("payload") or {}).get("item", {}).get("type") != "CommandExecution"
+            )
+        )
+    elif invalid == "wrong_input_token":
+        receipt_path = next((MODULE.STATE / "task_turn_receipts").glob("*.json"))
+        value = json.loads(receipt_path.read_bytes())
+        assert value["deliveryToken"] != json.loads(result_path.read_bytes())["resultDigest"]
+        value["deliveryToken"] = json.loads(result_path.read_bytes())["resultDigest"]
+        receipt_path.write_text(json.dumps(value))
+    elif invalid == "foreign_context":
+        context_path = result_path.parent / "task-context.json"
+        value = json.loads(context_path.read_bytes())
+        value["threadId"] = "foreign"
+        context_path.write_text(json.dumps(value))
+    elif invalid == "wrong_source":
+        (worktree / "go.mod").write_text("module foreign\n")
+    else:
+        value = json.loads(result_path.read_bytes())
+        value["tests"] = [{"command": "different command", "exitCode": 0}]
+        result_path.write_text(json.dumps(value))
+    assert MODULE._completed_unsupported_dependency(store, candidate) is None
+    assert MODULE._record_stopped_quarantined_executions(store) == []
+    assert MODULE._current_stopped_attempt(store, candidate) is None
+
+
+def test_new_authenticated_native_result_restores_archived_attempt_to_original_validation(
+    monkeypatch, tmp_path
+):
+    store, candidate, worktree, result_path, _journal = _unsupported_native_completed_fixture(
+        monkeypatch, tmp_path, "validation-followup", native_wrapper=True
+    )
+    assert MODULE._record_stopped_quarantined_executions(store)
+    _assert_stopped_attempt_native_archive_loop(monkeypatch, store, worktree)
+    old_raw = result_path.read_bytes()
+    # A real new source command executes; the old stopped raw is kept as evidence.
+    check = subprocess.run(
+        [sys.executable, "runtime.py"], cwd=worktree, capture_output=True, text=True
+    )
+    assert check.returncode == 0
+    value = json.loads(old_raw)
+    value["tests"] = [
+        {
+            "command": f"{sys.executable} runtime.py",
+            "cwd": str(worktree),
+            "phase": "after_fix",
+            "exitCode": check.returncode,
+            "result": check.stdout + check.stderr,
+        }
+    ]
+    value["quality"]["relevant_tests_green"] = False
+    digest = _sign_reproduction_certificate(
+        value,
+        result_path=result_path,
+        base_sha=value["selectedBaseSha"],
+        head_sha=value["headSha"],
+        commit_sha=value["commitSha"],
+        store=store,
+        fixture_repo="infiniflow/ragflow",
+    )
+    assert digest != json.loads(old_raw)["resultDigest"]
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert (
+        ingested["ok"] and ingested["validationDeferred"] and not ingested["publicationRequests"]
+    ), ingested
+    assert MODULE._current_stopped_attempt(store, candidate) is None
+    unarchived = []
+
+    def unarchive(items):
+        with sqlite3.connect(MODULE.THREAD_DB) as connection:
+            for item in items:
+                connection.execute("UPDATE threads SET archived=0 WHERE id=?", (item["threadId"],))
+                unarchived.append(item["threadId"])
+        return {item["threadId"]: None for item in items}
+
+    monkeypatch.setattr(MODULE, "_unarchive_desktop_threads", unarchive)
+    restored = MODULE.restore_reconcile(SimpleNamespace(ledger=store.path))
+    assert (
+        restored["ok"] and len(restored["restored"]) == 1 and unarchived == [candidate["threadId"]]
+    ), restored
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["ok"] and len(listed["candidates"]) == 1, listed
+    new = listed["candidates"][0]
+    assert new["resultDigest"] == digest
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(ledger=store.path, thread_id=new["threadId"], result_digest=digest)
+    )
+    assert reserved["ok"] and not reserved.get("blocked"), reserved
+    assert any(
+        item["reservationDigest"] == reserved["reservationDigest"]
+        for item in store.unresolved_validation_followups()
+    )
+    assert json.loads(result_path.read_bytes())["quality"]["relevant_tests_green"] is False
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
 
 
 def _bound_validation_worker_fixture(monkeypatch, tmp_path):
