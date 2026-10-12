@@ -1675,6 +1675,16 @@ def _validate_managed_replay_lineage_authority(
         raise LedgerError("managed replay replacement lineage authority is invalid")
 
 
+class _ClosingLedgerConnection(sqlite3.Connection):
+    """Keep SQLite transaction semantics and release resources at scope exit."""
+
+    def __exit__(self, *args: Any) -> bool:
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 class RadarLedger:
     READ_ONLY_BUSY_TIMEOUT_MS = 1_000
 
@@ -1693,16 +1703,23 @@ class RadarLedger:
                 uri=True,
                 timeout=self.READ_ONLY_BUSY_TIMEOUT_MS / 1_000,
                 isolation_level=None,
+                factory=_ClosingLedgerConnection,
             )
         else:
-            connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute(
-            f"PRAGMA busy_timeout={self.READ_ONLY_BUSY_TIMEOUT_MS if self.read_only else 30000}"
-        )
-        if not self.read_only:
-            connection.execute("PRAGMA journal_mode=WAL")
+            connection = sqlite3.connect(
+                self.path, timeout=30, isolation_level=None, factory=_ClosingLedgerConnection
+            )
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute(
+                f"PRAGMA busy_timeout={self.READ_ONLY_BUSY_TIMEOUT_MS if self.read_only else 30000}"
+            )
+            if not self.read_only:
+                connection.execute("PRAGMA journal_mode=WAL")
+        except BaseException:
+            connection.close()
+            raise
         return connection
 
     @contextmanager
