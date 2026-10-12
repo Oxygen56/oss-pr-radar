@@ -23335,8 +23335,9 @@ def test_expired_native_command_proof_rejects_incomplete_or_unbound_output(
 
 @pytest.mark.parametrize("task_id_present", [False, True])
 @pytest.mark.parametrize("separate_streams", [False, True])
+@pytest.mark.parametrize("stopped_current_revision", [False, True])
 def test_native_expired_pr_create_requires_real_completed_validation(
-    monkeypatch, tmp_path, task_id_present, separate_streams
+    monkeypatch, tmp_path, task_id_present, separate_streams, stopped_current_revision
 ):
     import oss_pr_radar.ledger as ledger_module
     import oss_pr_radar.repo_probe as repo_probe
@@ -23407,20 +23408,22 @@ def test_native_expired_pr_create_requires_real_completed_validation(
     current_expiry_revision = getattr(
         MODULE, "EXPIRED_PUBLICATION_PROMPT_REVISION", "expired_publication_real_commands_v2"
     )
-    monkeypatch.setattr(
-        MODULE,
-        "EXPIRED_PUBLICATION_PROMPT_REVISION",
-        "expired_publication_real_commands_v1",
-        raising=False,
-    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    if not stopped_current_revision:
+        monkeypatch.setattr(
+            MODULE,
+            "EXPIRED_PUBLICATION_PROMPT_REVISION",
+            "expired_publication_real_commands_v1",
+            raising=False,
+        )
     native_reserve = store.reserve_validation_followup
 
     def legacy_reserve(**kwargs):
         kwargs.pop("expiry_prompt_revision", None)
         return native_reserve(**kwargs)
 
-    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
-    monkeypatch.setattr(store, "reserve_validation_followup", legacy_reserve)
+    if not stopped_current_revision:
+        monkeypatch.setattr(store, "reserve_validation_followup", legacy_reserve)
     reserved = MODULE.validation_followup_reserve(
         SimpleNamespace(
             ledger=store.path,
@@ -23573,7 +23576,11 @@ def test_native_expired_pr_create_requires_real_completed_validation(
             return buffer, {"result": {"thread": {"id": "thread-1"}}}
         return buffer, {"result": {"turn": {"id": turn_id}}}
 
-    turn_id = "native-expiry-copied-turn"
+    turn_id = (
+        "native-expiry-real-validation-turn"
+        if stopped_current_revision
+        else "native-expiry-copied-turn"
+    )
     cache_proof = {}
 
     def execute_check(command_text, cwd, phase):
@@ -23630,7 +23637,7 @@ def test_native_expired_pr_create_requires_real_completed_validation(
             execute_check("git rev-parse HEAD", worktree, "read_only")
             copied = dict(value, contextDigest=source["contextDigest"], tests=source["tests"])
             result_path.write_text(json.dumps(copied))
-            return {"turnId": turn_id, "status": "completed"}
+            return complete_native_turn()
         import shlex
 
         run_git(worktree, "worktree", "add", "--detach", str(baseline), source["selectedBaseSha"])
@@ -23644,7 +23651,11 @@ def test_native_expired_pr_create_requires_real_completed_validation(
         current_context = json.loads((result_path.parent / "task-context.json").read_text())
         output = dict(
             value,
-            contextDigest=current_context["contextDigest"],
+            contextDigest=(
+                source["contextDigest"]
+                if stopped_current_revision
+                else current_context["contextDigest"]
+            ),
             tests=[
                 {
                     name: item
@@ -23655,6 +23666,8 @@ def test_native_expired_pr_create_requires_real_completed_validation(
                 for check in checks
             ],
         )
+        if stopped_current_revision:
+            output["quality"] = dict(output["quality"], independent_review_passed=False)
         if not separate_streams:
             for check in output["tests"]:
                 check.update(stdout="unverified task stdout", stderr="unverified task stderr")
@@ -23669,6 +23682,19 @@ def test_native_expired_pr_create_requires_real_completed_validation(
         cache_proof["key"] = MODULE._task_result_evidence_block_key(
             candidate, cache_proof["raw"], (result_path.parent / "task-context.json").read_bytes()
         )
+        return complete_native_turn()
+
+    def complete_native_turn():
+        with rollout.open("a") as journal:
+            journal.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {"type": "task_complete", "turn_id": turn_id},
+                    }
+                )
+                + "\n"
+            )
         return {"turnId": turn_id, "status": "completed"}
 
     def launch_worker(argv, **kwargs):
@@ -23715,81 +23741,87 @@ def test_native_expired_pr_create_requires_real_completed_validation(
             )
         )
         assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
-        failed_raw = result_path.read_bytes()
-        blocked = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
-        assert (
-            blocked.get("workBlocked", [{}])[0].get("reason")
-            == "EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID"
-        ), blocked
-        assert blocked["publicationRequests"] == [] and result_path.read_bytes() == failed_raw
-        assert run_git(worktree, "rev-parse", "HEAD") == old_head
-        candidates = store.validation_followup_candidates()
-        assert len(candidates) == 1, candidates
-        correction = candidates[0]["expiryCorrection"]
-        with store.connect() as connection:
-            legacy = json.loads(
-                connection.execute(
-                    "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' ORDER BY id LIMIT 1"
-                ).fetchone()[0]
-            )
-        assert "expiryPromptRevision" not in legacy
-        assert base64.b64decode(correction["failedRawBase64"]) == failed_raw
-        assert base64.b64decode(correction["sourceRawBase64"]) == old_raw
-        repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
-        assert (
-            repeated["publicationRequests"] == []
-            and len(store.validation_followup_candidates()) == 1
-        )
-        with store.connect() as connection:
+        if not stopped_current_revision:
+            failed_raw = result_path.read_bytes()
+            blocked = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
             assert (
-                connection.execute(
-                    "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'"
-                ).fetchone()[0]
-                == 1
+                blocked.get("workBlocked", [{}])[0].get("reason")
+                == "EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID"
+            ), blocked
+            assert blocked["publicationRequests"] == [] and result_path.read_bytes() == failed_raw
+            assert run_git(worktree, "rev-parse", "HEAD") == old_head
+            candidates = store.validation_followup_candidates()
+            assert len(candidates) == 1, candidates
+            correction = candidates[0]["expiryCorrection"]
+            with store.connect() as connection:
+                legacy = json.loads(
+                    connection.execute(
+                        "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' ORDER BY id LIMIT 1"
+                    ).fetchone()[0]
+                )
+            assert "expiryPromptRevision" not in legacy
+            assert base64.b64decode(correction["failedRawBase64"]) == failed_raw
+            assert base64.b64decode(correction["sourceRawBase64"]) == old_raw
+            repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+            assert (
+                repeated["publicationRequests"] == []
+                and len(store.validation_followup_candidates()) == 1
             )
-            sent = connection.execute(
-                "SELECT dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT'"
-            ).fetchone()
-        assert sent["dedupe_key"] == candidate["resultDigest"]
-        assert "reservationDigest" not in json.loads(sent["payload_json"])
-        assert not MODULE._expired_validation_command_proof(
-            candidates[0],
-            correction["completion"],
-            dict(json.loads(failed_raw), contextDigest=context["contextDigest"]),
-        )
-        previous_reservation = reservation
-        reserved = MODULE.validation_followup_reserve(
-            SimpleNamespace(
-                ledger=store.path,
-                thread_id="thread-1",
-                result_digest=candidate["resultDigest"],
-                intent_id="intent-1",
-                worktree_path=str(worktree),
+            with store.connect() as connection:
+                assert (
+                    connection.execute(
+                        "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'"
+                    ).fetchone()[0]
+                    == 1
+                )
+                sent = connection.execute(
+                    "SELECT dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT'"
+                ).fetchone()
+            assert sent["dedupe_key"] == candidate["resultDigest"]
+            assert "reservationDigest" not in json.loads(sent["payload_json"])
+            assert not MODULE._expired_validation_command_proof(
+                candidates[0],
+                correction["completion"],
+                dict(json.loads(failed_raw), contextDigest=context["contextDigest"]),
             )
-        )
-        assert reserved["ok"] and reserved["reservationDigest"] != previous_reservation, reserved
-        assert "新输出必须使用" in reserved["prompt"] and "禁止复制" in reserved["prompt"]
-        assert result_path.read_bytes() == failed_raw
-        candidate = store.unresolved_validation_followups()[0]
-        reservation = reserved["reservationDigest"]
-        turn_id = "native-expiry-real-validation-turn"
-        delivered = MODULE.validation_followup_deliver(
-            SimpleNamespace(
-                ledger=store.path,
-                thread_id="thread-1",
-                result_digest=candidate["resultDigest"],
+            previous_reservation = reservation
+            reserved = MODULE.validation_followup_reserve(
+                SimpleNamespace(
+                    ledger=store.path,
+                    thread_id="thread-1",
+                    result_digest=candidate["resultDigest"],
+                    intent_id="intent-1",
+                    worktree_path=str(worktree),
+                )
             )
-        )
-        assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
+            assert reserved["ok"] and reserved["reservationDigest"] != previous_reservation, (
+                reserved
+            )
+            assert "新输出必须使用" in reserved["prompt"] and "禁止复制" in reserved["prompt"]
+            assert result_path.read_bytes() == failed_raw
+            candidate = store.unresolved_validation_followups()[0]
+            reservation = reserved["reservationDigest"]
+            turn_id = "native-expiry-real-validation-turn"
+            delivered = MODULE.validation_followup_deliver(
+                SimpleNamespace(
+                    ledger=store.path,
+                    thread_id="thread-1",
+                    result_digest=candidate["resultDigest"],
+                )
+            )
+            assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
     assert store.unresolved_validation_followups() == []
     assert store.validation_followup_candidates() == []
     with store.connect() as connection:
         sent_rows = connection.execute(
             "SELECT dedupe_key,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' ORDER BY id"
         ).fetchall()
-    assert len(sent_rows) == 2 and sent_rows[0]["dedupe_key"] == candidate["resultDigest"]
-    assert sent_rows[1]["dedupe_key"] == reservation
-    assert json.loads(sent_rows[1]["payload_json"])["reservationDigest"] == reservation
+    assert len(sent_rows) == (1 if stopped_current_revision else 2)
+    assert sent_rows[0]["dedupe_key"] == (
+        reservation if stopped_current_revision else candidate["resultDigest"]
+    )
+    assert sent_rows[-1]["dedupe_key"] == reservation
+    assert json.loads(sent_rows[-1]["payload_json"])["reservationDigest"] == reservation
     assert result_path.read_bytes() == cache_proof["raw"]
     assert (
         MODULE._task_result_evidence_block_key(
@@ -23798,7 +23830,158 @@ def test_native_expired_pr_create_requires_real_completed_validation(
         == cache_proof["key"]
     )
     turns = [item for item in _task_turn_messages(process) if item.get("method") == "turn/start"]
-    assert len(turns) == 2 and "复现凭证已到期" in turns[-1]["params"]["input"][0]["text"]
+    assert (
+        len(turns) == (1 if stopped_current_revision else 2)
+        and "复现凭证已到期" in turns[-1]["params"]["input"][0]["text"]
+    )
+    if stopped_current_revision:
+        schema = tmp_path / "schemas" / "independent_review.schema.json"
+        schema.parent.mkdir()
+        shutil.copyfile(SCRIPT.parent.parent / "schemas" / schema.name, schema)
+        native_review = MODULE.review_once
+
+        def forbid_review(*_args):
+            raise RuntimeError("a stopped expiry result must not be reviewed")
+
+        monkeypatch.setattr(
+            MODULE, "review_once", lambda *a, **kw: native_review(*a, reviewer=forbid_review, **kw)
+        )
+        review_args = SimpleNamespace(ledger=store.path, key="a/b#1")
+        reviews_before = {
+            path.name: path.read_bytes()
+            for path in (tmp_path / "state/independent_reviews").glob("*.json")
+        }
+
+        def original_context_refusal():
+            outcome = MODULE.independent_review_run(review_args)
+            assert outcome["updated"] == [] and outcome["skipped"] == [], outcome
+            assert outcome["candidateErrors"] == [
+                {
+                    "key": "a/b#1",
+                    "error": "RuntimeError:independent review task result context digest mismatch",
+                }
+            ], outcome
+
+        # The genuine completed turn alone is not a stopped-validation proof.
+        original_context_refusal()
+        stopped = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+        assert stopped["publicationRequests"] == []
+        assert (
+            stopped["workBlocked"][0]["reason"] == "EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID"
+        )
+        failed_bytes = result_path.read_bytes()
+        context_path = result_path.parent / "task-context.json"
+        context_bytes = context_path.read_bytes()
+        with store.connect() as connection:
+            history = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+            no_progress = connection.execute(
+                "SELECT id,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_NO_PROGRESS' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            latest_reservation = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' ORDER BY id DESC LIMIT 1"
+                ).fetchone()[0]
+            )
+        correction = json.loads(no_progress["payload_json"])["expiryCorrection"]
+        assert correction["failedEvidenceDigest"] == hashlib.sha256(failed_bytes).hexdigest()
+        assert latest_reservation["expiryPromptRevision"] == correction["promptRevision"]
+        classified = MODULE.independent_review_run(review_args)
+        assert (
+            classified["ok"] and classified["candidateErrors"] == [] and classified["updated"] == []
+        )
+        assert classified["skipped"] == [
+            {
+                "key": "a/b#1",
+                "reason": "VALIDATION_BLOCKED",
+                "blockingReason": "EXPIRED_VALIDATION_CURRENT_CONTEXT_OR_EXECUTION_MISSING",
+                "resultDigest": candidate["resultDigest"],
+            }
+        ]
+        assert (
+            result_path.read_bytes() == failed_bytes and context_path.read_bytes() == context_bytes
+        )
+        assert (worktree / binding["worktreeInputPath"]).read_bytes() == old_raw
+        assert store.validation_followup_candidates() == []
+        assert store.publication_request(request_id)["request"] == old_request
+        with store.connect() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == history
+            assert (
+                connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+                    0
+                ]
+                == "VALIDATION_PENDING"
+            )
+            assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+        assert {
+            path.name: path.read_bytes()
+            for path in (tmp_path / "state/independent_reviews").glob("*.json")
+        } == reviews_before
+        without_reader = native_review(tmp_path, store.path, reviewer=forbid_review)
+        assert without_reader["errors"][0]["error"].endswith("context digest mismatch")
+        with monkeypatch.context() as unavailable:
+            unavailable.setattr(MODULE, "THREAD_DB", tmp_path / "missing-threads.sqlite3")
+            original_context_refusal()
+            assert not MODULE.THREAD_DB.exists()
+        with monkeypatch.context() as active:
+            active.setattr(
+                MODULE, "_active_task_turn_for_result", lambda _item: {"turnId": "active"}
+            )
+            original_context_refusal()
+        changed = json.loads(failed_bytes)
+        changed.setdefault("evidence", {})["changedAfterStop"] = True
+        result_path.write_text(json.dumps(changed))
+        original_context_refusal()
+        result_path.write_bytes(failed_bytes)
+        for invalid_context in (
+            dict(json.loads(context_bytes), threadId="foreign"),
+            "invalid JSON",
+        ):
+            context_path.write_text(
+                json.dumps(invalid_context)
+                if isinstance(invalid_context, dict)
+                else invalid_context
+            )
+            rejected = MODULE.independent_review_run(review_args)
+            assert (
+                rejected["updated"] == []
+                and rejected["skipped"] == []
+                and rejected["candidateErrors"]
+            )
+            context_path.write_bytes(context_bytes)
+        for invalid_proof in ("completion", "reservation"):
+            payload = json.loads(no_progress["payload_json"])
+            if invalid_proof == "completion":
+                payload["expiryCorrection"].pop("completion")
+            else:
+                payload["expiryCorrection"]["reservationDigest"] = "foreign"
+            with store.transaction() as connection:
+                connection.execute(
+                    "UPDATE events SET payload_json=? WHERE id=?",
+                    (json.dumps(payload), no_progress["id"]),
+                )
+            original_context_refusal()
+            with store.transaction() as connection:
+                connection.execute(
+                    "UPDATE events SET payload_json=? WHERE id=?",
+                    (no_progress["payload_json"], no_progress["id"]),
+                )
+        current_candidate = next(
+            item for item in store.task_result_candidates_for_ingestion() if item["key"] == "a/b#1"
+        )
+        assert store.record_expired_validation_correction(
+            current_candidate,
+            source=store.expired_publication_validation_source(current_candidate),
+            failed_raw=failed_bytes,
+            completion={"reservation": latest_reservation, "receipt": correction["completion"]},
+            prompt_revision=current_expiry_revision + "-changed-instructions",
+            reason="EXPIRED_VALIDATION_CURRENT_CONTEXT_OR_EXECUTION_MISSING",
+        )
+        original_context_refusal()
+        assert (
+            result_path.read_bytes() == failed_bytes and context_path.read_bytes() == context_bytes
+        )
+        assert (worktree / binding["worktreeInputPath"]).read_bytes() == old_raw
+        return
     ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
     assert ingested["ok"] and ingested.get("workBlocked", []) == [] and ingested["errors"] == [], (
         ingested

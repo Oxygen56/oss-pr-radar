@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import fcntl
 import hashlib
 import json
@@ -1618,6 +1619,170 @@ def migrate_controller_review_receipt(
         return verified_target
 
 
+def _stopped_expired_validation_result(
+    store: RadarLedger,
+    candidate: dict[str, Any],
+    *,
+    active_turn_reader: Callable[[dict[str, Any], str | None], Any] | None,
+) -> dict[str, str] | None:
+    """Classify an immutable, already-stopped expiry result; authorize no action."""
+    if (
+        candidate.get("stage") != "VALIDATION_PENDING"
+        or active_turn_reader is None
+        or active_turn_reader(candidate, None) is not None
+    ):
+        return None
+    no_progress_reader = getattr(store, "validation_no_progress", None)
+    if no_progress_reader is None:
+        return None
+    stopped = [
+        item
+        for item in no_progress_reader()
+        if all(
+            item.get(name) == candidate.get(name)
+            for name in ("key", "intentId", "threadId", "worktreePath")
+        )
+        and item.get("reason") == "EXPIRED_VALIDATION_CURRENT_CONTEXT_OR_EXECUTION_MISSING"
+        and item.get("missing") == ["fresh_state_verified"]
+    ]
+    if len(stopped) != 1:
+        return None
+    stop = stopped[0]
+    path = Path(candidate["worktreePath"]).resolve() / TASK_PRIVATE_DIR / "result.json"
+    context_path = path.with_name("task-context.json")
+    if (
+        not path.is_file()
+        or path.is_symlink()
+        or not context_path.is_file()
+        or context_path.is_symlink()
+    ):
+        return None
+    try:
+        raw = path.read_bytes()
+        value = json.loads(raw)
+        context_raw = context_path.read_bytes()
+        context = json.loads(context_raw)
+        if (
+            not isinstance(value, dict)
+            or value.get("schemaVersion") != TASK_RESULT_SCHEMA
+            or value.get("stage") != "FIX_READY"
+            or not store.task_result_binding_gate(candidate, value)
+            or not isinstance(context, dict)
+            or context.get("schemaVersion") != "radar-task-context-v1"
+            or not re.fullmatch(r"[0-9a-f]{64}", str(context.get("contextDigest") or ""))
+            or not store.task_result_binding_gate(candidate, context)
+        ):
+            return None
+        source = store.expired_publication_validation_source(candidate)
+        if source is None or source.get("resultDigest") != stop.get("resultDigest"):
+            return None
+        with store.connect() as connection:
+            no_progress = connection.execute(
+                "SELECT id,created_at,payload_json FROM events WHERE opportunity_key=? "
+                "AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS' AND dedupe_key=? "
+                "ORDER BY id DESC LIMIT 1",
+                (candidate["key"], source["resultDigest"]),
+            ).fetchone()
+            reserved = connection.execute(
+                "SELECT id,created_at,payload_json FROM events WHERE opportunity_key=? "
+                "AND event_type='VALIDATION_FOLLOWUP_RESERVED' "
+                "AND json_extract(payload_json,'$.intentId')=? "
+                "AND json_extract(payload_json,'$.threadId')=? "
+                "AND json_extract(payload_json,'$.worktreePath')=? "
+                "AND json_extract(payload_json,'$.resultDigest')=? ORDER BY id DESC LIMIT 1",
+                tuple(candidate[name] for name in ("key", "intentId", "threadId", "worktreePath"))
+                + (source["resultDigest"],),
+            ).fetchone()
+            if no_progress is None or reserved is None:
+                return None
+            event = json.loads(no_progress["payload_json"])
+            reservation = json.loads(reserved["payload_json"])
+            correction = event.get("expiryCorrection")
+            if not isinstance(correction, dict):
+                return None
+            completion = correction.get("completion")
+            if not isinstance(completion, dict):
+                return None
+            if (
+                any(
+                    event.get(name) != candidate.get(name)
+                    for name in ("intentId", "threadId", "worktreePath")
+                )
+                or event.get("resultDigest") != source["resultDigest"]
+                or event.get("reason") != stop["reason"]
+                or event.get("missing") != ["fresh_state_verified"]
+                or no_progress["created_at"] != stop["blockedAt"]
+                or not reserved["id"] < no_progress["id"]
+                or correction.get("requestId") != source["requestId"]
+                or correction.get("sourceRawBase64") != source["evidenceRawBase64"]
+                or correction.get("failedEvidenceDigest") != hashlib.sha256(raw).hexdigest()
+                or base64.b64decode(correction["failedRawBase64"], validate=True) != raw
+                or not isinstance(reservation.get("expiryPromptRevision"), str)
+                or not reservation["expiryPromptRevision"]
+                or reservation["expiryPromptRevision"] != correction.get("promptRevision")
+                or correction.get("reservationDigest") != reservation.get("reservationDigest")
+                or completion.get("ok") is not True
+                or completion.get("turnStatus") != "completed"
+                or completion.get("turnError") is not None
+                or completion.get("deliveryKind") != "validation-followup"
+                or completion.get("threadId") != candidate["threadId"]
+                or completion.get("deliveryToken") != source["resultDigest"]
+                or completion.get("reservationDigest") != reservation.get("reservationDigest")
+                or not isinstance(completion.get("turnId"), str)
+                or not completion["turnId"]
+            ):
+                return None
+            sent = connection.execute(
+                "SELECT payload_json FROM events WHERE opportunity_key=? "
+                "AND event_type='VALIDATION_FOLLOWUP_SENT' AND dedupe_key=? "
+                "AND id>? AND id<? ORDER BY id DESC LIMIT 1",
+                (
+                    candidate["key"],
+                    reservation["reservationDigest"],
+                    reserved["id"],
+                    no_progress["id"],
+                ),
+            ).fetchone()
+            invalidated = connection.execute(
+                "SELECT 1 FROM events WHERE opportunity_key=? "
+                "AND event_type IN ('VALIDATION_FOLLOWUP_RESERVATION_CANCELLED',"
+                "'VALIDATION_FOLLOWUP_DELIVERY_ABANDONED') "
+                "AND json_extract(payload_json,'$.intentId')=? "
+                "AND json_extract(payload_json,'$.threadId')=? "
+                "AND json_extract(payload_json,'$.worktreePath')=? "
+                "AND json_extract(payload_json,'$.resultDigest')=? AND id>? LIMIT 1",
+                tuple(candidate[name] for name in ("key", "intentId", "threadId", "worktreePath"))
+                + (source["resultDigest"], reserved["id"]),
+            ).fetchone()
+            if sent is None or invalidated is not None:
+                return None
+            sent_payload = json.loads(sent["payload_json"])
+            if (
+                any(
+                    sent_payload.get(name) != candidate.get(name)
+                    for name in ("intentId", "threadId", "worktreePath")
+                )
+                or sent_payload.get("resultDigest") != source["resultDigest"]
+            ):
+                return None
+        if (
+            path.read_bytes() != raw
+            or context_path.read_bytes() != context_raw
+            or store.expired_publication_validation_source(candidate) != source
+            or stop not in no_progress_reader()
+            or active_turn_reader(candidate, completion["turnId"]) is not None
+        ):
+            return None
+        return {
+            "key": candidate["key"],
+            "reason": "VALIDATION_BLOCKED",
+            "blockingReason": stop["reason"],
+            "resultDigest": source["resultDigest"],
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def review_once(
     root: Path,
     ledger_path: Path,
@@ -1626,6 +1791,7 @@ def review_once(
     timeout: int = 900,
     state_root: Path | None = None,
     key: str | None = None,
+    active_turn_reader: Callable[[dict[str, Any], str | None], Any] | None = None,
 ) -> dict[str, Any]:
     """Review at most one committed result and atomically bind the verdict to it."""
 
@@ -1655,6 +1821,12 @@ def review_once(
             source_digest = ""
             commit_sha = ""
             try:
+                stopped = _stopped_expired_validation_result(
+                    store, candidate, active_turn_reader=active_turn_reader
+                )
+                if stopped is not None:
+                    skipped.append(stopped)
+                    continue
                 prepared = _candidate_result(candidate, receipt_root=state_root)
                 if prepared is None:
                     continue

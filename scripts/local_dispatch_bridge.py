@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 import tomllib
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
@@ -7850,9 +7850,20 @@ def independent_review_run(args: argparse.Namespace) -> dict[str, Any]:
             "errors": [],
         }
     if getattr(args, "key", None):
-        result = review_once(ROOT, args.ledger, state_root=_review_state_root(args), key=args.key)
+        result = review_once(
+            ROOT,
+            args.ledger,
+            state_root=_review_state_root(args),
+            key=args.key,
+            active_turn_reader=_independent_review_turn_activity,
+        )
     else:
-        result = review_once(ROOT, args.ledger, state_root=_review_state_root(args))
+        result = review_once(
+            ROOT,
+            args.ledger,
+            state_root=_review_state_root(args),
+            active_turn_reader=_independent_review_turn_activity,
+        )
     if "errors" not in result:
         return result
     reported_errors = list(result.get("errors") or [])
@@ -13697,6 +13708,43 @@ def _active_task_turn_for_result(candidate: dict[str, Any]) -> dict[str, Any] | 
         "turnId": active.get("turnId"),
         "startedAt": active.get("startedAt"),
     }
+
+
+def _independent_review_turn_activity(
+    candidate: dict[str, Any], completed_turn_id: str | None = None
+) -> dict[str, Any] | None:
+    """Distinguish known inactive from unavailable activity for stopped-result admission."""
+    active = _active_task_turn_for_result(candidate)
+    if active is not None:
+        return active
+    unavailable = {"source": "independent_review_activity", "state": "unknown"}
+    try:
+        with closing(
+            sqlite3.connect(THREAD_DB.resolve().as_uri() + "?mode=ro", uri=True)
+        ) as connection:
+            connection.execute("PRAGMA query_only=ON")
+            row = connection.execute(
+                "SELECT cwd,archived,rollout_path FROM threads WHERE id=?",
+                (candidate["threadId"],),
+            ).fetchone()
+        if (
+            row is None
+            or row[1] != 0
+            or Path(row[0]).resolve() != Path(candidate["worktreePath"]).resolve()
+        ):
+            return unavailable
+        latest = latest_thread_turn_state(row[2])
+        if (
+            latest is None
+            or latest.get("status") != "completed"
+            or latest.get("code") is not None
+            or not latest.get("turnId")
+            or (completed_turn_id is not None and latest["turnId"] != completed_turn_id)
+        ):
+            return unavailable
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+        return unavailable
+    return None
 
 
 def _proved_no_turn_started_receipt(receipt: dict[str, Any]) -> bool:
