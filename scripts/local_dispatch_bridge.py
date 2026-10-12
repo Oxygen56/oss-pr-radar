@@ -28636,7 +28636,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             ):
                 stage_claim = str(value.get("stage") or "")
                 if (
-                    stage_claim == "BLOCKED"
+                    stage_claim in {"BLOCKED", "REPRODUCTION_ENVIRONMENT_BLOCKED"}
                     and value.get("reason") == "REPRODUCTION_ENVIRONMENT_BLOCKED"
                     and value.get("reproductionVerified") is False
                 ):
@@ -31703,7 +31703,12 @@ def _current_stopped_attempt(
                     candidate["stage"] != "DISPATCHED"
                     or context.get("taskStage") != "REPRODUCTION_REQUIRED"
                     or value.get("contextDigest") != context.get("contextDigest")
-                    or value.get("stage") not in {"BLOCKED", "REPRODUCTION_REQUIRED"}
+                    or value.get("stage")
+                    not in {
+                        "BLOCKED",
+                        "REPRODUCTION_REQUIRED",
+                        "REPRODUCTION_ENVIRONMENT_BLOCKED",
+                    }
                     or value.get("reason") != "REPRODUCTION_ENVIRONMENT_BLOCKED"
                     or value.get("reproductionVerified") is not False
                     or any(

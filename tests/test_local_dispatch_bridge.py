@@ -13153,6 +13153,19 @@ def test_restore_reconcile_trusts_verified_postcondition_over_transport_error(
         ("BLOCKED", "dirty"),
         ("BLOCKED", "commit"),
         ("BLOCKED", "publication"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", None),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "verification"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "verification_zero"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "verification_string"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "verification_missing"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "reason"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "foreign"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "context"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "changed_files"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "dirty"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "commit"),
+        ("REPRODUCTION_ENVIRONMENT_BLOCKED", "publication"),
+        ("UNKNOWN_REPRODUCTION_STAGE", "stage"),
     ],
 )
 def test_exact_environment_blocked_reproduction_keeps_other_ready_work(
@@ -13513,7 +13526,7 @@ def _assert_stopped_attempt_native_archive_loop(monkeypatch, store, worktree):
     return stop
 
 
-def _native_exhausted_environment_stop(monkeypatch, tmp_path):
+def _native_exhausted_environment_stop(monkeypatch, tmp_path, *, reported_stage="BLOCKED"):
     bind_validation_runtime(monkeypatch, tmp_path)
     worktree = MODULE.managed_worktree_path("intent-stop", "a/b")
     worktree.mkdir(parents=True)
@@ -13584,7 +13597,7 @@ def _native_exhausted_environment_stop(monkeypatch, tmp_path):
         "threadId": "thread-stop",
         "worktreePath": str(worktree),
         "contextDigest": context["contextDigest"],
-        "stage": "BLOCKED",
+        "stage": reported_stage,
         "reason": "REPRODUCTION_ENVIRONMENT_BLOCKED",
         "reproductionVerified": False,
         "tests": [
@@ -13647,10 +13660,44 @@ def _native_exhausted_environment_stop(monkeypatch, tmp_path):
     return store, worktree
 
 
+def test_environment_stage_alias_changed_head_cannot_close_current_attempt(monkeypatch, tmp_path):
+    store, worktree = _native_exhausted_environment_stop(
+        monkeypatch, tmp_path, reported_stage="REPRODUCTION_ENVIRONMENT_BLOCKED"
+    )
+    candidate = store.task_context_candidates()[0]
+    assert MODULE._current_stopped_attempt(store, candidate) is not None
+    context_path = worktree / MODULE.TASK_PRIVATE_DIR / "task-context.json"
+    result_path = context_path.with_name("result.json")
+    before = (context_path.read_bytes(), result_path.read_bytes())
+    selected_head = json.loads(before[0])["selectedBaseSha"]
+    (worktree / "runtime.py").write_text("value = 2\n")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "unapproved reproduction change")
+    assert run_git(worktree, "status", "--porcelain") == ""
+    assert run_git(worktree, "rev-parse", "HEAD") != selected_head
+    assert MODULE._current_stopped_attempt(store, candidate) is None
+    assert MODULE.cleanup_list(SimpleNamespace(ledger=store.path))["cleanup"] == []
+    assert (context_path.read_bytes(), result_path.read_bytes()) == before
+    assert json.loads(before[1])["reproductionVerified"] is False
+    assert "quality" not in json.loads(before[1])
+    assert (
+        store.task_context(issue_url=candidate["issueUrl"], thread_id=candidate["threadId"])[
+            "stage"
+        ]
+        == "DISPATCHED"
+    )
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("reported_stage", ["BLOCKED", "REPRODUCTION_ENVIRONMENT_BLOCKED"])
 def test_native_exhausted_environment_archives_without_reopening_or_mutating_evidence(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, reported_stage
 ):
-    store, worktree = _native_exhausted_environment_stop(monkeypatch, tmp_path)
+    store, worktree = _native_exhausted_environment_stop(
+        monkeypatch, tmp_path, reported_stage=reported_stage
+    )
     stop = _assert_stopped_attempt_native_archive_loop(monkeypatch, store, worktree)
     with store.connect() as connection:
         probe = connection.execute("SELECT * FROM managed_reproduction_probes").fetchone()
