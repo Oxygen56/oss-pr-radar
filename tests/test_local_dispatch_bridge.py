@@ -29416,6 +29416,7 @@ def _unsupported_native_completed_fixture(
         "internal/binding/cpp/missing.cc": "#include <simde/x86/sse4.1.h>\n",
     }
     if canonical_office:
+        files[".gitignore"] += "__pycache__/\n"
         files.update(
             {
                 "build.sh": "# native-linux-x86_64.tar.gz\nprintf 'office_oxide native archive absent\\n'\nexit 1\n",
@@ -29571,6 +29572,7 @@ def _unsupported_native_completed_fixture(
             ["/bin/zsh", "-lc", canonical], cwd=worktree, capture_output=True, text=True
         )
         assert native_run.returncode == 1 and "office_oxide" in native_run.stdout
+        assert MODULE._local_changed_files(worktree) == []
         item.update(
             command=["/bin/zsh", "-lc", canonical],
             exit_code=native_run.returncode,
