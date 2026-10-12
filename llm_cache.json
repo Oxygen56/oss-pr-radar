@@ -36324,6 +36324,35 @@
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool_calls. The root cause is partially known (finish_reason logic) and the enforcement gap is clearly described. The issue provides a reproduction script and analysis, and there are open PRs addressing related aspects, indicating actionable code work."
   },
+  "3fa37cdd5f59bbd9206927b3f5e8ab06b4339d52cb0fc1cae9857c7d327ac344": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/fal/src/fal-speech-model-options.ts: model pronunciation_dict with tone_list: z.array(z.string()) while preserving pass-through of the validated object"
+    ],
+    "risks": [
+      "Broadening the schema could unintentionally accept other undocumented shapes; keep the change scoped to the documented tone_list contract",
+      "Maintainer may prefer a different schema modeling approach, but this is normal review uncertainty"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.mjs against the built package to confirm the documented tone_list now validates and is forwarded unchanged",
+      "Add runtime validation tests for a nonempty tone list and invalid element types",
+      "Add a type test asserting the documented array shape is accepted"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete root cause (pronunciation_dict typed as z.record(z.string(), z.string()) in packages/fal/src/fal-speech-model-options.ts rejecting the documented tone_list array), a self-contained mocked reproduction, and a specific validation path; no duplicate or open PR coverage found."
+  },
   "3fbfc82982e99ab76441a5c1675d176a9c09b0f22517e5a1309a4751e4ce3256": {
     "confidence": 0.85,
     "contradictions": [],
@@ -45063,6 +45092,40 @@
       "Whether maintainers prefer the architectural direction over the targeted fix"
     ],
     "why": "The issue describes a real model-card ownership defect, but the supplied evidence shows an open PR #14845 that directly references this issue, is technically complete, includes 3 test files, and has passing CI. The issue's own proposed direction (remove public model registration) is a large architectural change, while the existing PR already implements the smaller fix. This is a covered opportunity with weak competition space."
+  },
+  "4e25ad0e2950ea820c0f75226d6c71be76bd227ce22a0068a9d85f04551f6fa9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/pipeline/network/egress/tcp_client.rs: distinguish request-ack timeout from peer-down, or make ack timeout configurable per endpoint",
+      "lib/runtime/src/pipeline/network/egress/push_router.rs: stop mapping ConnectionTimeout/CannotConnect to report_instance_down for slow-but-healthy workers",
+      "lib/runtime/src/pipeline/network/egress/client.rs: fall back to inhibited instance (or queue) when no routable instance remains, especially single-instance endpoints",
+      "lib/runtime/src/config/environment_names.rs: register DYN_TCP_REQUEST_TIMEOUT and other DYN_TCP_* client variables with defaults"
+    ],
+    "risks": [
+      "Changing inhibition semantics could mask genuinely dead peers and delay failover",
+      "Per-endpoint timeout config may expand API surface beyond the minimal fix",
+      "Potential overlap with #13286 (graceful shutdown/timeout budgets) and #15942 (pinned-target inhibition bypass) could cause duplicate or conflicting work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test with a single Python endpoint whose handler blocks the GIL for >5s per request, called via Endpoint.client().round_robin() at concurrency ~32; assert no 'No workers available' and no instance removal",
+      "Unit test in push_router/client: simulate a request-ack timeout and assert the instance is not inhibited (or is retried) when it is the only instance",
+      "Verify DYN_TCP_REQUEST_TIMEOUT and DYN_TCP_* appear in environment_names.rs and the runtime configuration reference"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing the ack-timeout/inhibition mapping versus only documenting/registering DYN_TCP_* variables",
+      "Whether #13286 or #15942 already covers the single-instance inhibition fallback, which would make part of this work redundant"
+    ],
+    "why": "Issue provides a detailed, code-anchored root cause chain: 5s DYN_TCP_REQUEST_TIMEOUT ack timeout in tcp_client.rs, timeout treated as instance-down in push_router.rs is_inhibited, unconditional removal in client.rs, and no single-instance fallback. A verified workaround (DYN_TCP_REQUEST_TIMEOUT=600 + DYN_RUNTIME_INHIBITED_DURATION_SECS=0 yielding 96/96) and a concrete minimal reproduction (GIL-bound Python handler via Endpoint.client().round_robin() with ~32 concurrent requests) establish an actionable fix path. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific gate does not apply."
   },
   "4e311b2b951c422449e7647c68408bf1dc1d4a3fecc617b98452cff1aa78ed78": {
     "confidence": 0.55,
@@ -66318,6 +66381,40 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a concrete LLM inference bug (garbled output under CUDA graph with concurrent identical requests) with a clear reproduction command and environment. However, the supplied evidence indicates a potential duplicate issue #52386 sharing stack signatures and an existing PR #41834 with semantic overlap. The deterministic gate is HUMAN_REVIEW, and the submission policy flags an AI disclosure conflict. The root cause is not yet isolated; the issue may be resolved in v0.21.0 per comments, and the existing PR may already cover the fix. A new PR would require careful comparison with existing work and maintainer guidance."
   },
+  "6eb721f0f54e3f65681c790821ab32784cdf700611b476a87e1a20eb7d6dfd00": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/global_router/handler.py",
+      "lib/llm/src/block_manager/controller/handler.rs",
+      "TCP response callback establishment / cancellation ordering in dynamo-runtime"
+    ],
+    "risks": [
+      "Race condition may be timing-sensitive and hard to reproduce deterministically in CI",
+      "Fix may require changes to callback lifecycle semantics affecting other request/response plane paths",
+      "base_sha_changed pre-check flag needs re-validation against current main"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided K8s manifests and aiperf script under concurrent load with discovery removal",
+      "Add a regression test asserting requests whose response callbacks are rejected do not begin processing",
+      "Verify streams accepted before discovery removal continue normally"
+    ],
+    "unknowns": [
+      "Whether the linked steved/vllm-response-ack branch has been merged or superseded",
+      "Exact code location of the callback cancellation race in current main"
+    ],
+    "why": "Issue provides a concrete race condition between worker discovery removal and TCP response callback establishment, with a detailed reproduction (K8s manifests, aiperf load script, trigger timing), observed error logs showing ConnectionReset and failed response publish, and a linked proposed fix branch. This is a runtime fault-tolerance bug on the inference critical path with clear expected vs actual behavior."
+  },
   "6ec08c602d2cb0d75e7095ac0c4114b15a653e3c3c71e933e838600f25137e65": {
     "confidence": 0.7,
     "contradictions": [
@@ -72160,6 +72257,38 @@
     ],
     "wait_reason": null,
     "why": "Issue clearly describes a bug where GPU counting assumes device plugin and fails with DRA ResourceClaims, causing global planner crash and local planner warnings. Root cause is identified in specific code paths (dgd_services.py, kubernetes.py, kubernetes_capacity_manager.py). No competing PR or related issue found. Actionable fix: extend GPU counting to support DRA ResourceClaims."
+  },
+  "78d0d4e4f056a6b5d4ad541423b9a3e0f1e0419e7dd900fe342b6588ec4155b2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "KV router cost/weighting formula in the routing decision path",
+      "possibly default weights or a discount for soon-to-finish decode load",
+      "clarify or fix non_max_overlap_selections_total counter semantics"
+    ],
+    "risks": [
+      "Changing default weights may regress heavier or skewed load where the load term is legitimately useful",
+      "Counter semantics may be intentional and only need documentation",
+      "Fix scope may overlap with related issue #13279"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the two-worker vLLM setup and 16x12 multi-turn workload; assert resumed turns stay on the worker the index shows holds the prefix",
+      "Regression test comparing recomputed prefill (vllm:request_prefill_kv_computed_tokens_sum) against round-robin and session-affinity baselines",
+      "Unit test on the router scoring formula where overlap credit should outweigh a small transient decode-load difference"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the current weighting intended behavior or a bug",
+      "Whether #13279 already covers the same fix"
+    ],
+    "why": "Issue provides a concrete, reproducible KV-router cost-weighting bug: overlap credit only offsets the prefill term, so transient decode load can outweigh a nearly-full prefix match, moving multi-turn sessions off the cache-holding worker. Evidence includes a minimal reproduction, per-request router formula logs, and a controlled comparison against round-robin and session affinity."
   },
   "78d681b7d49e89a39fada31c60ec64fd905efcdb87b4463f81d36d759ef69dcb": {
     "confidence": 0.85,
@@ -103203,6 +103332,40 @@
       "No explicit maintainer design confirmation, but not blocking given clear root cause and acceptance criteria."
     ],
     "why": "Issue provides a clear, reproducible bug with exact versions, steps, and boundary evidence showing enabled skills are not passed to Claude Code ACP sessions. Root cause is localized to the Agent Canvas to ACP session/profile bridge. Acceptance criteria include a cross-boundary regression test, making it actionable."
+  },
+  "af2e1618e6247cf5495441025cb51b7ec747196ffa042a3dd29d187e8f59ae3a": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #43884 referencing this issue, while the candidate is categorized WAIT_MAINTAINER/HUMAN_REVIEW without resolving whether that PR already covers the fix"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/speculative/eagle_utils.py: preflight/warm-up of speculative sampling ops and non-fatal handling of JIT failure",
+      "flashinfer cache handling for partial builds under cached_ops/sampling/"
+    ],
+    "risks": [
+      "PR #43884 may already cover the same root cause and scope, making a new contribution duplicative",
+      "Changing failure handling could alter server lifecycle semantics beyond the reported bug"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on RTX 4070 Laptop / sm_89, pip cu13 bundle, sglang 0.5.21, flashinfer 0.6.18: send a temperature 0.7 request with NGRAM + triton attention and confirm the server no longer SIGKILLs",
+      "Regression test that a sampling-op JIT failure surfaces as a request-level error rather than killing the process tree",
+      "Test that a poisoned partial build in cached_ops/sampling/ is cleared before warm-up"
+    ],
+    "unknowns": [
+      "Whether PR #43884 is intended to close this issue and whether its implementation fully covers the root cause",
+      "Whether maintainers consider the remaining blast-radius work distinct from #43884"
+    ],
+    "why": "The issue provides a clear root-cause chain (flashinfer JIT of top_k_renorm_probs in eagle_sample fails due to bundled cccl vs pip cu13 toolkit mismatch, and the RuntimeError kills the process tree). However, the supplied evidence shows an open PR #43884 that explicitly targets this issue (#43412) with overlapping code path python/sglang/srt/speculative/eagle_utils.py and distinctive overlap on 'cu13'/'non_greedy', and the issue thread itself confirms the author is sending that PR. This unresolved duplicate/coverage question materially determines whether new code work is actionable."
   },
   "af31d73f4d4fd772051ae5ca0f5e4e48e62dda0d18e955cf3073c4d44154753a": {
     "confidence": 0.85,
