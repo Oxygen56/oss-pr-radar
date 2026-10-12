@@ -56,6 +56,7 @@ from oss_pr_radar.github_client import (  # noqa: E402
     is_transient_github_error,
 )
 from oss_pr_radar.independent_review import (  # noqa: E402
+    _stopped_expired_validation_result,
     controller_merge_conflict_scope,
     controller_merge_resolution_scope,
     controller_review_result,
@@ -80,6 +81,7 @@ from oss_pr_radar.managed_adapter import (  # noqa: E402
 )
 from oss_pr_radar.managed_lifecycle import (  # noqa: E402
     MANAGED_SCHEMA_VERSION,
+    REPRODUCTION_PROBE_MAX_ATTEMPTS,
     ManagedLedger,
     pr_key_from_url,
     reconcile_managed_pr_states,
@@ -507,6 +509,8 @@ TITLE_PREFIXES = {
     "VALIDATION_RETURNED": "[本轮已结束·待验证]",
     "TURN_FAILED": "[本轮执行失败]",
     "TURN_INTERRUPTED": "[本轮已停止]",
+    "REPRODUCTION_STOPPED": "[本轮无法PR·复现受阻]",
+    "VALIDATION_STOPPED": "[本轮无法PR·验证已停止]",
 }
 PR_STAGE_PRIORITY = {
     "PR_OPEN": 1,
@@ -13713,38 +13717,8 @@ def _active_task_turn_for_result(candidate: dict[str, Any]) -> dict[str, Any] | 
 def _independent_review_turn_activity(
     candidate: dict[str, Any], completed_turn_id: str | None = None
 ) -> dict[str, Any] | None:
-    """Distinguish known inactive from unavailable activity for stopped-result admission."""
-    active = _active_task_turn_for_result(candidate)
-    if active is not None:
-        return active
-    unavailable = {"source": "independent_review_activity", "state": "unknown"}
-    try:
-        with closing(
-            sqlite3.connect(THREAD_DB.resolve().as_uri() + "?mode=ro", uri=True)
-        ) as connection:
-            connection.execute("PRAGMA query_only=ON")
-            row = connection.execute(
-                "SELECT cwd,archived,rollout_path FROM threads WHERE id=?",
-                (candidate["threadId"],),
-            ).fetchone()
-        if (
-            row is None
-            or row[1] != 0
-            or Path(row[0]).resolve() != Path(candidate["worktreePath"]).resolve()
-        ):
-            return unavailable
-        latest = latest_thread_turn_state(row[2])
-        if (
-            latest is None
-            or latest.get("status") != "completed"
-            or latest.get("code") is not None
-            or not latest.get("turnId")
-            or (completed_turn_id is not None and latest["turnId"] != completed_turn_id)
-        ):
-            return unavailable
-    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
-        return unavailable
-    return None
+    """Use the same known-terminal proof before and after stopped-attempt archival."""
+    return _stopped_attempt_activity(candidate, completed_turn_id)
 
 
 def _proved_no_turn_started_receipt(receipt: dict[str, Any]) -> bool:
@@ -19981,6 +19955,12 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         if candidate["key"] in preparation_error_keys:
             continue
         try:
+            stopped_attempt = _current_stopped_attempt(store, candidate)
+            if stopped_attempt is not None:
+                revalidation_deferred.append(
+                    {"key": candidate["key"], "reason": stopped_attempt["reason"]}
+                )
+                continue
             worktree = Path(candidate["worktreePath"]).resolve()
             if not worktree.is_dir():
                 if candidate.get("stage") not in PUBLISHED_TASK_STAGES:
@@ -30425,6 +30405,8 @@ def restore_list(args: argparse.Namespace) -> dict[str, Any]:
     try:
         display_title = _thread_display_title_sql(connection)
         for candidate in bindings:
+            if _current_stopped_attempt(store, candidate) is not None:
+                continue
             ledger_archived = (
                 candidate.get("lifecycleState", "THREAD_ARCHIVED") == "THREAD_ARCHIVED"
             )
@@ -30487,6 +30469,8 @@ def restore_commit(args: argparse.Namespace) -> dict[str, Any]:
     candidate = candidates[0] if len(candidates) == 1 else None
     if candidate is None:
         raise RuntimeError("restore authorization is stale or invalid")
+    if _current_stopped_attempt(store, candidate) is not None:
+        raise RuntimeError("stopped attempt is not authorized for restoration")
     connection = sqlite3.connect(THREAD_DB)
     try:
         row = connection.execute(
@@ -30496,6 +30480,8 @@ def restore_commit(args: argparse.Namespace) -> dict[str, Any]:
         connection.close()
     if row is None or int(row[0] or 0) != 0:
         raise RuntimeError("thread is still archived")
+    if _current_stopped_attempt(store, candidate) is not None:
+        raise RuntimeError("stopped attempt is not authorized for restoration")
     store.commit_restore(
         thread_id=args.thread_id,
         nonce=args.restore_nonce,
@@ -30504,13 +30490,305 @@ def restore_commit(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "threadId": args.thread_id}
 
 
+def _stopped_attempt_activity(
+    candidate: dict[str, Any], completed_turn_id: str | None = None
+) -> dict[str, Any] | None:
+    """Require genuine terminal activity even after this same attempt is archived."""
+    active = _active_task_turn_for_result(candidate)
+    if active is not None:
+        return active
+    unknown = {"state": "unknown"}
+    try:
+        with closing(sqlite3.connect(THREAD_DB.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            row = conn.execute(
+                "SELECT cwd,archived,rollout_path,first_user_message FROM threads WHERE id=?",
+                (candidate["threadId"],),
+            ).fetchone()
+        if row is None or row[1] not in {0, 1}:
+            return unknown
+        worktree = Path(candidate["worktreePath"]).resolve()
+        valid_cwds = {worktree}
+        if _is_managed_worktree(worktree):
+            valid_cwds.add(GITHUB_ROOT.resolve())
+        if Path(row[0]).resolve() not in valid_cwds or canonical_prompt(
+            str(row[3] or "")
+        ) != issue_prompt(candidate["issueUrl"]):
+            return unknown
+        journal = _read_owned_regular_file(
+            Path(row[2]), label="stopped attempt native journal", reject_dangerous_writes=True
+        )
+        records = [json.loads(line) for line in journal.splitlines() if line.strip()]
+        if not any(
+            record.get("type") == "session_meta"
+            and (record.get("payload") or {}).get("id") == candidate["threadId"]
+            for record in records
+        ):
+            return unknown
+        latest = latest_thread_turn_state(row[2])
+        if (
+            latest is None
+            or latest.get("status") != "completed"
+            or latest.get("code") is not None
+            or not latest.get("turnId")
+            or (completed_turn_id is not None and latest["turnId"] != completed_turn_id)
+        ):
+            return unknown
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+        return unknown
+    return None
+
+
+def _current_stopped_attempt(
+    store: RadarLedger, candidate: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Read one exact exhausted attempt; grant no execution or publication authority."""
+    if candidate.get("stage") and candidate["stage"] not in {"DISPATCHED", "VALIDATION_PENDING"}:
+        return None
+    if not hasattr(store, "task_context_candidates"):
+        return None
+    try:
+        with store.connect() as connection:
+            row = connection.execute(
+                "SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,i.worktree_path,i.status "
+                "FROM opportunities o JOIN intents i ON i.opportunity_key=o.key "
+                "WHERE o.key=? AND i.intent_id=? AND i.thread_id=? AND i.worktree_path=? "
+                "AND i.status IN ('DISPATCHED','COMPLETED') "
+                "AND i.rowid=(SELECT MAX(n.rowid) FROM intents n WHERE n.opportunity_key=o.key)",
+                tuple(candidate.get(k) for k in ("key", "intentId", "threadId", "worktreePath")),
+            ).fetchone()
+        if row is None or row["stage"] not in {"DISPATCHED", "VALIDATION_PENDING"}:
+            return None
+        candidate = {
+            "key": row["key"],
+            "stage": row["stage"],
+            "issueUrl": row["issue_url"],
+            "intentId": row["intent_id"],
+            "threadId": row["thread_id"],
+            "worktreePath": row["worktree_path"],
+            "intentStatus": row["status"],
+        }
+        if _stopped_attempt_activity(candidate) is not None:
+            return None
+        with _task_worktree_private_descriptor(candidate) as opened:
+            raw = _read_task_result_bytes_from_private(opened)
+            context_raw = _read_task_context_bytes_from_private(opened)
+            context_stat = os.stat(
+                "task-context.json", dir_fd=opened.private_fd, follow_symlinks=False
+            )
+            context, _ = _verified_private_context_with_singleton_guard(
+                store, opened.worktree, context_raw, context_stat
+            )
+        value = json.loads(raw)
+        if (
+            not store.task_result_binding_gate(candidate, value)
+            or not store.task_result_binding_gate(candidate, context)
+            or context.get("prFollowup")
+            or store.active_task_quarantines(candidate["key"])
+        ):
+            return None
+        binding = tuple(candidate[k] for k in ("key", "intentId", "threadId", "worktreePath"))
+        expiry = _stopped_expired_validation_result(
+            store, candidate, active_turn_reader=_stopped_attempt_activity
+        )
+        source = store.expired_publication_validation_source(candidate) if expiry else None
+        receipt = context.get("publicationReceipt")
+        if receipt and (
+            source is None
+            or not isinstance(receipt, dict)
+            or receipt.get("status") != "BLOCKED"
+            or receipt.get("prUrl")
+            or receipt.get("commitSha") != source["commitSha"]
+            or receipt.get("branch") != source["branch"]
+        ):
+            return None
+        with store.connect() as connection:
+            if connection.execute(
+                "SELECT 1 FROM managed_prs p JOIN managed_results r ON r.pr_key=p.pr_key "
+                "JOIN managed_tasks t ON t.task_id=r.task_id WHERE t.opportunity_key=? "
+                "UNION SELECT 1 FROM managed_publication_reservations r WHERE r.opportunity_key=? "
+                "AND (r.pr_key IS NOT NULL OR r.state NOT IN ('BLOCKED','EXPIRED','RELEASED')) LIMIT 1",
+                (candidate["key"], candidate["key"]),
+            ).fetchone():
+                return None
+            requests = connection.execute(
+                "SELECT request_id FROM publication_requests WHERE opportunity_key=?",
+                (candidate["key"],),
+            ).fetchall()
+            if requests and (source is None or any(r[0] != source["requestId"] for r in requests)):
+                return None
+            if connection.execute(
+                "SELECT 1 FROM publication_effects e JOIN publication_permits p ON p.permit_id=e.permit_id "
+                "JOIN publication_requests r ON r.request_id=p.request_id WHERE r.opportunity_key=? LIMIT 1",
+                (candidate["key"],),
+            ).fetchone():
+                return None
+            if expiry:
+                stop = connection.execute(
+                    "SELECT id,event_type,payload_json FROM events WHERE opportunity_key=? "
+                    "AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS' "
+                    "AND json_extract(payload_json,'$.intentId')=? AND json_extract(payload_json,'$.threadId')=? "
+                    "AND json_extract(payload_json,'$.worktreePath')=? ORDER BY id DESC LIMIT 1",
+                    binding,
+                ).fetchone()
+                if stop is None:
+                    return None
+                reason = expiry["blockingReason"]
+                completed_turn = json.loads(stop["payload_json"])["expiryCorrection"]["completion"][
+                    "turnId"
+                ]
+                extra = {
+                    "sourceRequestId": source["requestId"],
+                    "sourceResultDigest": source["resultDigest"],
+                }
+            else:
+                if (
+                    candidate["stage"] != "DISPATCHED"
+                    or context.get("taskStage") != "REPRODUCTION_REQUIRED"
+                    or value.get("contextDigest") != context.get("contextDigest")
+                    or value.get("stage") not in {"BLOCKED", "REPRODUCTION_REQUIRED"}
+                    or value.get("reason") != "REPRODUCTION_ENVIRONMENT_BLOCKED"
+                    or value.get("reproductionVerified") is not False
+                    or any(
+                        value.get(k)
+                        for k in (
+                            "changedFiles",
+                            "controllerCommitChangedFiles",
+                            "commitSha",
+                            "handoffMode",
+                            "publication",
+                            "prUrl",
+                        )
+                    )
+                    or _local_changed_files(opened.worktree)
+                    or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree)
+                    != context.get("selectedBaseSha")
+                ):
+                    return None
+                block = ManagedLedger(store.path, ensure_schema=False).event_by_idempotency_key(
+                    _task_result_evidence_block_key(candidate, raw, context_raw)
+                )
+                if (
+                    block is None
+                    or block.get("event_type") != "TASK_RESULT_EVIDENCE_BLOCKED"
+                    or block.get("task_id") != candidate["intentId"]
+                    or block.get("opportunity_key") != candidate["key"]
+                    or json.loads(block.get("provenance_json") or "{}").get("threadId")
+                    != candidate["threadId"]
+                    or json.loads(block.get("payload_json") or "{}").get("reason")
+                    != "REPRODUCTION_ENVIRONMENT_BLOCKED"
+                ):
+                    return None
+                probes = connection.execute(
+                    "SELECT * FROM managed_reproduction_probes WHERE task_id=? AND opportunity_key=? "
+                    "AND thread_id=? AND checkout_path=? ORDER BY updated_at DESC",
+                    (binding[1], binding[0], binding[2], binding[3]),
+                ).fetchall()
+                if len(probes) != 1:
+                    return None
+                probe = probes[0]
+                if (
+                    probe["state"] != "WAITING_EXTERNAL"
+                    or probe["profile_id"] is not None
+                    or probe["error"] != "TRUSTED_PROBE_PROFILE_UNAVAILABLE"
+                    or probe["attempt_count"] != REPRODUCTION_PROBE_MAX_ATTEMPTS
+                    or probe["selected_base_sha"] != context.get("selectedBaseSha")
+                ):
+                    return None
+                stop = connection.execute(
+                    "SELECT id,event_type,payload_json FROM events WHERE opportunity_key=? "
+                    "AND event_type='TASK_EXECUTION_STOPPED' AND json_extract(payload_json,'$.intentId')=? "
+                    "AND json_extract(payload_json,'$.threadId')=? AND json_extract(payload_json,'$.worktreePath')=? "
+                    "ORDER BY id DESC LIMIT 1",
+                    binding,
+                ).fetchone()
+                if stop is None:
+                    return None
+                stopped = json.loads(stop["payload_json"])
+                if stopped.get("turnStatus") != "completed" or stopped.get("quarantines") != []:
+                    return None
+                completed_turn = stopped["turnId"]
+                with closing(
+                    sqlite3.connect(THREAD_DB.resolve().as_uri() + "?mode=ro", uri=True)
+                ) as native:
+                    native.execute("PRAGMA query_only=ON")
+                    rollout = native.execute(
+                        "SELECT rollout_path FROM threads WHERE id=?", (candidate["threadId"],)
+                    ).fetchone()
+                if rollout is None or hashlib.sha256(
+                    _read_owned_regular_file(
+                        Path(rollout[0]),
+                        label="stopped environment journal",
+                        reject_dangerous_writes=True,
+                    )
+                ).hexdigest() != stopped.get("journalSha256"):
+                    return None
+                reason = "REPRODUCTION_ENVIRONMENT_BLOCKED"
+                extra = {
+                    "probeKey": probe["probe_key"],
+                    "probeUpdatedAt": probe["updated_at"],
+                    "blockEventId": block["event_id"],
+                    "blockKey": block["idempotency_key"],
+                    "journalSha256": stopped["journalSha256"],
+                }
+            newer = connection.execute(
+                "SELECT 1 FROM events WHERE opportunity_key=? AND id>? "
+                "AND json_extract(payload_json,'$.intentId')=? AND json_extract(payload_json,'$.threadId')=? "
+                "AND json_extract(payload_json,'$.worktreePath')=? AND event_type IN "
+                "('TASK_TURN_DELIVERY_STARTED','THREAD_RECOVERY_RESERVED','THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED',"
+                "'VALIDATION_FOLLOWUP_RESERVED','VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED','PR_FOLLOWUP_RESERVED',"
+                "'IMPLEMENTATION_FOLLOWUP_RESERVED') LIMIT 1",
+                (binding[0], stop["id"], *binding[1:]),
+            ).fetchone()
+            if newer is not None:
+                return None
+            watermark = connection.execute(
+                "SELECT MAX(id) FROM events WHERE opportunity_key=? AND json_extract(payload_json,'$.intentId')=? "
+                "AND json_extract(payload_json,'$.threadId')=? AND json_extract(payload_json,'$.worktreePath')=? "
+                "AND event_type NOT IN ('THREAD_ARCHIVED','THREAD_RESTORED','THREAD_TITLE_SYNCED','THREAD_TITLE_DRIFTED')",
+                binding,
+            ).fetchone()[0]
+        if _stopped_attempt_activity(candidate, completed_turn) is not None:
+            return None
+        with _task_worktree_private_descriptor(candidate) as check:
+            if raw != _read_task_result_bytes_from_private(
+                check
+            ) or context_raw != _read_task_context_bytes_from_private(check):
+                return None
+        proof = {
+            k: candidate[k]
+            for k in ("key", "issueUrl", "intentId", "threadId", "worktreePath", "stage")
+        }
+        proof.update(
+            reason=reason,
+            turnId=completed_turn,
+            stopEventId=stop["id"],
+            stopEventType=stop["event_type"],
+            stopPayloadDigest=hashlib.sha256(stop["payload_json"].encode()).hexdigest(),
+            rawDigest=hashlib.sha256(raw).hexdigest(),
+            contextRawDigest=hashlib.sha256(context_raw).hexdigest(),
+            eventWatermark=watermark,
+            **extra,
+        )
+        proof["stopDigest"] = sha256_json(proof)
+        return proof
+    except (OSError, RuntimeError, ValueError, TypeError, KeyError, sqlite3.Error):
+        return None
+
+
+def _current_attempt_stops(store: RadarLedger) -> list[dict[str, Any]]:
+    reader = getattr(store, "task_context_candidates", lambda: [])
+    return [stop for candidate in reader() if (stop := _current_stopped_attempt(store, candidate))]
+
+
 def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
+    current_stops = _current_attempt_stops(store)
     reconciliation_candidates = getattr(store, "cleanup_reconciliation_candidates", None)
     candidates = (
-        reconciliation_candidates()
+        reconciliation_candidates(**({"current_stops": current_stops} if current_stops else {}))
         if callable(reconciliation_candidates)
-        else store.cleanup_candidates()
+        else store.cleanup_candidates(**({"current_stops": current_stops} if current_stops else {}))
     )
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
@@ -30530,13 +30808,28 @@ def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
                 commit(
                     thread_id=candidate["threadId"],
                     nonce=candidate["cleanupNonce"],
+                    **(
+                        {
+                            "current_stop": candidate["currentStop"],
+                            "current_stop_reader": lambda item: _current_stopped_attempt(
+                                store, item
+                            ),
+                        }
+                        if candidate.get("currentStop")
+                        else {}
+                    ),
                 )
-                if candidate.get("worktreePath") and _is_managed_worktree(
-                    Path(candidate["worktreePath"])
+                if (
+                    not candidate.get("currentStop")
+                    and candidate.get("worktreePath")
+                    and _is_managed_worktree(Path(candidate["worktreePath"]))
                 ):
                     shared_context_path(candidate["issueUrl"]).unlink(missing_ok=True)
                 continue
-            if candidate.get("titleSyncedState") not in {None, "AUDIT_NO_GO"}:
+            if not candidate.get("currentStop") and candidate.get("titleSyncedState") not in {
+                None,
+                "AUDIT_NO_GO",
+            }:
                 continue
             pending.append(candidate | {"title": row["title"]})
     finally:
@@ -30546,7 +30839,11 @@ def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
 
 def cleanup_commit(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
-    candidates = {item["threadId"]: item for item in store.cleanup_candidates()}
+    stops = _current_attempt_stops(store)
+    candidates = {
+        item["threadId"]: item
+        for item in store.cleanup_candidates(**({"current_stops": stops} if stops else {}))
+    }
     candidate = candidates.get(args.thread_id)
     if candidate is None or candidate["cleanupNonce"] != args.cleanup_nonce:
         raise RuntimeError("cleanup authorization is stale or invalid")
@@ -30562,8 +30859,20 @@ def cleanup_commit(args: argparse.Namespace) -> dict[str, Any]:
     store.commit_cleanup(
         thread_id=args.thread_id,
         nonce=args.cleanup_nonce,
+        **(
+            {
+                "current_stop": candidate["currentStop"],
+                "current_stop_reader": lambda item: _current_stopped_attempt(store, item),
+            }
+            if candidate.get("currentStop")
+            else {}
+        ),
     )
-    if candidate.get("worktreePath") and _is_managed_worktree(Path(candidate["worktreePath"])):
+    if (
+        not candidate.get("currentStop")
+        and candidate.get("worktreePath")
+        and _is_managed_worktree(Path(candidate["worktreePath"]))
+    ):
         shared_context_path(candidate["issueUrl"]).unlink(missing_ok=True)
     return {"ok": True, "threadId": args.thread_id}
 
@@ -30769,6 +31078,32 @@ def cleanup_reconcile(args: argparse.Namespace) -> dict[str, Any]:
     eligible: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     for candidate in candidates:
+        if candidate.get("currentStop"):
+            expected = (
+                "REPRODUCTION_STOPPED"
+                if candidate["currentStop"]["reason"] == "REPRODUCTION_ENVIRONMENT_BLOCKED"
+                else "VALIDATION_STOPPED"
+            )
+            if not str(candidate.get("title") or "").startswith(f"{TITLE_PREFIXES[expected]} "):
+                errors.append(
+                    {
+                        "key": candidate["key"],
+                        "threadId": candidate["threadId"],
+                        "error": "cleanup_title_not_reconciled",
+                    }
+                )
+                continue
+            if _current_stopped_attempt(ledger(args.ledger), candidate) != candidate["currentStop"]:
+                errors.append(
+                    {
+                        "key": candidate["key"],
+                        "threadId": candidate["threadId"],
+                        "error": "stopped_cleanup_changed",
+                    }
+                )
+                continue
+            eligible.append(candidate)
+            continue
         if candidate.get("stage") != "AUDIT_NO_GO" or not str(
             candidate.get("title") or ""
         ).startswith(f"{TITLE_PREFIXES['AUDIT_NO_GO']} "):
@@ -30817,6 +31152,13 @@ def cleanup_reconcile(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _task_title_display_state(store: RadarLedger, binding: dict[str, Any]) -> str:
+    stop = _current_stopped_attempt(store, binding)
+    if stop:
+        return (
+            "REPRODUCTION_STOPPED"
+            if stop["reason"] == "REPRODUCTION_ENVIRONMENT_BLOCKED"
+            else "VALIDATION_STOPPED"
+        )
     state = str(binding["titleState"])
     if state not in {"GO", "VALIDATION_PENDING", "VALIDATION_BLOCKED"}:
         return state
@@ -31583,6 +31925,8 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 }
             )
         for candidate in candidates:
+            if _current_stopped_attempt(store, candidate) is not None:
+                continue
             row = connection.execute(
                 f"SELECT archived,{display_title} AS title,first_user_message,cwd,"
                 "git_origin_url,updated_at,"
@@ -31849,7 +32193,10 @@ def recovery_reserve(args: argparse.Namespace) -> dict[str, Any]:
                 "recovery_prompt_digest": prompt_digest,
             }
         )
-    candidate = ledger(args.ledger).reserve_recovery(**reserve_kwargs)
+    recovery_store = ledger(args.ledger)
+    if _current_stopped_attempt(recovery_store, authorized) is not None:
+        raise RuntimeError("stopped attempt is not authorized for recovery")
+    candidate = recovery_store.reserve_recovery(**reserve_kwargs)
     if candidate.get("recoveryKind") == "DISPATCHED_TASK":
         _verify_dispatched_recovery_prompt_binding(candidate, prompt)
     return {

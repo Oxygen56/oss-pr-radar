@@ -13408,6 +13408,311 @@ def test_exact_environment_blocked_reproduction_keeps_other_ready_work(
         )
 
 
+def _assert_stopped_attempt_native_archive_loop(monkeypatch, store, worktree):
+    with sqlite3.connect(MODULE.THREAD_DB) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(threads)")}
+        if "title" not in columns:
+            connection.execute("ALTER TABLE threads ADD COLUMN title TEXT DEFAULT 'running'")
+        if "updated_at" not in columns:
+            connection.execute("ALTER TABLE threads ADD COLUMN updated_at INTEGER DEFAULT 0")
+    candidate = store.task_context_candidates()[0]
+    stop = MODULE._current_stopped_attempt(store, candidate)
+    assert stop is not None, candidate
+    assert store.stopped_cleanup_candidate(stop) is not None
+    forged = dict(stop, stopEventId=0)
+    forged["stopDigest"] = sha256_json({k: v for k, v in forged.items() if k != "stopDigest"})
+    assert store.stopped_cleanup_candidate(forged) is None
+    assert store.stopped_cleanup_candidate(dict(stop, stopDigest="f" * 64)) is None
+    borrowed = dict(stop, rawDigest="f" * 64)
+    borrowed["stopDigest"] = sha256_json({k: v for k, v in borrowed.items() if k != "stopDigest"})
+    borrowed_candidate = store.stopped_cleanup_candidate(borrowed)
+    if borrowed_candidate is None:
+        assert stop["reason"] == "EXPIRED_VALIDATION_CURRENT_CONTEXT_OR_EXECUTION_MISSING"
+    else:
+        assert stop["reason"] == "REPRODUCTION_ENVIRONMENT_BLOCKED"
+        with pytest.raises(MODULE.LedgerError, match="stopped cleanup authorization changed"):
+            store.commit_reconciled_cleanup(
+                thread_id=candidate["threadId"],
+                nonce=borrowed_candidate["cleanupNonce"],
+                current_stop=borrowed,
+                current_stop_reader=lambda item: MODULE._current_stopped_attempt(store, item),
+            )
+    context_path = worktree / MODULE.TASK_PRIVATE_DIR / "task-context.json"
+    result_path = context_path.with_name("result.json")
+    before = (context_path.read_bytes(), result_path.read_bytes())
+    shared = MODULE.shared_context_path(candidate["issueUrl"])
+    shared_before = shared.read_bytes() if shared.exists() else None
+    head = run_git(worktree, "rev-parse", "HEAD")
+
+    def set_titles(items):
+        with sqlite3.connect(MODULE.THREAD_DB) as connection:
+            for item in items:
+                connection.execute(
+                    "UPDATE threads SET title=? WHERE id=?",
+                    (item["desiredTitle"], item["threadId"]),
+                )
+        return {item["threadId"]: None for item in items}
+
+    archive_calls = []
+
+    def archive(items):
+        archive_calls.extend(item["threadId"] for item in items)
+        with sqlite3.connect(MODULE.THREAD_DB) as connection:
+            for item in items:
+                connection.execute("UPDATE threads SET archived=1 WHERE id=?", (item["threadId"],))
+        return {item["threadId"]: None for item in items}
+
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", set_titles)
+    monkeypatch.setattr(MODULE, "_archive_desktop_threads", archive)
+
+    def no_unarchive(items):
+        assert items == [], "stopped attempt must stay archived"
+        return {}
+
+    monkeypatch.setattr(MODULE, "_unarchive_desktop_threads", no_unarchive)
+    monkeypatch.setattr(
+        MODULE,
+        "_refresh_active_task_live_audit",
+        lambda *_args: pytest.fail("stopped context must not be refreshed"),
+    )
+    args = SimpleNamespace(ledger=store.path)
+    assert MODULE.title_reconcile(args)["ok"]
+    pending = MODULE.cleanup_list(args)
+    assert len(pending["cleanup"]) == 1, pending
+    archived = MODULE.cleanup_reconcile(args)
+    assert archived["ok"] and len(archived["archived"]) == 1, archived
+    assert archive_calls == [candidate["threadId"]]
+    assert MODULE._current_stopped_attempt(store, candidate) == stop
+    assert MODULE.sync_task_contexts(args)["written"] == []
+    assert MODULE.restore_reconcile(args)["restored"] == []
+    assert MODULE.title_reconcile(args)["ok"]
+    assert MODULE.cleanup_reconcile(args)["archived"] == []
+    recovery = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))
+    assert recovery["recoverable"] == [] and recovery["blocked"] == [], recovery
+    assert archive_calls == [candidate["threadId"]]
+    assert (context_path.read_bytes(), result_path.read_bytes()) == before
+    assert not shared_before or shared.read_bytes() == shared_before
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    with store.connect() as connection:
+        event = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='THREAD_ARCHIVED' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert json.loads(event[0])["reason"] == stop["reason"]
+        assert (
+            connection.execute(
+                "SELECT stage FROM opportunities WHERE key=?", (candidate["key"],)
+            ).fetchone()[0]
+            == candidate["stage"]
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    return stop
+
+
+def _native_exhausted_environment_stop(monkeypatch, tmp_path):
+    bind_validation_runtime(monkeypatch, tmp_path)
+    worktree = MODULE.managed_worktree_path("intent-stop", "a/b")
+    worktree.mkdir(parents=True)
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "runtime.py").write_text("value = 1\n")
+    (worktree / ".git/info/exclude").write_text(".oss-pr-radar/\n")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "baseline")
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    base = run_git(worktree, "rev-parse", "HEAD")
+    now = datetime.now(UTC)
+    intent = {
+        "intentId": "intent-stop",
+        "key": "a/b#1",
+        "repo": "a/b",
+        "issueNumber": 1,
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "title": "Missing restore assets",
+        "mode": "canary",
+        "score": 9,
+        "snapshotId": "snapshot",
+        "decisionDigest": "decision",
+        "issuedAt": iso_z(now),
+        "expiresAt": iso_z(now + timedelta(hours=1)),
+        "defaultBranch": "main",
+        "selectedBaseSha": base,
+        "codePaths": ["runtime.py"],
+        "taskStage": "REPRODUCTION_REQUIRED",
+        "probeLevel": "UNVERIFIED",
+        "probeRequired": True,
+    }
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent)
+    store.claim("intent-stop", "controller")
+    store.commit_dispatch(
+        "intent-stop",
+        owner="controller",
+        thread_id="thread-stop",
+        project_id="github",
+        worktree_path=str(worktree),
+        title_time="10-12 17:00",
+    )
+    MODULE.ManagedAdapter(tmp_path, store.path).bind_task_after_thread(
+        intent=intent, thread_id="thread-stop", worktree_path=str(worktree)
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "environment-evidence",
+            "liveAudit": {
+                "capturedAt": iso_z(now),
+                "evidence": {"digest": "environment-evidence", "issue": {"state": "open"}},
+            },
+        },
+        dedupe_key="intent-stop:environment-evidence",
+    )
+    context_path = MODULE.write_task_context(
+        store, issue_url=intent["issueUrl"], thread_id="thread-stop", cwd=worktree
+    )
+    context = json.loads(context_path.read_bytes())
+    raw = {
+        "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+        "key": intent["key"],
+        "issueUrl": intent["issueUrl"],
+        "threadId": "thread-stop",
+        "worktreePath": str(worktree),
+        "contextDigest": context["contextDigest"],
+        "stage": "BLOCKED",
+        "reason": "REPRODUCTION_ENVIRONMENT_BLOCKED",
+        "reproductionVerified": False,
+        "tests": [
+            {
+                "command": "dotnet test --no-restore",
+                "exitCode": 1,
+                "result": "NETSDK1004: project.assets.json was not found",
+            }
+        ],
+    }
+    (context_path.parent / "result.json").write_text(json.dumps(raw))
+    managed = ManagedLedger(store.path, ensure_schema=False)
+    attempts = managed.run_pending_reproduction_probes(limit=3)
+    assert attempts["count"] == 3
+    journal = tmp_path / "native-stop.jsonl"
+    journal.write_text(
+        "\n".join(
+            json.dumps(record)
+            for record in [
+                {"type": "session_meta", "payload": {"id": "thread-stop"}},
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(now),
+                    "payload": {"type": "task_started", "turn_id": "native-stop"},
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(now),
+                    "payload": {"type": "task_complete", "turn_id": "native-stop"},
+                },
+            ]
+        )
+        + "\n"
+    )
+    journal.chmod(0o600)
+    native = tmp_path / "native.sqlite3"
+    with sqlite3.connect(native) as c:
+        c.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT,title TEXT,updated_at INTEGER,git_origin_url TEXT)"
+        )
+        c.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?,?,?,?)",
+            (
+                "thread-stop",
+                str(MODULE.GITHUB_ROOT),
+                0,
+                MODULE.issue_prompt(intent["issueUrl"]),
+                str(journal),
+                "running",
+                int(now.timestamp()),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", native)
+    assert MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))["ok"]
+    blocked = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert (
+        blocked["ok"] and blocked["workBlocked"][0]["reason"] == "REPRODUCTION_ENVIRONMENT_BLOCKED"
+    ), blocked
+    return store, worktree
+
+
+def test_native_exhausted_environment_archives_without_reopening_or_mutating_evidence(
+    monkeypatch, tmp_path
+):
+    store, worktree = _native_exhausted_environment_stop(monkeypatch, tmp_path)
+    stop = _assert_stopped_attempt_native_archive_loop(monkeypatch, store, worktree)
+    with store.connect() as connection:
+        probe = connection.execute("SELECT * FROM managed_reproduction_probes").fetchone()
+        assert probe["attempt_count"] == 3 and probe["profile_id"] is None
+        assert connection.execute("SELECT status FROM intents").fetchone()[0] == "DISPATCHED"
+    candidate = store.task_context_candidates()[0]
+    result = worktree / MODULE.TASK_PRIVATE_DIR / "result.json"
+    old = result.read_bytes()
+    changed = json.loads(old)
+    changed["reason"] = "NEW_NATIVE_EVIDENCE"
+    result.write_text(json.dumps(changed))
+    assert MODULE._current_stopped_attempt(store, candidate) is None
+    assert (
+        MODULE.restore_list(SimpleNamespace(ledger=store.path))["restore"][0]["threadId"]
+        == candidate["threadId"]
+    )
+    result.write_bytes(old)
+    assert MODULE._current_stopped_attempt(store, candidate) == stop
+
+
+@pytest.mark.parametrize(
+    "invalid", ["active", "unknown", "missing_terminal", "foreign_context", "new_raw"]
+)
+def test_stopped_environment_cleanup_requires_current_complete_known_proof(
+    monkeypatch, tmp_path, invalid
+):
+    store, worktree = _native_exhausted_environment_stop(monkeypatch, tmp_path)
+    candidate = store.task_context_candidates()[0]
+    assert MODULE._current_stopped_attempt(store, candidate)
+    if invalid == "active":
+        monkeypatch.setattr(
+            MODULE, "_active_task_turn_for_result", lambda _item: {"turnId": "new-active"}
+        )
+    elif invalid == "unknown":
+        monkeypatch.setattr(MODULE, "THREAD_DB", tmp_path / "missing.sqlite3")
+    elif invalid == "missing_terminal":
+        journal = tmp_path / "native-stop.jsonl"
+        records = [json.loads(line) for line in journal.read_text().splitlines()]
+        journal.write_text(
+            "\n".join(
+                json.dumps(r)
+                for r in records
+                if (r.get("payload") or {}).get("type") != "task_complete"
+            )
+            + "\n"
+        )
+    elif invalid == "foreign_context":
+        path = worktree / MODULE.TASK_PRIVATE_DIR / "task-context.json"
+        value = json.loads(path.read_bytes())
+        value["threadId"] = "foreign"
+        path.write_text(json.dumps(value))
+    else:
+        path = worktree / MODULE.TASK_PRIVATE_DIR / "result.json"
+        value = json.loads(path.read_bytes())
+        value["evidence"] = {"new": "unverified"}
+        path.write_text(json.dumps(value))
+    assert MODULE._current_stopped_attempt(store, candidate) is None
+    assert MODULE.cleanup_list(SimpleNamespace(ledger=store.path))["cleanup"] == []
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='THREAD_ARCHIVED'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
 def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path):
     store, worktree = registered_store(tmp_path)
     context_path = MODULE.write_task_context(
@@ -24074,6 +24379,13 @@ def test_native_expired_pr_create_requires_real_completed_validation(
                     "UPDATE events SET payload_json=? WHERE id=?",
                     (no_progress["payload_json"], no_progress["id"]),
                 )
+        closed_stop = _assert_stopped_attempt_native_archive_loop(monkeypatch, store, worktree)
+        assert closed_stop["reason"] == "EXPIRED_VALIDATION_CURRENT_CONTEXT_OR_EXECUTION_MISSING"
+        archived_review = MODULE.independent_review_run(review_args)
+        assert (
+            archived_review["candidateErrors"] == []
+            and archived_review["skipped"] == classified["skipped"]
+        ), archived_review
         current_candidate = next(
             item for item in store.task_result_candidates_for_ingestion() if item["key"] == "a/b#1"
         )
@@ -24085,6 +24397,20 @@ def test_native_expired_pr_create_requires_real_completed_validation(
             prompt_revision=current_expiry_revision + "-changed-instructions",
             reason="EXPIRED_VALIDATION_CURRENT_CONTEXT_OR_EXECUTION_MISSING",
         )
+        assert MODULE._current_stopped_attempt(store, current_candidate) is None
+        assert MODULE.restore_list(SimpleNamespace(ledger=store.path))["restore"]
+
+        def restore_after_legitimate_rearm(items):
+            with sqlite3.connect(MODULE.THREAD_DB) as connection:
+                for item in items:
+                    connection.execute(
+                        "UPDATE threads SET archived=0 WHERE id=?", (item["threadId"],)
+                    )
+            return {item["threadId"]: None for item in items}
+
+        monkeypatch.setattr(MODULE, "_unarchive_desktop_threads", restore_after_legitimate_rearm)
+        resumed = MODULE.restore_reconcile(SimpleNamespace(ledger=store.path))
+        assert resumed["ok"] and len(resumed["restored"]) == 1, resumed
         original_context_refusal()
         assert (
             result_path.read_bytes() == failed_bytes and context_path.read_bytes() == context_bytes
