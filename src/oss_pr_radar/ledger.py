@@ -16684,6 +16684,26 @@ class RadarLedger:
                     )
                 elif required and previous is not None:
                     wake_digest = previous["wake_digest"]
+                elif (
+                    not required
+                    and item.get("taskFollowupRequired") is False
+                    and (rearm_after is None or checked_time > rearm_after)
+                    and previous is not None
+                    and not bool(previous["followup_required"])
+                    and all(incoming_identity)
+                    and incoming_identity == previous_identity == followup_identity
+                    and previous["pr_url"] == pr_url
+                    and previous["head_sha"] == head_sha
+                    and previous["checked_at"] == checked_at
+                    and previous["action_digest"] == action_digest
+                    and previous["task_action_digest"] == task_digest
+                    and previous["actions_json"] == canonical_json(actions)
+                    and previous["evidence_json"] == canonical_json(evidence)
+                    and re.fullmatch(r"[0-9a-f]{64}", str(previous["wake_digest"] or ""))
+                ):
+                    # An exact replay of an already suspended observation
+                    # retains its historical wake, without rearming work.
+                    wake_digest = previous["wake_digest"]
                 else:
                     wake_digest = None
                 connection.execute(

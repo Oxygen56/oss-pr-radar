@@ -14961,6 +14961,91 @@ def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
     [
         None,
         "active",
+        "no_wake",
+        "malformed_wake",
+        "intent_id",
+        "thread_id",
+        "worktree_path",
+        "pr_url",
+        "headSha",
+        "checkedAt",
+        "actionDigest",
+        "taskActionDigest",
+        "taskActions",
+        "evidence",
+    ],
+)
+def test_retired_followup_import_retains_only_exact_inactive_observation(
+    monkeypatch, tmp_path, mutation
+):
+    monkeypatch.setattr(MODULE, "ROOT", MODULE.ROOT)
+    store, _worktree, _head, _pr_url = _published_followup_store(tmp_path)
+    with store.connect() as connection:
+        original = dict(connection.execute("SELECT * FROM pr_followups").fetchone())
+    assert store.suspend_pr_followups(
+        source_generated_at=original["checked_at"], reason="source_stale"
+    ) == [original["opportunity_key"]]
+    item = {
+        "url": original["pr_url"],
+        "headSha": original["head_sha"],
+        "actionDigest": original["action_digest"],
+        "taskActionDigest": original["task_action_digest"],
+        "taskFollowupRequired": False,
+        "taskActions": json.loads(original["actions_json"]),
+        "evidence": json.loads(original["evidence_json"]),
+        "checkedAt": original["checked_at"],
+    }
+    if mutation in {
+        "active",
+        "no_wake",
+        "malformed_wake",
+        "intent_id",
+        "thread_id",
+        "worktree_path",
+        "pr_url",
+    }:
+        column, changed = {
+            "active": ("followup_required", 1),
+            "no_wake": ("wake_digest", None),
+            "malformed_wake": ("wake_digest", "invalid"),
+            "intent_id": ("intent_id", "other-intent"),
+            "thread_id": ("thread_id", "other-thread"),
+            "worktree_path": ("worktree_path", str(tmp_path / "other-worktree")),
+            "pr_url": ("pr_url", "https://github.com/a/b/pull/10"),
+        }[mutation]
+        with store.transaction() as connection:
+            connection.execute(
+                f"UPDATE pr_followups SET {column}=? WHERE opportunity_key=?",
+                (changed, original["opportunity_key"]),
+            )
+    elif mutation is not None:
+        if mutation == "checkedAt":
+            item[mutation] = iso_z(parse_time(item[mutation]) + timedelta(minutes=1))
+        elif mutation == "headSha":
+            item[mutation] = "f" * 40
+        elif mutation == "taskActions":
+            item[mutation] = ["different actions"]
+        elif mutation == "evidence":
+            item[mutation] = {"differentEvidence": True}
+        else:
+            item[mutation] = "different digest"
+    state = {"version": "pr_followup_v3", "generatedAt": item["checkedAt"], "items": [item]}
+    for _ in range(3):
+        store.import_pr_followups(state)
+        with store.connect() as connection:
+            current = dict(connection.execute("SELECT * FROM pr_followups").fetchone())
+        assert current["followup_required"] == 0
+        assert current["wake_digest"] == (original["wake_digest"] if mutation is None else None)
+        assert store.active_pr_followup(original["opportunity_key"]) is None
+        assert store.pr_followup_candidates() == []
+        assert store.publication_work_items() == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "active",
         "missing_row",
         "intent_id",
         "thread_id",
@@ -14971,8 +15056,9 @@ def test_published_result_context_mismatch_keeps_observation_split_task_scoped(
         "mirror_drift",
     ],
 )
+@pytest.mark.parametrize("reimport_retired", [False, True])
 def test_published_result_context_mismatch_after_followup_suspension_keeps_old_evidence(
-    monkeypatch, tmp_path, mutation
+    monkeypatch, tmp_path, mutation, reimport_retired
 ):
     """Recover the original split with a real newer wake suspended by the ledger."""
 
@@ -15021,7 +15107,18 @@ def test_published_result_context_mismatch_after_followup_suspension_keeps_old_e
                     "taskActionDigest": "replacement-task-action",
                     "taskFollowupRequired": True,
                     "taskActions": ["当前分支检查失败"],
-                    "evidence": {"actionableCheckNames": ["Ruff"]},
+                    "evidence": {
+                        "actionableCheckNames": ["Ruff"],
+                        "unansweredMaintainerComments": [
+                            {
+                                "url": pr_url + "#comment-1",
+                                "body": "Please retain the exact regression evidence.",
+                                "bodyDigest": hashlib.sha256(
+                                    b"Please retain the exact regression evidence."
+                                ).hexdigest(),
+                            }
+                        ],
+                    },
                     "checkedAt": checked_at,
                 }
             ],
@@ -15037,6 +15134,42 @@ def test_published_result_context_mismatch_after_followup_suspension_keeps_old_e
     local_path.write_text(MODULE.canonical_json(private), encoding="utf-8")
     private_raw = local_path.read_bytes()
     assert MODULE._private_context_matches_current_ledger(store, private)
+
+    if reimport_retired:
+        incoming = {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": published_head,
+                    "actionDigest": "older-summary-action",
+                    "taskActionDigest": "older-summary-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["older summary"],
+                    "evidence": {
+                        "unansweredMaintainerComments": [
+                            {"url": pr_url + "#comment-1", "summary": "older summary"}
+                        ]
+                    },
+                    "checkedAt": iso_z(datetime.now(UTC)),
+                }
+            ],
+        }
+        for _ in range(3):
+            retained, preserved = MODULE._preserve_complete_pr_feedback(store, incoming)
+            assert preserved == [context["key"]]
+            store.import_pr_followups(retained)
+            assert store.active_pr_followup(context["key"]) is None
+            assert store.pr_followup_candidates() == []
+            with store.connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM pr_followups WHERE opportunity_key=?", (context["key"],)
+                ).fetchone()
+            assert row["wake_digest"] == fresh["wake_digest"]
+            assert row["checked_at"] == fresh["checked_at"]
+            assert row["followup_required"] == 0
+            assert MODULE._private_context_matches_current_ledger(store, private)
 
     with store.transaction() as connection:
         if mutation == "missing_row":
