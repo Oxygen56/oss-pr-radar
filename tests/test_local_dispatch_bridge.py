@@ -13135,7 +13135,27 @@ def test_restore_reconcile_trusts_verified_postcondition_over_transport_error(
     assert restored == 1
 
 
-def test_exact_environment_blocked_reproduction_keeps_other_ready_work(tmp_path):
+@pytest.mark.parametrize(
+    ("reported_stage", "invalid_claim"),
+    [
+        ("REPRODUCTION_REQUIRED", None),
+        ("BLOCKED", None),
+        ("BLOCKED", "verification"),
+        ("BLOCKED", "verification_zero"),
+        ("BLOCKED", "verification_string"),
+        ("BLOCKED", "verification_missing"),
+        ("BLOCKED", "reason"),
+        ("BLOCKED", "foreign"),
+        ("BLOCKED", "context"),
+        ("BLOCKED", "changed_files"),
+        ("BLOCKED", "dirty"),
+        ("BLOCKED", "commit"),
+        ("BLOCKED", "publication"),
+    ],
+)
+def test_exact_environment_blocked_reproduction_keeps_other_ready_work(
+    tmp_path, reported_stage, invalid_claim
+):
     store, _ready_worktree, _ready_result = _controller_commit_result(tmp_path)
     worktree = MODULE.managed_worktree_path("intent-2", "a/b")
     worktree.mkdir(parents=True)
@@ -13204,6 +13224,26 @@ def test_exact_environment_blocked_reproduction_keeps_other_ready_work(tmp_path)
     context = json.loads(context_raw)
     assert context["stage"] == "DISPATCHED"
     assert context["taskStage"] == "REPRODUCTION_REQUIRED"
+    # Use the real title bookkeeping writer to order the blocked candidate
+    # before the valid contribution in the unfiltered ingestion projection.
+    ready_title = next(item for item in store.title_bindings() if item["threadId"] == "thread-1")
+    if ready_title["titleSyncedState"] == ready_title["titleState"]:
+        assert store.invalidate_title_sync(
+            thread_id="thread-1",
+            state=ready_title["titleState"],
+            actual_title_digest="test-candidate-order",
+        )
+    store.commit_title(
+        thread_id="thread-1",
+        state=ready_title["titleState"],
+        nonce=ready_title["titleNonce"],
+        intent_id="intent-1",
+        worktree_path=str(_ready_worktree),
+    )
+    assert [item["key"] for item in store.task_result_candidates_for_ingestion()] == [
+        "a/b#2",
+        "a/b#1",
+    ]
     result_path = Path(context["resultPath"])
     value = {
         "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
@@ -13213,15 +13253,39 @@ def test_exact_environment_blocked_reproduction_keeps_other_ready_work(tmp_path)
         "threadId": "thread-2",
         "worktreePath": str(worktree),
         # The actual child result omitted taskId; preserve that shape.
-        "stage": "REPRODUCTION_REQUIRED",
+        "stage": reported_stage,
         "reason": "REPRODUCTION_ENVIRONMENT_BLOCKED",
         "reproductionVerified": False,
         "evidence": {"environmentBlocker": "Bun and repository dependencies are absent."},
         "tests": [{"command": "bun --version", "exitCode": 127}],
     }
+    if invalid_claim == "verification":
+        value["reproductionVerified"] = True
+    elif invalid_claim == "verification_zero":
+        value["reproductionVerified"] = 0
+    elif invalid_claim == "verification_string":
+        value["reproductionVerified"] = "false"
+    elif invalid_claim == "verification_missing":
+        value.pop("reproductionVerified")
+    elif invalid_claim == "reason":
+        value["reason"] = "REPRODUCTION_CONFIRMED"
+    elif invalid_claim == "foreign":
+        value["threadId"] = "foreign-thread"
+    elif invalid_claim == "context":
+        value["contextDigest"] = "f" * 64
+    elif invalid_claim == "changed_files":
+        value["changedFiles"] = ["runtime.py"]
+    elif invalid_claim == "dirty":
+        (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
+    elif invalid_claim == "commit":
+        value["commitSha"] = base_sha
+    elif invalid_claim == "publication":
+        value["publication"] = {"baseBranch": "main"}
     raw = json.dumps(value, indent=2).encode() + b"\n"
     result_path.write_bytes(raw)
-    assert run_git(worktree, "status", "--porcelain") == ""
+    assert run_git(worktree, "status", "--porcelain") == (
+        "M runtime.py" if invalid_claim == "dirty" else ""
+    )
     with store.connect() as connection:
         intent_before = json.loads(
             connection.execute(
@@ -13233,6 +13297,51 @@ def test_exact_environment_blocked_reproduction_keeps_other_ready_work(tmp_path)
     # task alone produces no accepted result or publication request.
     args = SimpleNamespace(ledger=store.path, key="a/b#2")
     first = MODULE.ingest_task_results(args)
+    if invalid_claim is not None:
+        assert first["ingested"] == [] and first["publicationRequests"] == []
+        expected_error = (
+            "task result mismatch: threadId"
+            if invalid_claim == "foreign"
+            else "task result context digest mismatch"
+            if invalid_claim == "context"
+            else "REPRODUCTION_REQUIRED task violated its read-only contract"
+        )
+        assert first["errors"] == [{"key": "a/b#2", "error": expected_error}], first
+        if invalid_claim not in {"foreign", "context"}:
+            with store.connect() as connection:
+                policy_events = connection.execute(
+                    "SELECT payload_json FROM managed_lifecycle_events "
+                    "WHERE opportunity_key='a/b#2' AND event_type='TASK_POLICY_VIOLATION'"
+                ).fetchall()
+            assert len(policy_events) == 1
+            expected_violation = (
+                "changed_files_declared"
+                if invalid_claim == "changed_files"
+                else "worktree_modified"
+                if invalid_claim == "dirty"
+                else "implementation_or_publication_claim"
+                if invalid_claim in {"commit", "publication"}
+                else "stage_not_reproduction"
+            )
+            assert json.loads(policy_events[0]["payload_json"])["violations"] == [
+                expected_violation
+            ]
+        assert not any(
+            item.get("reason") == "REPRODUCTION_ENVIRONMENT_BLOCKED"
+            for item in first.get("workBlocked", [])
+        ), first
+        combined = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+        assert combined["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}], combined
+        assert len(combined["publicationRequests"]) == 1
+        assert combined["publicationRequests"][0]["key"] == "a/b#1"
+        assert result_path.read_bytes() == raw and context_path.read_bytes() == context_raw
+        assert (
+            store.task_context(issue_url="https://github.com/a/b/issues/2", thread_id="thread-2")[
+                "taskStage"
+            ]
+            == "REPRODUCTION_REQUIRED"
+        )
+        return
     assert first["ok"] is True, first
     assert first["errors"] == []
     assert first["ingested"] == []

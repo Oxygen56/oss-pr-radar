@@ -28000,6 +28000,12 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 "contextDigest"
             ):
                 stage_claim = str(value.get("stage") or "")
+                if (
+                    stage_claim == "BLOCKED"
+                    and value.get("reason") == "REPRODUCTION_ENVIRONMENT_BLOCKED"
+                    and value.get("reproductionVerified") is False
+                ):
+                    stage_claim = "REPRODUCTION_REQUIRED"
                 if stage_claim == "REPRODUCTION_VERIFIED" or (
                     stage_claim == "AUDIT_NO_GO" and value.get("reproductionVerified") is True
                 ):
