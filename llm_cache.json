@@ -95271,6 +95271,39 @@
     ],
     "why": "The issue provides a detailed experiment matrix isolating the corruption to speculative decoding with a KV connector attached, even with zero transferred tokens, and identifies a suspected code path. Maintainer comments confirm the connector-conditional lookup is not the sole cause, narrowing the root cause to connector presence interacting with spec-verify rollback. This is actionable for a fix in the scheduler/KV cache manager."
   },
+  "a0a060aac856b4a02f7365c41f4b12d85d3567d6b9fdf9e3e6f3c249cbf1156a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "graphon/graph/graph.py fail-branch node promotion logic",
+      "graphon/graph_engine/filters/response_stream.py blocking-edge and stream-buffer flush behavior",
+      "streaming regression test for Agent node with fail-branch error strategy"
+    ],
+    "risks": [
+      "Fix may alter branch-node streaming semantics for other node types",
+      "Overlapping open PR #43954 may conflict or duplicate effort",
+      "Behavior change could affect non-Agent branch nodes relying on current buffering"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with Advanced Chat chatflow, Agent node (Function Calling) with error_strategy=fail-branch, streaming API call; assert message events arrive incrementally rather than in a single burst",
+      "Control run with default error handling to confirm streaming baseline",
+      "Unit test on ResponseStreamFilter verifying chunks are flushed while branch session is unresolved"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for streaming through branch nodes",
+      "Exact scope of PR #43954 changes relative to the identified root cause"
+    ],
+    "why": "Issue provides a concrete, reproducible streaming regression with expected/actual timing pairs, control run, and specific code anchors in graphon (graph.py fail-branch promotion, response_stream.py blocking-edge and buffering logic). Root cause is clearly identified and a reference-vs-implementation test is feasible. Track is agent_ai_infra, not llm_algorithm, so algorithm-specific gating does not apply. Existing PR #43954 is open but lacks root-cause coverage evidence, leaving room for a better-substantiated fix."
+  },
   "a0bb40dfd65477661a61d469bc388fa39bf56accc4967adaadc5421a52fc4c36": {
     "confidence": 0.8,
     "contradictions": [
@@ -138183,6 +138216,38 @@
     ],
     "why": "The issue precisely identifies a missing mapping in a cost calculation dictionary, provides a clear reproduction path, and suggests a minimal fix. The root cause is well-defined and the change is low-risk."
   },
+  "e9970b7f4f7993b3eadd22f7d5d5baf913edd0727a41d5c200c1b43a2cdbc58c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "docker/Dockerfile: add COPY lines for mars-web-bridge.mjs and its transitive import closure (http-body.mjs, mars-tunnel-bridge.mjs, tunnel-registry.mjs, tunnel-client.mjs, mars-session.mjs, mars-api.mjs, mars-credentials.mjs, mars-oauth.mjs)",
+      "docker/Dockerfile: copy the ws runtime package into /opt/agent-canvas/node_modules",
+      "Add a script-test/lint check that fails when a relative import reachable from scripts/static-server.mjs lacks a matching COPY"
+    ],
+    "risks": [
+      "Copying the full transitive closure may pull in additional runtime deps beyond ws; incomplete closure would still crash at a later import",
+      "Adding a lint/script-test guard could be brittle if import resolution logic is naive",
+      "Dockerfile changes could inadvertently alter image size or startup defaults"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build the fixed image and run docker run -d -p 8000:8000 <tag>; after 120s verify docker inspect --format '{{.State.Running}} {{.RestartCount}}' reports true 0",
+      "docker run --rm --entrypoint sh <tag> -c 'ls /opt/agent-canvas' and confirm mars-web-bridge.mjs and http-body.mjs are listed; confirm /opt/agent-canvas/node_modules/ws exists",
+      "curl -sf http://localhost:8000/ returns 200 and docker logs contain no ERR_MODULE_NOT_FOUND or 'Static server ... exited'",
+      "Run mock-llm-docker-e2e workflow against the fix commit and confirm it passes (currently fails on run 38266250613, SHA 3f5654ac02)"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete, reproduced root cause: docker/Dockerfile copies scripts individually and omits mars-web-bridge.mjs (and its transitive import closure plus the ws runtime package), causing ERR_MODULE_NOT_FOUND and container crash-loop. Triage confirms against main and CI run 38266250613 reproduces the identical error. Acceptance criteria define a clear validation path (container stays running, module present, mock-llm-docker-e2e passes)."
+  },
   "e9bfdd9cbcb0365db984ef2b26abd59b03ffa4df6aa5e01ec859e6fb9edc9eea": {
     "confidence": 0.8,
     "contradictions": [],
@@ -144567,6 +144632,43 @@
       "Maintainer preference on routing vs dropping reasoning_effort; but issue asks to decide and record rationale"
     ],
     "why": "Issue reports a clear user-facing 400 error with a concrete repro and acceptance criteria. A comment provides a detailed root-cause analysis identifying the exact client-selection logic and parameter mapping mismatch, making the fix actionable and localized."
+  },
+  "f42d4d51a5456bbca8634d6b637586574c1c7a5728a261b68efb54d2fdf0978b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter sees consistent failure on macOS while the bot's Linux reproduction picked up all files within seconds",
+      "Reporter claims consistent reproducibility across dozens of attempts, but registration is described as intermittent and content-independent"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "command file watcher/reload path (platform-specific FSEvents handling)",
+      "command registry reconciliation on directory events"
+    ],
+    "risks": [
+      "Platform-specific FSEvents behavior may not be reproducible in CI (Linux inotify)",
+      "Possible interaction with plugin reload dropping file-loaded commands (#49982) could misattribute the cause",
+      "Watcher resubscription churn (#53393/#50594) may be the actual defect rather than command registration"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on macOS with OPENCODE_LOG_LEVEL=DEBUG, capture `watcher ...` and WARN/ERROR lines around batch and single-file writes",
+      "Retest with the headroom plugin disabled to rule out plugin reload interference",
+      "Add a regression test that batch-adds N command files and asserts /api/command reflects all of them without restart"
+    ],
+    "unknowns": [
+      "DEBUG watcher logs from the failing macOS run",
+      "Whether the failure persists with the headroom plugin disabled",
+      "Whether failure correlates with service uptime",
+      "Whether #49982/#53393/#50594 already cover this watcher defect"
+    ],
+    "why": "The issue reports intermittent macOS FSEvents watcher behavior with no root cause identified; the bot's Linux reproduction attempt failed entirely, and the reporter was asked for DEBUG watcher logs, plugin-disabled retest, and uptime correlation that have not been supplied. No code anchor points to a specific watcher/reload defect, so the fix target is undetermined."
   },
   "f43633ddc5ac463d42f243c40cd239b32e3d27605b70c1b0c1700bcb04366101": {
     "confidence": 0.9,
