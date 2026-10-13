@@ -1300,6 +1300,34 @@
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "0305965ef36906c69d94dc144db06fadbd37a8661f295c7f3c54a62f11d7656d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: align mhc_fused_post_pre large-batch path with current tf32_hc_prenorm_gemm contract (num_splits internal split-K hint, d shape {1,m,n})"
+    ],
+    "risks": [
+      "Changing num_splits semantics may alter numerical results or performance on other devices",
+      "DeepGemm version drift could require a version-gated fix rather than a hard clamp"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLANG_OPT_FUSE_MHC_POST_PRE=1 on DeepSeek-V4-Pro TP8 and confirm the DeepGemm assertion at gemm.hpp:930",
+      "After fix, verify CUDA graph capture succeeds and sanity outputs match the unfused path",
+      "Add a minimal single-call, 1-card smoke test for the opt-in fused mHC flag"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer clamping n_splits to 1 versus reallocating d as {1,m,n}"
+    ],
+    "why": "Issue provides a concrete crash, exact assertion, code anchor (mhc.py large-batch path), and a bisection showing num_splits=39/19 fails while num_splits=1 passes, establishing an API-contract mismatch with the current DeepGemm tf32_hc_prenorm_gemm. A minimal fix (clamp/reallocate d as {1,m,n}) and validation path (graph capture + sanity outputs) are described."
+  },
   "031bd822e038ae62196db445830dd6f270cc82fa790941ed2b117aab474373ec": {
     "confidence": 0.7,
     "contradictions": [
@@ -2567,6 +2595,39 @@
       "Exact scope of affected call sites beyond those listed."
     ],
     "why": "Issue provides a clear root cause (Sqlite3Client discards connection on interactive transaction, causing :memory: to be recreated empty), a minimal reproduction, and affected call sites. The fix is actionable: either avoid interactive transactions for :memory: or handle connection reuse. Evidence includes code anchors and a related upstream PR."
+  },
+  "058a33bb85fb3ec98f76a334c0fb0421d1f0ee1bafa9bf42ee153cb93e71e425": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "invokeai/app/invocations/wan/wan_denoise.py: implement `_get_wan_transformer_working_mem_bytes` to estimate activation memory from token count (e.g. 75,600 tokens at 720p/81 frames) instead of returning None when `wan_memory_optimization` is off",
+      "Pass the estimated `working_mem_bytes` into `model_on_device(...)` so the loader offloads enough weights to fit 24 GB",
+      "Optionally add a SageAttention pre-call VRAM check comparing quantized Q/K/V copy size against free VRAM (`torch.cuda.mem_get_info` + reserved-but-unallocated) and fall back to SDPA when it does not fit"
+    ],
+    "risks": [
+      "Over-estimating working memory could force excessive offloading and regress throughput on cards that previously fit",
+      "SageAttention fallback adds a per-call driver query; must not regress the 480p case where SageAttention halves time",
+      "Open PRs #9657/#9665 touch the same attention path and may conflict or partially overlap the SageAttention portion"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test `_get_wan_transformer_working_mem_bytes` against known token counts (e.g. 832x480 and 1280x720 with 81 frames) asserting a non-None estimate that scales with tokens",
+      "Regression test that with default `device_working_mem_gb: 3` and partial loading on, the loader receives a working_mem_bytes estimate large enough to avoid the first-block OOM path",
+      "If SageAttention fallback is added, a test that a simulated low-free-VRAM condition selects SDPA instead of SageAttention"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the missing working-memory estimate in scope for a standalone fix versus folding it into the open SageAttention PR stack (#9657-#9665)"
+    ],
+    "why": "Issue #9831 provides a concrete, reproducible root cause: `_get_wan_transformer_working_mem_bytes` in `invokeai/app/invocations/wan/wan_denoise.py` returns None unless `wan_memory_optimization` is on, so the Wan expert is loaded with only the 3 GB floor as working memory; at 720p/81 frames the transformer sees 75,600 tokens and overflows 24 GB. The issue includes a settings matrix (partial loading on/off, device_working_mem_gb 3/10, SDPA vs SageAttention), exact OOM location (`transformer_wan.py:502`), and a concrete fix direction (estimate working memory from token count and pass to `model_on_device(working_mem_bytes=...)`). This is a memory-management/algorithmic mechanism in a diffusion transformer, not mere CLI/config plumbing. Open PRs #9665/#9657/#9668 are semantically overlapping but none references or closes this issue, and none covers the missing working-memory estimate root cause, so they do not establish coverage."
   },
   "0593e2b2ec458703b11bde9ef9cf1d7a44573131d4358d32d687bfd09b629560": {
     "confidence": 0.82,
@@ -11273,6 +11334,43 @@
       "Whether maintainers require assignment before a PR (policy status needs_assignment) and whether they prefer the migration fix or restoring the old gate leg"
     ],
     "why": "Issue provides directly observed root cause (cmd.exe /C quote-stripping destroying the wrapped argv when a second quoted Program Files path is present), a controlled repro matrix across two kiro-cli versions, a concrete rewriter patch with 8.3 short-path conversion plus an argv guard, a migration/gate fix, and end-to-end live verification. Track is agent_ai_infra, so the algorithm-track restriction does not apply; the work is a concrete runtime/gateway defect with a clear validation path."
+  },
+  "146f070edcf2e949c2ac8255e8b48922d01659ba128792efcedfd9f47dde0310": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states first differing projection does not establish cause of all final drift, yet candidate claims root-cause localization",
+      "PR #44094 references the issue with direct code overlap but is CLOSED and lacks tests; coverage unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Numerical determinism/batch-shape invariance in BF16 projection and LM-head scoring path",
+      "Regression test pinning score stability across batch shapes"
+    ],
+    "risks": [
+      "Distinguishing genuine numerical bug from expected non-deterministic GEMM behavior",
+      "Fix may belong upstream (cuBLAS/FlashInfer) rather than SGLang",
+      "Closed PR #44094 may already address the same root cause"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay repro_bf16_projection.py to confirm M=47 vs M=752 divergence",
+      "Run /v1/score batch sweep with fixed token IDs and assert P(positive) stability within tolerance",
+      "Compare FP8 vs BF16 and FP32-head controls"
+    ],
+    "unknowns": [
+      "Whether PR #44094's closed fix already resolves the batch-shape invariance",
+      "Whether the root cause is in SGLang code or upstream GEMM kernels",
+      "Whether maintainers consider this a supported-configuration documentation issue rather than a code fix"
+    ],
+    "why": "The issue provides a strong reproduction and localization (BF16 in_proj_ba projection differs by 0.015625 between M=47 and M=752, reproducible in pure PyTorch), but the supplied evidence explicitly states the first differing projection does not establish the cause of final drift, and the duplicate/coverage status is unresolved: PR #44094 (CLOSED, references the issue, direct code overlap, no tests) may already cover the batch-shape invariance fix, and the pre-task duplicate status is human_review_required. This unresolved coverage materially determines whether new code work is actionable."
   },
   "1473a4a066770da258ab0b5289b854f8b217589f0c96e24c6457ac7c178cd28d": {
     "confidence": 0.8,
@@ -27720,6 +27818,36 @@
     ],
     "why": "Issue reports a concrete local-embedding failure with a plausible root cause (duplicate ONNX module identities from OMP's reload-tagged import) and a candidate fix, but the only recent comment claims the problem is resolved by upgrading Bun to 1.4.2, which contradicts the proposed code fix and leaves unresolved whether any code change is still needed."
   },
+  "301d52edededcc2ac0bff475e9e7025e2eff141c960d1e7d4750cef334e563b4": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks semantic_overlap_requires_review while preTaskEvidence duplicate status is unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/mcp/server/lowlevel/server.py AuthSettings validation",
+      "src/mcp/server/mcpserver/server.py auth wiring"
+    ],
+    "risks": [
+      "PR #3292 may already implement the same fix, making this duplicate work",
+      "Relaxing issuer_url could weaken PRM authorization_servers validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with token_verifier only and resource_server_url=None; assert AuthSettings validates without issuer_url",
+      "Regression: issuer_url still required when resource_server_url or auth_server_provider is set"
+    ],
+    "unknowns": [
+      "Whether PR #3292 already fixes the issuer_url requirement for resource-server-only mode"
+    ],
+    "why": "Issue describes a concrete validation bug (issuer_url required but unused in resource-server-only mode) with a repro gist, but the supplied evidence shows an open PR #3292 with semantic overlap on 'resource_server_only' and overlapping server paths, and the duplicate status is 'semantic_overlap_requires_review'. Whether that PR already covers the root cause is unresolved, which materially determines whether new code work is actionable."
+  },
   "3028641768aa78de7e3cae2dd0093fb4c66d63c7e75bca93043ff2110f813a0d": {
     "confidence": 0.6,
     "contradictions": [
@@ -43432,6 +43560,38 @@
     ],
     "why": "The issue provides a clear, statically-confirmed root cause (name-based uninstall resolves only through getLoadedExtensions(), which requires an on-disk manifest, while install checks the store snapshot) and a concrete reproduction path. However, the supplied evidence contains a materially blocking unknown: an open PR (#11889) with semantic overlap on packages/core/src/extension/extension-store.ts is flagged as 'semantic_overlap_requires_review' and 'technical_complete: false', and the issue itself explicitly states it was filed separately from that Windows directory-lock fix. Whether that PR already covers or conflicts with the proposed fix is unresolved, and the triage comment notes a maintainer decision is needed on the credentialPersistence gap before a fix can land."
   },
+  "4ae5c40f77ae83d2cbfefadf3c186002225bb4323328c2942b5a61d336bedfe4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "related_issue_assessment reports no related open issues, but bot comment cites #51071, #54876, #46122, #49765, #50925 as duplicates/related"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "subagent tool model-override permission enforcement",
+      "permissions/subagent model granularity"
+    ],
+    "risks": [
+      "Duplicate of #51071 may already cover the fix",
+      "Behavior change to subagent model inheritance could break existing workflows"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: parent on free model spawns explore subagent with explicit per-call model; assert child inherits parent model or is denied",
+      "Regression test that subagent permission denies per-call model override when configured"
+    ],
+    "unknowns": [
+      "Whether #51071 is still open and unresolved",
+      "Whether any upstream fix or merged PR already addresses per-call model gating"
+    ],
+    "why": "The bot comment identifies #51071 as a likely duplicate covering the same root cause (per-call `model` on the `subagent` tool not gated by permission), and the issue itself notes related asks exist only as unmerged fork PRs. Duplicate/merged-fix coverage is unresolved, which materially determines whether new code work is actionable."
+  },
   "4af04935374bd7696d10a403ad5c8801e3974ed736ab0aa2b301ba22690bc3d2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -52519,6 +52679,38 @@
       "Whether maintainers have already started work on this issue"
     ],
     "why": "The issue provides a concrete, reproducible bug with clear root causes: CUDA graph capture hangs for hybrid GDN models, dtype mismatch in AWQ path, and MTP memory allocation failure. It includes executable commands and environment details, enabling a reference-vs-implementation test. The track is llm_algorithm with mechanisms in model_architecture and numerics_quantization, satisfying the requirement for a concrete validation path."
+  },
+  "57b563103a82ad8366b8e80d3479318a725cd1b1fbd4d957af80bf5d3bd00d29": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims a verified minimal fix, while open PR #43960 already covers the same code identifier and path; duplicate status is human_review_required"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "scheduler prefill path: filter running_batch in the non-mixed-chunk else branch of _get_new_batch_prefill_raw"
+    ],
+    "risks": [
+      "Duplicating the already-open PR #43960 with no added value",
+      "Changing running_batch filtering on the prefill path could affect admission/load accounting behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting num_running_reqs / len(running_batch.reqs) does not grow monotonically under chunked prefill with enable_mixed_chunk=False and max_new_tokens>=1",
+      "Reproduce with the issue's server/client config and confirm #running-req stays near client concurrency"
+    ],
+    "unknowns": [
+      "Whether PR #43960 will merge or be superseded, i.e. whether independent implementation space exists",
+      "Whether maintainers require a regression test beyond the one-line fix"
+    ],
+    "why": "Issue provides a clear root cause and a verified minimal fix, but an open PR (#43960) already implements exactly that one-line change on the same code path, and the duplicate/coverage status is explicitly 'human_review_required'. Whether independent implementation space remains is unresolved, which materially determines actionability."
   },
   "57c3c54411085929c2a2fb61d71a6c31972612d6379db7d08a70e3208c96c6d3": {
     "confidence": 0.8,
