@@ -42962,3 +42962,273 @@ def test_original_recovery_refreshes_stale_published_validation_resources(
     assert base64.b64decode(json.loads(event[0])["failedResultBytesBase64"]) == failed_raw
     MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
     assert result_path.read_bytes() == derived_raw
+
+
+def _private_scan_snapshot_fixture(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda *_args: None)
+    first = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=first)
+    run_git(first, "remote", "add", "origin", "https://github.com/a/b.git")
+    second = MODULE.managed_worktree_path("intent-2", "a/b")
+    second.mkdir(parents=True)
+    run_git(second, "init")
+    run_git(second, "remote", "add", "origin", "https://github.com/a/b.git")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-2",
+            "key": "a/b#2",
+            "repo": "a/b",
+            "issueNumber": 2,
+            "issueUrl": "https://github.com/a/b/issues/2",
+            "title": "Second task",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    store.claim("intent-2", "controller")
+    store.commit_dispatch(
+        "intent-2",
+        owner="controller",
+        thread_id="thread-2",
+        project_id="github",
+        worktree_path=str(second),
+        title_time="08-05 16:00",
+    )
+    store.record_audit_snapshot(
+        "a/b#2",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "second-live-evidence",
+            "liveAudit": {
+                "capturedAt": iso_z(now),
+                "evidence": {"digest": "second-live-evidence", "issue": {"state": "open"}},
+            },
+        },
+        dedupe_key="second-live-evidence",
+    )
+    paths = [
+        MODULE.write_task_context(
+            store,
+            issue_url=f"https://github.com/a/b/issues/{number}",
+            thread_id=f"thread-{number}",
+            cwd=worktree,
+        )
+        for number, worktree in ((1, first), (2, second))
+    ]
+    return store, paths
+
+
+def test_private_scan_snapshot_accepts_original_writer_update_and_recovers_next_task(
+    monkeypatch, tmp_path
+):
+    store, paths = _private_scan_snapshot_fixture(monkeypatch, tmp_path)
+    old_raw = paths[0].read_bytes()
+    old_context = json.loads(old_raw)
+    second_raw = paths[1].read_bytes()
+    scan = MODULE._list_managed_private_task_contexts
+    observed = []
+
+    def scan_then_write():
+        entries, errors = scan()
+        audit = copy.deepcopy(old_context["liveAudit"])
+        audit["capturedAt"] = iso_z(parse_time(audit["capturedAt"]) + timedelta(seconds=1))
+        store.record_audit_snapshot(
+            "a/b#1",
+            evidence={
+                "authorization": {"status": "ALLOW"},
+                "evidenceDigest": audit["evidence"]["digest"],
+                "liveAudit": audit,
+            },
+            dedupe_key="scan-snapshot-current-audit",
+        )
+        MODULE.write_task_context(
+            store,
+            issue_url=old_context["issueUrl"],
+            thread_id=old_context["threadId"],
+            cwd=Path(old_context["worktreePath"]),
+        )
+        current_raw = paths[0].read_bytes()
+        assert current_raw != old_raw
+        assert json.loads(current_raw)["contextDigest"] == old_context["contextDigest"]
+        assert any(item["raw"] == old_raw for item in entries)
+        observed.append(current_raw)
+        return entries, errors
+
+    monkeypatch.setattr(MODULE, "_list_managed_private_task_contexts", scan_then_write)
+    result = MODULE.recover_shared_task_contexts(store)
+
+    assert len(observed) == 1
+    assert result["privateErrors"] == [], result
+    assert result["errors"] == [], result
+    assert result["verified"] == 2, json.dumps(result, sort_keys=True)
+    assert {item["key"] for item in result["restored"]} == {"a/b#1", "a/b#2"}
+    assert paths[0].read_bytes() == observed[0]
+    assert paths[1].read_bytes() == second_raw
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "digest",
+        "boundary",
+        "intent",
+        "thread",
+        "issue",
+        "worktree",
+        "invalid-json",
+        "file-mode",
+        "file-symlink",
+        "private-directory",
+        "worktree-directory",
+        "repository",
+        "base",
+    ],
+)
+def test_private_scan_snapshot_does_not_hide_changed_unsafe_or_foreign_current_context(
+    monkeypatch, tmp_path, mutation
+):
+    store, paths = _private_scan_snapshot_fixture(monkeypatch, tmp_path)
+    original = json.loads(paths[0].read_bytes())
+    second_raw = paths[1].read_bytes()
+    scan = MODULE._list_managed_private_task_contexts
+    mutated = []
+
+    def scan_then_mutate():
+        entries, errors = scan()
+        current = dict(original)
+        if mutation == "digest":
+            current["contextDigest"] = "0" * 64
+        elif mutation == "boundary":
+            current["childMayRequestApproval"] = True
+        elif mutation == "intent":
+            current["intentId"] = "foreign-intent"
+        elif mutation == "thread":
+            current["threadId"] = "foreign-thread"
+        elif mutation == "issue":
+            current.update(issueUrl="https://github.com/a/b/issues/3", key="a/b#3")
+        elif mutation == "worktree":
+            current["worktreePath"] = str(tmp_path / "foreign-worktree")
+        elif mutation == "invalid-json":
+            paths[0].write_bytes(b"invalid JSON")
+        elif mutation == "file-mode":
+            paths[0].chmod(0o666)
+        elif mutation == "file-symlink":
+            target = tmp_path / "foreign-context.json"
+            target.write_bytes(paths[0].read_bytes())
+            paths[0].unlink()
+            paths[0].symlink_to(target)
+        elif mutation in {"private-directory", "worktree-directory"}:
+            directory = paths[0].parent if mutation == "private-directory" else paths[0].parents[1]
+            retained = directory.with_name(directory.name + "-retained")
+            directory.rename(retained)
+            shutil.copytree(retained, directory)
+        elif mutation == "repository":
+            run_git(
+                paths[0].parents[1], "remote", "set-url", "origin", "https://github.com/x/y.git"
+            )
+        elif mutation == "base":
+            current["targetBase"] = {"branch": "main", "sha": "f" * 40}
+            current["contextDigest"] = MODULE._task_context_digest(current, None)
+        if mutation in {"digest", "boundary", "intent", "thread", "issue", "worktree", "base"}:
+            MODULE._atomic_json(paths[0], current)
+        mutated.append(paths[0].read_bytes())
+        return entries, errors
+
+    monkeypatch.setattr(MODULE, "_list_managed_private_task_contexts", scan_then_mutate)
+    result = MODULE.recover_shared_task_contexts(store)
+
+    if mutation in {"file-mode", "repository"}:
+        # Both unchanged envelopes fail the original shared verifier;
+        # preserve its quarantine contract and the other valid task.
+        assert result["privateErrors"] == []
+        assert result["verified"] == 1, result
+        assert [item["key"] for item in result["restored"]] == ["a/b#2"]
+        assert [(item["key"], item["reason"]) for item in result["quarantined"]] == [
+            ("a/b#1", "SHARED_CONTEXT_INVALID")
+        ]
+    else:
+        assert result["verified"] == 0, result
+        assert result["restored"] == [], result
+        assert len(result["privateErrors"]) == 1, result
+        assert result["errors"][0]["source"] == "private"
+    assert paths[0].read_bytes() == mutated[0]
+    assert paths[1].read_bytes() == second_raw
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                   AND opportunity_key='a/b#1'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.parametrize("updates", [1, 2])
+def test_private_scan_snapshot_retries_one_original_write_but_not_continuous_drift(
+    monkeypatch, tmp_path, updates
+):
+    store, paths = _private_scan_snapshot_fixture(monkeypatch, tmp_path)
+    verify = MODULE._verified_private_task_context
+    writes = []
+    writing = False
+
+    def verify_then_write(worktree, raw, source_stat, **kwargs):
+        nonlocal writing
+        result = verify(worktree, raw, source_stat, **kwargs)
+        if worktree == paths[0].parents[1] and len(writes) < updates and not writing:
+            context = json.loads(paths[0].read_bytes())
+            audit = copy.deepcopy(context["liveAudit"])
+            audit["capturedAt"] = iso_z(parse_time(audit["capturedAt"]) + timedelta(seconds=1))
+            store.record_audit_snapshot(
+                "a/b#1",
+                evidence={
+                    "authorization": {"status": "ALLOW"},
+                    "evidenceDigest": audit["evidence"]["digest"],
+                    "liveAudit": audit,
+                },
+                dedupe_key=f"snapshot-verification-audit-{len(writes)}",
+            )
+            writing = True
+            try:
+                MODULE.write_task_context(
+                    store,
+                    issue_url=context["issueUrl"],
+                    thread_id=context["threadId"],
+                    cwd=worktree,
+                    _opportunity_guard_held=True,
+                )
+            finally:
+                writing = False
+            writes.append(paths[0].read_bytes())
+        return result
+
+    monkeypatch.setattr(MODULE, "_verified_private_task_context", verify_then_write)
+    result = MODULE.recover_shared_task_contexts(store)
+
+    assert len(writes) == updates
+    assert paths[0].read_bytes() == writes[-1]
+    if updates == 1:
+        assert result["errors"] == [], result
+        assert result["privateErrors"] == [], result
+        assert result["verified"] == 2
+        assert {item["key"] for item in result["restored"]} == {"a/b#1", "a/b#2"}
+    else:
+        assert result["verified"] == 0
+        assert result["restored"] == []
+        assert (
+            result["privateErrors"][0]["error"]
+            == "private task context changed during verification"
+        )
+        with store.connect() as connection:
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND'"
+                ).fetchone()[0]
+                == 0
+            )

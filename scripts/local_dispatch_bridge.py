@@ -3235,6 +3235,61 @@ def _task_context_authorization_projection(
     }
 
 
+def _verified_current_private_task_context(
+    store: RadarLedger, entry: dict[str, Any]
+) -> tuple[dict[str, Any], str]:
+    """Use scan bytes only to locate the same task's current, stable mirror."""
+
+    cached = json.loads(entry["raw"])
+    if not isinstance(cached, dict):
+        raise RuntimeError("private task context is not an object")
+    binding = _task_context_binding(cached)
+    worktree = Path(entry["worktreePath"])
+    if binding is None or binding[3] != str(worktree.resolve()):
+        raise RuntimeError("private task context lifecycle binding is incomplete")
+    with opportunity_action_guard(ledger_action_guard_root(store.path), binding[0]):
+        with _task_worktree_private_descriptor({"worktreePath": str(worktree)}) as opened:
+            for name, descriptor in (
+                ("worktreeStat", opened.worktree_fd),
+                ("privateStat", opened.private_fd),
+            ):
+                scanned = entry[name]
+                current = os.fstat(descriptor)
+                if (scanned.st_dev, scanned.st_ino) != (current.st_dev, current.st_ino):
+                    raise RuntimeError("private task context directory changed after scanning")
+            for _attempt in range(2):
+                raw = _read_task_context_bytes_from_private(opened)
+                source_stat = os.stat(
+                    "task-context.json", dir_fd=opened.private_fd, follow_symlinks=False
+                )
+                entry.update(raw=raw, sourceStat=source_stat, snapshotStable=False)
+                current = json.loads(raw)
+                if (
+                    not isinstance(current, dict)
+                    or _task_context_binding(current) != binding
+                    or current.get("issueUrl") != cached.get("issueUrl")
+                ):
+                    raise RuntimeError("private task context binding changed after scanning")
+                failure = None
+                try:
+                    verified = _verified_private_task_context(worktree, raw, source_stat)
+                except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                    failure = exc
+                latest_raw = _read_task_context_bytes_from_private(opened)
+                latest_stat = os.stat(
+                    "task-context.json", dir_fd=opened.private_fd, follow_symlinks=False
+                )
+                if latest_raw != raw or latest_stat != source_stat:
+                    continue
+                break
+            else:
+                raise RuntimeError("private task context changed during verification")
+        entry["snapshotStable"] = True
+        if failure is not None:
+            raise failure
+        return verified
+
+
 def _private_context_matches_current_ledger(
     store: RadarLedger,
     context: dict[str, Any],
@@ -3442,6 +3497,8 @@ def _list_managed_private_task_contexts() -> tuple[list[dict[str, Any]], list[di
                     "worktreePath": repository_path,
                     "raw": raw,
                     "sourceStat": source_stat,
+                    "worktreeStat": os.fstat(repository_fd),
+                    "privateStat": os.fstat(private_fd),
                 }
             )
             return True
@@ -5344,12 +5401,11 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     private_errors.extend(private_scan_errors)
     private_by_key: dict[str, list[dict[str, Any]]] = {}
     for entry in private_entries:
+        current_entry = dict(entry)
         try:
             private_worktree = Path(entry["worktreePath"])
-            context, source_updated_at = _verified_private_task_context(
-                private_worktree,
-                entry["raw"],
-                entry["sourceStat"],
+            context, source_updated_at = _verified_current_private_task_context(
+                store, current_entry
             )
             # A rejected/expired task mirror is authenticated historical evidence,
             # not a candidate for lifecycle restoration.  Retained worktrees are
@@ -5365,7 +5421,7 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                     "context": context,
                     "sourceUpdatedAt": source_updated_at,
                     "worktreePath": private_worktree,
-                    "raw": entry["raw"],
+                    "raw": current_entry["raw"],
                     "binding": binding,
                 }
             )
@@ -5374,7 +5430,9 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
             # preserve the established shared-context quarantine contract.
             # A private-only defect (or a mismatch against a valid shared
             # file) remains a top-level controller error.
-            if _private_failure_is_identically_mirrored(entry["raw"]):
+            if current_entry.get(
+                "snapshotStable"
+            ) is True and _private_failure_is_identically_mirrored(current_entry["raw"]):
                 continue
             private_errors.append(
                 {
