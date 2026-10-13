@@ -96,6 +96,41 @@
     ],
     "why": "Issue provides a concrete, reproducible root cause: MCP OAuth authorization-server discovery at github.com/login/oauth/.well-known/oauth-authorization-server returns 404, so Cline bails before reaching its already-implemented device-code grant. Endpoint checks and a minimal device-flow client are supplied, giving a clear reference-vs-implementation validation path. No open PR or duplicate covers this fix; the two merged PRs are unrelated (promotion messaging, search approval crash)."
   },
+  "0056daff86506261160629e37df0a2afb27b2652acd5ff647e7d0189bc636677": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/pipeline/network/egress/tcp_client.rs: distinguish ack timeout from instance-down signal",
+      "lib/runtime/src/pipeline/network/ingress/shared_tcp_endpoint.rs: ack path independence from handler load",
+      "lib/runtime/src/config/environment_names.rs: register DYN_TCP_REQUEST_TIMEOUT and other DYN_TCP_* vars",
+      "push_router/client.rs: fallback to inhibited instance when no routable instance remains (single-instance endpoint)"
+    ],
+    "risks": [
+      "Changing inhibition semantics for ack timeouts could mask genuinely dead peers; needs a bounded fallback rather than removing fault detection.",
+      "Process-wide env vars (DYN_TCP_REQUEST_TIMEOUT, DYN_RUNTIME_INHIBITED_DURATION_SECS) affect all clients in the process, so a fix must be scoped carefully.",
+      "The reporter's exact setup depends on a non-upstream video-encode PoC patch; the minimal reproduction is proposed but not yet run, so the failing test must be constructed from the sketch."
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test with a single-instance Python endpoint whose handler blocks the runtime >5s, called via Endpoint.client().round_robin() with ~32 concurrent requests; assert no 'No workers available' burst and that requests eventually succeed.",
+      "Unit test asserting a request-ack timeout does not call report_instance_down / does not remove the only instance from the routable set.",
+      "Config test asserting DYN_TCP_REQUEST_TIMEOUT and sibling DYN_TCP_* vars are registered in environment_names.rs with documented defaults."
+    ],
+    "unknowns": [
+      "The suggested minimal reproduction was not actually run; whether a pure-Python GIL-holding handler reliably reproduces the >5s ack delay on upstream main is unverified.",
+      "Whether maintainers prefer fix (b) ack-timeout-not-down, (c) inhibited-instance fallback, or (d) ack-path isolation is not stated, though this is normal implementation choice rather than a blocker."
+    ],
+    "why": "Issue provides a detailed, code-anchored root cause chain (tcp_client.rs 5s ack timeout -> is_inhibited -> report_instance_down -> unconditional removal from routable set -> Unavailable), a verified workaround, and a concrete minimal reproduction sketch. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific gate does not apply. No duplicate/merged fix covers this case; #15775 bounds post-ack wait only and #15942/#14369 are adjacent but not covering."
+  },
   "006c6c869e70b6b102f255762f16611bd63b0012548daea8b2b1110444691c96": {
     "confidence": 0.8,
     "contradictions": [],
@@ -14758,6 +14793,37 @@
       "Whether a deterministic reproduction can be constructed at all"
     ],
     "why": "The issue reports a real regression (build A/B rollback on GLM-5.3-Flash FP8), but the reporter explicitly could NOT reproduce it synthetically; only long real agentic sessions trigger it. Root cause is unresolved across three candidate components (vLLM commit range, FlashInfer 0.6.17→0.6.18, transformers 5.15.1→5.16.1), and the suggested bisection checks (disable prefix caching, pin FlashInfer 0.6.17) are unexecuted. No concrete training objective, kernel algorithm, quantization/numerical method, or evaluation methodology is established, and no reference-vs-implementation or numerical regression path exists yet."
+  },
+  "1ae4cafd5cfc0739a1168be8d8d0db74bcfba713e3828bf4197eaf520cc81c95": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "KV router cost/weighting formula in the router selection path (overlap credit vs decode-load term)",
+      "possibly the non_max_overlap_selections_total counter semantics"
+    ],
+    "risks": [
+      "Changing default weights may regress heavier or skewed-load scenarios where the load term is legitimately useful",
+      "Counter semantics may be intentional, so changing it could break observability expectations",
+      "Maintainer may prefer documenting session affinity as the recommended option rather than changing defaults"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the documented two-worker vLLM setup and 16x12 multi-turn workload; assert resumed turns stay on the prefix-holding worker when the alternative's advantage is only transient decode load",
+      "Regression test comparing recomputed prefill (vllm:request_prefill_kv_computed_tokens_sum) against round-robin and session-affinity baselines",
+      "Unit test on the router scoring formula verifying overlap credit can outweigh short-lived decode load for long-prefix/short-output requests"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the current weighting intended behavior or a bug",
+      "Whether non_max_overlap_selections_total staying 0 is expected"
+    ],
+    "why": "Issue provides a concrete, reproducible KV-router scheduling defect: overlap credit only offsets the prefill term, so transient decode load on the cache-holding worker can outweigh resident prefix overlap, moving multi-turn sessions off the worker holding their prefix. Evidence includes a decision-formula trace, per-request worker placement, and a controlled comparison against round-robin and session affinity."
   },
   "1af1647f415bd8ff9a2a7e23d6179c96b45eed1575503d62185215bbca079beb": {
     "confidence": 0.95,
