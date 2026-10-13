@@ -504,8 +504,20 @@ def activate_staged_workers(
     domain: str,
     runtime_root: Path,
     require_stage_receipt: bool = True,
+    _lock_held: bool = False,
 ) -> dict[str, object]:
     """Load workers only after the current operational authorization verifies."""
+
+    if not _lock_held:
+        with worker_staging_transaction_lock(runtime_root):
+            return activate_staged_workers(
+                specs,
+                home=home,
+                domain=domain,
+                runtime_root=runtime_root,
+                require_stage_receipt=require_stage_receipt,
+                _lock_held=True,
+            )
 
     authorization = require_operational_authorization(
         runtime_root, require_staged_receipt=require_stage_receipt
@@ -531,7 +543,7 @@ def activate_staged_workers(
         # operation, including reproduction-probe.  Promote the staged proof
         # before bootstrap so the first process cannot observe STAGED auth.
         if require_stage_receipt:
-            finalize_operational_authorization(runtime_root)
+            finalize_operational_authorization(runtime_root, _lock_held=True)
         for _spec, snapshot in zip(specs, snapshots, strict=True):
             touched.append(snapshot.service)
             _checked_launchctl("bootstrap", domain, str(snapshot.path))
@@ -545,7 +557,7 @@ def activate_staged_workers(
         rollback_errors = _rollback(snapshots, touched, domain=domain)
         if require_stage_receipt:
             try:
-                revoke_operational_authorization(runtime_root)
+                revoke_operational_authorization(runtime_root, _lock_held=True)
             except Exception as revoke_exc:
                 rollback_errors.append(
                     f"revoke authorization: {type(revoke_exc).__name__}:{revoke_exc}"
@@ -563,9 +575,20 @@ def activate_staged_workers(
 
 
 def ensure_workers(
-    specs: list[dict[str, object]], *, home: Path, domain: str, runtime_root: Path
+    specs: list[dict[str, object]],
+    *,
+    home: Path,
+    domain: str,
+    runtime_root: Path,
+    _lock_held: bool = False,
 ) -> dict[str, object]:
     """Keep correctly loaded workers running, or repair them under authorization."""
+
+    if not _lock_held:
+        with worker_staging_transaction_lock(runtime_root):
+            return ensure_workers(
+                specs, home=home, domain=domain, runtime_root=runtime_root, _lock_held=True
+            )
 
     authorization = require_operational_authorization(runtime_root)
     _validate_specs(specs)
@@ -590,11 +613,21 @@ def ensure_workers(
         for snapshot, spec in zip(snapshots, specs, strict=True)
     ):
         return activate_staged_workers(
-            specs, home=home, domain=domain, runtime_root=runtime_root, require_stage_receipt=False
+            specs,
+            home=home,
+            domain=domain,
+            runtime_root=runtime_root,
+            require_stage_receipt=False,
+            _lock_held=True,
         )
     stage_workers(specs, home=home, domain=domain, allow_unload=True)
     return activate_staged_workers(
-        specs, home=home, domain=domain, runtime_root=runtime_root, require_stage_receipt=False
+        specs,
+        home=home,
+        domain=domain,
+        runtime_root=runtime_root,
+        require_stage_receipt=False,
+        _lock_held=True,
     )
 
 

@@ -1366,11 +1366,11 @@ def read_operational_authorization_status(runtime_root: Path) -> dict[str, Any]:
 
 
 def finalize_operational_authorization(
-    runtime_root: Path, *, now: datetime | None = None
+    runtime_root: Path, *, now: datetime | None = None, _lock_held: bool = False
 ) -> dict[str, Any]:
     """Promote staged full auth at one final, fail-closed commit point."""
 
-    with _WorkerStagingLock(runtime_root):
+    with nullcontext() if _lock_held else _WorkerStagingLock(runtime_root):
         receipt_path = staged_worker_receipt_path(runtime_root)
         staging_path = worker_staging_authorization_path(runtime_root)
         try:
