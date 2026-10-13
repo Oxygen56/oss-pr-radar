@@ -22474,6 +22474,38 @@
     ],
     "why": "Maintainer johnlanni verified every current-behavior claim against main: upgrade.go:67 and uninstall.go:66 discard the getAllProfiles error, and getAllProfiles (upgrade.go:138-167) suppresses failures from path discovery, file store, kube client construction, and ConfigMap listing. SPEC-4402001 matches the code, and the maintainer explicitly approved Proposal #4402. The remaining open item is a design/SPEC confirmation on the local-docker no-kubeconfig carve-out, which is normal review sequencing rather than a missing root cause or validation path."
   },
+  "27a84c1135d110235ee7e50984eab653ab37ec7b3da0771aefccf2c66fa2b92c": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/v1beta1_helpers.go: GetDCDDynamoNamespace precedence between preserved alpha value, labels, and computed namespace",
+      "deploy/operator/internal/webhook/validation/shared_v1alpha1.go: align admission warning with actual rendering behavior",
+      "label-value validation for explicit legacy namespaces before resource reconciliation"
+    ],
+    "risks": [
+      "Changing precedence could alter running workloads' identities; migration policy for existing explicit namespaces is not defined in the issue",
+      "Maintainer may prefer warning-only vs. enforcement; both are reasonable but affect test expectations",
+      "PR #16306 is open in the same area and could conflict on shared files"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: construct v1alpha1 DCD with nonempty spec.dynamoNamespace, ConvertTo v1beta1, assert GetDCDDynamoNamespace result matches the documented contract",
+      "Regression test: 64-character alphanumeric explicit namespace must not reach generated pod labels unvalidated; assert validation.IsValidLabelValue failure is surfaced at admission rather than later reconciliation",
+      "Run targeted operator package unit tests and static checks for deploy/operator/internal/dynamo and webhook/validation"
+    ],
+    "unknowns": [
+      "Whether maintainers intend explicit legacy namespaces to remain honored (with validation) or become ignored (with migration policy)"
+    ],
+    "why": "Issue identifies a concrete source-level contradiction: GetDCDDynamoNamespace returns the preserved alpha spec.dynamoNamespace before consulting labels/computed namespace, while shared v1alpha1 admission warns the field is ignored and replaced. Code anchors (v1beta1_helpers.go L343-357, shared_v1alpha1.go L45-51) and a deterministic 64-char label-bound reproduction are supplied. No duplicate/merged fix covers this; PR #16306 is explicitly scoped to derived namespaces and intentionally does not change preserved explicit alpha identities."
+  },
   "27c23acf3d31b87caa164f9650227b0c9351e124f0a6f92e3ea8c5b7596891f8": {
     "confidence": 0.85,
     "contradictions": [],
@@ -40934,6 +40966,32 @@
     ],
     "why": "Issue clearly identifies two concrete root causes (openai.rs discovery only reads meta.n_ctx; desktop form lacks per-model context_limit and rewrites the file), but the supplied evidence shows an open PR #12044 with semantic overlap on custom_provider and overlapping path crates/goose-providers/src/openai.rs, and the duplicate status is explicitly 'semantic_overlap_requires_review'. Whether that PR already covers the root cause is unresolved, which materially determines whether new code work is actionable."
   },
+  "46f1855cb235f3852ccb5046f29046e71c11599c3c984aecd7d7d7b0dabb9dc1": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Reporter's initial read-path hypothesis was disproven by their own README.md test, but the duplicate conclusion held"
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Duplicating effort with the tracked fix in #50627",
+      "Intermittent free-tier gate behavior noted but not isolated"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new test needed here; validation belongs to #50627"
+    ],
+    "unknowns": [
+      "Whether #50627 has an accepted fix or open PR (not supplied)"
+    ],
+    "why": "Issue is explicitly acknowledged by the reporter as a duplicate of #50627, where the fix is tracked; the tool-list root cause is already worked out there and the reporter agreed to closure. No new code work is actionable on this issue."
+  },
   "46fa36f83ec4fd3d4fb275cec40c1f6f0c0daf745e07b2aeb42d538057e0e79a": {
     "confidence": 0.7,
     "contradictions": [],
@@ -44646,6 +44704,40 @@
       "Maintainer-preferred UX and API design for editing"
     ],
     "why": "The issue requests UI affordances to set/edit experiment name and description, but supplies no code anchors, no reproduction evidence, and no root-cause signal; the pre-task evidence itself flags no_code_surface and reproduction_or_validation_missing, and the only wait reason is DESIGN_CONFIRMATION. This is a UI/API plumbing enhancement rather than an algorithm or infra mechanism, and the missing code surface plus unresolved design preference materially block an actionable code contribution."
+  },
+  "4d0db13be4dff498ec734e06f30f97731164ad7b3b8df39e7c588b9a0a1c9476": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue targets v1.18.31 while maintainer directs the request to v2, where stream timeout handling is claimed to already exist"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add a configurable first-token timeout with bounded automatic retry for provider streams in the v2 core path",
+      "Ensure zero-output-token attempts are treated as retryable without billing/usage side effects"
+    ],
+    "risks": [
+      "Fix may be out of scope for v1 per maintainer policy",
+      "Overlap with existing v2 chunkTimeout/idle-timeout and open PR #52866 could make the change redundant",
+      "Automatic retry on first-token timeout could mask genuine provider outages or cause duplicate billing if usage accounting is wrong"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce a silent first-token hang against v2 (mock provider that accepts the request and never emits a token) and assert the session aborts and retries within the configured window",
+      "Regression test that a zero-token attempt is retried and does not leave the session busy"
+    ],
+    "unknowns": [
+      "Whether the hang reproduces on v2",
+      "Whether v2's existing chunkTimeout/idle timeout already covers first-token hangs or only mid-stream silence",
+      "Whether open PR #52866 already addresses this exact gap"
+    ],
+    "why": "Issue reports a real first-token hang on OpenCode v1.18.31, but the maintainer bot states v1 is in maintenance-only mode and v2 already has chunkTimeout/idle-timeout handling; the report is against a version unlikely to receive the fix, and no reproduction on v2 is provided. Related v2 issues (#53747, #53896, #52866, #54538) suggest the v2 surface may already be covered or under active work, making the actionable target ambiguous."
   },
   "4d461c5ccac9c63dd3d4dbce29de147554d9e39a4ec960d229ae384932d1bca3": {
     "confidence": 0.8,
@@ -82007,6 +82099,40 @@
       "Whether the separate llama-server tensor-access-out-of-bounds abort shares this root cause or is independent"
     ],
     "why": "Issue provides a concrete, well-traced root cause: MoE expert cache banks exceed the Vulkan buffer type's 1 GiB suballocation block size, causing views to get buffer==NULL and tripping the scheduler assert in ggml-backend.cpp. Reproduction is explicit (llama-completion with --fit or --moe-cache-mib 3072 on Vulkan), a threshold table isolates the failure boundary, and a workaround (GGML_VK_SUBALLOCATION_BLOCK_SIZE=4GiB) confirms the mechanism. Code anchors (llama-moe-cache.cpp, ggml-backend.cpp, ggml-vulkan.cpp, common_fit_auto_moe_cache) point to an actionable fix surface. No duplicate/merged fix found; open PRs are unrelated drafts."
+  },
+  "888c4982e01bff7149034663461ac31f9c56b300ce450026e7c769dcc29a943e": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go request construction for reasoning/tool combinations",
+      "provider validation/error surfacing for unsupported endpoint+reasoning+tool combinations",
+      "possibly Responses API adapter path for tool-call continuation"
+    ],
+    "risks": [
+      "Scope creep into full Responses API support (streaming, tool-call continuation) may exceed a minimal bug fix",
+      "Changing default endpoint selection could alter behavior for other OpenAI-compatible providers",
+      "The reasoning_effort:'none' workaround is unconfirmed in the reporter's deployment"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test that builds a Chat Completions request with function tools and non-none reasoning_effort and asserts either a clear pre-flight validation error or correct endpoint selection",
+      "Add a regression test for gpt-6-luna with tools and reasoning_effort:'none' through Chat Completions",
+      "Run targeted Go package tests and static checks for internal/entity/models"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer pre-flight validation vs. automatic Responses API routing",
+      "Whether the effective reasoning_effort value is set by RAGFlow defaults or user config"
+    ],
+    "why": "Issue provides a concrete HTTP 400 reproduction with expected/actual pair and a named Go adapter (internal/entity/models/openai.go) that constructs Chat Completions requests; the incompatibility between function tools and reasoning_effort on gpt-6-luna is well specified. No open PR or duplicate issue covers it. However, the issue itself notes the Responses API path requires request construction, response parsing, streaming, and tool-call continuation changes, and the reasoning_effort:'none' workaround is unconfirmed, so the minimal fix boundary is not fully pinned down."
   },
   "88a1bb98ae659d4b3c097d3e6ee8381c5947baa0f96332ec72e1ffbb01b65460": {
     "confidence": 0.8,
