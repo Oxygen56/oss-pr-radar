@@ -1931,6 +1931,11 @@ def test_codex_runner_is_ephemeral_and_read_only(tmp_path, monkeypatch):
     result = module.codex_review_runner(worktree, schema, "review prompt", 321)
 
     assert result["verdict"] == "PASS"
+    assert observed["argv"][observed["argv"].index("--model") + 1] == "gpt-6.1-sol"
+    assert (
+        observed["argv"][observed["argv"].index('model_reasoning_effort="medium"') - 1]
+        == "--config"
+    )
     assert "--ephemeral" in observed["argv"]
     assert observed["argv"][observed["argv"].index("--sandbox") + 1] == "read-only"
     assert "--ignore-user-config" in observed["argv"]

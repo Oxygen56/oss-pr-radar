@@ -930,6 +930,10 @@ def codex_review_runner(
                 [
                     executable,
                     "exec",
+                    "--model",
+                    "gpt-6.1-sol",
+                    "--config",
+                    'model_reasoning_effort="medium"',
                     "--ephemeral",
                     "--sandbox",
                     "read-only",
