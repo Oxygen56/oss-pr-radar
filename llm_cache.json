@@ -11717,6 +11717,44 @@
     ],
     "why": "Issue provides a clear root cause (wiki eligibility requires compilation template group, absent for Built-in datasets) with source-verified code anchors and a concrete reproduction path. Existing PR #18695 is open but lacks root-cause coverage and full validation, leaving room for a more complete fix. The issue is actionable and valuable."
   },
+  "15b662c5cd25c07aee08f4189750891ebb4098e2ffd808e5bea9ee673432775e": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Contributor analysis claims code-explorer is not the direct cause, while the issue title and reporter attribute the failure to the code-explorer subagent",
+      "Candidate actionability evidence marks root_cause_signal=false while the issue comment supplies a partial root-cause hypothesis"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Event streaming/aggregation path for StreamingDeltaEvent after subagent ObservationEvent",
+      "Subagent result handoff between task tool and parent agent loop",
+      "Progress reporting for code-explorer subagent"
+    ],
+    "risks": [
+      "Root cause may be in the model/provider streaming layer rather than OpenHands event handling",
+      "Fixing empty-delta emission could mask a deeper provider-side stall",
+      "Overlapping PR #4385 may later conflict on the same subagent/timer area"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a live Agent Canvas session using the issue's prompt and capture the trajectory",
+      "Add a regression test asserting no unbounded empty StreamingDeltaEvent emission after a subagent ObservationEvent",
+      "Run targeted unit tests for the event-streaming module and static checks"
+    ],
+    "unknowns": [
+      "Whether the empty StreamingDeltaEvent flood is reproducible in a live Agent Canvas session as required by the readiness check",
+      "Whether the stall originates in OpenHands event handling or in the underlying model/provider streaming",
+      "Whether maintainers consider the issue ready-for-dev or have a preferred fix direction"
+    ],
+    "why": "Issue reports code-explorer subagent hangs/errors, with a contributor-supplied trajectory analysis pointing at hundreds of empty StreamingDeltaEvents after a successful subagent ObservationEvent. However the analysis is truncated mid-sentence, no confirmed root cause in code is established, and the automated readiness check explicitly states the issue lacks a live Agent Canvas reproduction, observed-behavior detail, and acceptance criteria, so the issue is not yet ready-for-dev. The only overlapping PR (#4385) is keyword-only overlap with no shared code paths and is not a duplicate, but it does not supply a validated root cause either."
+  },
   "15c93df86b9beca02f1296d4dbb4fcc47ee36fd36d55feff2c5decf6bd205376": {
     "confidence": 0.82,
     "contradictions": [],
@@ -38955,6 +38993,35 @@
       "Whether maintainers prefer forwarding vs raising UnsupportedParamsError for this class of param"
     ],
     "why": "Issue provides a concrete, executable reproduction (get_optional_params with drop_params=True silently drops reasoning_effort for gpt-4.1/gpt-4o on openai and azure), a verified provider-side 400, and a clear code anchor (get_supported_openai_params / drop_params). Root cause is well established: drop_params converts an explicit provider rejection into a silent behavior change. No open PR directly covers this code path (best overlap is keyword-only, no direct code overlap)."
+  },
+  "43d1d21d142a8da16d11cc055773480d3682664d8d8faf25a0994de7186aeafe": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate marks duplicate status 'none' and keywordOverlapOnly, but the maintainer bot comment explicitly names #51003 as the same problem with PR #53046 open against it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code work: the location-graph TTL and MCP process-tree reclamation are already covered by #51003 and PR #53046"
+    ],
+    "risks": [
+      "Duplicating an already-open PR (#53046) on the same root cause",
+      "Working the issue as filed would conflict with the bot's duplicate-close path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursuing the uncovered respawn-loop defect, open a separate issue with server config and log excerpt, then add a reconnect-backoff regression test"
+    ],
+    "unknowns": [
+      "Whether #51003 has already been fixed or merged, which would determine if any residual work remains"
+    ],
+    "why": "The issue's root cause is well documented, but the maintainer bot comment identifies it as a duplicate of #51003 (with #37844, #51249, #50363, #46253 also covering the same root cause), and PR #53046 is already open against #51003. The only novel element (Open Design MCP respawn loop) is explicitly called out as a separate issue, not this one."
   },
   "43d2fd57c834e7d7d56756ba61ccc5064b9a201765b3b0a9fc0c35118f1837c5": {
     "confidence": 0.8,
@@ -72659,6 +72726,35 @@
       "Whether non_max_overlap_selections_total staying 0 is expected"
     ],
     "why": "Issue provides a concrete, reproducible KV-router routing pathology with a clear mechanism: overlap credit only offsets the prefill term, so transient decode load on the cache-holding worker can outweigh prefix locality. Evidence includes a decision-formula trace, per-request placement, and a public reproduction repo, establishing root cause and a validation path."
+  },
+  "78a81e97553cc6fcefa7a2baf66b7f832d9afc5c2367e4900c049d8a0448b559": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: align tf32_hc_prenorm_gemm call with current DeepGemm contract (clamp n_splits or allocate d as {1,m,n})"
+    ],
+    "risks": [
+      "Changing n_splits semantics may alter split-K behavior for other callers",
+      "Fix may need coordination with deep_gemm_wrapper entrypoint contract"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLANG_OPT_FUSE_MHC_POST_PRE=1 on DeepSeek-V4-Pro TP8 and confirm graph-capture crash",
+      "Regression test: run mhc_fused_post_pre large-batch path with num_splits>1 and assert no DeepGemm assertion",
+      "Sanity-check fused vs unfused outputs for numerical agreement"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer clamping n_splits vs reallocating d as {1,m,n}",
+      "Whether the DeepGemm wrapper entrypoint already exposes a compatible contract"
+    ],
+    "why": "Issue provides a concrete crash, exact assertion, code anchor (mhc.py large-batch path), and a shape bisection isolating the DeepGemm API contract mismatch; a minimal fix (clamp n_splits to 1 or reallocate d as {1,m,n}) is actionable and testable."
   },
   "78b780373cc5b91d292c029599a5e2d9a81d116bee700957a4ecfa1f123b62d2": {
     "confidence": 0.85,
@@ -116943,6 +117039,37 @@
       "Maintainer approval or design confirmation"
     ],
     "why": "The issue provides a detailed root cause and concrete fix suggestions for a real bug in the Datadog callback, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences."
+  },
+  "c50fd40425caed71bd8142c9c179c9d418019c243c7a5eabb14f3a208b0558a3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate marks probe_ready=true and reproduction_evidence present, but issue body states 'I do not yet have a minimal deterministic repro'"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Error classification/mapping in the LLM provider error handling path (if any) to distinguish proxy/infra failures from auth failures"
+    ],
+    "risks": [
+      "Root cause may live in the external LiteLLM proxy rather than OpenHands, making the issue non-actionable in this repo",
+      "Intermittent failure without deterministic repro risks a speculative fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Establish a deterministic reproduction of the LiteLLM proxy returning a 401 auth_error with a DB-unreachable message, then assert the surfaced error code is not LLMAuthenticationError"
+    ],
+    "unknowns": [
+      "Whether OpenHands code or the external LiteLLM proxy is responsible for the misleading error code",
+      "Whether a deterministic reproduction can be constructed",
+      "Which OpenHands module maps provider errors to LLMAuthenticationError"
+    ],
+    "why": "Issue reports a misleading LLMAuthenticationError masking a LiteLLM proxy DB connectivity failure, but the reporter explicitly states there is no minimal deterministic repro and the failure may be intermittent/proxy-health dependent. No code anchor in OpenHands is identified; the error originates in the LiteLLM proxy layer, so the actionable code surface is unclear."
   },
   "c5335861e4c4d234f495ddb8300bde02756db2706e340f9f0773dc75db5af34c": {
     "confidence": 0.6,
