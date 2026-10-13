@@ -43234,3 +43234,730 @@ def test_private_scan_snapshot_retries_one_original_write_but_not_continuous_dri
                 ).fetchone()[0]
                 == 0
             )
+
+
+def _completed_go_environment_fixture(monkeypatch, tmp_path, *, record_block=True):
+    """Real local Go proxy/cache and signed ledger; no external downloads."""
+    import zipfile
+
+    go = shutil.which("go")
+    if go is None:
+        pytest.skip("Go is not installed for the real cache fixture")
+    go = str(Path(go).resolve())
+    bind_validation_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
+    private_root = MODULE.GITHUB_ROOT / MODULE.TASK_PRIVATE_DIR
+    private_root.mkdir(parents=True, exist_ok=True)
+    private_root.chmod(0o700)
+    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: {})
+    cache = tmp_path / "go-cache"
+    proxy = tmp_path / "proxy/example.com/dep/@v"
+    proxy.mkdir(parents=True)
+    dep_mod = b"module example.com/dep\n\ngo 1.20\n"
+    (proxy / "v1.0.0.mod").write_bytes(dep_mod)
+    (proxy / "v1.0.0.info").write_text('{"Version":"v1.0.0","Time":"2020-01-01T00:00:00Z"}')
+    with zipfile.ZipFile(proxy / "v1.0.0.zip", "w") as z:
+        z.writestr("example.com/dep@v1.0.0/go.mod", dep_mod)
+        z.writestr("example.com/dep@v1.0.0/dep.go", "package dep\nconst Value = 1\n")
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    manifest = "module example.com/probe\n\ngo 1.20\n\nrequire example.com/dep v1.0.0\n"
+    (seed / "go.mod").write_text(manifest)
+    env = dict(
+        os.environ,
+        GOENV="off",
+        GOTOOLCHAIN="local",
+        GOWORK="off",
+        GOSUMDB="off",
+        GOPROXY=(tmp_path / "proxy").as_uri(),
+        GOMODCACHE=str(tmp_path / "seed-cache"),
+        GOFLAGS="",
+    )
+    downloaded = subprocess.run(
+        [go, "-C", str(seed), "mod", "download", "-json"], env=env, capture_output=True, text=True
+    )
+    assert downloaded.returncode == 0, downloaded.stderr
+    pin = json.loads(downloaded.stdout)
+    sums = f"example.com/dep v1.0.0 {pin['Sum']}\nexample.com/dep v1.0.0/go.mod {pin['GoModSum']}\n"
+    worktree = MODULE.managed_worktree_path("intent-go", "a/b")
+    worktree.mkdir(parents=True)
+    (worktree / "pkg").mkdir()
+    (worktree / "go.mod").write_text(manifest)
+    (worktree / "go.sum").write_text(sums)
+    (worktree / "pkg/dep.go").write_text(
+        'package pkg\nimport "example.com/dep"\nvar Value = dep.Value\n'
+    )
+    for args in [
+        ("init",),
+        ("config", "user.name", "Test"),
+        ("config", "user.email", "test@example.com"),
+        ("add", "."),
+        ("commit", "-m", "baseline"),
+        ("remote", "add", "origin", "https://github.com/a/b.git"),
+    ]:
+        run_git(worktree, *args)
+    (worktree / ".git/info/exclude").write_text(".oss-pr-radar/\n")
+    base = run_git(worktree, "rev-parse", "HEAD")
+    now = datetime.now(UTC)
+    intent = dict(
+        intentId="intent-go",
+        key="a/b#1",
+        repo="a/b",
+        issueNumber=1,
+        issueUrl="https://github.com/a/b/issues/1",
+        title="Missing pinned Go modules",
+        mode="canary",
+        score=9,
+        snapshotId="snapshot",
+        decisionDigest="decision",
+        issuedAt=iso_z(now),
+        expiresAt=iso_z(now + timedelta(hours=1)),
+        defaultBranch="main",
+        selectedBaseSha=base,
+        codePaths=["pkg/dep.go"],
+        taskStage="REPRODUCTION_REQUIRED",
+        probeLevel="UNVERIFIED",
+        probeRequired=True,
+    )
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent)
+    store.claim("intent-go", "controller")
+    store.commit_dispatch(
+        "intent-go",
+        owner="controller",
+        thread_id="thread-go",
+        project_id="github",
+        worktree_path=str(worktree),
+        title_time="10-14 03:00",
+    )
+    MODULE.ManagedAdapter(tmp_path, store.path).bind_task_after_thread(
+        intent=intent, thread_id="thread-go", worktree_path=str(worktree)
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "go-evidence",
+            "liveAudit": {
+                "capturedAt": iso_z(now),
+                "evidence": {"digest": "go-evidence", "issue": {"state": "open"}},
+            },
+        },
+        dedupe_key="intent-go:go-evidence",
+    )
+    context_path = MODULE.write_task_context(
+        store, issue_url=intent["issueUrl"], thread_id="thread-go", cwd=worktree
+    )
+    context = json.loads(context_path.read_bytes())
+    probe = context_path.parent / "probe_test.go"
+    probe.write_text('package pkg\nimport "testing"\nfunc TestProbe(t *testing.T) {}\n')
+    overlay = context_path.parent / "probe-overlay.json"
+    overlay.write_text(json.dumps({"Replace": {str(worktree / "pkg/probe_test.go"): str(probe)}}))
+    command_text = f"GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off {shlex.quote(go)} -C . test -mod=readonly -overlay {shlex.quote(str(overlay))} ./pkg -run '^TestProbe$' -count=1 -v"
+    monkeypatch.setenv("GOMODCACHE", str(cache))
+    failed = subprocess.run(
+        ["/bin/sh", "-c", command_text],
+        cwd=worktree,
+        env=dict(env, GOMODCACHE=str(cache), GOPROXY="off"),
+        capture_output=True,
+        text=True,
+    )
+    assert failed.returncode == 1 and "module lookup disabled by GOPROXY=off" in failed.stderr
+    log = context_path.parent / "probe.log"
+    log.write_text(failed.stdout + failed.stderr)
+    raw = dict(
+        schemaVersion=MODULE.TASK_RESULT_SCHEMA,
+        key=intent["key"],
+        issueUrl=intent["issueUrl"],
+        threadId="thread-go",
+        worktreePath=str(worktree),
+        contextDigest=context["contextDigest"],
+        stage="REPRODUCTION_REQUIRED",
+        reason="REPRODUCTION_ENVIRONMENT_BLOCKED",
+        reproductionVerified=False,
+        evidence={
+            "summary": "Pinned modules missing before compilation",
+            "logFile": str(log),
+            "logSha256": hashlib.sha256(log.read_bytes()).hexdigest(),
+        },
+        tests=[
+            {
+                "command": command_text,
+                "exitCode": 1,
+                "result": "module lookup disabled by GOPROXY=off",
+            }
+        ],
+    )
+    result = context_path.with_name("result.json")
+    result.write_text(json.dumps(raw))
+    pending = store.recovery_candidates(min_age_minutes=0)[0]
+    version, prompt_digest = MODULE._dispatched_recovery_prompt_binding(
+        MODULE.issue_prompt(intent["issueUrl"])
+    )
+    bound = MODULE.bind_dispatched_recovery_prompt(
+        pending, prompt_version=version, prompt_digest=prompt_digest
+    )
+    store.reserve_recovery(
+        thread_id="thread-go",
+        nonce=bound["recoveryNonce"],
+        recovery_prompt_version=version,
+        recovery_prompt_digest=prompt_digest,
+        intent_id="intent-go",
+        worktree_path=str(worktree),
+    )
+    store.commit_recovery(
+        thread_id="thread-go",
+        nonce=bound["recoveryNonce"],
+        intent_id="intent-go",
+        worktree_path=str(worktree),
+    )
+    journal = tmp_path / "go-native.jsonl"
+    journal.write_text(
+        "".join(
+            json.dumps(r) + "\n"
+            for r in [
+                {"type": "session_meta", "payload": {"id": "thread-go"}},
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(datetime.now(UTC)),
+                    "payload": {"type": "task_started", "turn_id": "native-go"},
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(datetime.now(UTC)),
+                    "payload": {
+                        "type": "item_completed",
+                        "thread_id": "thread-go",
+                        "turn_id": "native-go",
+                        "item": {
+                            "type": "CommandExecution",
+                            "command": ["/bin/sh", "-lc", command_text],
+                            "cwd": worktree.as_uri(),
+                            "status": "failed",
+                            "exit_code": 1,
+                            "aggregated_output": failed.stderr,
+                        },
+                    },
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": iso_z(datetime.now(UTC)),
+                    "payload": {"type": "task_complete", "turn_id": "native-go"},
+                },
+            ]
+        )
+    )
+    journal.chmod(0o600)
+    native = tmp_path / "native.sqlite3"
+    with sqlite3.connect(native) as c:
+        c.execute(
+            "CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT,title TEXT,updated_at INTEGER,git_origin_url TEXT)"
+        )
+        c.execute(
+            "INSERT INTO threads VALUES(?,?,?,?,?,?,?,?)",
+            (
+                "thread-go",
+                str(MODULE.GITHUB_ROOT),
+                0,
+                MODULE.issue_prompt(intent["issueUrl"]),
+                str(journal),
+                "blocked",
+                int(now.timestamp()),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", native)
+    assert MODULE._record_stopped_quarantined_executions(store)
+    if record_block:
+        ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+        assert ingested["ok"] and ingested["workBlocked"], ingested
+    ready = subprocess.run(
+        [go, "-C", str(worktree), "mod", "download", "-json"],
+        env=dict(env, GOMODCACHE=str(cache)),
+        capture_output=True,
+        text=True,
+    )
+    assert ready.returncode == 0, ready.stderr
+    assert run_git(worktree, "status", "--porcelain") == ""
+    return store, worktree, result, cache, journal, bound
+
+
+def test_completed_go_environment_has_new_original_recovery_nonce(monkeypatch, tmp_path):
+    store, worktree, result, cache, journal, old = _completed_go_environment_fixture(
+        monkeypatch, tmp_path
+    )
+    assert store.recovery_candidates(min_age_minutes=0) == []
+    assert store.unresolved_recoveries() == []
+    before = (
+        result.read_bytes(),
+        result.with_name("task-context.json").read_bytes(),
+        run_git(worktree, "rev-parse", "HEAD"),
+    )
+    listed = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))
+    assert len(listed["recoverable"]) == 1, listed
+    current = listed["recoverable"][0]
+    assert current["recoveryNonce"] != old["recoveryNonce"]
+    assert current["environmentRecovery"]["kind"] == "GO_LOCKED_CACHE_READY"
+    assert before == (
+        result.read_bytes(),
+        result.with_name("task-context.json").read_bytes(),
+        run_git(worktree, "rev-parse", "HEAD"),
+    )
+
+    with store.connect() as c:
+        old_events = [
+            tuple(r)
+            for r in c.execute(
+                "SELECT id,event_type,payload_json FROM events WHERE event_type IN ('THREAD_RECOVERY_RESERVED','THREAD_RECOVERY_SENT','TASK_EXECUTION_STOPPED') ORDER BY id"
+            )
+        ]
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-go",
+            recovery_nonce=current["recoveryNonce"],
+            intent_id="intent-go",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserved["ok"] and reserved["recoveryNonce"] == current["recoveryNonce"]
+    pending = store.unresolved_recoveries()
+    assert len(pending) == 1
+    assert pending[0]["reservation"]["environmentRecovery"] == current["environmentRecovery"]
+    assert pending[0]["reservation"]["recoveryChainDigest"] == old["recoveryChainDigest"]
+    assert store.sent_recoveries_without_result() == []
+    assert (
+        MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))["recoverable"]
+        == []
+    )
+    with store.connect() as c:
+        assert [
+            tuple(r)
+            for r in c.execute(
+                "SELECT id,event_type,payload_json FROM events WHERE id<=? AND event_type IN ('THREAD_RECOVERY_RESERVED','THREAD_RECOVERY_SENT','TASK_EXECUTION_STOPPED') ORDER BY id",
+                (old_events[-1][0],),
+            )
+        ] == old_events
+    with pytest.raises((RuntimeError, LedgerError)):
+        MODULE.recovery_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-go",
+                recovery_nonce=current["recoveryNonce"],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+            )
+        )
+    process = _FakeTaskTurnProcess()
+    original_popen = subprocess.Popen
+    original_which = shutil.which
+
+    @contextmanager
+    def session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 0:
+            return buffer, {"result": {}}
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": "thread-go"}}}
+        return buffer, {"result": {"turn": {"id": "resumed-go"}}}
+
+    def launch_worker(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        args = SimpleNamespace(
+            ledger=store.path,
+            delivery_kind="recovery",
+            thread_id="thread-go",
+            delivery_token=reserved["recoveryNonce"],
+            receipt=argv[argv.index("--receipt") + 1],
+            intent_id="intent-go",
+            worktree_path=str(worktree),
+            delivery_attempt_digest=None,
+        )
+        finished = MODULE.task_turn_worker_entry(args)
+        assert finished["turnStatus"] == "completed"
+        return SimpleNamespace(pid=os.getpid())
+
+    with monkeypatch.context() as delivery:
+        delivery.setattr(MODULE, "_app_server_action_session", session)
+        delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+        delivery.setattr(MODULE, "_read_app_server_response", read_response)
+        delivery.setattr(
+            MODULE,
+            "_wait_for_app_server_terminal_turn",
+            lambda *_a, **_k: {"turnId": "resumed-go", "status": "completed"},
+        )
+        delivery.setattr(
+            MODULE.shutil,
+            "which",
+            lambda _name: "/usr/bin/codex" if _name == "codex" else original_which(_name),
+        )
+        delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+        completed = MODULE.recovery_deliver(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-go",
+                recovery_nonce=reserved["recoveryNonce"],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+            )
+        )
+    assert completed["ok"], completed
+    turns = [m for m in _task_turn_messages(process) if m.get("method") == "turn/start"]
+    assert (
+        len(turns) == 1
+        and turns[0]["params"]["model"] == "gpt-6.1-sol"
+        and turns[0]["params"]["effort"] == "medium"
+    )
+    assert store.unresolved_recoveries() == []
+    assert json.loads(result.read_bytes())["reproductionVerified"] is False
+    assert before == (
+        result.read_bytes(),
+        result.with_name("task-context.json").read_bytes(),
+        run_git(worktree, "rev-parse", "HEAD"),
+    )
+
+    # A later completed native fixture and a newly recorded current raw do not
+    # make the same dependency content a second environment improvement.
+    records = [json.loads(line) for line in journal.read_text().splitlines()]
+    native_item = next(
+        r["payload"]["item"]
+        for r in records
+        if (r.get("payload") or {}).get("type") == "item_completed"
+    )
+    with journal.open("a") as stream:
+        for payload in (
+            {"type": "task_started", "turn_id": "resumed-go"},
+            {
+                "type": "item_completed",
+                "thread_id": "thread-go",
+                "turn_id": "resumed-go",
+                "item": native_item,
+            },
+            {"type": "task_complete", "turn_id": "resumed-go"},
+        ):
+            stream.write(
+                json.dumps(
+                    {"type": "event_msg", "timestamp": iso_z(datetime.now(UTC)), "payload": payload}
+                )
+                + "\n"
+            )
+    value = json.loads(result.read_bytes())
+    value["observedAt"] = "new native observation, same locked dependencies"
+    result.write_text(json.dumps(value))
+    assert MODULE._record_stopped_quarantined_executions(store)
+    blocked = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert blocked["ok"] and blocked["workBlocked"], blocked
+    sources = store.completed_environment_recovery_sources()
+    assert len(sources) == 1 and sources[0]["environmentSource"] != current["environmentSource"]
+    with store.connect() as connection:
+        connection_type = type(connection)
+    original_execute = connection_type.execute
+    consumed_queries = []
+
+    def observe_execute(connection, sql, parameters=()):
+        if "$.environmentRecovery.fingerprint" in sql and "SELECT 1" in sql:
+            consumed_queries.append(parameters)
+        return original_execute(connection, sql, parameters)
+
+    with monkeypatch.context() as observed:
+        observed.setattr(connection_type, "execute", observe_execute)
+        assert (
+            MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+                "recoverable"
+            ]
+            == []
+        )
+    assert ("a/b#1", "intent-go", current["environmentRecovery"]["fingerprint"]) in consumed_queries
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "raw",
+        "context",
+        "child-edit",
+        "head",
+        "log",
+        "active",
+        "unknown",
+        "wrong-source",
+        "no-block",
+        "auth",
+        "public",
+    ],
+)
+def test_completed_go_environment_recovery_refuses_changed_or_unknown_scope(
+    monkeypatch, tmp_path, mutation
+):
+    store, worktree, result, cache, journal, old = _completed_go_environment_fixture(
+        monkeypatch, tmp_path
+    )
+    args = SimpleNamespace(ledger=store.path, min_age_minutes=0)
+    baseline = MODULE.recovery_list(args)
+    assert len(baseline["recoverable"]) == 1, baseline
+    expected = baseline["recoverable"][0]
+    if mutation == "raw":
+        value = json.loads(result.read_bytes())
+        value["observedAt"] = "fresh model timestamp"
+        result.write_text(json.dumps(value))
+    elif mutation == "context":
+        value = json.loads(result.with_name("task-context.json").read_bytes())
+        value["contextDigest"] = "0" * 64
+        result.with_name("task-context.json").write_text(json.dumps(value))
+    elif mutation == "child-edit":
+        context = result.with_name("task-context.json")
+        value = json.loads(context.read_bytes())
+        value["childMayEditFiles"] = True
+        context.write_text(json.dumps(value))
+    elif mutation == "head":
+        (worktree / "pkg/dep.go").write_text("package pkg\nvar Value = 2\n")
+        run_git(worktree, "add", ".")
+        run_git(worktree, "commit", "-m", "foreign current head")
+    elif mutation == "log":
+        result.with_name("probe.log").write_text("not an original missing-cache failure")
+    elif mutation in {"active", "unknown"}:
+        if mutation == "unknown":
+            journal.unlink()
+        else:
+            with journal.open("a") as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "timestamp": iso_z(datetime.now(UTC)),
+                            "payload": {"type": "task_started", "turn_id": "new-active"},
+                        }
+                    )
+                    + "\n"
+                )
+    elif mutation == "wrong-source":
+        with store.transaction() as c:
+            row = c.execute(
+                "SELECT id,payload_json FROM events WHERE event_type='THREAD_RECOVERY_SENT'"
+            ).fetchone()
+            value = json.loads(row["payload_json"])
+            value["worktreePath"] = str(tmp_path / "foreign")
+            c.execute("UPDATE events SET payload_json=? WHERE id=?", (json.dumps(value), row["id"]))
+    elif mutation == "no-block":
+        store, worktree, result, cache, journal, old = _completed_go_environment_fixture(
+            monkeypatch, tmp_path / "unregistered", record_block=False
+        )
+        args = SimpleNamespace(ledger=store.path, min_age_minutes=0)
+    elif mutation == "auth":
+
+        def refused(_root):
+            raise RuntimeError("actual current auth missing")
+
+        monkeypatch.setattr(MODULE, "require_operational_authorization", refused)
+    else:
+        value = json.loads(result.read_bytes())
+        value["prUrl"] = "https://github.com/a/b/pull/9"
+        result.write_text(json.dumps(value))
+    listed = MODULE.recovery_list(args)
+    assert not listed["recoverable"], listed
+    with pytest.raises((RuntimeError, LedgerError)):
+        MODULE.recovery_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-go",
+                recovery_nonce=expected["recoveryNonce"],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+            )
+        )
+    with store.connect() as c:
+        assert (
+            c.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_RESERVED'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_missing_go_cache_is_not_ready_even_when_native_verify_returns_zero(monkeypatch, tmp_path):
+    store, worktree, result, cache, journal, old = _completed_go_environment_fixture(
+        monkeypatch, tmp_path
+    )
+    assert MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+        "recoverable"
+    ]
+    (cache / "example.com/dep@v1.0.0").chmod(0o700)
+    shutil.rmtree(cache / "example.com/dep@v1.0.0")
+    (cache / "cache/download/example.com/dep/@v/v1.0.0.zip").unlink()
+    go = shlex.split(json.loads(result.read_bytes())["tests"][0]["command"])[3]
+    env = dict(
+        os.environ,
+        GOENV="off",
+        GOTOOLCHAIN="local",
+        GOWORK="off",
+        GOPROXY="off",
+        GOSUMDB="off",
+        GOFLAGS="",
+    )
+    missing = subprocess.run(
+        [go, "-C", str(worktree), "mod", "verify"], env=env, capture_output=True, text=True
+    )
+    assert missing.returncode == 0 and missing.stdout.strip() == "all modules verified"
+    assert not MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+        "recoverable"
+    ]
+
+
+def test_completed_go_environment_cas_rejects_new_delivery_and_forged_ready(monkeypatch, tmp_path):
+    store, worktree, result, cache, journal, old = _completed_go_environment_fixture(
+        monkeypatch, tmp_path
+    )
+    source = store.completed_environment_recovery_sources()[0]
+    ready = MODULE._completed_go_environment_recovery(store, source)
+    assert ready is not None
+    version, prompt_digest = MODULE._dispatched_recovery_prompt_binding(
+        MODULE.issue_prompt(source["issueUrl"])
+    )
+    bound = MODULE.bind_dispatched_recovery_prompt(
+        ready, prompt_version=version, prompt_digest=prompt_digest
+    )
+    kwargs = dict(
+        thread_id="thread-go",
+        nonce=bound["recoveryNonce"],
+        intent_id="intent-go",
+        worktree_path=str(worktree),
+        recovery_prompt_version=version,
+        recovery_prompt_digest=prompt_digest,
+        environment_candidate=ready,
+    )
+    with pytest.raises(LedgerError, match="authority is incomplete"):
+        store.reserve_recovery(**kwargs)
+    with pytest.raises(LedgerError, match="readiness changed"):
+        store.reserve_recovery(**kwargs, environment_validator=lambda: None)
+    with store.transaction() as c:
+        store._event(
+            c,
+            "a/b#1",
+            "TASK_TURN_DELIVERY_STARTED",
+            "new-delivery",
+            {
+                "intentId": "intent-go",
+                "threadId": "thread-go",
+                "worktreePath": str(worktree),
+                "deliveryKind": "recovery",
+                "deliveryToken": "new",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+    with pytest.raises(LedgerError, match="source changed"):
+        store.reserve_recovery(**kwargs, environment_validator=lambda: ready)
+    with store.connect() as c:
+        assert (
+            c.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_RESERVED'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_completed_go_environment_cache_checksum_failure_and_reserved_input_change(
+    monkeypatch, tmp_path
+):
+    store, worktree, result, cache, journal, old = _completed_go_environment_fixture(
+        monkeypatch, tmp_path
+    )
+    baseline = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+        "recoverable"
+    ][0]
+    directory = cache / "example.com/dep@v1.0.0"
+    directory.chmod(0o755)
+    path = directory / "dep.go"
+    path.chmod(0o644)
+    path.write_text("package dep\nconst Value=99\n")
+    assert not MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+        "recoverable"
+    ]
+    path.write_text("package dep\nconst Value = 1\n")
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-go",
+            recovery_nonce=baseline["recoveryNonce"],
+            intent_id="intent-go",
+            worktree_path=str(worktree),
+        )
+    )
+    result.with_name("probe-overlay.json").write_text("{}")
+    with pytest.raises(RuntimeError, match="input changed before delivery"):
+        MODULE.recovery_deliver(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-go",
+                recovery_nonce=reserved["recoveryNonce"],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+            )
+        )
+    assert len(store.unresolved_recoveries()) == 1
+    with store.connect() as c:
+        assert (
+            c.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_SENT'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_completed_go_environment_delivery_rechecks_current_durable_source(monkeypatch, tmp_path):
+    store, worktree, result, cache, journal, old = _completed_go_environment_fixture(
+        monkeypatch, tmp_path
+    )
+    baseline = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+        "recoverable"
+    ][0]
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-go",
+            recovery_nonce=baseline["recoveryNonce"],
+            intent_id="intent-go",
+            worktree_path=str(worktree),
+        )
+    )
+    pending = store.unresolved_recoveries()[0]
+    candidate = pending | {
+        "environmentSource": pending["reservation"]["environmentRecovery"]["source"]
+    }
+    assert MODULE._completed_go_environment_recovery(store, candidate, reserved=True) is not None
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "TASK_TURN_DELIVERY_STARTED",
+            "concurrent-native-delivery",
+            {
+                "intentId": "intent-go",
+                "threadId": "thread-go",
+                "worktreePath": str(worktree),
+                "deliveryKind": "recovery",
+                "deliveryToken": "another-attempt",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+    with pytest.raises(RuntimeError, match="input changed before delivery"):
+        MODULE.recovery_deliver(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-go",
+                recovery_nonce=reserved["recoveryNonce"],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+            )
+        )
+    assert len(store.unresolved_recoveries()) == 1
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_SENT'"
+            ).fetchone()[0]
+            == 1
+        )

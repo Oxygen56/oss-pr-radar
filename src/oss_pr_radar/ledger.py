@@ -6634,6 +6634,16 @@ class RadarLedger:
                        OR {_legacy_unique_unbound_event_clause("i", "s")}
                      )
                    WHERE NOT EXISTS (
+                     SELECT 1 FROM events replacement
+                     WHERE replacement.opportunity_key=o.key
+                       AND replacement.event_type='THREAD_RECOVERY_RESERVED'
+                       AND replacement.id>s.id
+                       AND json_extract(replacement.payload_json,'$.intentId')=i.intent_id
+                       AND json_extract(replacement.payload_json,'$.threadId')=i.thread_id
+                       AND json_extract(replacement.payload_json,'$.worktreePath')=i.worktree_path
+                       AND json_extract(replacement.payload_json,'$.environmentRecovery.kind')='GO_LOCKED_CACHE_READY'
+                       AND json_extract(replacement.payload_json,'$.environmentRecovery.source.sentEventId')=s.id
+                   ) AND NOT EXISTS (
                      SELECT 1 FROM events abandoned
                      WHERE abandoned.opportunity_key=o.key
                        AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
@@ -6683,6 +6693,263 @@ class RadarLedger:
             for row in rows
         ]
 
+    def completed_environment_recovery_sources(
+        self,
+        *,
+        connection: sqlite3.Connection | None = None,
+        intent_id: str | None = None,
+        pending_nonce: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read completed dispatched recoveries; grant no environment authority."""
+        if connection is None:
+            with self.connect() as opened:
+                return self.completed_environment_recovery_sources(
+                    connection=opened, intent_id=intent_id, pending_nonce=pending_nonce
+                )
+        if (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='managed_lifecycle_events'"
+            ).fetchone()
+            is None
+        ):
+            return []
+        rows = connection.execute(
+            "SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,i.worktree_path "
+            "FROM opportunities o JOIN intents i ON i.opportunity_key=o.key "
+            "WHERE o.stage='DISPATCHED' AND i.status='DISPATCHED' "
+            "AND i.rowid=(SELECT MAX(n.rowid) FROM intents n WHERE n.opportunity_key=o.key) "
+            "AND (? IS NULL OR i.intent_id=?)",
+            (intent_id, intent_id),
+        ).fetchall()
+        result = []
+        for row in rows:
+            binding = (row["intent_id"], row["thread_id"], row["worktree_path"])
+            events = connection.execute(
+                "SELECT * FROM events WHERE opportunity_key=? AND json_valid(payload_json)=1 "
+                "AND json_extract(payload_json,'$.intentId')=? "
+                "AND json_extract(payload_json,'$.threadId')=? "
+                "AND (json_extract(payload_json,'$.worktreePath')=? OR "
+                "(event_type='DISPATCHED' AND json_extract(payload_json,'$.worktreePath') IS NULL)) ORDER BY id",
+                (row["key"], *binding),
+            ).fetchall()
+            pending = None
+            if pending_nonce is not None:
+                pending = next(
+                    (
+                        event
+                        for event in reversed(events)
+                        if event["event_type"] == "THREAD_RECOVERY_RESERVED"
+                    ),
+                    None,
+                )
+                if pending is None or pending["dedupe_key"] != pending_nonce:
+                    continue
+                pending_proof = json.loads(pending["payload_json"]).get("environmentRecovery")
+                if (
+                    not isinstance(pending_proof, dict)
+                    or pending_proof.get("kind") != "GO_LOCKED_CACHE_READY"
+                    or any(
+                        event["event_type"] == "THREAD_RECOVERY_SENT"
+                        and event["dedupe_key"] == pending_nonce
+                        for event in events
+                    )
+                ):
+                    continue
+            by_type = {
+                event["event_type"]: event
+                for event in events
+                if pending is None or event["id"] != pending["id"]
+            }
+            reserved = by_type.get("THREAD_RECOVERY_RESERVED")
+            stopped = by_type.get("TASK_EXECUTION_STOPPED")
+            dispatch = by_type.get("DISPATCHED")
+            if reserved is None or stopped is None or dispatch is None:
+                continue
+            payload = json.loads(reserved["payload_json"])
+            # An environment wake is consumed once; no counter/epoch reset.
+            if payload.get("recoveryKind") != "DISPATCHED_TASK":
+                continue
+            sent = next(
+                (
+                    event
+                    for event in reversed(events)
+                    if event["event_type"] == "THREAD_RECOVERY_SENT"
+                    and event["dedupe_key"] == reserved["dedupe_key"]
+                ),
+                None,
+            )
+            terminal = json.loads(stopped["payload_json"])
+            if sent is None or not reserved["id"] < sent["id"] < stopped["id"]:
+                continue
+            if (
+                terminal.get("turnStatus") != "completed"
+                or terminal.get("quarantines") != []
+                or not isinstance(terminal.get("turnId"), str)
+                or not terminal["turnId"]
+                or not re.fullmatch(r"[0-9a-f]{64}", str(terminal.get("journalSha256") or ""))
+            ):
+                continue
+            if any(
+                event["event_type"]
+                in {
+                    "THREAD_RECOVERY_RETRY_EXHAUSTED",
+                    "THREAD_RECOVERY_DELIVERY_ABANDONED",
+                    "TASK_RESULT_INGESTED",
+                    "IMPLEMENTATION_FOLLOWUP_SENT",
+                    "VALIDATION_FOLLOWUP_SENT",
+                }
+                for event in events
+            ):
+                continue
+            if any(
+                event["id"] > stopped["id"]
+                and (pending is None or event["id"] != pending["id"])
+                and event["event_type"]
+                in {
+                    "TASK_TURN_DELIVERY_STARTED",
+                    "THREAD_RECOVERY_RESERVED",
+                    "THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED",
+                }
+                for event in events
+            ):
+                continue
+            if connection.execute(
+                "SELECT 1 FROM events WHERE opportunity_key=? AND event_type IN ('THREAD_RECOVERY_RESERVED','THREAD_RECOVERY_SENT','TASK_TURN_DELIVERY_STARTED','TASK_EXECUTION_STOPPED') AND json_valid(payload_json)=0 LIMIT 1",
+                (row["key"],),
+            ).fetchone():
+                continue
+            block = connection.execute(
+                "SELECT * FROM managed_lifecycle_events WHERE opportunity_key=? AND task_id=? "
+                "AND event_type='TASK_RESULT_EVIDENCE_BLOCKED' ORDER BY event_id DESC LIMIT 1",
+                (row["key"], row["intent_id"]),
+            ).fetchone()
+            if block is None:
+                continue
+            try:
+                block_payload = json.loads(block["payload_json"])
+                block_provenance = json.loads(block["provenance_json"])
+            except (ValueError, TypeError):
+                continue
+            if (
+                not isinstance(block_payload, dict)
+                or not isinstance(block_provenance, dict)
+                or block_payload.get("reason") != "REPRODUCTION_ENVIRONMENT_BLOCKED"
+                or block_provenance.get("threadId") != row["thread_id"]
+            ):
+                continue
+            if connection.execute(
+                "SELECT 1 FROM task_quarantines WHERE opportunity_key=? AND status='ACTIVE' LIMIT 1",
+                (row["key"],),
+            ).fetchone():
+                continue
+            if connection.execute(
+                "SELECT 1 FROM publication_requests WHERE opportunity_key=? LIMIT 1", (row["key"],)
+            ).fetchone():
+                continue
+            source = {
+                "reservedEventId": reserved["id"],
+                "sentEventId": sent["id"],
+                "stoppedEventId": stopped["id"],
+                "blockedEventId": block["event_id"],
+                "blockedKey": block["idempotency_key"],
+                "turnId": terminal.get("turnId"),
+                "journalSha256": terminal.get("journalSha256"),
+            }
+            for name, event in (("reserved", reserved), ("sent", sent), ("stopped", stopped)):
+                source[name + "PayloadDigest"] = sha256_text(event["payload_json"])
+            source["blockedPayloadDigest"] = sha256_text(block["payload_json"])
+            source["blockedProvenanceDigest"] = sha256_text(block["provenance_json"])
+            if pending is not None and (
+                pending["id"] <= stopped["id"] or pending_proof.get("source") != source
+            ):
+                continue
+            result.append(
+                {
+                    "key": row["key"],
+                    "issueUrl": row["issue_url"],
+                    "title": row["title"],
+                    "intentId": row["intent_id"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
+                    "dispatchedAt": dispatch["created_at"],
+                    "recoveryKind": "DISPATCHED_TASK",
+                    "followupDigest": None,
+                    "environmentSource": source,
+                }
+            )
+        return result
+
+    def _reserve_completed_environment_recovery(
+        self,
+        candidate: dict[str, Any],
+        *,
+        nonce: str,
+        prompt_version: str,
+        prompt_digest: str,
+        validator: Callable[[], dict[str, Any] | None],
+    ) -> dict[str, Any]:
+        proof = candidate.get("environmentRecovery")
+        if (
+            not isinstance(proof, dict)
+            or proof.get("kind") != "GO_LOCKED_CACHE_READY"
+            or not re.fullmatch(r"[0-9a-f]{64}", str(proof.get("fingerprint") or ""))
+        ):
+            raise LedgerError("completed environment recovery proof is invalid")
+        with self.transaction() as connection:
+            require_quarantine_clear(
+                connection,
+                opportunity_key=candidate["key"],
+                operation="completed environment recovery",
+            )
+            sources = self.completed_environment_recovery_sources(connection=connection)
+            source = next(
+                (
+                    item
+                    for item in sources
+                    if item["intentId"] == candidate.get("intentId")
+                    and item["threadId"] == candidate.get("threadId")
+                    and item["worktreePath"] == candidate.get("worktreePath")
+                ),
+                None,
+            )
+            if source is None or source["environmentSource"] != candidate.get("environmentSource"):
+                raise LedgerError("completed environment recovery source changed")
+            fresh = validator()
+            if fresh != candidate:
+                raise LedgerError("completed environment readiness changed")
+            expected = bind_dispatched_recovery_prompt(
+                candidate, prompt_version=prompt_version, prompt_digest=prompt_digest
+            )
+            if expected is None or expected["recoveryNonce"] != nonce:
+                raise LedgerError("completed environment recovery nonce is invalid")
+            if connection.execute(
+                "SELECT 1 FROM events WHERE opportunity_key=? AND event_type='THREAD_RECOVERY_RESERVED' "
+                "AND json_extract(payload_json,'$.intentId')=? AND json_extract(payload_json,'$.environmentRecovery.fingerprint')=? LIMIT 1",
+                (candidate["key"], candidate["intentId"], proof["fingerprint"]),
+            ).fetchone():
+                raise LedgerError("completed environment already consumed")
+            self._event(
+                connection,
+                candidate["key"],
+                "THREAD_RECOVERY_RESERVED",
+                nonce,
+                {
+                    "intentId": candidate["intentId"],
+                    "threadId": candidate["threadId"],
+                    "worktreePath": candidate["worktreePath"],
+                    "recoveryNonce": nonce,
+                    "recoveryKind": "DISPATCHED_TASK",
+                    "followupDigest": None,
+                    "recoveryPromptVersion": expected["recoveryPromptVersion"],
+                    "recoveryPromptDigest": expected["recoveryPromptDigest"],
+                    "recoveryChainDigest": expected["recoveryChainDigest"],
+                    "rearmedFromExhausted": None,
+                    "environmentRecovery": proof,
+                },
+                iso_z(datetime.now(UTC)),
+            )
+        return expected
+
     def reserve_recovery(
         self,
         *,
@@ -6693,7 +6960,26 @@ class RadarLedger:
         scope_correction: dict[str, Any] | None = None,
         intent_id: str | None = None,
         worktree_path: str | None = None,
+        environment_candidate: dict[str, Any] | None = None,
+        environment_validator: Callable[[], dict[str, Any] | None] | None = None,
     ) -> dict[str, Any]:
+        if environment_candidate is not None:
+            if (
+                environment_validator is None
+                or not recovery_prompt_version
+                or not recovery_prompt_digest
+                or environment_candidate.get("threadId") != thread_id
+                or environment_candidate.get("intentId") != intent_id
+                or environment_candidate.get("worktreePath") != worktree_path
+            ):
+                raise LedgerError("completed environment recovery authority is incomplete")
+            return self._reserve_completed_environment_recovery(
+                environment_candidate,
+                nonce=nonce,
+                prompt_version=recovery_prompt_version,
+                prompt_digest=recovery_prompt_digest,
+                validator=environment_validator,
+            )
         # The bridge may authorize an immediate one-shot recovery after a
         # terminal desktop error, before the normal stale-task threshold.
         if (recovery_prompt_version is None) != (recovery_prompt_digest is None):

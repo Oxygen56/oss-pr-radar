@@ -13,12 +13,14 @@ import json
 import os
 import re
 import selectors
+import shlex
 import shutil
 import signal
 import sqlite3
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from contextlib import ExitStack, closing, contextmanager
@@ -15015,6 +15017,31 @@ def publication_feedback_deliver(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def recovery_deliver(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    unresolved_reader = getattr(store, "unresolved_recoveries", lambda: [])
+    matches = [
+        item
+        for item in unresolved_reader()
+        if item["threadId"] == args.thread_id
+        and item["reservationDigest"] == args.recovery_nonce
+        and _task_turn_binding_matches(
+            item,
+            intent_id=getattr(args, "intent_id", None),
+            worktree_path=getattr(args, "worktree_path", None),
+        )
+    ]
+    if len(matches) == 1:
+        candidate = matches[0]
+        proof = candidate.get("reservation", {}).get("environmentRecovery")
+        if proof is not None:
+            with opportunity_action_guard(ledger_action_guard_root(store.path), candidate["key"]):
+                ready = _completed_go_environment_recovery(
+                    store, candidate | {"environmentSource": proof["source"]}, reserved=True
+                )
+                if ready is None or ready["environmentRecovery"] != proof:
+                    raise RuntimeError(
+                        "Completed environment recovery input changed before delivery"
+                    )
     args.delivery_kind = "recovery"
     args.delivery_token = args.recovery_nonce
     return task_turn_deliver(args)
@@ -32968,6 +32995,498 @@ def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": not errors, "updates": updates, "errors": errors, "followup": followup}
 
 
+def _readonly_go_probe_command(
+    worktree: Path, text: str, log: Path | None = None
+) -> dict[str, Any] | None:
+    """Identify a reported probe; never execute a child's command string."""
+    prefix = "git status --short; git rev-parse HEAD; "
+    if text.startswith(prefix):
+        text = text[len(prefix) :]
+    try:
+        parts = shlex.split(text)
+        if log is not None and ">" in parts:
+            index = parts.index(">")
+            tail = parts[index:]
+            if len(tail) != 3 or tail[2] != "2>&1" or (worktree / tail[1]).resolve() != log:
+                return None
+            parts = parts[:index]
+        if parts[:3] != ["GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off"] or len(parts) != 15:
+            return None
+        if (
+            parts[4] != "-C"
+            or parts[6:9] != ["test", "-mod=readonly", "-overlay"]
+            or parts[11] != "-run"
+            or parts[13:] != ["-count=1", "-v"]
+        ):
+            return None
+        if not re.fullmatch(r"\./[A-Za-z0-9_/-]+", parts[10]) or any(
+            c in text for c in ("\n", "\r", "`")
+        ):
+            return None
+        module = (worktree / parts[5]).resolve()
+        overlay = Path(parts[9].replace("$PWD/", str(worktree) + "/", 1))
+        if not overlay.is_absolute():
+            overlay = worktree / overlay
+        if module != worktree and worktree not in module.parents:
+            return None
+        if overlay.resolve() != overlay or overlay.parent != worktree / TASK_PRIVATE_DIR:
+            return None
+        tool = shutil.which("go") if parts[3] == "go" else parts[3]
+        if not tool or not Path(tool).is_absolute():
+            return None
+        return {
+            "go": str(Path(tool).resolve()),
+            "module": str(module),
+            "overlay": str(overlay),
+            "package": parts[10],
+            "run": parts[12],
+        }
+    except (ValueError, OSError):
+        return None
+
+
+def _go_locked_reproduction_cache(worktree: Path, probe: dict[str, Any]) -> dict[str, Any] | None:
+    """Verify existing locked cache with fixed offline Go recipes, no download."""
+    try:
+        module = Path(probe["module"])
+        mod_path, sum_path = module / "go.mod", module / "go.sum"
+        mod_raw = _read_owned_regular_file(
+            mod_path, label="reproduction Go module", reject_dangerous_writes=True
+        )
+        sum_raw = _read_owned_regular_file(
+            sum_path, label="reproduction Go sums", reject_dangerous_writes=True
+        )
+        text = mod_raw.decode()
+        if re.search(r"(?m)^\s*(?:replace|exclude|toolchain|retract)\b", text):
+            return None
+        version = re.search(r"(?m)^go (\d+)\.(\d+)(?:\.(\d+))?\s*$", text)
+        if version is None:
+            return None
+        required = tuple(int(x or 0) for x in version.groups())
+        pairs = []
+        in_require = False
+        for line in text.splitlines():
+            line = line.strip()
+            if line == "require (":
+                in_require = True
+            elif line == ")":
+                in_require = False
+            elif in_require and line and not line.startswith("//"):
+                fields = line.split()
+                pairs.append((fields[0], fields[1]))
+            elif line.startswith("require "):
+                fields = line.split()
+                pairs.append((fields[1], fields[2]))
+        sums = {
+            (fields[0], fields[1]): fields[2]
+            for line in sum_raw.decode().splitlines()
+            if len(fields := line.split()) == 3
+        }
+        if (
+            not pairs
+            or len(set(pairs)) != len(pairs)
+            or any(
+                (name, ver) not in sums or (name, ver + "/go.mod") not in sums
+                for name, ver in pairs
+            )
+        ):
+            return None
+        # The parent selects installed tools independently of child arguments.
+        tools = []
+        system = shutil.which("go")
+        if system:
+            tools.append(Path(system).resolve())
+        tools.extend(
+            sorted((Path.home() / "go/pkg/mod").glob("golang.org/toolchain@v0.0.1-go*/bin/go"))
+        )
+        env = dict(
+            os.environ,
+            GOENV="off",
+            GO111MODULE="on",
+            GOTOOLCHAIN="local",
+            GOWORK="off",
+            GOPROXY="off",
+            GOSUMDB="off",
+            GOFLAGS="",
+            GOAUTH="off",
+            GOPRIVATE="",
+            GONOPROXY="",
+            GONOSUMDB="",
+        )
+        trusted = None
+        for tool in tools:
+            meta = tool.lstat()
+            if (
+                tool.resolve() != tool
+                or not stat.S_ISREG(meta.st_mode)
+                or meta.st_uid not in {0, os.getuid()}
+                or meta.st_mode & 0o022
+                or not os.access(tool, os.X_OK)
+            ):
+                continue
+            with tool.open("rb") as stream:
+                if stream.read(4) not in {
+                    b"\x7fELF",
+                    b"\xcf\xfa\xed\xfe",
+                    b"\xce\xfa\xed\xfe",
+                    b"\xca\xfe\xba\xbe",
+                }:
+                    continue
+            checked = subprocess.run(
+                [str(tool), "env", "GOVERSION", "GOMODCACHE"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            lines = checked.stdout.splitlines()
+            found = (
+                re.fullmatch(r"go(\d+)\.(\d+)(?:\.(\d+))?", lines[0]) if len(lines) == 2 else None
+            )
+            if (
+                checked.returncode == 0
+                and found
+                and tuple(int(x or 0) for x in found.groups()) >= required
+            ):
+                trusted = (tool, Path(lines[1]))
+                break
+        if trusted is None or str(trusted[0]) != probe["go"]:
+            return None
+        tool, cache = trusted
+        if not cache.is_absolute() or cache.resolve() != cache:
+            return None
+        pins = []
+        for name, ver in sorted(pairs):
+            escaped = "".join("!" + c.lower() if c.isupper() else c for c in name)
+            root = cache / "cache/download" / escaped / "@v"
+            for path in [
+                root / (ver + extension) for extension in (".info", ".mod", ".zip", ".ziphash")
+            ]:
+                _read_owned_regular_file(
+                    path, label="required Go cache artifact", reject_dangerous_writes=True
+                )
+                if path.resolve() != path:
+                    return None
+            directory = cache / (escaped + "@" + ver)
+            metadata = directory.lstat()
+            if (
+                directory.resolve() != directory
+                or not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or metadata.st_mode & 0o022
+            ):
+                return None
+            if (root / (ver + ".ziphash")).read_text().strip() != sums[(name, ver)]:
+                return None
+            pins.append(
+                {
+                    "module": name,
+                    "version": ver,
+                    "sum": sums[(name, ver)],
+                    "goModSum": sums[(name, ver + "/go.mod")],
+                }
+            )
+        with tempfile.TemporaryDirectory(prefix="radar-readonly-go-cache-") as temporary:
+            folder = Path(temporary)
+            for name, data in (("go.mod", mod_raw), ("go.sum", sum_raw)):
+                with os.fdopen(
+                    os.open(folder / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "wb"
+                ) as stream:
+                    stream.write(data)
+            downloaded = subprocess.run(
+                [str(tool), "-C", str(folder), "mod", "download", "-json"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=VALIDATION_PREFETCH_TIMEOUTS["go_locked_download"],
+                umask=0o022,
+            )
+            if downloaded.returncode != 0:
+                return None
+            records = []
+            remaining = downloaded.stdout.strip()
+            decoder = json.JSONDecoder()
+            while remaining:
+                record, offset = decoder.raw_decode(remaining)
+                records.append(record)
+                remaining = remaining[offset:].strip()
+            actual = {
+                (item["Path"], item["Version"]): item for item in records if isinstance(item, dict)
+            }
+            if len(records) != len(pins) or len(actual) != len(pins):
+                return None
+            for pin in pins:
+                value = actual.get((pin["module"], pin["version"]))
+                if (
+                    not value
+                    or value.get("Error")
+                    or value.get("Sum") != pin["sum"]
+                    or value.get("GoModSum") != pin["goModSum"]
+                ):
+                    return None
+            verified = subprocess.run(
+                [str(tool), "-C", str(folder), "mod", "verify"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=VALIDATION_PREFETCH_TIMEOUTS["go_locked_download"],
+                umask=0o022,
+            )
+            if (
+                verified.returncode != 0
+                or verified.stdout.strip() != "all modules verified"
+                or (folder / "go.mod").read_bytes() != mod_raw
+                or (folder / "go.sum").read_bytes() != sum_raw
+            ):
+                return None
+        if mod_path.read_bytes() != mod_raw or sum_path.read_bytes() != sum_raw:
+            return None
+        return {
+            "goExecutable": str(tool),
+            "goExecutableDigest": hashlib.sha256(tool.read_bytes()).hexdigest(),
+            "module": str(module),
+            "goModDigest": hashlib.sha256(mod_raw).hexdigest(),
+            "goSumDigest": hashlib.sha256(sum_raw).hexdigest(),
+            "modules": pins,
+        }
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        IndexError,
+        subprocess.SubprocessError,
+        RuntimeError,
+    ):
+        return None
+
+
+def _completed_go_environment_recovery(
+    store: RadarLedger, candidate: dict[str, Any], *, reserved: bool = False
+) -> dict[str, Any] | None:
+    """Observe genuine completed missing-cache work and newly usable locked input."""
+    try:
+        require_operational_authorization(ROOT)
+        source = candidate["environmentSource"]
+        pending_nonce = candidate.get("reservationDigest") if reserved else None
+        if reserved and not pending_nonce:
+            return None
+
+        def current_source_matches() -> bool:
+            return any(
+                item["environmentSource"] == source
+                and _task_turn_binding_matches(
+                    item, intent_id=candidate["intentId"], worktree_path=candidate["worktreePath"]
+                )
+                for item in store.completed_environment_recovery_sources(
+                    intent_id=candidate["intentId"], pending_nonce=pending_nonce
+                )
+            )
+
+        if not current_source_matches():
+            return None
+        if _stopped_attempt_activity(
+            candidate, source["turnId"]
+        ) is not None or store.active_task_quarantines(candidate["key"]):
+            return None
+        with store.connect() as connection:
+            if connection.execute(
+                "SELECT 1 FROM managed_prs p JOIN managed_results r ON r.pr_key=p.pr_key JOIN managed_tasks t ON t.task_id=r.task_id WHERE t.opportunity_key=? UNION SELECT 1 FROM managed_publication_reservations WHERE opportunity_key=? UNION SELECT 1 FROM publication_effects e JOIN publication_permits p ON p.permit_id=e.permit_id JOIN publication_requests r ON r.request_id=p.request_id WHERE r.opportunity_key=? LIMIT 1",
+                (candidate["key"], candidate["key"], candidate["key"]),
+            ).fetchone():
+                return None
+        with _task_worktree_private_descriptor(candidate) as opened:
+            raw = _read_task_result_bytes_from_private(opened)
+            context_raw = _read_task_context_bytes_from_private(opened)
+            context_stat = os.stat(
+                "task-context.json", dir_fd=opened.private_fd, follow_symlinks=False
+            )
+            context, _ = _verified_private_context_with_singleton_guard(
+                store, opened.worktree, context_raw, context_stat
+            )
+            value = json.loads(raw)
+            if (
+                not store.task_result_binding_gate(candidate, value)
+                or not store.task_result_binding_gate(candidate, context)
+                or context.get("taskStage") != "REPRODUCTION_REQUIRED"
+                or context.get("taskMode") != "reproduction_only"
+                or context.get("networkPolicy") != "controller_snapshot_only"
+                or context.get("childMayEditFiles") is not False
+                or context.get("childMayWriteGitMetadata") is not False
+                or context.get("publicationReceipt")
+                or context.get("prFollowup")
+                or value.get("contextDigest") != context.get("contextDigest")
+                or value.get("stage") != "REPRODUCTION_REQUIRED"
+                or value.get("reason") != "REPRODUCTION_ENVIRONMENT_BLOCKED"
+                or value.get("reproductionVerified") is not False
+                or any(
+                    value.get(k)
+                    for k in (
+                        "changedFiles",
+                        "commitSha",
+                        "publication",
+                        "prUrl",
+                        "publicationReceipt",
+                        "prFollowup",
+                        "handoffMode",
+                    )
+                )
+                or _local_changed_files(opened.worktree)
+                or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree)
+                != context.get("selectedBaseSha")
+                or _task_result_evidence_block_key(candidate, raw, context_raw)
+                != source["blockedKey"]
+            ):
+                return None
+            quality = value.get("quality", {})
+            if not isinstance(quality, dict) or any(quality.values()):
+                return None
+            evidence = value.get("evidence")
+            if not isinstance(evidence, dict):
+                return None
+            log_path = Path(str(evidence.get("logFile") or ""))
+            log = _read_owned_regular_file(
+                log_path, label="original reproduction failure log", reject_dangerous_writes=True
+            )
+            if (
+                log_path.parent != opened.worktree / TASK_PRIVATE_DIR
+                or hashlib.sha256(log).hexdigest() != evidence.get("logSha256")
+                or b"module lookup disabled by GOPROXY=off" not in log
+            ):
+                return None
+            with closing(
+                sqlite3.connect(THREAD_DB.resolve().as_uri() + "?mode=ro", uri=True)
+            ) as native:
+                row = native.execute(
+                    "SELECT rollout_path FROM threads WHERE id=?", (candidate["threadId"],)
+                ).fetchone()
+            journal = _read_owned_regular_file(
+                Path(row[0]), label="completed reproduction journal", reject_dangerous_writes=True
+            )
+            if hashlib.sha256(journal).hexdigest() != source["journalSha256"]:
+                return None
+            records = [json.loads(line) for line in journal.splitlines() if line.strip()]
+            failures = value.get("tests")
+            if not isinstance(failures, list):
+                return None
+            proof = None
+            for failure in failures:
+                if (
+                    not isinstance(failure, dict)
+                    or type(failure.get("exitCode")) is not int
+                    or failure["exitCode"] != 1
+                ):
+                    continue
+                probe = _readonly_go_probe_command(
+                    opened.worktree, str(failure.get("command") or "")
+                )
+                if probe is None:
+                    continue
+                match = None
+                for record in records:
+                    payload = record.get("payload") or {}
+                    item = payload.get("item") or {}
+                    argv = item.get("command")
+                    if (
+                        record.get("type") == "event_msg"
+                        and payload.get("turn_id") == source["turnId"]
+                        and item.get("type") == "CommandExecution"
+                        and item.get("status") == "failed"
+                        and type(item.get("exit_code")) is int
+                        and item["exit_code"] == 1
+                        and item.get("cwd") in {str(opened.worktree), opened.worktree.as_uri()}
+                        and isinstance(argv, list)
+                        and len(argv) == 3
+                        and argv[:2] in [["/bin/zsh", "-lc"], ["/bin/sh", "-lc"]]
+                        and _readonly_go_probe_command(opened.worktree, argv[2], log_path) == probe
+                    ):
+                        match = item
+                        break
+                if match is None:
+                    continue
+                overlay = _read_owned_regular_file(
+                    Path(probe["overlay"]),
+                    label="original reproduction overlay",
+                    reject_dangerous_writes=True,
+                )
+                capability = _go_locked_reproduction_cache(opened.worktree, probe)
+                if capability is None:
+                    continue
+                if (
+                    _read_owned_regular_file(
+                        Path(probe["overlay"]),
+                        label="original reproduction overlay",
+                        reject_dangerous_writes=True,
+                    )
+                    != overlay
+                ):
+                    return None
+                proof = {
+                    "kind": "GO_LOCKED_CACHE_READY",
+                    "source": source,
+                    "rawDigest": hashlib.sha256(raw).hexdigest(),
+                    "contextRawDigest": hashlib.sha256(context_raw).hexdigest(),
+                    "contextDigest": context["contextDigest"],
+                    "head": context["selectedBaseSha"],
+                    "overlayDigest": hashlib.sha256(overlay).hexdigest(),
+                    "nativeCommandDigest": sha256_json(match),
+                    "capability": capability,
+                    "fingerprint": sha256_json(
+                        {"intentId": candidate["intentId"], "capability": capability}
+                    ),
+                }
+                break
+            if (
+                proof is None
+                or _read_task_result_bytes_from_private(opened) != raw
+                or _read_task_context_bytes_from_private(opened) != context_raw
+                or _stopped_attempt_activity(candidate, source["turnId"]) is not None
+            ):
+                return None
+            if (
+                _read_owned_regular_file(
+                    log_path,
+                    label="original reproduction failure log",
+                    reject_dangerous_writes=True,
+                )
+                != log
+                or _read_owned_regular_file(
+                    Path(row[0]),
+                    label="completed reproduction journal",
+                    reject_dangerous_writes=True,
+                )
+                != journal
+            ):
+                return None
+            require_operational_authorization(ROOT)
+            if not current_source_matches():
+                return None
+        with store.connect() as connection:
+            if (
+                not reserved
+                and connection.execute(
+                    "SELECT 1 FROM events WHERE opportunity_key=? AND event_type='THREAD_RECOVERY_RESERVED' AND json_extract(payload_json,'$.intentId')=? AND json_extract(payload_json,'$.environmentRecovery.fingerprint')=? LIMIT 1",
+                    (candidate["key"], candidate["intentId"], proof["fingerprint"]),
+                ).fetchone()
+            ):
+                return None
+        return candidate | {
+            "environmentRecovery": proof,
+            "recoveryNonce": sha256_json(
+                {
+                    "intentId": candidate["intentId"],
+                    "environmentFingerprint": proof["fingerprint"],
+                    "rawDigest": proof["rawDigest"],
+                    "contextRawDigest": proof["contextRawDigest"],
+                    "overlayDigest": proof["overlayDigest"],
+                    "source": source,
+                }
+            ),
+        }
+    except (OSError, RuntimeError, ValueError, TypeError, KeyError, IndexError, sqlite3.Error):
+        return None
+
+
 def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     quarantined_reader = getattr(store, "quarantined_validation_followups", lambda: [])
@@ -33022,6 +33541,11 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             min_age_minutes=0,
             include_exhausted_dispatched=True,
         )
+        environment_reader = getattr(store, "completed_environment_recovery_sources", lambda: [])
+        for source in environment_reader():
+            ready = _completed_go_environment_recovery(store, source)
+            if ready is not None:
+                candidates.append(ready)
         candidate_thread_ids = {item["threadId"] for item in candidates}
         context_candidates = getattr(store, "task_context_candidates", lambda: [])()
         probe_thread_ids: set[str] = set()
@@ -33165,7 +33689,9 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 except (OSError, RuntimeError):
                     completed_validation_without_result = False
             immediate_recovery = (
-                _is_immediate_recovery(turn_state) or completed_validation_without_result
+                _is_immediate_recovery(turn_state)
+                or completed_validation_without_result
+                or candidate.get("environmentRecovery") is not None
             )
             turn_worker = (
                 active_task_turn_worker(candidate["threadId"]) if immediate_recovery else None
@@ -33346,7 +33872,36 @@ def recovery_reserve(args: argparse.Namespace) -> dict[str, Any]:
     recovery_store = ledger(args.ledger)
     if _current_stopped_attempt(recovery_store, authorized) is not None:
         raise RuntimeError("stopped attempt is not authorized for recovery")
-    candidate = recovery_store.reserve_recovery(**reserve_kwargs)
+    if authorized.get("environmentRecovery") is not None:
+        with opportunity_action_guard(
+            ledger_action_guard_root(recovery_store.path), authorized["key"]
+        ):
+            sources = recovery_store.completed_environment_recovery_sources()
+            source = next(
+                (
+                    item
+                    for item in sources
+                    if _task_turn_binding_matches(
+                        item,
+                        intent_id=authorized["intentId"],
+                        worktree_path=authorized["worktreePath"],
+                    )
+                ),
+                None,
+            )
+            ready = _completed_go_environment_recovery(recovery_store, source) if source else None
+            if (
+                ready is None
+                or ready.get("environmentRecovery") != authorized["environmentRecovery"]
+            ):
+                raise RuntimeError("Completed environment recovery changed before reservation")
+            reserve_kwargs["environment_candidate"] = ready
+            reserve_kwargs["environment_validator"] = lambda: _completed_go_environment_recovery(
+                recovery_store, source
+            )
+            candidate = recovery_store.reserve_recovery(**reserve_kwargs)
+    else:
+        candidate = recovery_store.reserve_recovery(**reserve_kwargs)
     if candidate.get("recoveryKind") == "DISPATCHED_TASK":
         _verify_dispatched_recovery_prompt_binding(candidate, prompt)
     return {
