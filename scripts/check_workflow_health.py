@@ -685,7 +685,9 @@ def full_slot_coverage(
         created = _run_time(item)
         if created == _UTC_MIN:
             continue
-        slot = eligible_slot(created, minute=slot_minute, grace_minutes=grace_minutes)
+        slot = created.replace(minute=slot_minute, second=0, microsecond=0)
+        if created < slot:
+            slot -= timedelta(hours=1)
         if slot in expected_set:
             by_slot[slot].append(item)
 
