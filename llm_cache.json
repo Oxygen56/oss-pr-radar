@@ -12340,6 +12340,37 @@
     ],
     "why": "Issue reports a plausible DFlash/DSpark draft-KV corruption under automatic prefix caching, with code anchors and a reproduction sketch, but the reporter explicitly states they have not pinned which step registers unwritten draft blocks, and the proposed fix shape is unresolved. Open draft PR #56723 overlaps the same speculator path but does not reference this issue and is not technically complete, so duplicate/coverage status is unresolved. Policy evidence also flags an AI disclosure conflict."
   },
+  "169d530b3c026451c37c30d7e5772e26b8eac7a7f5f9ce860b785f20cceaebab": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: reallocate gemm_out_mul/gemm_out_sqrsum as {1, m, n} or clamp n_splits to 1 in the large-batch path of mhc_fused_post_pre",
+      "Align the call with sglang.srt.layers.deep_gemm_wrapper.entrypoint.tf32_hc_prenorm_gemm contract"
+    ],
+    "risks": [
+      "Changing n_splits semantics could alter numerical results if split-K reduction was previously relied upon",
+      "The opt-in path is default-off and may have other latent API drift beyond this call site",
+      "No maintainer design preference recorded for whether to clamp or reallocate"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLANG_OPT_FUSE_MHC_POST_PRE=1 on a single card and confirm the DeepGemm assertion at gemm.hpp:930 before the fix",
+      "After the fix, run the same fused path through CUDA graph capture and compare sanity outputs against the unfused path",
+      "Add a minimal single-call, 1-card smoke test for the opt-in fused mHC flag to catch future API drift"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer clamping n_splits to 1 versus reallocating d as {1, m, n}",
+      "Whether other call sites in the fused mHC path share the same stale DeepGemm contract"
+    ],
+    "why": "Issue pins a concrete API-contract drift: mhc_fused_post_pre allocates per-split partials shaped {n_splits, m, n} and passes num_splits explicitly, while the current DeepGemm tf32_hc_prenorm_gemm only accepts {1, m, n} when num_splits is set. The 1-card shape bisection (num_splits=39/19 fails, 1 passes) and the working clamp workaround give a reproducible root cause and a concrete validation path."
+  },
   "16a2f5e04344aad158218134bb63e9bd7060ac93dbc4b04293d4ff65ca1e7d97": {
     "confidence": 0.8,
     "contradictions": [
@@ -53271,6 +53302,35 @@
       "Whether maintainers have a preferred design for future-proofing."
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than adding each model to an exclusion list. No open PR or issue addresses this, and the issue provides a concrete reproduction and expected behavior."
+  },
+  "596c7b52e046e01343c997b8eb14c3bb5f970d16d8d90843d9f0bf8e1a4dbc79": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Frontend dataset configuration form: normalize nullable parser_config fields on load or relax validation to accept null",
+      "Save handler: surface visible validation error instead of only console logging"
+    ],
+    "risks": [
+      "Fix could broaden API behavior if normalization is applied server-side rather than in the form layer",
+      "Maintainer may prefer a specific normalization location (frontend vs backend schema)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create dataset via POST /api/v1/datasets with parser_config lacking table_column_* fields, open /dataset/configuration/<id>, click Save, assert a PUT request is sent and returns code 0",
+      "Regression test that null table_column_mode/roles/names do not block General parser settings save",
+      "Verify Permissions change to Team persists after save"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete reproduction (API-created General dataset with null table_column_* fields), identifies the frontend validation root cause (optional() rejecting null, form.trigger() silently failing), and includes a verified workaround plus a suggested fix. Track is agent_ai_infra, so the llm_algorithm rejection criteria do not apply. No duplicate PR/issue coverage found."
   },
   "5970c19431318491f1876d8c1efe12f736ae140813f5ce4363371f618cf2b4eb": {
     "confidence": 0.85,
@@ -113555,6 +113615,39 @@
       "Exact caller list after PR #9506 merges"
     ],
     "why": "Issue clearly identifies a concrete bug in the in-send compression path where request route is not threaded through, causing token counts to be invalidated against the active route instead of the request route. Root cause is precisely described with three specific code sites and a suggested fix direction. The issue is a follow-up from PR #9506 and is blocked on that PR, but the evidence is sufficient to define actionable work."
+  },
+  "beb43e3d7f05ebd1815c280fc534298c187f0f232f615b015a88003127c95cf7": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Admin UI usage date-range preset logic (start-date offset for inclusive ranges)",
+      "Date-range selector Apply handler / preset definitions"
+    ],
+    "risks": [
+      "Timezone handling may shift the boundary if fix uses UTC vs local startOf('day')",
+      "Other presets (Last 30 days, etc.) may share the same off-by-one and need consistent treatment",
+      "Changing preset semantics could affect saved/exported usage reports"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test asserting the 'Last 7 days' preset yields exactly 7 inclusive dates ending today (e.g., Oct 7-Oct 13, 2026)",
+      "Regression test under a non-UTC timezone (Asia/Shanghai) to confirm no DST/timezone drift",
+      "Manual repro: open /ui/usage/, select Last 7 days, Apply, verify heading and 7 chart buckets"
+    ],
+    "unknowns": [
+      "Exact file/function implementing the preset (codePathsPlan is empty; only 'Apply' anchor given)",
+      "Whether other presets share the same off-by-one"
+    ],
+    "why": "Issue provides a concrete, reproducible off-by-one in the Admin UI 'Last 7 days' preset: start date computed as moment().subtract(7,'days').startOf('day') while both bounds are inclusive, yielding 8 calendar days. Expected/actual pairs, ordered steps, timezone, version, and a specific code anchor ('Apply') are supplied; no open PR or duplicate issue covers it."
   },
   "beb86e403ecfe8f7444018a1c90b28bdd286f030456f49e77905efdf1781efab": {
     "confidence": 0.6,
