@@ -18,7 +18,12 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from .operational_auth import require_operational_authorization
-from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
+from .release_binding import (
+    bind_runtime,
+    bind_verified_release,
+    runtime_ledger_path,
+    runtime_python,
+)
 from .runtime import (
     RuntimeLockBusy,
     append_operation,
@@ -438,12 +443,29 @@ def run_bridge(
     timeout: int = 900,
     code_root: Path | None = None,
     allow_unreleased_code: bool = False,
+    extra_args: list[str] | None = None,
+    inactive_release: bool = False,
 ) -> dict[str, Any]:
-    binding = bind_runtime(
-        root,
-        code_root=code_root,
-        allow_unreleased_code=allow_unreleased_code,
-    )
+    if inactive_release:
+        if (
+            operation
+            not in {
+                "agentscope-event-create",
+                "agentscope-event-worker",
+                "nanobot-event-create",
+                "nanobot-event-worker",
+            }
+            or code_root is None
+            or allow_unreleased_code
+        ):
+            raise RuntimeError("independent event release operation is not allowed")
+        binding = bind_verified_release(root, code_root)
+    else:
+        binding = bind_runtime(
+            root,
+            code_root=code_root,
+            allow_unreleased_code=allow_unreleased_code,
+        )
     argv = [
         str(runtime_python(root)),
         str(binding.script("scripts/local_dispatch_bridge.py")),
@@ -453,6 +475,7 @@ def run_bridge(
         str(runtime_ledger_path(root)),
         operation,
     ]
+    argv.extend(extra_args or [])
     process = subprocess.Popen(
         argv,
         cwd=root,

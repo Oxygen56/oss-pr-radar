@@ -366,6 +366,17 @@ class RuntimeBinding:
         return path
 
 
+def bind_verified_release(runtime_root: Path, code_root: Path) -> RuntimeBinding:
+    """Pin an independent event release without replacing the active main release."""
+    runtime_root, releases, _state = validate_runtime_layout(runtime_root)
+    releases = _safe_directory(releases, label="runtime releases")
+    explicit = _validate_release_path(code_root, label="explicit event release").resolve()
+    if explicit.parent != releases:
+        raise RuntimeError("explicit event release escapes the runtime releases directory")
+    manifest = verify_release(explicit)
+    return RuntimeBinding(runtime_root=runtime_root, code_root=explicit, release=manifest)
+
+
 def bind_runtime(
     runtime_root: Path,
     *,

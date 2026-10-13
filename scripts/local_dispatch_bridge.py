@@ -112,6 +112,7 @@ from oss_pr_radar.publication import (  # noqa: E402
 )
 from oss_pr_radar.release_binding import (  # noqa: E402
     bind_runtime,
+    bind_verified_release,
     open_directory_handle,
     runtime_ledger_path,
     runtime_python,
@@ -34021,6 +34022,524 @@ def drain_once(args: argparse.Namespace) -> dict[str, Any]:
             }
 
 
+EVENT_TASK_MODELS = ("gpt-6.1-sol",)
+_EVENT_REPOSITORIES = {"agentscope": "agentscope-ai/agentscope", "nanobot": "HKUDS/nanobot"}
+
+
+def _event_bootstrap_prompt(namespace: str, event_id: str, key: str, outcome_path: Path) -> str:
+    return (
+        "This is an isolated internal bootstrap/continuation verification. Stay in this exact thread. "
+        "Do not read repositories, run commands, access GitHub, modify code, comment, claim work, "
+        "or create/update a pull request. Only write the private terminal JSON and finish. "
+        f"Write exactly four keys to {outcome_path}: schemaVersion={namespace}_event_outcome_v1, "
+        f"eventId={event_id}, publicKey={key}, state=no_action."
+    )
+
+
+def _event_operation_scope(args: argparse.Namespace) -> tuple[str, str]:
+    namespace = str(args.operation).split("-event-", 1)[0]
+    if namespace not in _EVENT_REPOSITORIES or args.operation not in {
+        f"{namespace}-event-create",
+        f"{namespace}-event-worker",
+    }:
+        raise RuntimeError("event operation is not allowed")
+    return namespace, _EVENT_REPOSITORIES[namespace]
+
+
+def _event_private_path(path: Path, directory: Path) -> Path:
+    path = path.absolute()
+    directory = directory.absolute()
+    if path.parent != directory or path.resolve() != path or directory.resolve() != directory:
+        raise RuntimeError("event artifact path is outside the owned namespace")
+    if not re.fullmatch(r"[0-9a-f]{64}\.json", path.name):
+        raise RuntimeError("event artifact name is invalid")
+    for item in (directory, path):
+        if not item.exists() and not item.is_symlink():
+            continue
+        metadata = item.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            raise RuntimeError("event artifact ownership is invalid")
+        if item == directory and not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeError("event artifact directory is invalid")
+        if item == path and not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError("event artifact is not a regular file")
+    return path
+
+
+def _validate_event_request(args: argparse.Namespace, request: dict[str, Any]) -> None:
+    namespace, repo = _event_operation_scope(args)
+    event_id = request.get("eventId")
+    key = request.get("eventKey")
+    bootstrap = request.get("bootstrap") is True
+    suffix = r"#bootstrap-[A-Za-z0-9_-]+" if bootstrap else r"#[1-9][0-9]*"
+    if (
+        not isinstance(event_id, str)
+        or not event_id
+        or not isinstance(key, str)
+        or not re.fullmatch(re.escape(repo) + suffix, key)
+    ):
+        raise RuntimeError("event request repository or identity is invalid")
+    if bootstrap and not event_id.startswith(f"{namespace}-bootstrap-"):
+        raise RuntimeError("event bootstrap identity is invalid")
+    if request.get("model") != "gpt-6.1-sol":
+        raise RuntimeError("event request model is not allowed")
+    artifact_root = STATE / f"{namespace}_event_bootstrap" if bootstrap else STATE
+    receipt = _event_private_path(Path(args.receipt), artifact_root / f"{namespace}_event_receipts")
+    outcome = _event_private_path(
+        Path(str(request.get("outcomePath") or "")), artifact_root / f"{namespace}_event_outcomes"
+    )
+    if receipt.name != outcome.name:
+        raise RuntimeError("event outcome and receipt identities differ")
+    manifest = read_json(ROOT / "event-lane-manifest.json", missing={})
+    expected_digest = (ROOT / "event-lane-manifest.sha256").read_text().strip().split()[0]
+    if (
+        hashlib.sha256((ROOT / "event-lane-manifest.json").read_bytes()).hexdigest()
+        != expected_digest
+    ):
+        raise RuntimeError("event lane manifest digest mismatch")
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schemaVersion") != "oss-pr-radar-event-lane-v1"
+        or not isinstance(manifest.get("repositories"), dict)
+    ):
+        raise RuntimeError("event lane manifest schema is invalid")
+    entry = manifest["repositories"].get(repo)
+    if (
+        not isinstance(entry, dict)
+        or not entry.get("activeThreadId")
+        or request.get("threadId") != entry["activeThreadId"]
+    ):
+        raise RuntimeError("event central thread binding mismatch")
+    expected_cwd = GITHUB_ROOT / repo.rsplit("/", 1)[1]
+    cwd = Path(str(request.get("cwd") or "")).absolute()
+    if (
+        cwd != expected_cwd
+        or cwd.resolve() != cwd
+        or entry.get("cwd") != str(cwd)
+        or not cwd.is_dir()
+    ):
+        raise RuntimeError("event central cwd binding mismatch")
+
+
+def _validated_event_outcome(
+    path: Path, *, allowed_dir: Path, event_id: str, public_key: str, namespace: str = "agentscope"
+) -> dict[str, Any]:
+    """Read the handler-authored outcome with fail-closed identity and TTL checks."""
+    if path.absolute().parent != allowed_dir.absolute() or path.resolve() != path.absolute():
+        return {"error": "OUTCOME_PATH_INVALID"}
+    try:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            return {"error": "OUTCOME_PATH_INVALID"}
+    except OSError:
+        return {"error": "OUTCOME_MISSING_OR_INVALID"}
+    value = read_json(path, missing={})
+    if not isinstance(value, dict) or value.get("schemaVersion") != f"{namespace}_event_outcome_v1":
+        return {"error": "OUTCOME_MISSING_OR_INVALID"}
+    if value.get("eventId") != event_id or value.get("publicKey") != public_key:
+        return {"error": "OUTCOME_IDENTITY_MISMATCH"}
+    state = value.get("state")
+    if state not in {"no_action", "claimed_or_pr", "design_wait"}:
+        return {"error": "OUTCOME_STATE_INVALID"}
+    expected_keys = {"schemaVersion", "eventId", "publicKey", "state"}
+    if state == "design_wait":
+        expected_keys.update({"waitStartedAt", "waitUntil"})
+    if set(value) != expected_keys:
+        return {"error": "OUTCOME_SCHEMA_INVALID"}
+    if state == "design_wait":
+        try:
+            started = datetime.fromisoformat(str(value["waitStartedAt"]).replace("Z", "+00:00"))
+            until = datetime.fromisoformat(str(value["waitUntil"]).replace("Z", "+00:00"))
+            if (
+                started.tzinfo is None
+                or until.tzinfo is None
+                or started > datetime.now(UTC)
+                or until < started
+                or until - started > timedelta(hours=24)
+            ):
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            return {"error": "OUTCOME_WAIT_INVALID"}
+    return value
+
+
+def _event_worker(args: argparse.Namespace) -> dict[str, Any]:
+    """Run one detached AgentScope turn and receipt it before waiting for terminal state."""
+    namespace, _repo = _event_operation_scope(args)
+    if Path(args.request).absolute() != Path(args.receipt).absolute().with_suffix(".request.json"):
+        raise RuntimeError("event request artifact identity mismatch")
+    request_path = Path(args.request)
+    metadata = request_path.lstat()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise RuntimeError("event request ownership is invalid")
+    request = read_json(request_path, missing={})
+    if not isinstance(request, dict):
+        raise RuntimeError("AgentScope event request is unavailable")
+    event_id = str(request.get("eventId") or "")
+    event_key = str(request.get("eventKey") or "")
+    prompt = str(request.get("prompt") or "")
+    model = str(request.get("model") or "").strip()
+    outcome_path = Path(str(request.get("outcomePath") or "")).resolve()
+    if not event_id or not event_key or not prompt or not model:
+        raise RuntimeError("AgentScope event request is incomplete")
+    if model not in EVENT_TASK_MODELS:
+        raise RuntimeError("AgentScope event request model is not allowed")
+    _validate_event_request(args, request)
+    artifact_root = (
+        STATE / f"{namespace}_event_bootstrap" if request.get("bootstrap") is True else STATE
+    )
+    allowed_outcome_dir = artifact_root / f"{namespace}_event_outcomes"
+    if outcome_path.parent != allowed_outcome_dir:
+        raise RuntimeError("AgentScope outcome path is outside the private outcome directory")
+    if request.get("bootstrap") is True:
+        prompt = _event_bootstrap_prompt(namespace, event_id, event_key, outcome_path)
+    thread_id = str(request.get("threadId") or "")
+    executable = shutil.which("codex")
+    if not executable:
+        raise RuntimeError("codex executable is unavailable")
+    store = ledger(args.ledger)
+    process = None
+    selector = selectors.DefaultSelector()
+    buffer = b""
+    turn_id = ""
+    client_message_id = str(
+        request.get("clientUserMessageId") or f"oss-pr-radar:{namespace}-event:{event_id}"
+    )
+    try:
+        with _app_server_action_session(
+            store,
+            opportunity_key=event_key,
+            argv=[
+                executable,
+                "app-server",
+                "--disable",
+                "recommended_plugins",
+                "--disable",
+                "remote_plugin",
+                "--disable",
+                "multi_agent",
+                "--disable",
+                "multi_agent_v2",
+                "--stdio",
+            ],
+            cwd=GITHUB_ROOT,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        ) as started_process:
+            process = started_process
+            if process.stdin is None or process.stdout is None:
+                raise RuntimeError("app server pipes are unavailable")
+            selector.register(process.stdout, selectors.EVENT_READ)
+            start_method = "thread/resume" if thread_id else "thread/start"
+            start_params: dict[str, Any] = (
+                {"threadId": thread_id}
+                if thread_id
+                else {
+                    "cwd": str(Path(str(request.get("cwd") or GITHUB_ROOT)).resolve()),
+                    "sandbox": "danger-full-access",
+                    "approvalPolicy": "never",
+                    "threadSource": "appServer",
+                }
+            )
+            process.stdin.write(
+                (
+                    json.dumps(
+                        {
+                            "id": 1,
+                            "method": "initialize",
+                            "params": {
+                                "clientInfo": {"name": f"oss-pr-radar-{namespace}", "version": "1"},
+                                "capabilities": {"experimentalApi": True},
+                            },
+                        }
+                    )
+                    + "\n"
+                    + json.dumps({"id": 2, "method": start_method, "params": start_params})
+                    + "\n"
+                ).encode("utf-8")
+            )
+            process.stdin.flush()
+            buffer, _ = _read_app_server_response(
+                process, selector, buffer, response_id=1, timeout=30, action="initialize"
+            )
+            buffer, start_message = _read_app_server_response(
+                process, selector, buffer, response_id=2, timeout=30, action=start_method
+            )
+            if not thread_id:
+                thread_id = str(
+                    ((start_message.get("result") or {}).get("thread") or {}).get("id") or ""
+                )
+            elif (
+                str(((start_message.get("result") or {}).get("thread") or {}).get("id") or "")
+                != thread_id
+            ):
+                raise RuntimeError("event app-server resumed a foreign thread")
+            if not thread_id:
+                raise RuntimeError("app server did not return a thread receipt")
+            params = {
+                "threadId": thread_id,
+                "cwd": str(Path(str(request.get("cwd") or GITHUB_ROOT)).resolve()),
+                "input": [{"type": "text", "text": prompt, "text_elements": []}],
+                "approvalPolicy": "never",
+                "sandboxPolicy": {"type": "dangerFullAccess"},
+                "summary": "auto",
+                "model": model,
+                "effort": "medium",
+                "clientUserMessageId": client_message_id,
+            }
+            process.stdin.write(
+                (json.dumps({"id": 3, "method": "turn/start", "params": params}) + "\n").encode(
+                    "utf-8"
+                )
+            )
+            process.stdin.flush()
+            buffer, turn_message = _read_app_server_response(
+                process, selector, buffer, response_id=3, timeout=45, action="turn/start"
+            )
+            turn_id = str(((turn_message.get("result") or {}).get("turn") or {}).get("id") or "")
+            if not turn_id:
+                raise RuntimeError("app server did not return a turn receipt")
+            _atomic_json(
+                Path(args.receipt),
+                {
+                    "ok": True,
+                    "eventId": event_id,
+                    "eventKey": event_key,
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "clientUserMessageId": client_message_id,
+                    "model": model,
+                    "effort": "medium",
+                    "turnStarted": True,
+                },
+            )
+        terminal = _wait_for_app_server_terminal_turn(
+            process,
+            selector,
+            buffer,
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
+        if terminal:
+            current = read_json(Path(args.receipt), missing={})
+            outcome = _validated_event_outcome(
+                outcome_path,
+                allowed_dir=allowed_outcome_dir,
+                event_id=event_id,
+                public_key=event_key,
+                namespace=namespace,
+            )
+            if request.get("bootstrap") is True and outcome.get("state") != "no_action":
+                outcome = {"error": "BOOTSTRAP_OUTCOME_INVALID"}
+            terminal_receipt = current | {
+                "turnStatus": terminal["status"],
+                "outcome": outcome,
+                "outcomePath": str(outcome_path),
+            }
+            if terminal.get("error") is not None:
+                terminal_receipt["terminalError"] = terminal["error"]
+            _atomic_json(
+                Path(args.receipt),
+                terminal_receipt,
+            )
+        return read_json(Path(args.receipt), missing={})
+    except Exception as exc:
+        receipt = Path(args.receipt)
+        if not receipt.exists():
+            _atomic_json(
+                receipt,
+                {
+                    "ok": False,
+                    "eventId": event_id,
+                    "eventKey": event_key,
+                    "turnStarted": bool(turn_id),
+                    "turnId": turn_id or None,
+                    "model": model,
+                    "retryable": "DESKTOP_ACTIVE_WRITER" in str(exc),
+                    "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                },
+            )
+        raise
+    finally:
+        selector.close()
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+
+def _event_create(args: argparse.Namespace) -> dict[str, Any]:
+    """Start or resume an AgentScope event worker and return its start receipt."""
+    namespace, _repo = _event_operation_scope(args)
+    _validate_event_request(
+        args,
+        {
+            "eventId": args.event_id,
+            "eventKey": args.event_key,
+            "model": args.model,
+            "threadId": args.thread_id,
+            "cwd": str(args.cwd),
+            "outcomePath": str(args.outcome_receipt),
+            "bootstrap": bool(getattr(args, "bootstrap", False)),
+        },
+    )
+    artifact_root = (
+        STATE / f"{namespace}_event_bootstrap" if getattr(args, "bootstrap", False) else STATE
+    )
+    receipt_root = artifact_root / f"{namespace}_event_receipts"
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    receipt = Path(args.receipt).resolve()
+    launch = receipt.with_suffix(".launch.json")
+    request = receipt.with_suffix(".request.json")
+    for sibling in (launch, request, receipt.with_suffix(".log"), receipt.with_suffix(".json.tmp")):
+        if sibling.is_symlink():
+            raise RuntimeError("event sidecar is a symlink")
+        if sibling.exists():
+            metadata = sibling.lstat()
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) & 0o022
+            ):
+                raise RuntimeError("event sidecar ownership is invalid")
+    existing = read_json(receipt, missing={})
+    launch_state = read_json(launch, missing={})
+    if existing and (
+        existing.get("eventId") != args.event_id or existing.get("eventKey") != args.event_key
+    ):
+        raise RuntimeError("event receipt identity mismatch")
+    worker_pid = int(launch_state.get("pid") or 0)
+    if worker_pid and _pid_is_alive(worker_pid):
+        return existing | {
+            "ok": True,
+            "pending": True,
+            "workerPid": worker_pid,
+            "receipt": str(receipt),
+            "model": str(getattr(args, "model", "") or existing.get("model") or ""),
+        }
+    if (
+        existing.get("ok")
+        and existing.get("turnId")
+        and existing.get("turnStatus") in {"completed", "failed", "interrupted"}
+    ):
+        return existing
+    # A start receipt without a live worker is recoverable: resume the same
+    # thread with the same client id instead of acknowledging a dead turn.
+    if existing.get("threadId") and not args.thread_id:
+        args.thread_id = str(existing["threadId"])
+    _atomic_json(
+        request,
+        {
+            "eventId": args.event_id,
+            "eventKey": args.event_key,
+            "bootstrap": bool(getattr(args, "bootstrap", False)),
+            "model": str(getattr(args, "model", "") or EVENT_TASK_MODELS[0]),
+            "threadId": args.thread_id or "",
+            "clientUserMessageId": args.client_user_message_id,
+            "cwd": str(args.cwd or GITHUB_ROOT),
+            "prompt": _event_bootstrap_prompt(
+                namespace, args.event_id, args.event_key, Path(args.outcome_receipt)
+            )
+            if getattr(args, "bootstrap", False)
+            else args.prompt,
+            "designWaitUntil": getattr(args, "design_wait_until", ""),
+            "designWaitStartedAt": getattr(args, "design_wait_started_at", ""),
+            "outcomePath": str(getattr(args, "outcome_receipt", "")),
+        },
+    )
+    receipt.unlink(missing_ok=True)
+    launch.unlink(missing_ok=True)
+    log = receipt.with_suffix(".log")
+    with log.open("ab") as handle:
+        worker = subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--ledger",
+                str(args.ledger),
+                "--runtime-root",
+                str(args.runtime_root),
+                f"{namespace}-event-worker",
+                "--request",
+                str(request),
+                "--receipt",
+                str(receipt),
+            ],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    _atomic_json(
+        launch,
+        {
+            "pid": worker.pid,
+            "startedAt": iso_z(datetime.now(UTC)),
+            "model": str(getattr(args, "model", "") or EVENT_TASK_MODELS[0]),
+        },
+    )
+    deadline = monotonic() + 60
+    while monotonic() < deadline:
+        if receipt.exists():
+            result = read_json(receipt, missing={})
+            if result.get("ok") or result.get("retryable"):
+                return result | {"workerPid": worker.pid}
+            raise RuntimeError(str(result.get("error") or "AgentScope event worker failed"))
+        if worker.poll() is not None:
+            break
+        sleep(0.25)
+    return {
+        "ok": True,
+        "pending": True,
+        "workerPid": worker.pid,
+        "receipt": str(receipt),
+        "model": str(getattr(args, "model", "") or EVENT_TASK_MODELS[0]),
+    }
+
+
+def _validated_agentscope_event_outcome(
+    path: Path, *, allowed_dir: Path, event_id: str, public_key: str
+) -> dict[str, Any]:
+    return _validated_event_outcome(
+        path, allowed_dir=allowed_dir, event_id=event_id, public_key=public_key
+    )
+
+
+def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
+    return _event_worker(args)
+
+
+def agentscope_event_create(args: argparse.Namespace) -> dict[str, Any]:
+    return _event_create(args)
+
+
+def _nanobot_event_worker(args: argparse.Namespace) -> dict[str, Any]:
+    return _event_worker(args)
+
+
+def nanobot_event_create(args: argparse.Namespace) -> dict[str, Any]:
+    return _event_create(args)
+
+
 def main() -> int:
     global STATE
     parser = argparse.ArgumentParser()
@@ -34107,6 +34626,23 @@ def main() -> int:
     creation_abandon_parser.add_argument(
         "--min-age-minutes", type=int, default=ORPHAN_ABANDON_MIN_AGE_MINUTES
     )
+    for namespace in _EVENT_REPOSITORIES:
+        create = subparsers.add_parser(f"{namespace}-event-create")
+        create.add_argument("--bootstrap", action="store_true")
+        create.add_argument("--event-id", required=True)
+        create.add_argument("--event-key", required=True)
+        create.add_argument("--model", default="gpt-6.1-sol", choices=EVENT_TASK_MODELS)
+        create.add_argument("--thread-id", required=True)
+        create.add_argument("--client-user-message-id", required=True)
+        create.add_argument("--cwd", type=Path, required=True)
+        create.add_argument("--prompt", required=True)
+        create.add_argument("--receipt", type=Path, required=True)
+        create.add_argument("--outcome-receipt", type=Path, required=True)
+        create.add_argument("--design-wait-until", default="")
+        create.add_argument("--design-wait-started-at", default="")
+        worker = subparsers.add_parser(f"{namespace}-event-worker")
+        worker.add_argument("--request", type=Path, required=True)
+        worker.add_argument("--receipt", type=Path, required=True)
     root_task_create_parser = subparsers.add_parser("root-task-create")
     root_task_create_parser.add_argument("--intent-id", required=True)
     root_task_create_parser.add_argument("--creation-token", required=True)
@@ -34410,6 +34946,12 @@ def main() -> int:
     try:
         bind_runtime(args.runtime_root)
         require_operational_authorization(args.runtime_root)
+        if args.operation in {
+            f"{ns}-event-{action}" for ns in _EVENT_REPOSITORIES for action in ("create", "worker")
+        }:
+            bind_verified_release(args.runtime_root, ROOT)
+            if Path(args.ledger).resolve() != runtime_ledger_path(args.runtime_root).resolve():
+                raise RuntimeError("event ledger does not match current main authorization")
     except (OSError, RuntimeError, ValueError) as exc:
         print(
             json.dumps(
@@ -34420,7 +34962,11 @@ def main() -> int:
             )
         )
         return 2
-    if args.operation == "sync":
+    if args.operation in {"agentscope-event-create", "nanobot-event-create"}:
+        result = _event_create(args)
+    elif args.operation in {"agentscope-event-worker", "nanobot-event-worker"}:
+        result = _event_worker(args)
+    elif args.operation == "sync":
         result = sync_queue(args.ledger)
     elif args.operation == "queue-import":
         result = import_signed_queue(args.ledger)
