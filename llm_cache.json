@@ -13352,6 +13352,39 @@
     ],
     "why": "Issue identifies a clear protocol-conformance bug in McpServerSession and McpStatelessAsyncServer where empty Mono completions suppress JSON-RPC responses, with a concrete root cause and suggested fix. However, the repository requires assignment and AI disclosure, and the deterministic gate is HUMAN_REVIEW, so work should not start without maintainer confirmation."
   },
+  "183a617afdae726dbbe55dd8d7acf0a74a2d5d4099335c973c636501e394e170": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/global_router/handler.py",
+      "lib/llm/src/block_manager/controller/handler.rs",
+      "TCP response callback establishment / cancellation ordering in dynamo-runtime"
+    ],
+    "risks": [
+      "Race may be timing-dependent and hard to reproduce deterministically in CI",
+      "Fix may require coordination between discovery, request plane, and response plane components",
+      "Maintainer may prefer a different synchronization approach"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided k8s manifest and aiperf script, confirming requests begin processing after callback cancellation",
+      "Add a regression test that removes a worker endpoint concurrently with callback establishment and asserts no processing starts after cancellation",
+      "Run targeted dynamo-runtime Rust unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact code location of the callback-cancellation vs processing-start race is not pinned to a specific function"
+    ],
+    "why": "Issue describes a concrete race between discovery removal and TCP response callback establishment, with ordered reproduction steps, executable commands, expected/actual behavior, and log evidence showing response publish failure after callback cancellation. Track is agent_ai_infra, not llm_algorithm, so algorithm-specific requirements do not apply. No open PR or duplicate issue covers it."
+  },
   "183e93d4bd817bcc15d5b9928a309782d5f5c1637bde53f5cecfa9e47d46a205": {
     "confidence": 0.8,
     "contradictions": [],
@@ -68103,6 +68136,34 @@
     ],
     "why": "The issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not reproduce it synthetically; only long real agentic sessions trigger it. A maintainer comment attributes it to 'tool call / vllm frontend', which is parser/frontend plumbing rather than an LLM algorithm mechanism (training objective, kernel algorithm, quantization/numerical method, or evaluation methodology). The candidate's algorithm_evidence claims model_architecture/distributed_training/numerics_quantization/evaluation_method, but the supplied evidence shows no formula, no experiment, and no concrete algorithmic root cause — the code anchors are collect_env.py, finished_reason, clear_thinking, bash, max_tokens, and glm parser files, i.e. frontend/parser plumbing. Additionally, the pre-task policy status is ai_disclosure_conflict, which is a materially blocking disclosure requirement, and there is a potential duplicate issue #56583 sharing stack/failure signatures. These unknowns determine whether code work is actionable."
   },
+  "70907d6b9e380ee4b50f07543216453a5bc682ca5444bc535e00ef2fc296ab24": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.related_issue_assessment reports 'none' related issues while the bot comment cites #52236 and multiple closed duplicates"
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "No new code work; any fix belongs in the existing #52236 investigation (project store eviction / runtime.tsx recompute path)"
+    ],
+    "risks": [
+      "Working this duplicate would fragment effort and duplicate the existing #52236 fix",
+      "Issue is pending automatic close as duplicate"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursued, add a regression test reproducing the store-eviction filter/sort storm with many projects, but this should be attached to #52236 rather than this duplicate"
+    ],
+    "unknowns": [
+      "Whether #52236 already has an open fix PR or maintainer-assigned owner"
+    ],
+    "why": "Issue is a user-visible desktop renderer freeze, but the supplied evidence shows it is a duplicate of #52236 (with #54441, #53859, #51028 already closed as duplicates of the same store-eviction/recompute storm). The bot comment explicitly identifies the same trigger, same stack, and same root-cause area, and the issue is labeled 'pending close'. This is covered opportunity, not a new actionable code contribution."
+  },
   "709125e6562ba1702d2c09f224fcfb8543096abcc965eb745434a19d21f53fbd": {
     "confidence": 0.8,
     "contradictions": [
@@ -99081,6 +99142,36 @@
       "Exact precedence order maintainers want among body, header, router credentials, and env vars"
     ],
     "why": "Issue provides a concrete, code-anchored root cause: get_openai_client in litellm/llms/openai/openai.py omits the project parameter, and batch/file handling in litellm/batches/main.py never resolves project/OpenAI-Project. Reproduction steps and expected behavior are explicit, and the fix is a bounded parameter-plumbing change with a clear validation path."
+  },
+  "a4eb9f71fa0c64611ddd523e6d8de2db09c80f71bc52cd2ef5b7e124bf88afb6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/fal/src/fal-speech-model-options.ts: replace z.record(z.string(), z.string()) with a schema accepting tone_list: z.array(z.string())",
+      "Add runtime validation and request-body coverage for nonempty tone_list and invalid element types",
+      "Add a type test showing the documented array shape is accepted"
+    ],
+    "risks": [
+      "Schema change could inadvertently broaden accepted provider options beyond the documented endpoint contract",
+      "Maintainer may prefer a different schema modeling approach for provider-specific dictionaries"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.mjs against the patched package to confirm the second doGenerate validates and forwards pronunciation_dict unchanged",
+      "Add unit tests asserting nonempty tone_list passes validation and is forwarded in the request body",
+      "Add negative tests asserting invalid element types are rejected",
+      "Add a type-level test that the documented tone_list array is accepted by the inferred option type"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete root cause: packages/fal/src/fal-speech-model-options.ts declares pronunciation_dict as z.record(z.string(), z.string()), rejecting the documented tone_list array shape. Reproduction is self-contained with mocked fetch, and the proposed fix (tone_list: z.array(z.string())) is a concrete, testable schema change."
   },
   "a505962edddb1d425d18f2e725cd4ad18015695a11bb312f62db24baed43c342": {
     "confidence": 0.6,
