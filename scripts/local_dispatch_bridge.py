@@ -2153,7 +2153,15 @@ def fetch_cloud_queue() -> dict[str, Any]:
     ref = "refs/radar/import/radar-state"
     with exclusive_lock(STATE / RADAR_STATE_FETCH_LOCK, blocking=True):
         command(
-            ["git", "fetch", "--no-write-fetch-head", "origin", f"+radar-state:{ref}"],
+            [
+                "git",
+                "fetch",
+                "--depth=1",
+                "--no-tags",
+                "--no-write-fetch-head",
+                "origin",
+                f"+radar-state:{ref}",
+            ],
             cwd=ROOT,
         )
         raw = command(["git", "show", f"{ref}:dispatch_queue.json"], cwd=ROOT)
@@ -2186,6 +2194,8 @@ def fetch_cloud_codex_outbox() -> dict[str, Any] | None:
             [
                 "git",
                 "fetch",
+                "--depth=1",
+                "--no-tags",
                 "--no-write-fetch-head",
                 "origin",
                 f"+radar-state:{ref}",
@@ -13139,13 +13149,6 @@ def _read_app_server_response(
         raise RuntimeError("app server output is unavailable")
     deadline = monotonic() + timeout
     while monotonic() < deadline:
-        ready = selector.select(max(0.0, deadline - monotonic()))
-        if not ready:
-            break
-        chunk = os.read(process.stdout.fileno(), 65536)
-        if not chunk:
-            break
-        buffer += chunk
         while b"\n" in buffer:
             raw, buffer = buffer.split(b"\n", 1)
             try:
@@ -13157,6 +13160,13 @@ def _read_app_server_response(
             if message.get("error"):
                 raise _app_server_task_error(message, action=action)
             return buffer, message
+        ready = selector.select(max(0.0, deadline - monotonic()))
+        if not ready:
+            break
+        chunk = os.read(process.stdout.fileno(), 65536)
+        if not chunk:
+            break
+        buffer += chunk
     raise RuntimeError(f"app server did not complete {action} request")
 
 
@@ -13298,9 +13308,8 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                 raise RuntimeError("app server pipes are unavailable")
             selector.register(process.stdout, selectors.EVENT_READ)
             process.stdin.write(
-                b"".join(
-                    (json.dumps(item, ensure_ascii=False) + "\n").encode("utf-8")
-                    for item in (
+                (
+                    json.dumps(
                         {
                             "id": 0,
                             "method": "initialize",
@@ -13309,6 +13318,25 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                                 "capabilities": {"experimentalApi": True},
                             },
                         },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                ).encode("utf-8")
+            )
+            process.stdin.flush()
+            buffer, _ = _read_app_server_response(
+                process,
+                selector,
+                buffer,
+                response_id=0,
+                timeout=30,
+                action="initialize",
+            )
+            process.stdin.write(
+                (
+                    json.dumps({"method": "initialized"})
+                    + "\n"
+                    + json.dumps(
                         {
                             "id": 1,
                             "method": "thread/resume",
@@ -13320,8 +13348,10 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                                 "excludeTurns": True,
                             },
                         },
+                        ensure_ascii=False,
                     )
-                )
+                    + "\n"
+                ).encode("utf-8")
             )
             process.stdin.flush()
             buffer, message = _read_app_server_response(
@@ -34247,7 +34277,7 @@ def _event_worker(args: argparse.Namespace) -> dict[str, Any]:
             selector.register(process.stdout, selectors.EVENT_READ)
             start_method = "thread/resume" if thread_id else "thread/start"
             start_params: dict[str, Any] = (
-                {"threadId": thread_id}
+                {"threadId": thread_id, "excludeTurns": True}
                 if thread_id
                 else {
                     "cwd": str(Path(str(request.get("cwd") or GITHUB_ROOT)).resolve()),
@@ -34269,14 +34299,21 @@ def _event_worker(args: argparse.Namespace) -> dict[str, Any]:
                         }
                     )
                     + "\n"
-                    + json.dumps({"id": 2, "method": start_method, "params": start_params})
-                    + "\n"
                 ).encode("utf-8")
             )
             process.stdin.flush()
             buffer, _ = _read_app_server_response(
                 process, selector, buffer, response_id=1, timeout=30, action="initialize"
             )
+            process.stdin.write(
+                (
+                    json.dumps({"method": "initialized"})
+                    + "\n"
+                    + json.dumps({"id": 2, "method": start_method, "params": start_params})
+                    + "\n"
+                ).encode("utf-8")
+            )
+            process.stdin.flush()
             buffer, start_message = _read_app_server_response(
                 process, selector, buffer, response_id=2, timeout=30, action=start_method
             )

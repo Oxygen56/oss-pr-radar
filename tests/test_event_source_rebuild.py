@@ -274,7 +274,12 @@ def test_real_event_turn_request_uses_exact_model_medium_and_same_thread(
     monkeypatch.setattr(bridge, "_wait_for_app_server_terminal_turn", terminal)
     result = bridge._event_worker(args)
     frames = [json.loads(line) for line in process.stdin.getvalue().decode().splitlines()]
-    assert [frame["method"] for frame in frames] == ["initialize", "thread/resume", "turn/start"]
+    assert [frame["method"] for frame in frames] == [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "turn/start",
+    ]
     params = frames[-1]["params"]
     assert params["model"] == "gpt-6.1-sol" and params["effort"] == "medium"
     assert params["threadId"] == "central"
@@ -307,6 +312,82 @@ def test_request_binding_rejects_before_sender(tmp_path, monkeypatch, mutation):
     )
     with pytest.raises(RuntimeError):
         bridge._event_worker(args)
+
+
+@pytest.mark.parametrize("namespace,repo,module", LANES)
+@pytest.mark.parametrize("failure", [None, "initialize", "resume", "foreign"])
+def test_event_worker_waits_for_initialize_then_resumes_metadata_before_turn(
+    tmp_path, monkeypatch, namespace, repo, module, failure
+):
+    from test_app_server_response_buffer import StrictAppServer
+
+    args, request, outcome = _bridge_request(tmp_path, monkeypatch, namespace, bootstrap=True)
+    process = StrictAppServer("central", failure=failure)
+
+    @contextmanager
+    def session(*_args, **_kwargs):
+        yield process
+
+    monkeypatch.setattr(bridge, "_app_server_action_session", session)
+    monkeypatch.setattr(bridge.shutil, "which", lambda _: "/test/codex")
+    monkeypatch.setattr(bridge, "ledger", lambda _: object())
+    monkeypatch.setattr(bridge, "_terminate_app_server_process", lambda *_args: None)
+    original_read = bridge._read_app_server_response
+
+    def read_response(*args, response_id, **kwargs):
+        if response_id == 1:
+            assert [item["method"] for item in process.frames] == ["initialize"]
+        return original_read(*args, response_id=response_id, **kwargs)
+
+    monkeypatch.setattr(bridge, "_read_app_server_response", read_response)
+
+    def terminal(*_args, **_kwargs):
+        outcome.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": f"{namespace}_event_outcome_v1",
+                    "eventId": request["eventId"],
+                    "publicKey": request["eventKey"],
+                    "state": "no_action",
+                }
+            )
+        )
+        return {"status": "completed"}
+
+    monkeypatch.setattr(bridge, "_wait_for_app_server_terminal_turn", terminal)
+    try:
+        if failure:
+            detail = {
+                "initialize": "APP_SERVER_INITIALIZE_FAILED:init denied",
+                "resume": "APP_SERVER_THREAD/RESUME_FAILED:resume denied",
+                "foreign": "event app-server resumed a foreign thread",
+            }[failure]
+            with pytest.raises(RuntimeError, match=detail):
+                bridge._event_worker(args)
+            assert all(item["method"] != "turn/start" for item in process.frames)
+            negative = json.loads(args.receipt.read_bytes())
+            assert negative["ok"] is False and negative["turnStarted"] is False
+            assert negative["turnId"] is None and not outcome.exists()
+        else:
+            result = bridge._event_worker(args)
+            assert result["turnStatus"] == "completed"
+            assert [item["method"] for item in process.frames] == [
+                "initialize",
+                "initialized",
+                "thread/resume",
+                "turn/start",
+            ]
+            assert process.frames[2]["params"] == {"threadId": "central", "excludeTurns": True}
+            params = process.frames[3]["params"]
+            assert params["model"] == "gpt-6.1-sol" and params["effort"] == "medium"
+            assert params["threadId"] == "central"
+            assert (
+                params["clientUserMessageId"]
+                == f"oss-pr-radar:{namespace}-event:{request['eventId']}"
+            )
+            assert result["outcome"]["state"] == "no_action"
+    finally:
+        process.close()
 
 
 @pytest.mark.parametrize("operation", ["drain-once", "publish-ready", "sync", "root-task-create"])

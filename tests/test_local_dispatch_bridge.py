@@ -31154,6 +31154,8 @@ def test_validation_worker_rejects_projection_changed_before_turn_start(
         yield process
 
     def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 0:
+            return buffer, {"id": 0, "result": {}}
         assert response_id == 1
         return buffer, {"result": {"thread": {"id": candidate["threadId"]}}}
 
