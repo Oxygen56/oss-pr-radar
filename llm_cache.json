@@ -3052,6 +3052,37 @@
     ],
     "why": "The issue describes a concrete TypeError from a missing positional argument in ep_scatter_from_psum, but the supplied evidence shows an open PR #39399 that directly references this issue and overlaps the same code path, plus PR #37211 with the same fix and a test. Duplicate/merged-fix coverage is unresolved and must be compared before independent code work is actionable."
   },
+  "064778c60ce5dff509693f64f68cf4cc6f1527fd196c27becf9980d47bc9cb10": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: mhc_fused_post_pre large-batch path — clamp n_splits to 1 or reallocate gemm_out_mul/gemm_out_sqrsum as {1, m, n} to match current tf32_hc_prenorm_gemm contract",
+      "align with sglang.srt.layers.deep_gemm_wrapper.entrypoint.tf32_hc_prenorm_gemm signature"
+    ],
+    "risks": [
+      "Clamping n_splits to 1 may silently change numerics/perf on devices where split-K was beneficial",
+      "DeepGemm API contract may differ across builds/versions, so the fix should target the pinned dependency",
+      "Default-off path may have other latent API drift beyond this call"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLANG_OPT_FUSE_MHC_POST_PRE=1 on DeepSeek-V4-Pro TP8 and confirm the DeepGemm assertion at gemm.hpp:930",
+      "Regression: run mhc_fused_post_pre under CUDA graph capture with the fix and verify no assertion plus correct sanity outputs",
+      "Unit-level: call tf32_hc_prenorm_gemm with num_splits>1 and d shaped {1,m,n} vs {n_splits,m,n} to lock the accepted contract"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer clamping n_splits vs reallocating d as {1,m,n}",
+      "Exact DeepGemm version pinned on main to confirm the {1,m,n} contract"
+    ],
+    "why": "Issue provides a concrete crash, exact assertion site (DeepGemm/csrc/apis/gemm.hpp:930), the offending call in python/sglang/kernels/ops/layernorm/mhc.py, and a shape bisection (num_splits=39/19 fails, num_splits=1 passes) that pins the API-contract drift. A minimal fix (clamp n_splits to 1 or reallocate d as {1,m,n}) and a validation path (graph capture + sanity outputs) are both established."
+  },
   "06492105b5f49a2b6664a306949067148243cd4b16aba46db4304f47ec038afd": {
     "confidence": 0.8,
     "contradictions": [],
@@ -16822,6 +16853,40 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a clear root cause (layer_idx=None during DSPARK draft CUDA graph capture) and a concrete repro, but an open PR (#17356) with semantic overlap and maintainer ownership requires manual comparison before creating a new task."
+  },
+  "1f19d00709f597c0c60dc5bb19f9db86ef52faf303be886d42be91c379741dac": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/pipeline/network/egress/tcp_client.rs: distinguish ack timeout from dead-peer signal or make inhibition configurable",
+      "lib/runtime/src/pipeline/network/ingress/push_handler.rs / shared_tcp_endpoint.rs: keep ack path independent of handler load",
+      "lib/runtime/src/config/environment_names.rs: register DYN_TCP_REQUEST_TIMEOUT and other DYN_TCP_* client variables with defaults",
+      "router/client.rs: queue or route to inhibited instance when all instances are inhibited, especially single-instance endpoints"
+    ],
+    "risks": [
+      "Changing inhibition semantics could mask genuinely dead peers and delay failover",
+      "Single-instance fallback could cause unbounded queueing or head-of-line blocking",
+      "Process-wide DYN_TCP_* settings affect all clients in the process",
+      "Exact upstream reproduction depends on a PoC video-encode patch; the minimal GIL-bound reproduction is suggested but not yet run"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a Python endpoint whose handler holds the GIL for several seconds, called via Endpoint.client().round_robin() with ~32 concurrent requests; assert no 'No workers available' window and no instance removal",
+      "Regression test asserting a slow ack does not call report_instance_down / does not remove the only instance from the routable set",
+      "Unit test that DYN_TCP_REQUEST_TIMEOUT and DYN_TCP_* variables are registered in environment_names.rs with documented defaults"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing the ack-timeout classification, the inhibition fallback, or the GIL/ack-path coupling first",
+      "Whether the suggested minimal GIL-bound reproduction actually triggers the 5s ack timeout on current main"
+    ],
+    "why": "Issue provides a detailed, code-anchored root cause chain: 5s DYN_TCP_REQUEST_TIMEOUT ack timeout in tcp_client.rs, timeout treated as instance-down via is_inhibited in push_router.rs, unconditional removal from routable set in client.rs, and no single-instance fallback, producing 'No workers available'. A verified workaround (DYN_TCP_REQUEST_TIMEOUT=600, DYN_RUNTIME_INHIBITED_DURATION_SECS=0) and a concrete minimal reproduction (GIL-bound Python handler with 32 concurrent round_robin requests) establish an actionable validation path. No open PR or duplicate covers it."
   },
   "1f3d7501cc33e5902b8212e9e3fdbb7493cd25f02fd17a587bff752cc4acef70": {
     "confidence": 0.85,
@@ -40141,6 +40206,40 @@
     ],
     "why": "Issue describes two distinct bugs: (1) check_provider_endpoint not in LITELLM_SETTINGS_SAFE_DB_OVERRIDES so DB-stored litellm_settings overrides config.yaml, and (2) VertexAIModelInfo.get_models() is a NotImplementedError stub. The supplied duplicate assessment flags PR #38818 as semantic_overlap_requires_review (score 52, overlapping paths litellm/llms/anthropic/common_utils.py, distinctive overlap config_yaml/store_model_in_db) but does not establish whether it actually fixes either root cause. This unresolved duplicate/coverage question materially determines whether new code work is actionable."
   },
+  "45f37b01cda768dd40a3c8516c85a925371b209efd4e1d0c1b706050fe549e32": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue suggests skipping drain when prompt is non-empty or racing a deadline; maintainer comment prefers isatty-based decision and rejects deadline race"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/main.ts headless stdin drain behavior",
+      "log line before awaiting stdin read"
+    ],
+    "risks": [
+      "PR #15020 may already cover the same root cause",
+      "Maintainer prefers isatty-based approach over prompt-skip or deadline race",
+      "Fix could change documented stdin-piping behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a never-closing stdin pipe and confirm hang",
+      "Add regression test covering unbounded stdin read in main.test.ts",
+      "Verify fix with stdin closed after delay and /dev/null"
+    ],
+    "unknowns": [
+      "Whether PR #15020 fully resolves the root cause or only adds logging",
+      "Which fix approach maintainers will accept"
+    ],
+    "why": "Issue has a strong reproduction and a plausible root cause (unbounded stdin drain in apps/cli/src/main.ts:1140), but the supplied evidence shows an open PR #15020 ('fix(cli): log while waiting for piped stdin to close') with semantic overlap on the same file, and a maintainer comment proposing a different fix (isatty-based drain decision) that conflicts with the issue's suggested fix. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review', which is a materially blocking unknown for whether new code work is actionable."
+  },
   "45f40eed7bc399c120ae528c3e40a211aafcf29d7cd96b6e45557f73645f0652": {
     "confidence": 0.7,
     "contradictions": [
@@ -55670,6 +55769,40 @@
       "Whether the repo's CI enables SUROGATE_SERVE_MOE_MARLIN by default"
     ],
     "why": "Issue identifies a concrete kernel-level OOB write: marlin_moe_c_tmp_bytes sizes the fp32-reduce buffer as assignments*n floats, while the vendored Marlin MoE kernel indexes C_tmp by locks_off (block index) with c_size = thread_m_blocks*16 * thread_n_blocks*16 floats, so the buffer must be min(padded_rows*n, sms*4*moe_block_size*max_thread_n) floats as upstream vLLM and the repo's own dense Marlin path do. Code anchors, a concrete fix, and a validation path are supplied; verifier corrections refine the trigger conditions but do not undermine the root cause."
+  },
+  "5e60a11c8a603a5562e7b0e9d1ae9e82ca0c3b2413b3f56b97615b66320f2e0b": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "KV router cost/weighting logic in the router selection path",
+      "possibly default router weights or a new discount/overlap-weight option",
+      "possibly the non_max_overlap_selections_total counter semantics"
+    ],
+    "risks": [
+      "Changing default weights may regress heavier or skewed load where the load term is legitimately useful",
+      "The counter discrepancy may be a separate bug or a misreading of its semantics",
+      "Maintainers may prefer documenting session affinity rather than changing defaults"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's two-worker vLLM setup and 16x12 multi-turn workload, comparing kv default vs session affinity recomputed prefill",
+      "Add a regression test asserting the cache-holding worker is selected when its overlap advantage exceeds transient decode load",
+      "Verify non_max_overlap_selections_total increments when the selected worker has less overlap than an alternative"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the current weighting intended behavior or a bug",
+      "Whether the non_max_overlap_selections_total counter is actually inconsistent or the reporter misread it"
+    ],
+    "why": "Issue provides a concrete, reproducible KV-router locality regression with a plausible mechanism: overlap credit only offsets the prefill term, so transient decode load on the cache-holding worker can outweigh resident prefix overlap. Evidence includes per-request router formula logs, worker placement, and recompute counters. No open PR or duplicate issue covers it. However, the issue is framed as questions about intended defaults rather than a confirmed defect, and the fix could be a default-weight change, a new option, or documentation, so the exact code change is not yet pinned down."
   },
   "5e8b87bd8aa4105fa794a58dfcea902303f7276ba1d655bb3368fb913212aa92": {
     "confidence": 0.85,
