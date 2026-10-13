@@ -33471,6 +33471,369 @@ def _completed_go_environment_context_refresh_proof(
     }
 
 
+def _fresh_readonly_revalidation_audit(
+    intent: dict[str, Any], payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Recompute the original decision from a strictly typed, bound audit."""
+    from oss_pr_radar.claims import detect_claims, detect_maintainer_approval
+    from oss_pr_radar.evidence import EvidenceBundle, assess_hardware_requirements
+
+    try:
+        if not isinstance(payload, dict) or not isinstance(payload.get("liveAudit"), dict):
+            return None
+        captured = payload["liveAudit"].get("capturedAt")
+        if (
+            not isinstance(captured, str)
+            or datetime.fromisoformat(captured.replace("Z", "+00:00")).tzinfo is None
+        ):
+            return None
+        evidence = payload["liveAudit"]["evidence"]
+        authorization = payload["authorization"]
+        completeness = {
+            key: "COMPLETE"
+            for key in ("issue", "comments", "timeline", "repositoryPolicy", "relatedPullRequests")
+        }
+        if (
+            not isinstance(evidence, dict)
+            or evidence.get("complete") is not True
+            or evidence.get("completeness") != completeness
+            or not isinstance(intent.get("repo"), str)
+            or type(intent.get("issueNumber")) is not int
+            or intent.get("issueUrl")
+            != f"https://github.com/{intent['repo']}/issues/{intent['issueNumber']}"
+            or evidence.get("repo") != intent["repo"]
+            or type(evidence.get("issue_number")) is not int
+            or evidence["issue_number"] != intent["issueNumber"]
+            or type(intent.get("autoSpawn")) is not bool
+            or not isinstance(authorization, dict)
+        ):
+            return None
+        issue = evidence["issue"]
+        if (
+            not isinstance(issue, dict)
+            or type(issue.get("number")) is not int
+            or issue["number"] != intent["issueNumber"]
+            or issue.get("html_url") != intent["issueUrl"]
+            or not isinstance(issue.get("state"), str)
+            or not isinstance(issue.get("title"), str)
+            or not isinstance(issue.get("body"), (str, type(None)))
+            or not isinstance(issue.get("assignees"), list)
+            or not isinstance(issue.get("labels"), list)
+            or any(
+                not isinstance(x, dict) or not isinstance(x.get("login"), str)
+                for x in issue["assignees"]
+            )
+            or any(
+                not (isinstance(x, str) or isinstance(x, dict) and isinstance(x.get("name"), str))
+                for x in issue["labels"]
+            )
+        ):
+            return None
+        for key in ("comments", "timeline", "claims", "maintainer_approvals", "pull_relations"):
+            if not isinstance(evidence.get(key), list) or any(
+                not isinstance(item, dict) for item in evidence[key]
+            ):
+                return None
+        for item in [issue, *evidence["comments"]]:
+            if not isinstance(item.get("body"), (str, type(None))):
+                return None
+            for key in ("author_association", "authorAssociation", "created_at", "createdAt"):
+                if key in item and not isinstance(item[key], str):
+                    return None
+            for key in ("user", "author"):
+                author = item.get(key)
+                if author is not None and not (
+                    isinstance(author, str)
+                    or isinstance(author, dict)
+                    and isinstance(author.get("login"), str)
+                ):
+                    return None
+        for item in evidence["timeline"]:
+            nested = item.get("source")
+            source_issue = nested.get("issue") if isinstance(nested, dict) else None
+            repo = source_issue.get("repository") if isinstance(source_issue, dict) else None
+            if isinstance(repo, dict) and "private" in repo and type(repo["private"]) is not bool:
+                return None
+        policy = evidence["policy"]
+        if (
+            not isinstance(policy, dict)
+            or not isinstance(policy.get("status"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(policy.get("digest") or ""))
+            or policy.get("error") is not None
+            or not isinstance(policy.get("files"), list)
+            or any(
+                not isinstance(item, dict)
+                or any(
+                    not isinstance(item.get(k), str) or not item[k]
+                    for k in ("path", "sha", "text_digest")
+                )
+                for item in policy["files"]
+            )
+            or any(
+                type(policy.get(k)) is not bool
+                for k in (
+                    "ai_disclosure",
+                    "ai_prohibited",
+                    "assignment_required",
+                    "unsolicited_pr_blocked",
+                    "cla",
+                    "dco",
+                    "nonstandard_agreement",
+                )
+            )
+        ):
+            return None
+        expected_policy_status = (
+            "CONTRIBUTIONS_CLOSED"
+            if policy["unsolicited_pr_blocked"]
+            else "LEGAL_POLICY_REVIEW"
+            if policy["nonstandard_agreement"]
+            else "AI_POLICY_REVIEW"
+            if policy["ai_prohibited"]
+            else "NORMAL"
+        )
+        if policy["status"] != expected_policy_status:
+            return None
+        relation_names = {
+            "STRONG_MERGED_COVERAGE",
+            "STRONG_EXACT_DUPLICATE",
+            "WEAK_OR_PARTIAL_EXACT",
+            "HISTORICAL_CLOSED_EXACT",
+            "REFERENCE_ONLY",
+            "SEMANTIC_OVERLAP",
+            "UNRELATED",
+        }
+        for relation in evidence["pull_relations"]:
+            if (
+                type(relation.get("number")) is not int
+                or relation["number"] <= 0
+                or relation.get("url")
+                != f"https://github.com/{intent['repo']}/pull/{relation['number']}"
+                or relation.get("relation") not in relation_names
+                or relation.get("state") not in {"OPEN", "CLOSED", "MERGED"}
+                or type(relation.get("title_overlap")) not in {int, float}
+                or not 0 <= relation["title_overlap"] <= 1
+                or not isinstance(relation.get("updated_at"), str)
+                or datetime.fromisoformat(relation["updated_at"].replace("Z", "+00:00")).tzinfo
+                is None
+                or any(
+                    type(relation.get(k)) is not bool
+                    for k in (
+                        "exact_link",
+                        "has_tests",
+                        "maintainer_approved",
+                        "maintainer_owned",
+                        "targeted_check_unproven",
+                        "current_blocking_review",
+                        "draft",
+                        "merged",
+                    )
+                )
+                or relation.get("checks_green") is not None
+                and type(relation["checks_green"]) is not bool
+            ):
+                return None
+        claims = [
+            x.as_dict()
+            for x in detect_claims(
+                evidence["comments"],
+                current_actor=os.environ.get("GITHUB_ACTOR", "Oxygen56"),
+                issue=issue,
+            )
+        ]
+        approvals = [x.as_dict() for x in detect_maintainer_approval(evidence["comments"])]
+        labels = ", ".join(x.get("name", "") if isinstance(x, dict) else x for x in issue["labels"])
+        body = "\n".join(
+            [issue["body"] or ""] + [x.get("body") or "" for x in evidence["comments"]]
+        )
+        hardware = assess_hardware_requirements(issue["title"], labels, body, _hardware_inventory())
+        if any(
+            sha256_json(actual) != sha256_json(expected)
+            for actual, expected in (
+                (evidence["claims"], claims),
+                (evidence["maintainer_approvals"], approvals),
+                (evidence["hardware"], hardware),
+            )
+        ):
+            return None
+        digest = sha256_json(
+            {
+                "repo": evidence["repo"],
+                "issueNumber": evidence["issue_number"],
+                "completeness": evidence["completeness"],
+                "issue": issue,
+                "comments": evidence["comments"],
+                "timeline": evidence["timeline"],
+                "claims": claims,
+                "maintainerApprovals": approvals,
+                "policy": policy,
+                "pullRelations": evidence["pull_relations"],
+                "hardware": hardware,
+            }
+        )
+        if any(
+            value != digest
+            for value in (
+                evidence.get("digest"),
+                evidence.get("evidenceDigest"),
+                payload.get("evidenceDigest"),
+                authorization.get("evidence_digest"),
+            )
+        ):
+            return None
+        fields = dict(evidence)
+        for alias, canonical in (
+            ("defaultBranch", "default_branch"),
+            ("selectedBaseSha", "selected_base_sha"),
+            ("liveBaseSha", "live_base_sha"),
+            ("probeLevel", "probe_level"),
+            ("repoProbeReceipt", "repo_probe_receipt"),
+        ):
+            if alias in fields:
+                if canonical not in fields or sha256_json(fields[alias]) != sha256_json(
+                    fields[canonical]
+                ):
+                    return None
+                del fields[alias]
+        del fields["evidenceDigest"]
+        for key in ("default_branch", "selected_base_sha", "live_base_sha", "probe_level"):
+            if key in fields and not isinstance(fields[key], str):
+                return None
+        if fields.get("repo_probe_receipt") is not None and not isinstance(
+            fields["repo_probe_receipt"], dict
+        ):
+            return None
+        for key in ("comments", "timeline", "claims", "maintainer_approvals", "pull_relations"):
+            fields[key] = tuple(fields[key])
+        verdict = authorize(_candidate(intent), EvidenceBundle(**fields)).as_dict()
+        if (
+            verdict["status"] != "ALLOW"
+            or verdict["checks"]
+            != {
+                key: "PASS"
+                for key in (
+                    "issueState",
+                    "ownership",
+                    "duplicate",
+                    "design",
+                    "policy",
+                    "hardware",
+                    "evidence",
+                )
+            }
+            or sha256_json(verdict) != sha256_json(authorization)
+        ):
+            return None
+        return verdict
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def _completed_go_environment_fresh_audit_proof(
+    store: RadarLedger,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+    context_raw: bytes,
+) -> dict[str, Any] | None:
+    """Authorize a new current-context read-only turn, never the old result."""
+    source = candidate["environmentSource"]
+    refresh = source.get("contextRefresh")
+    if (
+        not isinstance(refresh, dict)
+        or value.get("contextDigest") == context.get("contextDigest")
+        or _task_live_audit_refresh_due(context)
+        or _task_result_evidence_block_key(candidate, raw, context_raw) != source["blockedKey"]
+        or context.get("contextDigest") != _task_context_digest(context, None)
+    ):
+        return None
+    refs = refresh.get("auditRefs")
+    if not isinstance(refs, list) or not refs:
+        return None
+    with store.connect() as connection:
+        bound = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id=? AND opportunity_key=? AND thread_id=? AND worktree_path=? AND status='DISPATCHED'",
+            (
+                candidate["intentId"],
+                candidate["key"],
+                candidate["threadId"],
+                candidate["worktreePath"],
+            ),
+        ).fetchone()
+        if bound is None:
+            return None
+        intent = json.loads(bound[0])
+        audits = []
+        for ref in refs:
+            row = connection.execute(
+                "SELECT * FROM events WHERE opportunity_key=? AND id=? AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')",
+                (candidate["key"], ref["id"]),
+            ).fetchone()
+            if row is None or ref != {
+                "id": row["id"],
+                "createdAt": row["created_at"],
+                "dedupeKey": row["dedupe_key"],
+                "payloadDigest": sha256_text(row["payload_json"]),
+            }:
+                return None
+            audits.append((dict(row), json.loads(row["payload_json"])))
+    if [r[0]["id"] for r in audits] != sorted((r[0]["id"] for r in audits), reverse=True):
+        return None
+    latest_row, latest = audits[0]
+    if (
+        not isinstance(latest, dict)
+        or latest_row["id"] <= source["stoppedEventId"]
+        or sha256_json(latest.get("liveAudit")) != sha256_json(context.get("liveAudit"))
+        or latest_row["created_at"] != context.get("liveAuditRecordedAt")
+        or sha256_json(latest.get("targetBase")) != sha256_json(context.get("targetBase"))
+    ):
+        return None
+    previous = []
+    for row, payload in audits:
+        if row["id"] >= source["reservedEventId"] or not isinstance(payload, dict):
+            continue
+        historical = dict(
+            context,
+            liveAudit=payload.get("liveAudit"),
+            liveAuditRecordedAt=row["created_at"],
+            contextDigest=value["contextDigest"],
+        )
+        if (
+            _task_context_digest(historical, None) == value["contextDigest"]
+            and _task_result_evidence_block_key(candidate, raw, _serialized_json(historical))
+            == refresh["previousBlockedKey"]
+        ):
+            previous.append((row, historical))
+    if len(previous) != 1:
+        return None
+    previous_row, historical = previous[0]
+    verdict = None
+    for row, payload in audits:
+        if row["id"] < previous_row["id"]:
+            continue
+        verdict_at_audit = _fresh_readonly_revalidation_audit(intent, payload)
+        if (
+            verdict_at_audit is None
+            or sha256_json(payload.get("targetBase")) != sha256_json(context.get("targetBase"))
+            or row["dedupe_key"]
+            != f"{candidate['intentId']}:{verdict_at_audit['evidence_digest']}:{payload['liveAudit']['capturedAt']}:active-context-refresh"
+        ):
+            return None
+        if row["id"] == latest_row["id"]:
+            verdict = verdict_at_audit
+    return {
+        "mode": "FULL_CURRENT_READONLY_REVALIDATION",
+        "previousAuditEventId": previous_row["id"],
+        "auditEventId": latest_row["id"],
+        "previousContextDigest": value["contextDigest"],
+        "contextDigest": context["contextDigest"],
+        "previousContextRawDigest": hashlib.sha256(_serialized_json(historical)).hexdigest(),
+        "authorizationDigest": sha256_json(verdict),
+        "intentPayloadDigest": sha256_text(bound[0]),
+    }
+
+
 def _completed_go_environment_recovery(
     store: RadarLedger, candidate: dict[str, Any], *, reserved: bool = False
 ) -> dict[str, Any] | None:
@@ -33550,6 +33913,10 @@ def _completed_go_environment_recovery(
                 context_refresh = _completed_go_environment_context_refresh_proof(
                     store, candidate, context, value, raw, context_raw
                 )
+                if context_refresh is None:
+                    context_refresh = _completed_go_environment_fresh_audit_proof(
+                        store, candidate, context, value, raw, context_raw
+                    )
                 if context_refresh is None:
                     return None
             elif (
@@ -33680,6 +34047,15 @@ def _completed_go_environment_recovery(
             ):
                 return None
             require_operational_authorization(ROOT)
+            if (
+                context_refresh is not None
+                and context_refresh.get("mode") == "FULL_CURRENT_READONLY_REVALIDATION"
+            ):
+                current_refresh = _completed_go_environment_fresh_audit_proof(
+                    store, candidate, context, value, raw, context_raw
+                )
+                if sha256_json(current_refresh) != sha256_json(context_refresh):
+                    return None
             if not current_source_matches():
                 return None
         with store.connect() as connection:

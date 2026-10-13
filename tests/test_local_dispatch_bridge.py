@@ -44630,3 +44630,592 @@ def test_completed_go_reference_timestamp_refresh_preserves_full_decision_fields
                 worktree_path=str(worktree),
             )
         )
+
+
+def _completed_go_full_current_audit_fixture(monkeypatch, tmp_path):
+    """Full original audit/decision around the real local offline Go fixture."""
+    from oss_pr_radar.evidence import EvidenceBundle, assess_hardware_requirements
+
+    original_enqueue = RadarLedger.enqueue
+    original_record = RadarLedger.record_audit_snapshot
+
+    def enqueue_authorized(store, intent):
+        return original_enqueue(
+            store,
+            intent
+            | {
+                "category": "NEW_CLEAN_CANDIDATE",
+                "scanGate": "ALLOW_TO_WORK",
+                "autoSpawn": True,
+                "publicSubmissionAllowed": True,
+                "llmReview": {
+                    "status": "ok",
+                    "decision": "NEW_CLEAN_CANDIDATE",
+                    "semanticSignal": "NO_OBJECTION",
+                    "confidence": 0.9,
+                },
+            },
+        )
+
+    def record_full_audit(store, key, *, evidence, dedupe_key):
+        data = copy.deepcopy(evidence)
+        fields = data["liveAudit"]["evidence"]
+        fields["completeness"] = dict.fromkeys(
+            ("issue", "comments", "timeline", "repositoryPolicy", "relatedPullRequests"),
+            "COMPLETE",
+        )
+        fields["issue"].update(
+            html_url="https://github.com/a/b/issues/1",
+            title="Missing pinned Go modules",
+            body="An offline compilation probe cannot find its pinned modules.",
+            user={"login": "reporter"},
+        )
+        fields["policy"] = {
+            "status": "NORMAL",
+            "digest": "a" * 64,
+            "files": [],
+            "error": None,
+            **dict.fromkeys(
+                (
+                    "ai_disclosure",
+                    "ai_prohibited",
+                    "assignment_required",
+                    "unsolicited_pr_blocked",
+                    "cla",
+                    "dco",
+                    "nonstandard_agreement",
+                ),
+                False,
+            ),
+        }
+        fields["hardware"] = assess_hardware_requirements(
+            fields["issue"]["title"], "", fields["issue"]["body"], MODULE._hardware_inventory()
+        )
+        for relation in fields["pull_relations"]:
+            relation.update(
+                title_overlap=0.05,
+                has_tests=False,
+                checks_green=None,
+                maintainer_approved=False,
+                maintainer_owned=False,
+                targeted_check_unproven=False,
+                current_blocking_review=False,
+                draft=False,
+            )
+        with store.connect() as connection:
+            intent = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM intents WHERE intent_id='intent-go'"
+                ).fetchone()[0]
+            )
+        bundle_fields = {
+            key: value
+            for key, value in fields.items()
+            if key
+            not in {
+                "evidenceDigest",
+                "defaultBranch",
+                "selectedBaseSha",
+                "liveBaseSha",
+                "repoProbeReceipt",
+                "probeLevel",
+            }
+        }
+        bundle_fields["digest"] = _go_audit_evidence_digest(fields)
+        bundle = EvidenceBundle(**bundle_fields)
+        verdict = MODULE.authorize(MODULE._candidate(intent), bundle)
+        assert verdict.status == "ALLOW" and len(verdict.checks) == 7
+        data = MODULE._audit_payload(bundle, verdict, data["targetBase"])
+        for field in ("repoProbeReceipt", "repo_probe_receipt"):
+            if data["liveAudit"]["evidence"].get(field) is None:
+                data["liveAudit"]["evidence"].pop(field, None)
+        return original_record(
+            store,
+            key,
+            evidence=data,
+            dedupe_key=f"intent-go:{bundle.digest}:{data['liveAudit']['capturedAt']}:active-context-refresh",
+        )
+
+    with monkeypatch.context() as setup:
+        setup.setattr(RadarLedger, "enqueue", enqueue_authorized)
+        setup.setattr(RadarLedger, "record_audit_snapshot", record_full_audit)
+        fixture, original_ready = _completed_go_audit_refresh_fixture(monkeypatch, tmp_path)
+    return fixture, original_ready
+
+
+def _write_current_go_audit_context(store, worktree, result):
+    historical_raw = result.read_bytes()
+    MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-go", cwd=worktree
+    )
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["ok"] and any(
+        item["reason"] == "RESULT_CONTEXT_DIGEST_MISMATCH" for item in ingested["workBlocked"]
+    ), ingested
+    assert result.read_bytes() == historical_raw
+
+
+def _append_new_public_go_cross_reference(store):
+    def new_public_fact(data):
+        data["liveAudit"]["evidence"]["timeline"].append(
+            {
+                "event": "cross-referenced",
+                "created_at": "2020-01-01T02:00:00Z",
+                "actor": {"login": "another-reporter"},
+                "source": {
+                    "type": "issue",
+                    "issue": {
+                        "id": 30,
+                        "number": 3,
+                        "html_url": "https://github.com/a/b/issues/3",
+                        "title": "A separate default-namespace concern",
+                        "body": "The explicit compatibility case remains tracked in issue #1.",
+                        "state": "open",
+                        "assignees": [],
+                        "repository": {"full_name": "a/b", "private": False},
+                    },
+                },
+            }
+        )
+
+    _append_current_go_audit(store, mutate=new_public_fact)
+
+
+def test_completed_go_fresh_current_audit_has_new_readonly_revalidation_nonce(
+    monkeypatch, tmp_path
+):
+    (store, worktree, result, cache, journal, old), original_ready = (
+        _completed_go_full_current_audit_fixture(monkeypatch, tmp_path)
+    )
+    _append_new_public_go_cross_reference(store)
+    _write_current_go_audit_context(store, worktree, result)
+    source = store.completed_environment_recovery_sources()[0]
+    context_raw = result.with_name("task-context.json").read_bytes()
+    raw = result.read_bytes()
+    context, value = json.loads(context_raw), json.loads(raw)
+    assert (
+        MODULE._completed_go_environment_context_refresh_proof(
+            store, source, context, value, raw, context_raw
+        )
+        is None
+    )
+    assert store.recovery_candidates(min_age_minutes=0) == []
+    listed = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))
+    # The 8237 baseline has no full-current revalidation front door. This must
+    # fail there after real cache readiness and the original mismatch writer.
+    assert len(listed["recoverable"]) == 1, listed
+    current = listed["recoverable"][0]
+    proof = current["environmentRecovery"]
+    assert proof["contextRefresh"]["mode"] == "FULL_CURRENT_READONLY_REVALIDATION"
+    assert proof["fingerprint"] == original_ready["environmentRecovery"]["fingerprint"]
+    assert current["recoveryNonce"] != old["recoveryNonce"]
+    assert proof["contextDigest"] == context["contextDigest"] != value["contextDigest"]
+    assert (
+        raw == result.read_bytes()
+        and context_raw == result.with_name("task-context.json").read_bytes()
+    )
+    _deliver_current_go_revalidation(
+        monkeypatch, (store, worktree, result, cache, journal, old), current
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "forged-allow",
+        "missing-check",
+        "policy-bool",
+        "hardware-bool",
+        "assignees-type",
+        "derived-claim",
+        "alias",
+        "repository-bool",
+        "intermediate-block",
+    ],
+)
+def test_completed_go_fresh_current_audit_recomputes_full_authority(
+    monkeypatch, tmp_path, mutation
+):
+    (store, worktree, result, cache, journal, old), original_ready = (
+        _completed_go_full_current_audit_fixture(monkeypatch, tmp_path)
+    )
+    _append_new_public_go_cross_reference(store)
+    _write_current_go_audit_context(store, worktree, result)
+    args = SimpleNamespace(ledger=store.path, min_age_minutes=0)
+    assert len(MODULE.recovery_list(args)["recoverable"]) == 1
+
+    def change(data):
+        evidence = data["liveAudit"]["evidence"]
+        if mutation == "forged-allow":
+            evidence["issue"]["assignees"] = [{"login": "another-owner"}]
+        elif mutation == "missing-check":
+            data["authorization"]["checks"].pop("ownership")
+        elif mutation == "policy-bool":
+            evidence["policy"]["ai_prohibited"] = 0
+        elif mutation == "hardware-bool":
+            evidence["hardware"]["compatible"] = 1
+        elif mutation == "assignees-type":
+            evidence["issue"]["assignees"] = 0
+        elif mutation == "derived-claim":
+            evidence["comments"].append(
+                {
+                    "body": "I will work on this.",
+                    "user": {"login": "another-owner"},
+                    "created_at": "2020-01-01T03:00:00Z",
+                    "author_association": "NONE",
+                }
+            )
+        elif mutation == "alias":
+            evidence["defaultBranch"] = "foreign-branch"
+        elif mutation == "repository-bool":
+            evidence["timeline"][-1]["source"]["issue"]["repository"]["private"] = 0
+        elif mutation == "intermediate-block":
+            data["authorization"]["status"] = "BLOCK"
+
+    _append_current_go_audit(store, mutate=change)
+    if mutation == "intermediate-block":
+        _append_current_go_audit(
+            store, mutate=lambda data: data["authorization"].update(status="ALLOW")
+        )
+    _write_current_go_audit_context(store, worktree, result)
+    raw = result.read_bytes()
+    assert MODULE.recovery_list(args)["recoverable"] == []
+    assert result.read_bytes() == raw
+    assert store.unresolved_recoveries() == []
+
+
+def _deliver_current_go_revalidation(monkeypatch, fixture, current, *, fail_then_restore=False):
+    store, worktree, result, cache, journal, old = fixture
+    context_raw, historical_raw = (
+        result.with_name("task-context.json").read_bytes(),
+        result.read_bytes(),
+    )
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-go",
+            recovery_nonce=current["recoveryNonce"],
+            intent_id="intent-go",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserved["ok"], reserved
+    process = _FakeTaskTurnProcess()
+    original_popen, original_which = subprocess.Popen, shutil.which
+
+    @contextmanager
+    def session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 0:
+            return buffer, {"result": {}}
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": "thread-go"}}}
+        return buffer, {"result": {"turn": {"id": "full-current-go"}}}
+
+    def launch_worker(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        completed = MODULE.task_turn_worker_entry(
+            SimpleNamespace(
+                ledger=store.path,
+                delivery_kind="recovery",
+                thread_id="thread-go",
+                delivery_token=reserved["recoveryNonce"],
+                receipt=argv[argv.index("--receipt") + 1],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+                delivery_attempt_digest=None,
+            )
+        )
+        assert completed["turnStatus"] == "completed", completed
+        return SimpleNamespace(pid=os.getpid())
+
+    with monkeypatch.context() as delivery:
+        delivery.setattr(MODULE, "_app_server_action_session", session)
+        delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+        delivery.setattr(MODULE, "_read_app_server_response", read_response)
+        delivery.setattr(
+            MODULE,
+            "_wait_for_app_server_terminal_turn",
+            lambda *_a, **_k: {"turnId": "full-current-go", "status": "completed"},
+        )
+        delivery.setattr(
+            MODULE.shutil,
+            "which",
+            lambda name: "/usr/bin/codex" if name == "codex" else original_which(name),
+        )
+        delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+        sent = MODULE.recovery_deliver(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-go",
+                recovery_nonce=reserved["recoveryNonce"],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+            )
+        )
+    assert sent["ok"], sent
+    turns = [m for m in _task_turn_messages(process) if m.get("method") == "turn/start"]
+    assert len(turns) == 1
+    assert turns[0]["params"]["model"] == "gpt-6.1-sol" and turns[0]["params"]["effort"] == "medium"
+    assert (
+        result.read_bytes() == historical_raw
+        and result.with_name("task-context.json").read_bytes() == context_raw
+    )
+    assert any(
+        x["reason"] == "RESULT_CONTEXT_DIGEST_MISMATCH"
+        for x in MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))["workBlocked"]
+    )
+
+    command_text = json.loads(historical_raw)["tests"][0]["command"]
+    backup = cache.with_name("ready-cache-during-new-native-turn")
+    if fail_then_restore:
+        cache.rename(backup)
+    try:
+        actual = subprocess.run(
+            ["/bin/sh", "-c", command_text],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            env=dict(os.environ, GOENV="off", GOWORK="off", GOFLAGS="", GOMODCACHE=str(cache)),
+        )
+    finally:
+        if fail_then_restore:
+            if cache.exists():
+                shutil.rmtree(cache)
+            backup.rename(cache)
+    assert actual.returncode == (1 if fail_then_restore else 0), actual.stderr
+    log = result.with_name("fresh-current-native-go.log")
+    log.write_text(actual.stdout + actual.stderr)
+    with journal.open("a") as stream:
+        for payload in (
+            {"type": "task_started", "turn_id": "full-current-go"},
+            {
+                "type": "item_completed",
+                "thread_id": "thread-go",
+                "turn_id": "full-current-go",
+                "item": {
+                    "type": "CommandExecution",
+                    "command": ["/bin/sh", "-lc", command_text],
+                    "cwd": worktree.as_uri(),
+                    "status": "failed" if actual.returncode else "completed",
+                    "exit_code": actual.returncode,
+                    "aggregated_output": actual.stdout + actual.stderr,
+                },
+            },
+            {"type": "task_complete", "turn_id": "full-current-go"},
+        ):
+            stream.write(
+                json.dumps(
+                    {"type": "event_msg", "timestamp": iso_z(datetime.now(UTC)), "payload": payload}
+                )
+                + "\n"
+            )
+    value = json.loads(historical_raw)
+    value.update(
+        contextDigest=json.loads(context_raw)["contextDigest"],
+        observedAt=iso_z(datetime.now(UTC)),
+        stage="REPRODUCTION_REQUIRED" if fail_then_restore else "REPRODUCED_VALIDATED",
+        reason="REPRODUCTION_ENVIRONMENT_BLOCKED"
+        if fail_then_restore
+        else "REPRODUCTION_CONFIRMED",
+        reproductionVerified=not fail_then_restore,
+        evidence={
+            "summary": "Actual new current-context offline Go command",
+            "logFile": str(log),
+            "logSha256": hashlib.sha256(log.read_bytes()).hexdigest(),
+        },
+        tests=[{"command": command_text, "exitCode": actual.returncode}],
+    )
+    result.write_text(json.dumps(value))
+    assert MODULE._record_stopped_quarantined_executions(store)
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["ok"], ingested
+    with store.connect() as connection:
+        saved = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='THREAD_RECOVERY_RESERVED' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+        assert saved["recoveryChainDigest"] == old["recoveryChainDigest"]
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_SENT'"
+            ).fetchone()[0]
+            == 2
+        )
+    assert run_git(worktree, "status", "--porcelain") == ""
+    if fail_then_restore:
+        assert ingested["workBlocked"], ingested
+    else:
+        assert ingested["ingested"] == [{"key": "a/b#1", "stage": "IMPLEMENTATION_READY"}], ingested
+        assert (
+            json.loads(result.read_bytes())["contextDigest"]
+            == json.loads(context_raw)["contextDigest"]
+        )
+    return ingested
+
+
+def test_completed_go_full_current_and_strict_modes_share_consumed_fingerprint(
+    monkeypatch, tmp_path
+):
+    fixture, original_ready = _completed_go_full_current_audit_fixture(monkeypatch, tmp_path)
+    store, worktree, result, cache, journal, old = fixture
+    _append_new_public_go_cross_reference(store)
+    _write_current_go_audit_context(store, worktree, result)
+    args = SimpleNamespace(ledger=store.path, min_age_minutes=0)
+    current = MODULE.recovery_list(args)["recoverable"][0]
+    assert (
+        current["environmentRecovery"]["contextRefresh"]["mode"]
+        == "FULL_CURRENT_READONLY_REVALIDATION"
+    )
+    _deliver_current_go_revalidation(monkeypatch, fixture, current, fail_then_restore=True)
+    # The same exact cache content becomes available again after a genuine new
+    # offline failure. A later metadata-only audit has a valid strict proof.
+    _append_current_go_audit(
+        store,
+        mutate=lambda data: data["liveAudit"]["evidence"]["timeline"][0]["source"]["issue"][
+            "repository"
+        ].update(size=102),
+    )
+    _write_current_go_audit_context(store, worktree, result)
+    source = store.completed_environment_recovery_sources()[0]
+    raw, context_raw = result.read_bytes(), result.with_name("task-context.json").read_bytes()
+    strict = MODULE._completed_go_environment_context_refresh_proof(
+        store, source, json.loads(context_raw), json.loads(raw), raw, context_raw
+    )
+    assert strict is not None and "mode" not in strict
+    with store.connect() as connection:
+        connection_type = type(connection)
+    original_execute, consumed = connection_type.execute, []
+
+    def observe(connection, sql, parameters=()):
+        if "$.environmentRecovery.fingerprint" in sql and "SELECT 1" in sql:
+            consumed.append(parameters)
+        return original_execute(connection, sql, parameters)
+
+    with monkeypatch.context() as observed:
+        observed.setattr(connection_type, "execute", observe)
+        assert MODULE.recovery_list(args)["recoverable"] == []
+    assert ("a/b#1", "intent-go", current["environmentRecovery"]["fingerprint"]) in consumed
+
+
+@pytest.mark.parametrize("when", ["during-readiness", "inside-reserve", "before-delivery"])
+def test_completed_go_fresh_current_audit_rechecks_bound_intent_at_original_gates(
+    monkeypatch, tmp_path, when
+):
+    (store, worktree, result, cache, journal, old), original_ready = (
+        _completed_go_full_current_audit_fixture(monkeypatch, tmp_path)
+    )
+    _append_new_public_go_cross_reference(store)
+    _write_current_go_audit_context(store, worktree, result)
+    args = SimpleNamespace(ledger=store.path, min_age_minutes=0)
+    current = MODULE.recovery_list(args)["recoverable"][0]
+    with store.connect() as connection:
+        old_audits = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id,payload_json FROM events WHERE event_type='AUDIT_SNAPSHOT' ORDER BY id"
+            )
+        ]
+        old_reservations = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_RESERVED'"
+        ).fetchone()[0]
+
+    def withdraw_bound_scan_permission():
+        # Deliberate corruption in this private test DB, not a positive writer
+        # or a supported mutation of a dispatched intent's scan permission.
+        with store.transaction() as connection:
+            payload = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM intents WHERE intent_id='intent-go'"
+                ).fetchone()[0]
+            )
+            payload["scanGate"] = "HOLD"
+            connection.execute(
+                "UPDATE intents SET payload_json=? WHERE intent_id='intent-go'",
+                (json.dumps(payload),),
+            )
+
+    reserve_args = SimpleNamespace(
+        ledger=store.path,
+        thread_id="thread-go",
+        recovery_nonce=current["recoveryNonce"],
+        intent_id="intent-go",
+        worktree_path=str(worktree),
+    )
+    if when == "during-readiness":
+        original_cache = MODULE._go_locked_reproduction_cache
+
+        def change_during_read(*a, **k):
+            capability = original_cache(*a, **k)
+            assert capability is not None
+            withdraw_bound_scan_permission()
+            return capability
+
+        monkeypatch.setattr(MODULE, "_go_locked_reproduction_cache", change_during_read)
+        assert MODULE.recovery_list(args)["recoverable"] == []
+    elif when == "inside-reserve":
+        original_reserve = RadarLedger._reserve_completed_environment_recovery
+
+        def change_before_transaction(self, *a, **k):
+            withdraw_bound_scan_permission()
+            return original_reserve(self, *a, **k)
+
+        monkeypatch.setattr(
+            RadarLedger, "_reserve_completed_environment_recovery", change_before_transaction
+        )
+        with pytest.raises(LedgerError, match="readiness changed"):
+            MODULE.recovery_reserve(reserve_args)
+    else:
+        assert MODULE.recovery_reserve(reserve_args)["ok"]
+        withdraw_bound_scan_permission()
+        calls = []
+        monkeypatch.setattr(
+            MODULE,
+            "task_turn_deliver",
+            lambda *_a, **_k: calls.append("unexpected native dispatch"),
+        )
+        with pytest.raises(RuntimeError, match="input changed before delivery"):
+            MODULE.recovery_deliver(reserve_args)
+        assert calls == []
+    with store.connect() as connection:
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id,payload_json FROM events WHERE event_type='AUDIT_SNAPSHOT' ORDER BY id"
+            )
+        ] == old_audits
+        assert connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_RESERVED'"
+        ).fetchone()[0] == old_reservations + (when == "before-delivery")
+
+
+@pytest.mark.parametrize("mutation", ["digest", "completeness", "nullable-time"])
+def test_fresh_current_go_audit_adapter_rejects_malformed_current_authority(
+    monkeypatch, tmp_path, mutation
+):
+    (store, worktree, result, cache, journal, old), original_ready = (
+        _completed_go_full_current_audit_fixture(monkeypatch, tmp_path)
+    )
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='AUDIT_SNAPSHOT' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+        intent = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-go'"
+            ).fetchone()[0]
+        )
+    assert MODULE._fresh_readonly_revalidation_audit(intent, payload) == payload["authorization"]
+    if mutation == "digest":
+        payload["liveAudit"]["evidence"]["digest"] = "0" * 64
+    elif mutation == "completeness":
+        payload["liveAudit"]["evidence"]["completeness"].pop("comments")
+    else:
+        payload["liveAudit"]["capturedAt"] = None
+    assert MODULE._fresh_readonly_revalidation_audit(intent, payload) is None
