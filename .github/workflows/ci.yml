@@ -26,6 +26,37 @@ jobs:
         run: ruff check .
       - name: Format
         run: ruff format --check src scripts tests
+      - name: Prepare protected host state directory
+        run: |
+          python - <<'PY'
+          import os
+          import stat
+          from pathlib import Path
+
+          home = Path.home()
+          root = home / "Documents" / "github" / ".oss-pr-radar"
+          created = []
+          for path in (home, home / "Documents", root.parent, root):
+              if not path.is_absolute() or path.resolve() != path:
+                  raise RuntimeError("protected host state path is an alias")
+              try:
+                  metadata = path.lstat()
+              except FileNotFoundError:
+                  if path == home:
+                      raise RuntimeError("runner home is missing")
+                  path.mkdir(mode=0o700)
+                  metadata = path.lstat()
+                  created.append(path)
+              if (
+                  not stat.S_ISDIR(metadata.st_mode)
+                  or metadata.st_uid != os.getuid()
+                  or stat.S_IMODE(metadata.st_mode) & 0o022
+              ):
+                  raise RuntimeError("protected host state directory is unsafe")
+              if path in created and stat.S_IMODE(metadata.st_mode) != 0o700:
+                  raise RuntimeError("new protected host state directory is not private")
+          print(f"Protected host state directory prepared: {root}")
+          PY
       - name: Test
         run: python -m pytest -q
       - name: Native release focused checks

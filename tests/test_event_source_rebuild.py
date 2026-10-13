@@ -80,7 +80,11 @@ def test_lane_dispatch_is_scoped_exact_once_and_current_model(
     argv = calls[0][1]["extra_args"]
     assert argv[argv.index("--model") + 1] == "gpt-6.1-sol"
     assert f"schemaVersion={namespace}_event_outcome_v1" in argv[argv.index("--prompt") + 1]
-    assert "deepseek-flash" in argv[argv.index("--prompt") + 1]
+    assert (
+        "independent gpt-6.1-sol review with medium reasoning effort"
+        in argv[argv.index("--prompt") + 1]
+    )
+    assert "deepseek-flash" not in argv[argv.index("--prompt") + 1]
     assert calls[0][1]["inactive_release"] is True
     assert calls[0][1]["code_root"] == tmp_path
     assert lane.ack("event", lease_token=claimed["leaseToken"])
