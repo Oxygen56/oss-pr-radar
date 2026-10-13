@@ -85,6 +85,12 @@ def test_lane_dispatch_is_scoped_exact_once_and_current_model(
         in argv[argv.index("--prompt") + 1]
     )
     assert "deepseek-flash" not in argv[argv.index("--prompt") + 1]
+    assert (
+        "Truthful public disclosure of AI assistance is authorized."
+        in argv[argv.index("--prompt") + 1]
+    )
+    assert "CLA/legal declarations" in argv[argv.index("--prompt") + 1]
+    assert "CLA/AI/legal declarations" not in argv[argv.index("--prompt") + 1]
     assert calls[0][1]["inactive_release"] is True
     assert calls[0][1]["code_root"] == tmp_path
     assert lane.ack("event", lease_token=claimed["leaseToken"])

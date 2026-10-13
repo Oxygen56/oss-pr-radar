@@ -1656,7 +1656,7 @@ def issue_handler_delivery(
         prompt = (
             f"Handle NanoBot issue event {event['eventId']} for {event.get('issue', {}).get('html_url') or key}. "
             "First verify it is an open code issue, unassigned, unclaimed, without duplicate PR or maintainer-reserved design. "
-            "Only one complete PR is allowed; do not make partial fixes, claims, CLA/AI/legal declarations, force pushes, or destructive changes. "
+            "Only one complete PR is allowed; do not make partial fixes, claims, CLA/legal declarations, force pushes, or destructive changes. Truthful public disclosure of AI assistance is authorized. "
             "Respect a maximum of three active Oxygen56 tasks and stop in watch-only state when maintainer input is needed for 24 hours. "
             "If eligible, reproduce the behavior, implement the complete issue, run the repository formal checks and an independent gpt-6.1-sol review with medium reasoning effort, then prepare only the authorized complete PR. No failed or unavailable required check may be claimed green. Use the current controller task/result/independent-review/publication-permit chain; do not create a PR directly or bypass its signed gates. "
             "Before terminal completion, write exactly one machine outcome: no_action, claimed_or_pr, or design_wait with publicKey and wait timestamps."
