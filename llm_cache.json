@@ -45885,6 +45885,35 @@
     ],
     "why": "Issue reports a crash in vLLM's NixlConnector when prefix caching is enabled for Mamba-hybrid models, with a clear repro and a maintainer triage comment requesting upstream linkage and path decision. The root cause is acknowledged in source comments but no fix is proposed; the requested outcome (support vs. fail-fast) is unresolved."
   },
+  "4f4c437901dfe761bba8aefc905c5095b1cae7395826afc3d8b2b89a104479f0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: align mhc_fused_post_pre large-batch path with current tf32_hc_prenorm_gemm contract (allocate d as {1,m,n} or clamp n_splits to 1)"
+    ],
+    "risks": [
+      "Clamping n_splits to 1 may change numerical behavior or performance on other devices; verify against unfused reference",
+      "DeepGemm API contract may differ across builds/versions, so the fix should target the current sglang deep_gemm_wrapper entrypoint contract"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLANG_OPT_FUSE_MHC_POST_PRE=1 on DeepSeek-V4-Pro TP8 and confirm the DeepGemm assertion at gemm.hpp:930",
+      "After fix, run the same path through CUDA graph capture and verify sanity outputs match the unfused path",
+      "Add a single-call, 1-card smoke test for the opt-in fused mHC flag to catch future API drift"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer reallocating d as {1,m,n} versus clamping n_splits to 1",
+      "Whether the DeepGemm API drift is present on all supported builds or only the PPU build"
+    ],
+    "why": "Issue provides a concrete root cause: mhc_fused_post_pre's large-batch path passes n_splits-shaped d to deep_gemm.tf32_hc_prenorm_gemm, but the current DeepGemm API only accepts {1,m,n} when num_splits is set; shape bisection (num_splits=39/19 fails, 1 passes) and a working clamp confirm the diagnosis. This is a real correctness bug in a default-off opt-in path with a clear minimal fix and validation path."
+  },
   "4f56f8213ba0cfa4434b3b1d47a92d0aeb2c5b7be93f51ca49a876e44079a291": {
     "confidence": 0.85,
     "contradictions": [],
@@ -80370,6 +80399,44 @@
     ],
     "why": "Issue provides a clear traceback and root cause: _swift_encode assumes a list of token IDs but receives a mixed list of string and dict, causing a TypeError. Expected behavior and a proposed fix (#10029) are described, with a concrete reproduction path via teacher deployment and GKD training."
   },
+  "86a943ad9cf8613f3bbe75913ed03452b5cffe894ac6d19fd7fde92d6a3bb687": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter states config is ignored, but maintainer bot reproduced config being applied correctly without superpowers",
+      "Reporter says no model argument is passed, yet the per-task model pattern matches plugin-driven per-role selection"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/model.ts (subagent model resolution precedence)",
+      "packages/app/src/session/model.ts (subagent tool call model argument handling)"
+    ],
+    "risks": [
+      "Fixing a non-existent config-precedence bug could introduce an unintended behavior change to subagent model resolution",
+      "The real cause may be plugin-driven model overrides, which is a different (and already tracked) issue (#51071)",
+      "Duplicate coverage by #51071/#49765 may make this issue non-actionable as a distinct fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with superpowers disabled and the same config; verify child session model matches agents.general.model",
+      "Dump the raw input of an affected subagent tool call (all fields, including empty) and check for a model argument",
+      "Check for project-level opencode.json/.opencode/ or OPENCODE_CONFIG* env vars that could set agent models"
+    ],
+    "unknowns": [
+      "Whether the bug reproduces with superpowers disabled",
+      "Raw input of an affected subagent tool call (including empty fields)",
+      "Presence of other config files or OPENCODE_CONFIG* env vars setting agent models",
+      "Whether this is a genuine distinct bug or a duplicate of #51071/#49765"
+    ],
+    "why": "The issue's root cause is unresolved and contested. The reporter claims configured agents.<id>.model is ignored, but the maintainer bot reproduced the config being applied correctly without the superpowers plugin, and the reporter's own follow-up admits they cannot find a model argument in the parent's subagent tool calls. The bot's hypothesis (superpowers plugin instructing the parent to pick per-role models) is consistent with the observed per-task pattern, and the reporter has not yet provided the requested raw tool-call input or a reproduction with superpowers disabled. This is a materially blocking unknown: without it, the code work is not actionable."
+  },
   "86ad73ceb9cfe16be7833bf006c8a2a7473b3b53e278f40ed19107d894ac2f71": {
     "confidence": 0.7,
     "contradictions": [],
@@ -81230,6 +81297,40 @@
       "Whether open PRs #10244/#10252 already fix this exact tool_choice/tools mismatch"
     ],
     "why": "Issue provides a concrete, code-anchored root cause: adapters/base.py only adds tools when lm.supports_function_calling is True but never strips a caller-supplied tool_choice, while predict/react_v2.py forced submit always passes tool_choice. A minimal reproduction with a NoToolLM subclass is given, and the failure is a deterministic provider 400 error, so the fix is actionable and testable."
+  },
+  "87e88b0edd418d4e1050caafce933aae9619d28da2571cf932234356fb92299e": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue attributes the hang to Linux ARM64, but the comment's reproduction is Linux x64 and argues the mechanism is stdin shape, not arch"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/main.ts: gate or bound the non-interactive stdin drain (isatty-based per maintainer preference) and add a log line before awaiting",
+      "apps/cli/src/main.test.ts: add regression coverage for the unbounded read path (currently only the predicate at main.test.ts:1926 is covered)"
+    ],
+    "risks": [
+      "Open PR #15020 (fix(cli): log while waiting for piped stdin to close) overlaps apps/cli/src/main.ts and may already cover part of the root cause; must compare implementation boundaries before writing code",
+      "Maintainer prefers isatty gating over deadline racing; a deadline-based fix may be rejected",
+      "Changing stdin handling could alter piped-prompt behavior for legitimate `... | cline` usage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a writer that never closes fd 0 (e.g. `timeout 40 cline -c /tmp 'prompt'` with an open pipe) and assert non-hang/exit",
+      "Contrast runs with `< /dev/null` and with a pipe closed after N seconds to confirm the wait is on stdin EOF",
+      "Run apps/cli targeted unit tests including main.test.ts and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #15020 already resolves the root cause or only adds logging, which determines if independent code work is still actionable"
+    ],
+    "why": "Comment evidence pins the hang to an unbounded stdin drain in apps/cli/src/main.ts:1140 gated by stdinHasPipedInput() (main.ts:63), with a concrete reproduction (pipe never closed -> rc=124, /dev/null -> 1.5s) and a maintainer (dominiccooney) stating a preferred direction (isatty-based gating). This is a concrete, testable CLI runtime fix, not docs/plumbing."
   },
   "87eb60e77cd218898337d12853c5e7714160300693c5f26d35563cee47447c6d": {
     "confidence": 0.85,
@@ -86413,6 +86514,40 @@
       "Exact overlap with PR #33624 and whether it fixes this issue"
     ],
     "why": "Issue is a real bug with clear root cause: llm_as_a_judge guardrail bypasses proxy router and calls litellm.acompletion directly, failing for proxy-registered models. However, the deterministic gate requires HUMAN_REVIEW, and existing PR #33624 has semantic overlap in litellm/main.py, requiring maintainer comparison before new work."
+  },
+  "902a009ed3635cefb20d5d575d80e1eeb889d6a1c64067475f72e2b4f87ca8e5": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "frontend/src/views/settings/TenantMembers.vue: allow role dropdown on own row while keeping remove hidden",
+      "sync authStore.memberships after successful self-demotion",
+      "optional: explicit 'transfer ownership' action with confirmation",
+      "regression test covering self-demotion allowed with second Owner and blocked as last Owner"
+    ],
+    "risks": [
+      "Over-broadening UI change could allow removing self, which backend may not intend",
+      "authStore.memberships staleness after self-demotion could cause inconsistent UI state",
+      "Maintainer may prefer a dedicated transfer-ownership flow over relaxing the self-row guard"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: create tenant as A, invite B, promote B to Owner, attempt to demote A via UI (currently no control)",
+      "API-level check: PUT /api/v1/tenants/{id}/members/{A}/role=admin with second Owner present returns success; with A as sole Owner returns 409 ErrLastOwner",
+      "Add frontend unit/component test asserting role dropdown renders on own row when canManage and second Owner exists, and that 409 path surfaces the existing error message"
+    ],
+    "unknowns": [
+      "Whether maintainers want the minimal guard relaxation or a first-class transfer-ownership UX",
+      "Whether frontend test infrastructure exists to add the proposed regression test"
+    ],
+    "why": "Issue provides a precise root cause: frontend TenantMembers.vue gates both role dropdown and remove button on `row.user_id !== currentUserId`, which is stricter than backend ErrLastOwner semantics; backend UpdateRole/RemoveMember already allow self-demotion when another active Owner exists. Reproduction steps and a curl validation path are supplied, and code anchors are concrete. Existing PR #4213 covers only the minimal UI change and lacks regression tests, leaving a concrete gap (test coverage / first-class transfer flow) for a competing contribution."
   },
   "903ef17f8a8a47592149599c36b6cb9cda4bdee656e618a3286f0572833b4365": {
     "confidence": 0.85,
