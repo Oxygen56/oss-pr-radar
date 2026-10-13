@@ -43961,3 +43961,672 @@ def test_completed_go_environment_delivery_rechecks_current_durable_source(monke
             ).fetchone()[0]
             == 1
         )
+
+
+def _go_audit_evidence_digest(evidence):
+    return MODULE.sha256_json(
+        {
+            "repo": evidence["repo"],
+            "issueNumber": evidence["issue_number"],
+            "completeness": evidence["completeness"],
+            "issue": evidence["issue"],
+            "comments": evidence["comments"],
+            "timeline": evidence["timeline"],
+            "claims": evidence["claims"],
+            "maintainerApprovals": evidence["maintainer_approvals"],
+            "policy": evidence["policy"],
+            "pullRelations": evidence["pull_relations"],
+            "hardware": evidence["hardware"],
+        }
+    )
+
+
+def _completed_go_audit_refresh_fixture(monkeypatch, tmp_path, *, reference_rule=None):
+    from oss_pr_radar.evidence import EvidenceBundle
+
+    original_record = RadarLedger.record_audit_snapshot
+
+    def complete_audit(store, key, *, evidence, dedupe_key):
+        if evidence.get("evidenceDigest") == "go-evidence":
+            with store.connect() as connection:
+                worktree = Path(
+                    connection.execute(
+                        "SELECT worktree_path FROM intents WHERE intent_id='intent-go'"
+                    ).fetchone()[0]
+                )
+            fields = dict(
+                repo="a/b",
+                issue_number=1,
+                complete=True,
+                completeness={"issue": "COMPLETE", "timeline": "COMPLETE"},
+                issue={"number": 1, "state": "open", "assignees": [], "labels": []},
+                comments=(),
+                timeline=(
+                    {
+                        "event": "cross-referenced",
+                        "created_at": "2020-01-01T00:00:00Z",
+                        "source": {
+                            "type": "issue",
+                            "issue": {
+                                "id": 20,
+                                "number": 2,
+                                "html_url": "https://github.com/a/b/pull/2",
+                                "state": "open",
+                                "body": "Unchanged reference-only contribution",
+                                "assignees": [],
+                                "comments": 4,
+                                "updated_at": "2020-01-01T00:00:00Z",
+                                "repository": {
+                                    "id": 10,
+                                    "full_name": "a/b",
+                                    "private": False,
+                                    "default_branch": "main",
+                                    "has_pages": True,
+                                    "open_issues": 1,
+                                    "open_issues_count": 1,
+                                    "pushed_at": "2020-01-01T00:00:00Z",
+                                    "size": 100,
+                                    "updated_at": "2020-01-01T00:00:00Z",
+                                },
+                            },
+                        },
+                    },
+                ),
+                claims=(),
+                maintainer_approvals=(),
+                policy={"digest": "unchanged-policy"},
+                pull_relations=(
+                    {
+                        "number": 2,
+                        "url": "https://github.com/a/b/pull/2",
+                        "relation": "REFERENCE_ONLY",
+                        "exact_link": False,
+                        "state": "OPEN",
+                        "merged": False,
+                        "updated_at": "2020-01-01T00:00:00Z",
+                    },
+                ),
+                hardware={"status": "SUPPORTED"},
+            )
+            if reference_rule == "foreign":
+                fields["pull_relations"][0].update(number=3, url="https://github.com/a/b/pull/3")
+            elif reference_rule == "direct":
+                fields["pull_relations"][0].update(relation="DIRECT", exact_link=True)
+            elif reference_rule == "missing-id":
+                fields["timeline"][0]["source"]["issue"].pop("id")
+            bundle = EvidenceBundle(**fields, digest="pending")
+            bundle = EvidenceBundle(**fields, digest=_go_audit_evidence_digest(bundle.as_dict()))
+            evidence = MODULE._audit_payload(
+                bundle,
+                AuthorizationDecision(
+                    "ALLOW", "LIVE_EVIDENCE_PASSED", {"evidence": "PASS"}, bundle.digest
+                ),
+                {
+                    "branch": "main",
+                    "defaultBranch": "main",
+                    "sha": run_git(worktree, "rev-parse", "HEAD"),
+                    "source": "repository_default",
+                },
+            )
+            for field in ("repoProbeReceipt", "repo_probe_receipt"):
+                if evidence["liveAudit"]["evidence"].get(field) is None:
+                    evidence["liveAudit"]["evidence"].pop(field, None)
+            dedupe_key = f"intent-go:{bundle.digest}:{evidence['liveAudit']['capturedAt']}:active-context-refresh"
+        return original_record(store, key, evidence=evidence, dedupe_key=dedupe_key)
+
+    with monkeypatch.context() as setup:
+        setup.setattr(RadarLedger, "record_audit_snapshot", complete_audit)
+        fixture = _completed_go_environment_fixture(monkeypatch, tmp_path)
+    store, worktree, result, cache, journal, old = fixture
+    initial = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))
+    assert len(initial["recoverable"]) == 1, initial
+    with store.connect() as connection:
+        previous = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='AUDIT_SNAPSHOT' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+    refreshed = json.loads(json.dumps(previous))
+    metadata = refreshed["liveAudit"]["evidence"]["timeline"][0]["source"]["issue"]["repository"]
+    metadata.update(
+        has_pages=False,
+        open_issues=2,
+        open_issues_count=2,
+        pushed_at="2020-01-01T01:00:00Z",
+        size=101,
+        updated_at="2020-01-01T01:00:00Z",
+    )
+    evidence = refreshed["liveAudit"]["evidence"]
+    digest = _go_audit_evidence_digest(evidence)
+    evidence["digest"] = evidence["evidenceDigest"] = refreshed["evidenceDigest"] = digest
+    refreshed["authorization"]["evidence_digest"] = digest
+    refreshed["liveAudit"]["capturedAt"] = iso_z(datetime.now(UTC))
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence=refreshed,
+        dedupe_key=f"intent-go:{digest}:{refreshed['liveAudit']['capturedAt']}:active-context-refresh",
+    )
+    old_raw = result.read_bytes()
+    MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-go", cwd=worktree
+    )
+    assert (
+        json.loads(result.with_name("task-context.json").read_bytes())["contextDigest"]
+        != json.loads(old_raw)["contextDigest"]
+    )
+    rejected = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert rejected["ok"] and any(
+        x["reason"] == "RESULT_CONTEXT_DIGEST_MISMATCH" for x in rejected["workBlocked"]
+    ), rejected
+    assert result.read_bytes() == old_raw
+    return fixture, initial["recoverable"][0]
+
+
+def test_completed_go_environment_after_audit_refresh_has_current_context_nonce(
+    monkeypatch, tmp_path
+):
+    (store, worktree, result, cache, journal, old), original_ready = (
+        _completed_go_audit_refresh_fixture(monkeypatch, tmp_path)
+    )
+    before = (
+        result.read_bytes(),
+        result.with_name("task-context.json").read_bytes(),
+        run_git(worktree, "rev-parse", "HEAD"),
+    )
+    with store.connect() as connection:
+        old_events = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id,event_type,payload_json FROM events ORDER BY id"
+            )
+        ]
+    listed = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))
+    assert len(listed["recoverable"]) == 1, listed
+    current = listed["recoverable"][0]
+    assert current["recoveryNonce"] != original_ready["recoveryNonce"]
+    assert (
+        current["environmentRecovery"]["fingerprint"]
+        == original_ready["environmentRecovery"]["fingerprint"]
+    )
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-go",
+            recovery_nonce=current["recoveryNonce"],
+            intent_id="intent-go",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserved["ok"]
+    assert (
+        store.unresolved_recoveries()[0]["reservation"]["recoveryChainDigest"]
+        == old["recoveryChainDigest"]
+    )
+    assert before == (
+        result.read_bytes(),
+        result.with_name("task-context.json").read_bytes(),
+        run_git(worktree, "rev-parse", "HEAD"),
+    )
+    process = _FakeTaskTurnProcess()
+    original_popen, original_which = subprocess.Popen, shutil.which
+
+    @contextmanager
+    def session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 0:
+            return buffer, {"result": {}}
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": "thread-go"}}}
+        return buffer, {"result": {"turn": {"id": "refreshed-go"}}}
+
+    def launch_worker(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        completed = MODULE.task_turn_worker_entry(
+            SimpleNamespace(
+                ledger=store.path,
+                delivery_kind="recovery",
+                thread_id="thread-go",
+                delivery_token=reserved["recoveryNonce"],
+                receipt=argv[argv.index("--receipt") + 1],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+                delivery_attempt_digest=None,
+            )
+        )
+        assert completed["turnStatus"] == "completed"
+        return SimpleNamespace(pid=os.getpid())
+
+    with monkeypatch.context() as delivery:
+        delivery.setattr(MODULE, "_app_server_action_session", session)
+        delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+        delivery.setattr(MODULE, "_read_app_server_response", read_response)
+        delivery.setattr(
+            MODULE,
+            "_wait_for_app_server_terminal_turn",
+            lambda *_a, **_k: {"turnId": "refreshed-go", "status": "completed"},
+        )
+        delivery.setattr(
+            MODULE.shutil,
+            "which",
+            lambda name: "/usr/bin/codex" if name == "codex" else original_which(name),
+        )
+        delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+        delivered = MODULE.recovery_deliver(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-go",
+                recovery_nonce=reserved["recoveryNonce"],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+            )
+        )
+    assert delivered["ok"], delivered
+    turns = [m for m in _task_turn_messages(process) if m.get("method") == "turn/start"]
+    assert (
+        len(turns) == 1
+        and turns[0]["params"]["model"] == "gpt-6.1-sol"
+        and turns[0]["params"]["effort"] == "medium"
+    )
+    assert before == (
+        result.read_bytes(),
+        result.with_name("task-context.json").read_bytes(),
+        run_git(worktree, "rev-parse", "HEAD"),
+    )
+    rejected = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert rejected["ok"] and any(
+        x["reason"] == "RESULT_CONTEXT_DIGEST_MISMATCH" for x in rejected["workBlocked"]
+    )
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_SENT'"
+            ).fetchone()[0]
+            == 2
+        )
+        new_proof = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='THREAD_RECOVERY_RESERVED' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+        assert (
+            new_proof["environmentRecovery"]["contextDigest"]
+            == json.loads(before[1])["contextDigest"]
+        )
+        assert new_proof["recoveryChainDigest"] == old["recoveryChainDigest"]
+
+    with store.connect() as connection:
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id,event_type,payload_json FROM events WHERE id<=? ORDER BY id",
+                (old_events[-1][0],),
+            )
+        ] == old_events
+    # The fake SDK boundary now returns a fresh current-context observation.
+    # Even a newly eligible source must not consume the same cache content twice.
+    records = [json.loads(line) for line in journal.read_text().splitlines()]
+    native_item = next(
+        r["payload"]["item"]
+        for r in records
+        if (r.get("payload") or {}).get("type") == "item_completed"
+    )
+    with journal.open("a") as stream:
+        for payload in (
+            {"type": "task_started", "turn_id": "refreshed-go"},
+            {
+                "type": "item_completed",
+                "thread_id": "thread-go",
+                "turn_id": "refreshed-go",
+                "item": native_item,
+            },
+            {"type": "task_complete", "turn_id": "refreshed-go"},
+        ):
+            stream.write(
+                json.dumps(
+                    {"type": "event_msg", "timestamp": iso_z(datetime.now(UTC)), "payload": payload}
+                )
+                + "\n"
+            )
+    fresh_value = json.loads(result.read_bytes())
+    fresh_value["contextDigest"] = json.loads(before[1])["contextDigest"]
+    fresh_value["observedAt"] = "fresh current-context native fixture observation"
+    result.write_text(json.dumps(fresh_value))
+    assert MODULE._record_stopped_quarantined_executions(store)
+    assert MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))["workBlocked"]
+    assert len(store.completed_environment_recovery_sources()) == 1
+    with store.connect() as connection:
+        connection_type = type(connection)
+    original_execute = connection_type.execute
+    consumed_queries = []
+
+    def observe_execute(connection, sql, parameters=()):
+        if "$.environmentRecovery.fingerprint" in sql and "SELECT 1" in sql:
+            consumed_queries.append(parameters)
+        return original_execute(connection, sql, parameters)
+
+    with monkeypatch.context() as observed:
+        observed.setattr(connection_type, "execute", observe_execute)
+        assert not MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+            "recoverable"
+        ]
+    assert ("a/b#1", "intent-go", current["environmentRecovery"]["fingerprint"]) in consumed_queries
+
+
+def _append_current_go_audit(store, *, mutate=None):
+    with store.connect() as connection:
+        data = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='AUDIT_SNAPSHOT' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+    if mutate:
+        mutate(data)
+    evidence = data["liveAudit"]["evidence"]
+    digest = _go_audit_evidence_digest(evidence)
+    data["evidenceDigest"] = evidence["digest"] = evidence["evidenceDigest"] = digest
+    data["authorization"]["evidence_digest"] = digest
+    data["liveAudit"]["capturedAt"] = iso_z(datetime.now(UTC))
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence=data,
+        dedupe_key=f"intent-go:{digest}:{data['liveAudit']['capturedAt']}:active-context-refresh",
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "policy",
+        "issue",
+        "claim",
+        "decision",
+        "repository",
+        "old-pair",
+        "intermediate-block",
+        "active",
+        "public",
+    ],
+)
+def test_completed_go_audit_refresh_refuses_noncontinuous_or_unsafe_source(
+    monkeypatch, tmp_path, mutation
+):
+    (store, worktree, result, cache, journal, old), original_ready = (
+        _completed_go_audit_refresh_fixture(monkeypatch, tmp_path)
+    )
+    args = SimpleNamespace(ledger=store.path, min_age_minutes=0)
+    baseline = MODULE.recovery_list(args)["recoverable"]
+    assert len(baseline) == 1
+    if mutation in {"policy", "issue", "claim", "decision", "repository"}:
+
+        def change(data):
+            evidence = data["liveAudit"]["evidence"]
+            if mutation == "policy":
+                evidence["policy"]["digest"] = "different-policy"
+            elif mutation == "issue":
+                evidence["issue"]["assignees"] = [{"login": "other"}]
+            elif mutation == "claim":
+                evidence["claims"] = [{"claim": "other"}]
+            elif mutation == "decision":
+                data["authorization"]["checks"]["evidence"] = "OTHER"
+            else:
+                evidence["timeline"][0]["source"]["issue"]["repository"]["default_branch"] = "other"
+
+        _append_current_go_audit(store, mutate=change)
+        MODULE.write_task_context(
+            store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-go", cwd=worktree
+        )
+        assert MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))["ok"]
+    elif mutation == "old-pair":
+        value = json.loads(result.read_bytes())
+        value["observedAt"] = "different raw observation, no matching historical ENV pair"
+        result.write_text(json.dumps(value))
+        assert MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))["workBlocked"]
+        assert len(store.completed_environment_recovery_sources()) == 1
+    elif mutation == "intermediate-block":
+        _append_current_go_audit(
+            store, mutate=lambda data: data["authorization"].update(status="BLOCK")
+        )
+        _append_current_go_audit(
+            store, mutate=lambda data: data["authorization"].update(status="ALLOW")
+        )
+        MODULE.write_task_context(
+            store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-go", cwd=worktree
+        )
+        assert MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))["ok"]
+    elif mutation == "active":
+        with journal.open("a") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": iso_z(datetime.now(UTC)),
+                        "payload": {"type": "task_started", "turn_id": "new-active"},
+                    }
+                )
+                + "\n"
+            )
+    else:
+        value = json.loads(result.read_bytes())
+        value["prUrl"] = "https://github.com/a/b/pull/9"
+        result.write_text(json.dumps(value))
+    assert not MODULE.recovery_list(args)["recoverable"]
+    with pytest.raises((RuntimeError, LedgerError)):
+        MODULE.recovery_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-go",
+                recovery_nonce=baseline[0]["recoveryNonce"],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+            )
+        )
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_RESERVED'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.parametrize("point", ["reserve", "deliver", "during-ready"])
+def test_completed_go_audit_refresh_rechecks_audit_refs_at_original_cas(
+    monkeypatch, tmp_path, point
+):
+    (store, worktree, result, cache, journal, old), original_ready = (
+        _completed_go_audit_refresh_fixture(monkeypatch, tmp_path)
+    )
+    baseline = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+        "recoverable"
+    ][0]
+    args = SimpleNamespace(
+        ledger=store.path,
+        thread_id="thread-go",
+        recovery_nonce=baseline["recoveryNonce"],
+        intent_id="intent-go",
+        worktree_path=str(worktree),
+    )
+    if point == "reserve":
+        _append_current_go_audit(store)
+        with pytest.raises(LedgerError, match="source changed"):
+            store.reserve_recovery(
+                thread_id="thread-go",
+                nonce=baseline["recoveryNonce"],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+                recovery_prompt_version=baseline["recoveryPromptVersion"],
+                recovery_prompt_digest=baseline["recoveryPromptDigest"],
+                environment_candidate=baseline,
+                environment_validator=lambda: baseline,
+            )
+    elif point == "deliver":
+        assert MODULE.recovery_reserve(args)["ok"]
+        _append_current_go_audit(store)
+        with pytest.raises((RuntimeError, LedgerError)):
+            MODULE.recovery_deliver(args)
+    else:
+        original_ready_reader = MODULE._go_locked_reproduction_cache
+
+        def append_between_reads(*a, **k):
+            ready = original_ready_reader(*a, **k)
+            assert ready is not None
+            _append_current_go_audit(store)
+            return ready
+
+        monkeypatch.setattr(MODULE, "_go_locked_reproduction_cache", append_between_reads)
+        assert not MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+            "recoverable"
+        ]
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_SENT'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def _refresh_go_reference_timestamps(store, worktree, mutate=None, clock_mode="same"):
+    def update(data):
+        evidence = data["liveAudit"]["evidence"]
+        evidence["pull_relations"][0]["updated_at"] = (
+            "2019-12-01T00:00:00Z" if clock_mode == "older" else "2020-01-01T02:00:00Z"
+        )
+        evidence["timeline"][0]["source"]["issue"]["updated_at"] = {
+            "same": "2020-01-01T02:00:00Z",
+            "different": "2020-01-01T02:00:30Z",
+            "older": "2019-11-01T00:00:00Z",
+        }[clock_mode]
+        if mutate:
+            mutate(data)
+
+    _append_current_go_audit(store, mutate=update)
+    MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-go", cwd=worktree
+    )
+    blocked = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert blocked["ok"] and any(
+        item["reason"] == "RESULT_CONTEXT_DIGEST_MISMATCH" for item in blocked["workBlocked"]
+    )
+
+
+@pytest.mark.parametrize("clock_mode", ["same", "different", "older"])
+def test_completed_go_reference_only_timestamp_refresh_matches_audit177(
+    monkeypatch, tmp_path, clock_mode
+):
+    (store, worktree, result, cache, journal, old), original_ready = (
+        _completed_go_audit_refresh_fixture(monkeypatch, tmp_path)
+    )
+    baseline = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+        "recoverable"
+    ]
+    assert len(baseline) == 1
+    old_raw = result.read_bytes()
+    _refresh_go_reference_timestamps(store, worktree, clock_mode=clock_mode)
+    current = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+        "recoverable"
+    ]
+    assert len(current) == 1
+    assert (
+        current[0]["environmentRecovery"]["fingerprint"]
+        == original_ready["environmentRecovery"]["fingerprint"]
+    )
+    assert result.read_bytes() == old_raw
+    assert MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-go",
+            recovery_nonce=current[0]["recoveryNonce"],
+            intent_id="intent-go",
+            worktree_path=str(worktree),
+        )
+    )["ok"]
+    assert (
+        store.unresolved_recoveries()[0]["reservation"]["recoveryChainDigest"]
+        == old["recoveryChainDigest"]
+    )
+
+
+@pytest.mark.parametrize("reference_rule", ["foreign", "direct", "missing-id"])
+def test_completed_go_reference_timestamps_require_exact_reference_identity(
+    monkeypatch, tmp_path, reference_rule
+):
+    (store, worktree, result, cache, journal, old), original_ready = (
+        _completed_go_audit_refresh_fixture(monkeypatch, tmp_path, reference_rule=reference_rule)
+    )
+    assert (
+        len(
+            MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+                "recoverable"
+            ]
+        )
+        == 1
+    )
+    _refresh_go_reference_timestamps(store, worktree)
+    assert not MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+        "recoverable"
+    ]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "body",
+        "assignee",
+        "comments",
+        "relation-state",
+        "naive-time",
+        "main-issue-time",
+        "private-type",
+        "null-time",
+    ],
+)
+def test_completed_go_reference_timestamp_refresh_preserves_full_decision_fields(
+    monkeypatch, tmp_path, mutation
+):
+    (store, worktree, result, cache, journal, old), original_ready = (
+        _completed_go_audit_refresh_fixture(monkeypatch, tmp_path)
+    )
+    _refresh_go_reference_timestamps(store, worktree)
+    baseline = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))[
+        "recoverable"
+    ]
+    assert len(baseline) == 1
+
+    def change(data):
+        evidence = data["liveAudit"]["evidence"]
+        issue = evidence["timeline"][0]["source"]["issue"]
+        if mutation == "body":
+            issue["body"] = "new contribution claim"
+        elif mutation == "assignee":
+            issue["assignees"] = [{"login": "other"}]
+        elif mutation == "comments":
+            issue["comments"] += 1
+        elif mutation == "relation-state":
+            evidence["pull_relations"][0]["state"] = "CLOSED"
+        elif mutation == "naive-time":
+            issue["updated_at"] = "2020-01-01T03:00:00"
+        elif mutation == "private-type":
+            assert issue["repository"]["private"] is False
+            issue["repository"]["private"] = 0
+        elif mutation == "null-time":
+            issue["updated_at"] = None
+        else:
+            evidence["issue"]["updated_at"] = "2020-01-01T03:00:00Z"
+
+    _refresh_go_reference_timestamps(store, worktree, mutate=change)
+    refused = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))
+    assert refused["ok"] is True and not refused["recoverable"], refused
+    with pytest.raises((RuntimeError, LedgerError)):
+        MODULE.recovery_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-go",
+                recovery_nonce=baseline[0]["recoveryNonce"],
+                intent_id="intent-go",
+                worktree_path=str(worktree),
+            )
+        )

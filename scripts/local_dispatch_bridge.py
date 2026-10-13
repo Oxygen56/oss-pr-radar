@@ -33261,6 +33261,216 @@ def _go_locked_reproduction_cache(worktree: Path, probe: dict[str, Any]) -> dict
         return None
 
 
+def _completed_go_environment_context_refresh_proof(
+    store: RadarLedger,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+    context_raw: bytes,
+) -> dict[str, Any] | None:
+    """Prove an audit-only wake; never accept/rewrite the historical result."""
+    source = candidate["environmentSource"]
+    refresh = source.get("contextRefresh")
+    if (
+        not isinstance(refresh, dict)
+        or value.get("contextDigest") == context.get("contextDigest")
+        or _task_live_audit_refresh_due(context)
+        or _task_result_evidence_block_key(candidate, raw, context_raw) != source["blockedKey"]
+        or context.get("contextDigest") != _task_context_digest(context, None)
+    ):
+        return None
+    refs = refresh.get("auditRefs")
+    if not isinstance(refs, list) or not refs:
+        return None
+    with store.connect() as connection:
+        audits = []
+        for ref in refs:
+            row = connection.execute(
+                "SELECT * FROM events WHERE opportunity_key=? AND id=? AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')",
+                (candidate["key"], ref["id"]),
+            ).fetchone()
+            if row is None or ref != {
+                "id": row["id"],
+                "createdAt": row["created_at"],
+                "dedupeKey": row["dedupe_key"],
+                "payloadDigest": sha256_text(row["payload_json"]),
+            }:
+                return None
+            audits.append((dict(row), json.loads(row["payload_json"])))
+    if [r[0]["id"] for r in audits] != sorted((r[0]["id"] for r in audits), reverse=True):
+        return None
+    latest_row, latest = audits[0]
+    if (
+        latest_row["id"] <= source["stoppedEventId"]
+        or latest.get("liveAudit") != context.get("liveAudit")
+        or latest_row["created_at"] != context.get("liveAuditRecordedAt")
+        or latest.get("targetBase") != context.get("targetBase")
+    ):
+        return None
+
+    def semantic_audit(row: dict[str, Any], payload: dict[str, Any]) -> str | None:
+        data = json.loads(json.dumps(payload))
+        if not isinstance(data, dict) or not isinstance(data.get("liveAudit"), dict):
+            return None
+        evidence = data["liveAudit"].get("evidence")
+        authorization = data.get("authorization")
+        if not isinstance(evidence, dict) or not isinstance(authorization, dict):
+            return None
+        digest = sha256_json(
+            {
+                "repo": evidence["repo"],
+                "issueNumber": evidence["issue_number"],
+                "completeness": evidence["completeness"],
+                "issue": evidence["issue"],
+                "comments": evidence["comments"],
+                "timeline": evidence["timeline"],
+                "claims": evidence["claims"],
+                "maintainerApprovals": evidence["maintainer_approvals"],
+                "policy": evidence["policy"],
+                "pullRelations": evidence["pull_relations"],
+                "hardware": evidence["hardware"],
+            }
+        )
+        if (
+            authorization.get("status") != "ALLOW"
+            or not isinstance(authorization.get("checks"), dict)
+            or not authorization["checks"]
+            or evidence.get("complete") is not True
+            or not isinstance(evidence.get("completeness"), dict)
+            or not evidence["completeness"]
+            or any(v != "COMPLETE" for v in evidence["completeness"].values())
+            or any(
+                v != digest
+                for v in (
+                    evidence.get("digest"),
+                    evidence.get("evidenceDigest"),
+                    data.get("evidenceDigest"),
+                    authorization.get("evidence_digest"),
+                )
+            )
+            or row["dedupe_key"]
+            != f"{candidate['intentId']}:{digest}:{data['liveAudit']['capturedAt']}:active-context-refresh"
+            or data.get("targetBase") != context.get("targetBase")
+        ):
+            return None
+        del authorization["evidence_digest"]
+        del data["evidenceDigest"]
+        del data["liveAudit"]["capturedAt"]
+        del evidence["digest"]
+        del evidence["evidenceDigest"]
+        for item in evidence["timeline"]:
+            if not isinstance(item, dict) or item.get("event") != "cross-referenced":
+                continue
+            nested = item.get("source")
+            issue = nested.get("issue") if isinstance(nested, dict) else None
+            repository = issue.get("repository") if isinstance(issue, dict) else None
+            if (
+                not isinstance(repository, dict)
+                or repository.get("full_name") != candidate["key"].rsplit("#", 1)[0]
+            ):
+                continue
+            # Only this known nested repository metadata is non-decision data.
+            for field in (
+                "has_pages",
+                "open_issues",
+                "open_issues_count",
+                "pushed_at",
+                "size",
+                "updated_at",
+            ):
+                repository.pop(field, None)
+        for relation in evidence["pull_relations"]:
+            if (
+                not isinstance(relation, dict)
+                or relation.get("relation") != "REFERENCE_ONLY"
+                or relation.get("exact_link") is not False
+                or type(relation.get("number")) is not int
+                or relation["number"] <= 0
+            ):
+                continue
+            public_url = (
+                f"https://github.com/{candidate['key'].rsplit('#', 1)[0]}/pull/{relation['number']}"
+            )
+            if relation.get("url") != public_url:
+                continue
+            matches = []
+            for item in evidence["timeline"]:
+                nested = (
+                    item.get("source")
+                    if isinstance(item, dict) and item.get("event") == "cross-referenced"
+                    else None
+                )
+                issue = nested.get("issue") if isinstance(nested, dict) else None
+                repository = issue.get("repository") if isinstance(issue, dict) else None
+                if (
+                    isinstance(issue, dict)
+                    and type(issue.get("id")) is int
+                    and issue["id"] > 0
+                    and type(issue.get("number")) is int
+                    and issue["number"] == relation["number"]
+                    and issue.get("html_url") == public_url
+                    and isinstance(repository, dict)
+                    and repository.get("full_name") == candidate["key"].rsplit("#", 1)[0]
+                    and (
+                        "id" not in relation
+                        or (type(relation["id"]) is int and relation["id"] == issue["id"])
+                    )
+                ):
+                    matches.append(issue)
+            if len(matches) != 1:
+                continue
+            observed_times = (relation.get("updated_at"), matches[0].get("updated_at"))
+            if any(not isinstance(stamp, str) for stamp in observed_times):
+                continue
+            try:
+                parsed_times = tuple(
+                    datetime.fromisoformat(stamp.replace("Z", "+00:00")) for stamp in observed_times
+                )
+            except (TypeError, ValueError):
+                continue
+            if any(stamp.tzinfo is None for stamp in parsed_times):
+                continue
+            # Only the paired reference observation clock; all relation and
+            # source-issue identity/decision fields remain in the comparison.
+            del relation["updated_at"]
+            del matches[0]["updated_at"]
+        return sha256_json(data)
+
+    current_semantic = semantic_audit(latest_row, latest)
+    if current_semantic is None:
+        return None
+    previous = []
+    for row, payload in audits:
+        if row["id"] >= source["reservedEventId"] or not isinstance(payload, dict):
+            continue
+        historical = dict(
+            context,
+            liveAudit=payload.get("liveAudit"),
+            liveAuditRecordedAt=row["created_at"],
+            contextDigest=value["contextDigest"],
+        )
+        if (
+            _task_context_digest(historical, None) == value["contextDigest"]
+            and _task_result_evidence_block_key(candidate, raw, _serialized_json(historical))
+            == refresh["previousBlockedKey"]
+        ):
+            previous.append((row, historical))
+    if len(previous) != 1:
+        return None
+    previous_row, historical = previous[0]
+    for row, payload in audits:
+        if row["id"] >= previous_row["id"] and semantic_audit(row, payload) != current_semantic:
+            return None
+    return {
+        "previousAuditEventId": previous_row["id"],
+        "auditEventId": latest_row["id"],
+        "previousContextDigest": value["contextDigest"],
+        "contextDigest": context["contextDigest"],
+        "previousContextRawDigest": hashlib.sha256(_serialized_json(historical)).hexdigest(),
+    }
+
+
 def _completed_go_environment_recovery(
     store: RadarLedger, candidate: dict[str, Any], *, reserved: bool = False
 ) -> dict[str, Any] | None:
@@ -33315,7 +33525,6 @@ def _completed_go_environment_recovery(
                 or context.get("childMayWriteGitMetadata") is not False
                 or context.get("publicationReceipt")
                 or context.get("prFollowup")
-                or value.get("contextDigest") != context.get("contextDigest")
                 or value.get("stage") != "REPRODUCTION_REQUIRED"
                 or value.get("reason") != "REPRODUCTION_ENVIRONMENT_BLOCKED"
                 or value.get("reproductionVerified") is not False
@@ -33334,6 +33543,17 @@ def _completed_go_environment_recovery(
                 or _local_changed_files(opened.worktree)
                 or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree)
                 != context.get("selectedBaseSha")
+            ):
+                return None
+            context_refresh = None
+            if source.get("contextRefresh") is not None:
+                context_refresh = _completed_go_environment_context_refresh_proof(
+                    store, candidate, context, value, raw, context_raw
+                )
+                if context_refresh is None:
+                    return None
+            elif (
+                value.get("contextDigest") != context.get("contextDigest")
                 or _task_result_evidence_block_key(candidate, raw, context_raw)
                 != source["blockedKey"]
             ):
@@ -33424,6 +33644,7 @@ def _completed_go_environment_recovery(
                 proof = {
                     "kind": "GO_LOCKED_CACHE_READY",
                     "source": source,
+                    **({"contextRefresh": context_refresh} if context_refresh is not None else {}),
                     "rawDigest": hashlib.sha256(raw).hexdigest(),
                     "contextRawDigest": hashlib.sha256(context_raw).hexdigest(),
                     "contextDigest": context["contextDigest"],

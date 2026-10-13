@@ -6833,9 +6833,48 @@ class RadarLedger:
             if (
                 not isinstance(block_payload, dict)
                 or not isinstance(block_provenance, dict)
-                or block_payload.get("reason") != "REPRODUCTION_ENVIRONMENT_BLOCKED"
                 or block_provenance.get("threadId") != row["thread_id"]
             ):
+                continue
+            context_refresh = None
+            if block_payload.get("reason") == "RESULT_CONTEXT_DIGEST_MISMATCH":
+                previous = connection.execute(
+                    "SELECT * FROM managed_lifecycle_events WHERE opportunity_key=? AND task_id=? "
+                    "AND event_type='TASK_RESULT_EVIDENCE_BLOCKED' AND event_id<? "
+                    "AND json_valid(payload_json)=1 AND json_extract(payload_json,'$.reason')="
+                    "'REPRODUCTION_ENVIRONMENT_BLOCKED' ORDER BY event_id DESC LIMIT 1",
+                    (row["key"], row["intent_id"], block["event_id"]),
+                ).fetchone()
+                if previous is None:
+                    continue
+                try:
+                    previous_provenance = json.loads(previous["provenance_json"])
+                except (TypeError, ValueError):
+                    continue
+                if (
+                    not isinstance(previous_provenance, dict)
+                    or previous_provenance.get("threadId") != row["thread_id"]
+                ):
+                    continue
+                audits = _intent_bound_audit_rows(connection, row["key"], row["intent_id"])
+                if not audits:
+                    continue
+                context_refresh = {
+                    "previousBlockedEventId": previous["event_id"],
+                    "previousBlockedKey": previous["idempotency_key"],
+                    "previousBlockedPayloadDigest": sha256_text(previous["payload_json"]),
+                    "previousBlockedProvenanceDigest": sha256_text(previous["provenance_json"]),
+                    "auditRefs": [
+                        {
+                            "id": audit["id"],
+                            "createdAt": audit["created_at"],
+                            "dedupeKey": audit["dedupe_key"],
+                            "payloadDigest": sha256_text(audit["payload_json"]),
+                        }
+                        for audit in audits
+                    ],
+                }
+            elif block_payload.get("reason") != "REPRODUCTION_ENVIRONMENT_BLOCKED":
                 continue
             if connection.execute(
                 "SELECT 1 FROM task_quarantines WHERE opportunity_key=? AND status='ACTIVE' LIMIT 1",
@@ -6859,6 +6898,8 @@ class RadarLedger:
                 source[name + "PayloadDigest"] = sha256_text(event["payload_json"])
             source["blockedPayloadDigest"] = sha256_text(block["payload_json"])
             source["blockedProvenanceDigest"] = sha256_text(block["provenance_json"])
+            if context_refresh is not None:
+                source["contextRefresh"] = context_refresh
             if pending is not None and (
                 pending["id"] <= stopped["id"] or pending_proof.get("source") != source
             ):
