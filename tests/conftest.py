@@ -150,8 +150,37 @@ def no_host_radar_private_writes(tmp_path_factory):
             f"tests modified the live .oss-pr-radar shared state: before={before} after={after}"
         )
         allowed_exit_codes = (None, 0, -15) if intentionally_terminated else (0,)
+        flag_diagnostic = {"path": str(watcher_flag), "exists": None}
+        try:
+            flag_stat = watcher_flag.lstat()
+        except FileNotFoundError:
+            flag_diagnostic["exists"] = False
+        except OSError as error:
+            flag_diagnostic["statError"] = repr(error)
+        else:
+            flag_diagnostic.update(
+                exists=True,
+                uid=flag_stat.st_uid,
+                mode=oct(flag_stat.st_mode & 0o777),
+                size=flag_stat.st_size,
+                mtime_ns=flag_stat.st_mtime_ns,
+                inode=flag_stat.st_ino,
+            )
+            try:
+                with watcher_flag.open("rb") as flag_stream:
+                    flag_stream.seek(max(0, flag_stat.st_size - 4096))
+                    flag_diagnostic["payload"] = flag_stream.read(4096)
+            except OSError as error:
+                flag_diagnostic["readError"] = repr(error)
+        try:
+            with watcher_ready.open("rb") as ready_stream:
+                ready_diagnostic = ready_stream.read(4096)
+        except OSError as error:
+            ready_diagnostic = repr(error)
         assert exit_code in allowed_exit_codes, (
-            f"host watcher exited unexpectedly: code={exit_code}, stderr={diagnostic!r}"
+            f"host watcher exited unexpectedly: code={exit_code}, stderr={diagnostic!r}, "
+            f"flag={flag_diagnostic!r}, ready={ready_diagnostic!r}, "
+            f"root_preexisting={root_preexisting!r}, hostroot={str(root)!r}"
         )
         assert not watcher_flag.exists(), (
             "tests transiently modified the live shared radar state: "
