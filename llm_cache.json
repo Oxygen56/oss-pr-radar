@@ -21359,6 +21359,45 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies a concrete bug in sandbox reattachment logic with a reproducible failure mode and suggests a fix, but the maintainer has not yet triaged or approved the approach, and the suggested fix involves API behavior changes (e.g., making start() reject on DESTROYED) that need design confirmation."
   },
+  "25c1a59c7d2e82ea3ce968f819bfe5f38767402c0eee41509d0305b6d1eb92c0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Original issue body attributes the failure to opencode-pty 503, but maintainer and reporter later establish that route is TUI-only and the 503 is expected on Windows; the real cause is the Open in… → PowerShell path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Desktop main-process openPath handler: special-case powershell/pwsh entries to use -NoExit with cwd instead of positional folder argument",
+      "Switch from execFile to spawn with detached/stdio ignore and unref for interactive shells",
+      "Surface the swallowed IPC error cause in logs so the toast is diagnosable"
+    ],
+    "risks": [
+      "Detached spawn changes lifecycle semantics; ensure the shell process is not killed when Desktop exits and that spawn errors still reject",
+      "Shell detection by executable name regex may miss custom shell paths or aliases",
+      "Maintainer may prefer a per-entry argv builder rather than a special-case branch",
+      "Fix is in the Desktop bundle/main process; verifying requires a Windows Desktop build"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the child-process behavior directly: run powershell.exe \"<folder>\" and pwsh.exe \"<folder>\" and confirm exit 1/64 with the reported errors",
+      "Verify powershell.exe -NoExit with cwd=<folder> and pwsh.exe -NoExit with cwd=<folder with spaces> both open a prompt at the folder with exit 0",
+      "In Desktop, click Open in… → PowerShell on a folder with and without spaces and confirm the window opens at that folder without the Request failed toast",
+      "Confirm editors (VS Code, Cursor, Zed, Sublime) still open the folder positionally",
+      "Confirm the IPC error cause is now logged when the child fails (e.g. ENOENT)"
+    ],
+    "unknowns": [
+      "Exact minified source location of the openPath handler in the repo (bundle snippet only)",
+      "Whether the swallowed IPC error logging gap is in scope for the same fix",
+      "Whether maintainers want the per-entry argv builder refactor now or a minimal special-case"
+    ],
+    "why": "Reporter retracted the opencode-pty/503 theory after maintainer correction; the real trigger is the Desktop 'Open in… → PowerShell' action. Root cause is reproduced outside the app: the Windows shell entry passes the folder positionally to powershell.exe/pwsh.exe, which interpret it as -Command/-File rather than a working directory, and execFile rejects on non-zero exit. A concrete fix (special-case shell entries, use -NoExit with cwd, spawn detached) is proposed with measured evidence for both PowerShell 5.1 and pwsh 7, including paths with spaces."
+  },
   "25d6d0144a02bab41faf8e74c5e72399478dedc0e9aeef91e7ce1fe0f1b952f9": {
     "confidence": 0.7,
     "contradictions": [
@@ -49572,6 +49611,34 @@
       "Whether the issue is considered a security concern requiring CVE handling"
     ],
     "why": "Issue provides a clear root cause and reproduction, but an existing PR (#33449) directly addresses it with failing CI checks. The deterministic gate requires HUMAN_REVIEW, and the PR's technical completeness is uncertain due to failed checks. A new candidate would compete with an existing weak PR, but maintainer confirmation is needed to avoid duplicate effort."
+  },
+  "54203ca3ed7e1ff61f47631a5cd3b8e975c4e147cb83271d2448f834bdab338a": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: align tf32_hc_prenorm_gemm call with current DeepGemm contract (clamp n_splits or allocate d as {1,m,n})"
+    ],
+    "risks": [
+      "Fix must not alter default-off path semantics or introduce split-K correctness regressions",
+      "Maintainer may prefer reallocation over clamping; both are reasonable"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLANG_OPT_FUSE_MHC_POST_PRE=1 and CUDA graph capture to confirm the DeepGemm assertion",
+      "Regression test asserting mhc_fused_post_pre runs under graph capture with correct sanity outputs",
+      "Optional single-call 1-card smoke test for the opt-in flag"
+    ],
+    "unknowns": [
+      "Exact current DeepGemm tf32_hc_prenorm_gemm signature in the pinned build"
+    ],
+    "why": "Issue provides a concrete crash, exact assertion, code anchor (mhc.py large-batch path), and a shape bisection isolating the DeepGemm API contract drift (num_splits now requires d shape {1,m,n}). A minimal fix (clamp n_splits to 1 or reallocate d) and validation path (graph capture + sanity outputs) are established."
   },
   "542f5de158d5cde1777d3fd9f8c8be5141e329922e0952390dcda8ff4390a4b0": {
     "confidence": 0.6,
@@ -82126,6 +82193,45 @@
       "Whether maintainers consider this a duplicate of #33026 or #37015"
     ],
     "why": "Issue reports a concrete, reproducible proxy bug: failed /v1/audio/speech calls write no LiteLLM_SpendLogs failure row while success rows and other routes' failure rows are written. The reporter supplies an executable curl repro, SQL verification, and code anchors (audio_speech, post_call_failure_hook, DBSpendUpdateWriter.update_database). However, the supplied evidence explicitly marks root_cause_signal=false and the reporter states they could not find the cause; the open-PR assessment also flags semantic overlap with PR #41515 (Amazon Transcribe pass-through, litellm_spendlogs, proxy_server.py) that requires human comparison. The missing root-cause determination and unresolved duplicate/overlap coverage are materially blocking unknowns for deciding whether new code work is actionable."
+  },
+  "88620ba7e1fccf2ea0bfc9271901a36b8403f8a756335e4d3c9af326b8626b58": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no trainer-side error handling, but merged PR #6913 ('vLLM weight sync fails instead of hanging') already added timeout/server-error handling",
+      "Candidate category is WAIT_MAINTAINER with gate HUMAN_REVIEW, yet preTaskEvidence policy is needs_assignment and no assignee exists"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "trl/experimental/async_grpo/async_grpo_trainer.py: fail-fast detection for unsupported CPU-offloaded FSDP shards in the weight-transfer path",
+      "progress logging during initial weight sync",
+      "documented server --gpu-memory-utilization headroom guidance"
+    ],
+    "risks": [
+      "Remaining work may be documentation/logging rather than an algorithmic fix, lowering contribution value",
+      "Overlap with merged PR #6913 could make the timeout/error-handling portion redundant",
+      "Multi-GPU hang reproduction requires 8xH100-class hardware, limiting independent validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce variant A with fsdp_offload_params: true at a smaller verified scale and confirm the trainer raises instead of hanging",
+      "Add a regression test asserting a server-side transfer failure surfaces as a trainer-side error within a bounded timeout",
+      "Verify the config guard triggers on CPU-offloaded FSDP shards and does not fire on supported configs"
+    ],
+    "unknowns": [
+      "Whether the remaining diagnostics/guard work is still wanted after #6913",
+      "Whether variant A reproduces at a smaller verified scale",
+      "Whether the issue has been assigned to anyone"
+    ],
+    "why": "The issue describes a real distributed-training failure (NCCL weight-transfer hang/deadlock in AsyncGRPO), but the supplied evidence shows the core timeout/server-error handling was already addressed by merged maintainer PR #6913, and the remaining ask is diagnostics/logging plus a possible FSDP2 CPU-offload config guard. The issue also lacks a confirmed minimal reproduction (variant A 'probably also reproduces at smaller scale ... not verified yet') and the only recent comment is an unassigned first-time contributor asking for scope confirmation, while the repo policy requires assignment."
   },
   "887c9097583b5c9a747f94f247d3bab27957045eb54defa33fd49b69e989f9f7": {
     "confidence": 0.7,
@@ -140807,6 +140913,38 @@
       "Whether maintainers want to pursue option 1 (full vocab-parallel tied embeddings) as a permanent fix"
     ],
     "why": "The issue's concrete failure (AutoTP rejecting 'embedding_rowwise' from HF transformers main) is already covered by merged PR #8294, which converts embedding_rowwise tp_plan entries to SKIP specs, and a contributor comment confirms the fallback was validated on 2x L20 GPUs (18 cases passed, tied Qwen2 test passed). The remaining open question is only the policy choice of whether to pursue full vocab-parallel tied embeddings (option 1), which is a design decision, not an actionable code contribution."
+  },
+  "ea53373bf7e5981c17edb42ba423291c841b74b2a8102162efc1ba21ec4f8655": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/handler/knowledge.go: handle non-UTF-8 file.Filename from multipart Content-Disposition",
+      "internal/application/service/knowledge_create.go: filename validation path",
+      "internal/utils/security.go: ValidateInputSyntax UTF-8 handling"
+    ],
+    "risks": [
+      "Encoding detection/fallback heuristics (CP936/Shift-JIS/CP949) can be ambiguous and may introduce security bypasses in filename validation",
+      "Changing validation leniency could weaken XSS/path-traversal protections",
+      "Maintainer may prefer documenting RFC 5987 requirement over adding lenient decoding"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that posts a multipart file with a CJK filename and asserts success",
+      "Regression test for ASCII filename still passing",
+      "Test fallback behavior when file.Filename is invalid UTF-8 (e.g. GBK bytes)"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Option A/B/C or a different approach",
+      "Whether the web UI path already handles this and only API/CLI is affected"
+    ],
+    "why": "Issue provides a concrete reproduction (curl with CJK filename fails, ASCII succeeds), a specific root-cause chain (non-UTF-8 bytes from Content-Disposition filename reaching ValidateInputSyntax's utf8.ValidString check), and exact code anchors (handler/knowledge.go:346-347, knowledge_create.go:138, utils/security.go:85-98). This is a user-visible correctness bug with a clear validation path."
   },
   "ea7822f312a66d1d12a613b7e21a48bd4b803957eb52b2be732abeb87c4feba7": {
     "confidence": 0.7,
