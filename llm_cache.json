@@ -132782,6 +132782,34 @@
     ],
     "why": "Issue provides a concrete, code-anchored root cause for the primary defect: _engine_inputs_from_video() in components/src/dynamo/vllm/omni/omni_handler.py omits response_format=req.response_format, so output_formatter.py defaults to url and drops the requested b64_json. A minimal diff is proposed and a model-free reproduction plus acceptance criteria are supplied. The secondary FFmpeg color defect is independently isolated with a controlled RGB-quadrant test and cpuflags matrix, though its fix is a build/backport decision rather than a simple code change."
   },
+  "def984bcb719765a633c76260beb6595e4d9e1cfe73935dd4e2255f0e5d0ce31": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: align mhc_fused_post_pre large-batch path with current tf32_hc_prenorm_gemm contract (allocate d as {1, m, n} or clamp n_splits to 1)"
+    ],
+    "risks": [
+      "Changing n_splits semantics may alter split-K behavior for larger shapes if the path is later used beyond decode shapes",
+      "Default-off path may have other latent API drift beyond this call site"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLANG_OPT_FUSE_MHC_POST_PRE=1 on a single card and confirm the DeepGemm assertion at gemm.hpp:930",
+      "After fix, run the same fused path through CUDA graph capture and compare sanity outputs against the unfused path",
+      "Add a minimal single-call smoke test for the opt-in fused kernel flag"
+    ],
+    "unknowns": [
+      "Exact current signature/contract of sglang.srt.layers.deep_gemm_wrapper.entrypoint.tf32_hc_prenorm_gemm is not quoted in the issue"
+    ],
+    "why": "Issue provides a concrete root cause: mhc_fused_post_pre's large-batch path allocates per-split partials shaped {n_splits, m, n} and passes num_splits explicitly, while the current DeepGemm tf32_hc_prenorm_gemm contract only accepts {1, m, n} when num_splits is set. Shape bisection (num_splits=39/19 fails, 1 passes) and a working clamp workaround establish a reference-vs-implementation validation path."
+  },
   "df023698036a6b09180ac17601b6be95ac2d3c174dd668819215bfd84a784b48": {
     "confidence": 0.6,
     "contradictions": [
