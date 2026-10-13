@@ -34349,6 +34349,40 @@
     ],
     "why": "The issue is precisely diagnosed and independently verified: loopType exists on AgentHeadless but has no accessor, ForkedAgentResult lacks the field, and the shared helper is already loopType-aware. However, the triage bot and commenters establish a hard dependency: terminate-reason.ts / describeAgentTerminateReason only exist on the unmerged #13466 branch (CHANGES_REQUESTED, CI never ran), so steps 2-3 are unimplementable on main. This unresolved dependency/coverage question materially determines whether code work is actionable now."
   },
+  "3b94eca4c98a6fad07c5880ce47029ec86f3de958694e9609603fb687a7c367e": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "megatron/core/distributed/fsdp/src/megatron_fsdp/experimental/module.py: countdown/hook accounting for shared/tied Parameters",
+      "combined 1F1B MFSDP scheduler module post-backward hook / _reduce_gradient_groups gating",
+      "regression test covering tied embeddings with MFSDP v2 combined 1F1B"
+    ],
+    "risks": [
+      "Distinguishing a genuine countdown-accounting bug from benign duplicate hook firing requires careful per-Parameter multiplicity tracking.",
+      "Fix must not break untied-weight or non-MFSDP paths; multi-rank/GPU test environment needed.",
+      "Floating-point/random variation must be controlled with fixed seed and tolerance in any numerical comparison."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied 4-rank torchrun reproducer with untie_embeddings_and_output_weights=False and confirm the second-iteration RuntimeError: Missing gradient for FSDP parameter.",
+      "Re-run identical config with --untie-embeddings-and-output-weights as control; both iterations must complete.",
+      "Add a multi-rank regression test asserting the countdown reaches zero only after all group Parameters report ready and no duplicate hook invocations are counted."
+    ],
+    "unknowns": [
+      "No maintainer confirmation or assignment, but issue is open with no assignees and no repository prohibition on AI-assisted contributions.",
+      "Exact intended semantics for shared-Parameter multiplicity in the countdown are not specified by maintainers, though the A/B evidence makes the fix direction actionable."
+    ],
+    "why": "Issue provides a concrete distributed-training invariant violation: MFSDP v2's _trainable_parameter_countdown assumes one post_accumulate_grad_hook invocation per trainable Parameter per reduction cycle, but tied embedding/output weights cause the shared Parameter's hook to fire multiple times, driving the countdown to zero before all group gradients are ready and triggering premature _reduce_gradient_groups(). Evidence includes a minimal 4-rank reproducer, traced countdown/duplicate-hook logs, and a clean A/B control (untied weights succeed), establishing a reference-vs-implementation validation path."
+  },
   "3ba03c31b073140338babe61017db028459c63e903dacc1389c6df74b5ccccd8": {
     "confidence": 0.85,
     "contradictions": [],
@@ -43516,6 +43550,35 @@
       "Whether a related PR or issue already exists (lookup timed out)"
     ],
     "why": "Issue reports a user-visible bug loading MiniMaxH3 with sglang, but lacks a clear root cause and the provided reproduction is incomplete (no error message text, only an image). The deterministic gate requires HUMAN_REVIEW, and related issue/open PR lookups timed out, so duplicate work cannot be excluded."
+  },
+  "4b4b07049fb88592696e832f136d0ef68464db228aed401c0b89e4e9cd7d6e0d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Candidate claims root_cause_signal=false while the issue traceback and bot comment identify a concrete root cause (SECRET_KEY mismatch via missing mount)"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docker compose api_websocket volume/secret sharing (already addressed upstream)"
+    ],
+    "risks": [
+      "Duplicate of merged fixes #39424/#39587",
+      "Out of scope for agent_ai_infra track (config/infra, not algorithm)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with docker compose up and confirm api_websocket shares SECRET_KEY with api; verify socket.io connect succeeds"
+    ],
+    "unknowns": [
+      "Whether any residual defect remains after #39424 and #39587 are applied"
+    ],
+    "why": "The issue's own traceback and the bot comment both attribute the websocket rejection to a missing shared storage mount on api_websocket (SECRET_KEY mismatch), which is already fixed by merged PR #39424, and the Redis retry noise is covered by merged PR #39587. The remaining work is Docker/compose configuration, not an agent/AI-infra algorithm contribution, so it is low-value and largely covered."
   },
   "4b4e8ecf09fc621498672a8d3fd561a0ba8073847fdaa4d5f15d3789f8adca66": {
     "confidence": 0.7,
@@ -99137,6 +99200,36 @@
       "Open PR status unknown due to timeout; related issue audit failed; maintainer design preference not confirmed"
     ],
     "why": "The issue reports a user-visible bug with a plausible root cause (Gemini 3.5 API changes) and a concrete repro, but the fix requires design confirmation from maintainers (whether to map reasoning_effort to thinking_summaries or add Interactions API support). The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookup failed, so duplicates cannot be excluded."
+  },
+  "a5ff941ef131443bbedf03bffecb6be5f7e75a5cb87a0c2d8e137d3a8fd982e0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: align mhc_fused_post_pre large-batch path with current tf32_hc_prenorm_gemm contract (allocate d as {1,m,n} or clamp n_splits to 1)"
+    ],
+    "risks": [
+      "Clamping n_splits to 1 may change numerical behavior or performance for larger decode shapes",
+      "Reallocating d as {1,m,n} must match the wrapper entrypoint contract and not break other callers",
+      "Default-off path may have additional unexercised API drift"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLANG_OPT_FUSE_MHC_POST_PRE=1 on a single card and confirm the DeepGemm assertion at gemm.hpp:930",
+      "After fix, run the same fused path through CUDA graph capture and compare outputs against the unfused path",
+      "Add a minimal single-call smoke test for the opt-in fused mHC flag"
+    ],
+    "unknowns": [
+      "Exact current signature/contract of sglang.srt.layers.deep_gemm_wrapper.entrypoint.tf32_hc_prenorm_gemm is not quoted in the issue",
+      "Whether maintainers prefer clamping n_splits versus reallocating d"
+    ],
+    "why": "Issue provides a concrete root cause: mhc_fused_post_pre's large-batch path passes num_splits with per-split d shaped {n_splits,m,n}, but current DeepGemm tf32_hc_prenorm_gemm only accepts {1,m,n} when num_splits is set. A shape bisection (num_splits=39/19 fails, 1 passes) and a working clamp workaround establish a reference-vs-implementation validation path."
   },
   "a6021cde9e9c388beb6f77925ff870f16539ac2fc87db85a8bc5f0bf41b101b4": {
     "confidence": 0.8,
