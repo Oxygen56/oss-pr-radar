@@ -53504,6 +53504,39 @@
     ],
     "why": "The issue provides a detailed root cause (hard-coded WORLD group in fastsafetensors causing deadlock under PP-scoped draft loads) and a clear repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. A maintainer has acknowledged the report, so assignment/design confirmation is pending."
   },
+  "59e1291da46529c7b9d51c585b174eb0ae478f086de644e017f948c9b4ae96b5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims probe_ready=true and reproduction signals, but the issue body explicitly says no minimal deterministic repro exists"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Error classification/mapping for LiteLLM proxy failures in the conversation error path",
+      "Possibly clearer surfacing of infrastructure vs credential errors"
+    ],
+    "risks": [
+      "Root cause may lie in the external LiteLLM proxy rather than OpenHands, making a code fix inapplicable",
+      "Intermittent failure may not be reproducible in CI"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Establish a deterministic reproduction of the LiteLLM proxy DB-unreachable condition",
+      "Add a regression test asserting infrastructure failures are not classified as LLMAuthenticationError"
+    ],
+    "unknowns": [
+      "Whether the error classification occurs in OpenHands code or is passed through verbatim from LiteLLM",
+      "A deterministic reproduction path for the DB-unreachable condition",
+      "Whether the issue meets the repository's readiness criteria (missing supported run method, screenshot, acceptance criteria)"
+    ],
+    "why": "Issue reports a misleading LLMAuthenticationError masking a LiteLLM proxy DB connectivity failure, but the reporter explicitly states there is no minimal deterministic repro and the failure may be intermittent or tied to proxy/database health. No code anchor or root-cause evidence is supplied; the error originates in the LiteLLM proxy layer, not clearly in OpenHands code."
+  },
   "59e5a74f85849595c3ba603343051bb4d159487297cfeffd36c7d6a75964d2ff": {
     "confidence": 0.8,
     "contradictions": [],
@@ -79653,6 +79686,34 @@
       "Whether maintainers consider flashinfer_trtllm on SM90/H20 a supported configuration worth fixing versus documenting as unsupported"
     ],
     "why": "Issue provides a concrete, code-anchored root cause chain: overrides.py disables shared-experts fusion for flashinfer_trtllm, glm5_next builds the fused MoE layer with only 288 routed experts, EPLB cpu_map is [num_layers, 288], and the shared-expert weight (expert_id=288) falls through to logical_to_all_physical which lacks a logical_expert_id bounds guard. Reproduction command, image, hardware, and full traceback are supplied, and a concrete validation path exists (startup with --moe-runner-backend flashinfer_trtllm vs triton)."
+  },
+  "85520185c0c13aeef52f6c0f0ee8f76d7b50a16c67ae5b5ca2518d8f0d8b1afd": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.related_issue_assessment says no related issues, but issue_data.recent_comments identifies #52042 as the same root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "No new code work; fix belongs to the existing #52042 thread"
+    ],
+    "risks": [
+      "Duplicate work against #52042",
+      "Candidate duplicate assessment contradicts supplied bot evidence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursued, add a regression test that a tool-result image on a text-only model is replaced by a text placeholder before request assembly"
+    ],
+    "unknowns": [
+      "Whether #52042 has an accepted fix or open PR"
+    ],
+    "why": "The bot comment establishes this is a duplicate of #52042 with the same root cause (uncatalogued models defaulting to image input; `unsupportedParts` in packages/core/src/session/model-request.ts only strips images when capabilities.input omits image). The candidate's own related_issue_assessment reports 'none', contradicting the supplied duplicate evidence, and the issue is already covered by an existing tracked report."
   },
   "8553370484bdafa63adf6f0467c93a1aa84f8a5711c31a35e2520f80c57bd1b5": {
     "confidence": 0.7,
@@ -130970,6 +131031,45 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The issue clearly identifies a real bug: active runs evicted by a hard-coded TTL during long tool calls, with a concrete repro and suggested fixes. However, the maintainer has not approved the approach, and the issue is still in triage. The fix requires design confirmation on whether to extend TTL, refresh during tool execution, or switch to lifecycle-based cleanup."
   },
+  "db5938f69fb840a1b4d2593c8f6c598bc78a4ffcc2b7a29e3ed7da4fc17f5bed": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Contributor analysis asserts the code-explorer itself works and the stall is in parent result processing, while the issue title/body frames the subagent as failing",
+      "Candidate why-field claims a clear merge motivation and reproducible fix, but actionability evidence sets root_cause_signal=false and maintainer_approved=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Streaming/event emission path for subagent results (StreamingDeltaEvent handling)",
+      "Subagent result processing in the parent agent loop",
+      "Possibly parallel subagent tool-call default configuration"
+    ],
+    "risks": [
+      "Fixing the wrong layer (event emission vs. subagent scheduling vs. parallel-call default) if the root cause is misidentified",
+      "Overlapping open PR #4385 touches code-explorer idle timers and may partially cover the same symptom",
+      "Behavior changes to streaming/event semantics could affect other consumers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's prompt using code-explorer delegation and capture the event stream",
+      "Assert that no unbounded run of empty StreamingDeltaEvents occurs after a subagent ObservationEvent",
+      "Add a regression test that a completed subagent result yields a bounded, content-bearing event sequence"
+    ],
+    "unknowns": [
+      "Whether the empty StreamingDeltaEvent flood is the actual cause or a symptom of a stalled stream",
+      "Whether open PR #4385 already addresses the same failure mode",
+      "The exact code path emitting empty streaming deltas after subagent completion",
+      "Whether maintainers require the issue's readiness criteria (repro, actual behavior, acceptance criteria) to be met before a fix PR is acceptable"
+    ],
+    "why": "The issue reports a user-visible hang in the code-explorer subagent path, and a contributor-supplied trajectory analysis points at empty StreamingDeltaEvent floods after the subagent returns. However, the root cause is explicitly labeled a 'potential root cause' from an agent-generated analysis, the maintainer asked for trajectories that were never attached, and the automated readiness check says the issue lacks a supported reproduction, actual-behavior evidence, and acceptance criteria. The candidate's own actionability evidence records root_cause_signal=false, so the concrete code change is not yet determined."
+  },
   "db6d89375dd4a0d2ace5afc48ec1a767ea4beb7577470537b347c9022a571a6e": {
     "confidence": 0.85,
     "contradictions": [
@@ -144980,6 +145080,34 @@
       "Whether the vendored hono-mcp-server-sse-transport declarations also need changes"
     ],
     "why": "Issue has a clear root cause (vendored hono .d.ts in @mastra/mcp dist/_types causing nominal type mismatch) and a concrete repro, but the duplicate/coverage status is unresolved: PR #23776 ('declare hono as peer dependency and stop vendoring its types') directly overlaps and is CLOSED, and the bot comment explicitly asks contributors to wait for maintainer triage before opening a PR. This materially blocks whether new code work is actionable."
+  },
+  "f191e8d54766ed407b08324920d966084b791b1841ed48659d67b32d2f5a4100": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: mhc_fused_post_pre large-batch path must allocate d as {1, m, n} or clamp n_splits to 1 to match current tf32_hc_prenorm_gemm contract"
+    ],
+    "risks": [
+      "Clamping n_splits to 1 may change numerical behavior or performance on large-batch shapes",
+      "Reallocating d as {1, m, n} requires confirming the wrapper entrypoint contract to avoid a second mismatch"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLANG_OPT_FUSE_MHC_POST_PRE=1 on a single card and confirm the DeepGemm assertion at gemm.hpp:930",
+      "After fix, run graph capture end-to-end and compare fused vs unfused outputs for numerical sanity",
+      "Add a single-call smoke test for the opt-in fused mHC path"
+    ],
+    "unknowns": [
+      "Whether the current sglang.srt.layers.deep_gemm_wrapper.entrypoint.tf32_hc_prenorm_gemm wrapper already normalizes shapes, which would determine the minimal correct fix"
+    ],
+    "why": "Issue provides a concrete crash, exact assertion, code anchor in mhc.py, and a shape bisection (num_splits=39/19 fails, 1 passes) establishing an API contract mismatch between the caller's {n_splits, m, n} allocation and DeepGemm's current {1, m, n} requirement. A minimal fix (clamp/reallocate) and validation path (graph capture + sanity outputs) are described."
   },
   "f1992e1ee4948023b178d28462931ddadf740026bf98de4a4214b77ed6a1a963": {
     "confidence": 0.8,
