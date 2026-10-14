@@ -583,6 +583,12 @@ VALIDATION_RECOVERY_PROMPT = (
     "未完成的检查重新运行，如实保留失败，不恢复旧进程。"
     "生成新结果时删除输入里的 reproductionReceipt、probeReceipt 和 resultDigest，"
     "这些签名字段由系统重新生成。"
+    "先读取上一轮验证消息指定的不可变 validation-input。若输入为 controller_merge_complete，"
+    "且当前工作树干净、该合并提交和两个父提交仍符合当前上下文，保留该 handoffMode、"
+    "mergeResolutionFiles、controllerCommitChangedFiles、mergeBaseSha、previousCommitSha、"
+    "commitSha、headSha 和控制器提供的 codePaths/controllerCodePathScope。"
+    "两个合并范围只表示冲突解决文件；changedFiles 是累计 PR 差异，不能用它覆盖两个合并范围。"
+    "绑定不一致时如实交回缺口，不改写旧范围或提交凭据冒充当前授权。"
     "保持离线，不安装依赖，不请求权限，也不执行任何 GitHub 公开操作。"
     + END_RESULT_TURN_PROMPT
     + PLAIN_LANGUAGE_STATUS_PROMPT
@@ -18629,7 +18635,7 @@ def _finalize_controller_merge(
     if handoff_mode == "controller_merge_complete":
         changed_files = _validated_changed_files(value.get("mergeResolutionFiles"))
         if changed_files != _validated_changed_files(value.get("controllerCommitChangedFiles")):
-            raise RuntimeError("controller merge resolution receipts do not match")
+            raise TaskResultEvidenceBlocked("CONTROLLER_CHANGED_FILES_MODE_MISMATCH")
     else:
         changed_files = _validated_changed_files(value.get("changedFiles"))
     _enforce_code_path_tombstones(
@@ -25046,7 +25052,14 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "及全部实际改动文件的并集。使用当前获准的安全分支名，并提供非空、单行、至多120字符的"
         "安全 commitMessage；保留本轮真实 tests 和缺口，复核结论仍由系统填写，保持未通过。"
         "不要自己提交或修改 Git 元数据，由系统根据这份新结果完成提交。"
-        "若当前没有未提交源码改动，则保留 controller_commit_complete 和实际现有提交，不制造新提交。"
+        "若当前没有未提交源码改动，则保留输入的 controller_commit_complete 或"
+        " controller_merge_complete 以及实际现有提交，不制造新提交。"
+        "对于 controller_merge_complete，在该提交与两个父提交仍符合当前上下文时，"
+        "必须保留控制器提供的 mergeResolutionFiles、controllerCommitChangedFiles、"
+        "mergeBaseSha、previousCommitSha 及 codePaths/controllerCodePathScope。"
+        "两个合并范围只表示冲突解决文件，changedFiles 则是累计 PR 差异；"
+        "它们可能不同，不能用 changedFiles 覆盖任何一个合并范围。"
+        "绑定不一致时如实交回缺口，不自行改写提交凭据或范围冒充当前证明。"
         "若本轮不可变输入是 FIX_READY，则干净工作树的新验证结果也必须填写 stage=FIX_READY，"
         "即使已有公开 PR 或仍有验证缺口；task-context 的 PR_OPEN 是已有 PR 的业务状态，"
         "不能用作尚未发布的本地修复结果阶段。保留本轮不可变输入的 branch、commitSha、headSha、"
@@ -34281,6 +34294,303 @@ def _completed_stale_validation_failure_recovery(
         return False
 
 
+def _completed_merge_validation_scope_recovery(
+    store: RadarLedger, candidate: dict[str, Any], turn_state: dict[str, Any]
+) -> bool:
+    """Retry an owned validation that confused merge scope with the PR diff.
+
+    The rejected output never supplies authority or green evidence. Only its
+    unchanged identity connects it to the original authenticated merge input;
+    the existing recovery nonce, budget, worker, and ordinary intake still apply.
+    """
+
+    try:
+        if (
+            candidate.get("recoveryKind") != "VALIDATION_FOLLOWUP_RESULT"
+            or turn_state.get("status") != "completed"
+            or not turn_state.get("turnId")
+        ):
+            return False
+        with _task_worktree_private_descriptor(candidate) as opened:
+            raw = _read_task_result_bytes_from_private(opened)
+            context_raw = _read_task_context_bytes_from_private(opened)
+            value, context = json.loads(raw), json.loads(context_raw)
+            if not isinstance(value, dict) or not isinstance(context, dict):
+                return False
+            quality = value.get("quality")
+            binding = {key: candidate.get(key) for key in ("intentId", "threadId", "worktreePath")}
+            followup = context.get("prFollowup")
+            if (
+                not all(binding.values())
+                or not store.task_result_binding_gate(candidate, context)
+                or not store.task_result_binding_gate(candidate, value)
+                or any(context.get(key) != item for key, item in binding.items())
+                or value.get("taskId") != binding["intentId"]
+                or any(
+                    value.get(key) != context.get(key) or context.get(key) != candidate.get(key)
+                    for key in ("key", "issueUrl", "threadId", "worktreePath")
+                )
+                or value.get("schemaVersion") != TASK_RESULT_SCHEMA
+                or value.get("stage") != "FIX_READY"
+                or value.get("handoffMode") != "controller_merge_complete"
+                or context.get("stage") not in PUBLISHED_RESULT_STAGES
+                or context.get("taskStage") != "IMPLEMENTATION_READY"
+                or value.get("contextDigest") != context.get("contextDigest")
+                or not isinstance(followup, dict)
+                or value.get("followupDigest") != followup.get("wakeDigest")
+                or not isinstance(quality, dict)
+                or quality.get("independent_review_passed") is not False
+                or set(assess_submit_ready(quality, task_result=value).missing)
+                != {"independent_review_passed"}
+                or any(
+                    value.get(key) is not None
+                    for key in ("resultDigest", "reproductionReceipt", "probeReceipt")
+                )
+            ):
+                return False
+            managed = ManagedLedger(store.path, ensure_schema=False)
+            task_id = str(binding["intentId"])
+            task = managed.read_task(task_id)
+            source_digest = str(candidate.get("followupDigest") or "")
+            publication = context.get("publicationReceipt")
+            evidence = followup.get("evidence")
+            published = (
+                managed.published_pr_authority_for_opportunity(
+                    str(candidate["key"]),
+                    pr_url=str(followup.get("prUrl") or ""),
+                    receipt_head_sha=str(publication.get("commitSha") or ""),
+                )
+                if isinstance(publication, dict)
+                else None
+            )
+            # This is an unpublished update of an existing PR. Its ordinary
+            # intake result carries that PR key, so the deliberately non-PR
+            # latest_authenticated_fix_ready_result_for_task reader is not its
+            # authority. Bind only the exact current result of this OPEN PR.
+            with store.connect() as connection:
+                row = connection.execute(
+                    """SELECT * FROM managed_results
+                       WHERE task_id=? AND result_digest=? AND pr_key=?
+                         AND is_current=1 AND superseded_by IS NULL
+                         AND result_type IS NULL AND head_sha=commit_sha
+                       ORDER BY observed_at DESC,result_key DESC LIMIT 1""",
+                    (task_id, source_digest, published.get("pr_key") if published else None),
+                ).fetchone()
+            historical = dict(row) if row is not None else None
+            provenance = json.loads(historical.get("provenance_json") or "{}") if historical else {}
+            validation = json.loads(historical.get("validation_json") or "{}") if historical else {}
+            if (
+                not isinstance(task, dict)
+                or task.get("readSource") != "managed"
+                or task.get("opportunity_key") != candidate["key"]
+                or task.get("thread_id") != binding["threadId"]
+                or task.get("worktree_path") != binding["worktreePath"]
+                or task.get("state") not in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
+                or not isinstance(historical, dict)
+                or historical.get("task_id") != task_id
+                or historical.get("result_digest") != source_digest
+                or historical.get("source") != "dispatch-result"
+                or historical.get("result_type") is not None
+                or str(historical.get("worker_state") or "").casefold() != "patched"
+                or provenance.get("stage") != "FIX_READY"
+                or provenance.get("issueUrl") != candidate["issueUrl"]
+                or not re.fullmatch(r"[0-9a-f]{64}", source_digest)
+                or validation.get("reproductionReceiptAuthenticated") is not True
+                or not isinstance(evidence, dict)
+                or evidence.get("mergeConflict") is not True
+                or value.get("mergeBaseSha") != evidence.get("baseSha")
+                or value.get("previousCommitSha")
+                != (followup.get("preparedHeadSha") or followup.get("headSha"))
+                or not isinstance(publication, dict)
+                or publication.get("prUrl") != followup.get("prUrl")
+                or value.get("prUrl") != publication.get("prUrl")
+                or not isinstance(published, dict)
+                or published.get("state") != "OPEN"
+                or published.get("head_sha") != followup.get("headSha")
+            ):
+                return False
+            with store.connect() as connection:
+                rows = connection.execute(
+                    """SELECT id,event_type,payload_json,created_at FROM events
+                       WHERE opportunity_key=? AND event_type IN
+                         ('VALIDATION_FOLLOWUP_RESERVED','VALIDATION_FOLLOWUP_SENT')
+                       ORDER BY id""",
+                    (candidate["key"],),
+                ).fetchall()
+            events = [(dict(row), json.loads(row["payload_json"])) for row in rows]
+            events = [
+                (row, payload)
+                for row, payload in events
+                if all(payload.get(key) == item for key, item in binding.items())
+            ]
+            sent = next(
+                (
+                    item
+                    for item in reversed(events)
+                    if item[0]["event_type"] == "VALIDATION_FOLLOWUP_SENT"
+                ),
+                None,
+            )
+            if (
+                sent is None
+                or sent[0]["created_at"] != candidate.get("dispatchedAt")
+                or sent[1].get("resultDigest") != source_digest
+            ):
+                return False
+            reserved = next(
+                (
+                    item
+                    for item in reversed(events)
+                    if item[0]["event_type"] == "VALIDATION_FOLLOWUP_RESERVED"
+                    and item[0]["id"] < sent[0]["id"]
+                    and item[1].get("resultDigest") == source_digest
+                    and (
+                        not sent[1].get("reservationDigest")
+                        or item[1].get("reservationDigest") == sent[1]["reservationDigest"]
+                    )
+                ),
+                None,
+            )
+            if reserved is None:
+                return False
+            reservation = str(reserved[1].get("reservationDigest") or "")
+            delivery = store.validation_followup_delivery_binding(
+                thread_id=str(binding["threadId"]),
+                result_digest=source_digest,
+                reservation_digest=reservation,
+                **_ledger_binding_kwargs(candidate),
+            )
+            if not isinstance(delivery, dict):
+                return False
+            source_candidate = candidate | {"resultDigest": source_digest}
+            snapshot = _validation_snapshot_bytes(
+                candidate=source_candidate,
+                reservation_digest=reservation,
+                snapshot_id=str(delivery.get("snapshotId") or ""),
+                snapshot_path=str(delivery.get("snapshotPath") or ""),
+                snapshot_digest=str(delivery.get("snapshotDigest") or ""),
+            )
+            projected = _validation_worktree_input_bytes(
+                candidate=source_candidate,
+                reservation_digest=reservation,
+                worktree_input_path=str(delivery.get("worktreeInputPath") or ""),
+                worktree_input_digest=str(delivery.get("worktreeInputDigest") or ""),
+            )
+            source = json.loads(snapshot)
+            if (
+                snapshot != projected
+                or snapshot == raw
+                or not isinstance(source, dict)
+                or _task_result_digest(source, snapshot) != source_digest
+                or source.get("handoffMode") != "controller_merge_complete"
+                or any(
+                    source.get(key) != value.get(key)
+                    for key in (
+                        "schemaVersion",
+                        "key",
+                        "issueUrl",
+                        "taskId",
+                        "threadId",
+                        "worktreePath",
+                        "stage",
+                        "contextDigest",
+                        "commitSha",
+                        "headSha",
+                        "previousCommitSha",
+                        "mergeBaseSha",
+                        "followupDigest",
+                        "selectedBaseSha",
+                        "branch",
+                        "commitMessage",
+                        "targetBase",
+                        "publication",
+                        "prUrl",
+                    )
+                )
+            ):
+                return False
+            resolution = _validated_changed_files(source.get("mergeResolutionFiles"))
+            publication_diff = _validated_changed_files(source.get("changedFiles"))
+            if (
+                resolution != _validated_changed_files(source.get("controllerCommitChangedFiles"))
+                or resolution == publication_diff
+                or _validated_changed_files(value.get("mergeResolutionFiles")) != resolution
+                or _validated_changed_files(value.get("controllerCommitChangedFiles"))
+                != publication_diff
+                or _validated_changed_files(value.get("changedFiles")) != publication_diff
+            ):
+                return False
+            head = str(source.get("commitSha") or "")
+            issue = ISSUE_URL.fullmatch(str(candidate["issueUrl"]))
+            source_receipt = source.get("reproductionReceipt") or source.get("probeReceipt")
+            if (
+                not issue
+                or not re.fullmatch(r"[0-9a-f]{40}", head)
+                or source.get("headSha") != head
+                or historical.get("head_sha") != head
+                or historical.get("commit_sha") != head
+                or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree) != head
+                or _merge_parents(opened.worktree, head)
+                != [source.get("previousCommitSha"), source.get("mergeBaseSha")]
+                or not verify_probe_receipt(
+                    source_receipt,
+                    repo=issue.group(1),
+                    base_sha=str(source.get("selectedBaseSha") or ""),
+                    code_paths=source.get("codePaths") or [],
+                    required_level=REPRODUCED_VALIDATED,
+                    issue_url=str(candidate["issueUrl"]),
+                    task_id=task_id,
+                    thread_id=str(binding["threadId"]),
+                    head_sha=head,
+                    commit_sha=head,
+                    result_digest=source_digest,
+                    enforce_freshness=False,
+                )
+            ):
+                return False
+            receipt_key = _task_turn_delivery_file_key(
+                delivery_kind="validation-followup",
+                thread_id=str(binding["threadId"]),
+                delivery_token=source_digest,
+                validation_reservation_digest=reservation,
+            )
+            receipt = json.loads(
+                _read_owned_regular_file(
+                    STATE / "task_turn_receipts" / f"{receipt_key}.json",
+                    label="completed merge validation task-turn receipt",
+                    reject_dangerous_writes=True,
+                )
+            )
+            if (
+                not isinstance(receipt, dict)
+                or receipt.get("ok") is not True
+                or receipt.get("deliveryKind") != "validation-followup"
+                or receipt.get("threadId") != binding["threadId"]
+                or receipt.get("deliveryToken") != source_digest
+                or receipt.get("reservationDigest") != reservation
+                or receipt.get("turnStatus") != "completed"
+                or receipt.get("turnError")
+                or receipt.get("error")
+                or receipt.get("turnId") != turn_state["turnId"]
+            ):
+                return False
+            context_stat = os.stat(
+                "task-context.json", dir_fd=opened.private_fd, follow_symlinks=False
+            )
+            verified, _ = _verified_private_context_with_singleton_guard(
+                store, opened.worktree, context_raw, context_stat
+            )
+            return bool(
+                verified == context
+                and _private_context_matches_current_ledger(store, context)
+                and active_task_turn_worker(str(binding["threadId"])) is None
+                and _read_task_result_bytes_from_private(opened) == raw
+                and _read_task_context_bytes_from_private(opened) == context_raw
+            )
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError, sqlite3.Error):
+        return False
+
+
 def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     quarantined_reader = getattr(store, "quarantined_validation_followups", lambda: [])
@@ -34470,6 +34780,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 candidate = candidate | {"scopeCorrection": correction}
             completed_validation_without_result = False
             stale_failed_validation_output_recovery = False
+            invalid_merge_validation_scope_recovery = False
             if (
                 candidate.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT"
                 and turn_state
@@ -34487,10 +34798,15 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                     stale_failed_validation_output_recovery = (
                         _completed_stale_validation_failure_recovery(store, candidate, turn_state)
                     )
+                    if not stale_failed_validation_output_recovery:
+                        invalid_merge_validation_scope_recovery = (
+                            _completed_merge_validation_scope_recovery(store, candidate, turn_state)
+                        )
             immediate_recovery = (
                 _is_immediate_recovery(turn_state)
                 or completed_validation_without_result
                 or stale_failed_validation_output_recovery
+                or invalid_merge_validation_scope_recovery
                 or candidate.get("environmentRecovery") is not None
             )
             turn_worker = (
@@ -34533,6 +34849,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 "immediateRecovery": immediate_recovery,
                 "completionWithoutResult": completed_validation_without_result,
                 "staleFailedValidationOutputRecovery": stale_failed_validation_output_recovery,
+                "invalidMergeValidationScopeRecovery": invalid_merge_validation_scope_recovery,
             }
             if active_deferred or recoverable:
                 queued_deferred.append(eligible | {"reason": "serialized_recovery_queue"})

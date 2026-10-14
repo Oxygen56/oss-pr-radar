@@ -46371,3 +46371,637 @@ def test_review_only_uncommitted_merge_gap_keeps_legacy(tmp_path, handoff_mode, 
     assert MODULE._validation_progress_marker(value) == MODULE._legacy_validation_progress_marker(
         value
     )
+
+
+def _merge_boundary_assert_current_private(store, worktree, result_path):
+    context_path = result_path.with_name("task-context.json")
+    raw = context_path.read_bytes()
+    context = json.loads(raw)
+    verified, _ = MODULE._verified_private_context_with_singleton_guard(
+        store, worktree, raw, context_path.stat()
+    )
+    assert verified == context
+    assert MODULE._private_context_matches_current_ledger(store, context)
+    candidate = next(x for x in store.task_result_candidates() if x["intentId"] == "intent-1")
+    assert store.task_result_binding_gate(candidate, context)
+    assert store.task_result_binding_gate(candidate, json.loads(result_path.read_bytes()))
+    assert context["taskStage"] == "IMPLEMENTATION_READY"
+    assert context["stage"] in MODULE.PUBLISHED_RESULT_STAGES
+    return context
+
+
+def _merge_boundary_thread_db(monkeypatch, tmp_path, worktree):
+    thread_db = tmp_path / "merge-boundary-threads.sqlite3"
+    rollout = tmp_path / "merge-boundary-rollout.jsonl"
+    rollout.write_text("")
+    with sqlite3.connect(thread_db) as c:
+        c.execute(
+            "CREATE TABLE threads (id TEXT,archived INTEGER,title TEXT,first_user_message TEXT,"
+            "cwd TEXT,git_origin_url TEXT,updated_at INTEGER,rollout_path TEXT)"
+        )
+        c.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                0,
+                "task",
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(worktree),
+                "https://github.com/a/b.git",
+                int(datetime.now(UTC).timestamp()),
+                str(rollout),
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    return thread_db, rollout
+
+
+def _merge_boundary_original_owned_delivery(
+    monkeypatch, store, result_path, thread_db, rollout, args, *, turn_id, complete
+):
+    """Fake only the app-server transport; use original delivery/worker/receipt/SENT."""
+    process = _FakeTaskTurnProcess()
+    original_popen, original_which = MODULE.subprocess.Popen, MODULE.shutil.which
+
+    @contextmanager
+    def session(*_a, **_k):
+        yield process
+
+    def response(_p, _s, buffer, *, response_id, **_k):
+        if response_id == 0:
+            return buffer, {"result": {}}
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": "thread-1"}}}
+        return buffer, {"result": {"turn": {"id": turn_id}}}
+
+    def terminal(*_a, **_k):
+        # A child response is unsigned output. The controller's normal finalizer,
+        # reproduction binding, independent review and ordinary intake remain real.
+        complete(process)
+        with rollout.open("a") as f:
+            for event_type in ("task_started", "task_complete"):
+                f.write(
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": event_type,
+                                "turn_id": turn_id,
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+        with sqlite3.connect(thread_db) as c:
+            c.execute(
+                "UPDATE threads SET updated_at=? WHERE id='thread-1'",
+                (int(datetime.now(UTC).timestamp()) + 1,),
+            )
+        return {"turnId": turn_id, "status": "completed"}
+
+    def launch(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+
+        def option(name):
+            return argv[argv.index(name) + 1] if name in argv else None
+
+        worker = SimpleNamespace(
+            ledger=Path(option("--ledger")),
+            delivery_kind=option("--delivery-kind"),
+            thread_id=option("--thread-id"),
+            delivery_token=option("--delivery-token"),
+            intent_id=option("--intent-id"),
+            worktree_path=option("--worktree-path"),
+            delivery_attempt_digest=option("--delivery-attempt-digest"),
+            reservation_digest=option("--reservation-digest"),
+            snapshot_id=option("--snapshot-id"),
+            snapshot_path=option("--snapshot-path"),
+            snapshot_digest=option("--snapshot-digest"),
+            worktree_input_path=option("--worktree-input-path"),
+            worktree_input_digest=option("--worktree-input-digest"),
+            receipt=option("--receipt"),
+        )
+        receipt = MODULE.task_turn_worker_entry(worker)
+        assert receipt["ok"] and receipt["turnStatus"] == "completed", receipt
+        assert receipt["turnId"] == turn_id
+        assert json.loads(Path(worker.receipt).read_bytes()) == receipt
+        return SimpleNamespace(pid=os.getpid())
+
+    with monkeypatch.context() as delivery:
+        delivery.setattr(MODULE, "_app_server_action_session", session)
+        delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+        delivery.setattr(MODULE, "_read_app_server_response", response)
+        delivery.setattr(MODULE, "_wait_for_app_server_terminal_turn", terminal)
+        delivery.setattr(
+            MODULE.shutil,
+            "which",
+            lambda n: "/usr/bin/codex" if n == "codex" else original_which(n),
+        )
+        delivery.setattr(MODULE.subprocess, "Popen", launch)
+        delivered = (
+            MODULE.validation_followup_deliver(args)
+            if hasattr(args, "result_digest")
+            else MODULE.recovery_deliver(args)
+        )
+    assert delivered["ok"], delivered
+    assert MODULE.latest_thread_turn_state(str(rollout))["turnId"] == turn_id
+    assert MODULE.latest_thread_turn_state(str(rollout))["status"] == "completed"
+    assert MODULE.active_task_turn_worker("thread-1") is None
+    turn = [m for m in _task_turn_messages(process) if m.get("method") == "turn/start"]
+    assert len(turn) == 1
+    assert turn[0]["params"]["model"] == "gpt-6.1-sol"
+    assert turn[0]["params"]["effort"] == "medium"
+    return turn[0]["params"]["input"][0]["text"]
+
+
+def _merge_boundary_failed_completed_validation(monkeypatch, tmp_path):
+    bind_validation_runtime(monkeypatch, tmp_path)
+    original_fixture = _controller_commit_result
+
+    def two_file_source(*args, **kwargs):
+        store, worktree, result_path = original_fixture(
+            *args,
+            **kwargs,
+            additional_changed_files=("support.py",),
+            reported_code_paths=("runtime.py", "support.py"),
+            probe_code_paths=("runtime.py", "support.py"),
+            controller_policy_complete=True,
+            target_base_bound=True,
+            complete_normal_validation_audit=True,
+        )
+        # Materialize the ordinary controller scope before this source becomes
+        # immutable published history; the generic fixture signer alone keeps
+        # its narrower reproduction scope while reporting both changed files.
+        candidate = store.task_result_candidates()[0]
+        context = json.loads(result_path.with_name("task-context.json").read_bytes())
+        with MODULE._task_worktree_private_descriptor(candidate) as opened:
+            MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=json.loads(result_path.read_bytes()),
+                result_access=opened,
+                managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            )
+        return store, worktree, result_path
+
+    # Reuse the original published-PR authority and real Git conflict fixture.
+    # The replacement affects only fixture construction, never production gates.
+    with monkeypatch.context() as fixture:
+        fixture.setitem(globals(), "_controller_commit_result", two_file_source)
+        store, managed, worktree, result_path, _context, _request = (
+            _published_tracking_merge_fixture(
+                fixture, tmp_path, worktree=MODULE.managed_worktree_path("intent-1", "a/b")
+            )
+        )
+    bind_validation_runtime(monkeypatch, tmp_path)
+    prepared = json.loads(result_path.read_bytes())
+    assert prepared["handoffMode"] == "controller_merge_complete"
+    assert MODULE._controller_review_result(SimpleNamespace(ledger=store.path), prepared)
+    fixture_review = _receipt_path(
+        tmp_path,
+        key=prepared["key"],
+        commit_sha=prepared["commitSha"],
+        source_digest=_source_digest(prepared),
+    )
+    assert fixture_review.is_file()
+    fixture_review.unlink()
+    assert MODULE._controller_review_result(SimpleNamespace(ledger=store.path), prepared) is None
+    for field in ("resultDigest", "reproductionReceipt", "probeReceipt", "independentReview"):
+        prepared.pop(field, None)
+    failed = subprocess.run(
+        [sys.executable, "-B", "-c", "from runtime import value; assert value == 5"],
+        cwd=worktree,
+        capture_output=True,
+    )
+    assert failed.returncode == 1
+    prepared["tests"] = [
+        {
+            "command": "python -B -c 'from runtime import value; assert value == 5'",
+            "cwd": str(worktree),
+            "phase": "formal",
+            "exitCode": failed.returncode,
+        }
+    ]
+    prepared["quality"]["relevant_tests_green"] = False
+    prepared["quality"]["independent_review_passed"] = False
+    result_path.write_text(json.dumps(prepared))
+    source_intake = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert source_intake["ok"] and source_intake["errors"] == [], source_intake
+    assert source_intake["publicationRequests"] == []
+    source = json.loads(result_path.read_bytes())
+    assert source["handoffMode"] == "controller_merge_complete"
+    assert (
+        source["mergeResolutionFiles"] == source["controllerCommitChangedFiles"] == ["runtime.py"]
+    )
+    assert source["changedFiles"] == ["runtime.py", "support.py"]
+    assert MODULE._merge_parents(worktree, source["headSha"]) == [
+        source["previousCommitSha"],
+        source["mergeBaseSha"],
+    ]
+    assert source["quality"]["independent_review_passed"] is False
+    assert source["quality"]["relevant_tests_green"] is False
+    assert source_intake["validationDeferred"], json.dumps(source_intake, sort_keys=True)
+    with store.connect() as c:
+        row = c.execute(
+            "SELECT * FROM managed_results WHERE task_id='intent-1' AND result_digest=? "
+            "AND pr_key='a/b#9' AND is_current=1 AND superseded_by IS NULL",
+            (source["resultDigest"],),
+        ).fetchone()
+    assert row is not None
+    historical = dict(row)
+    assert historical["result_digest"] == source["resultDigest"]
+    assert json.loads(historical["validation_json"])["reproductionReceiptAuthenticated"] is True
+    _merge_boundary_assert_current_private(store, worktree, result_path)
+    thread_db, rollout = _merge_boundary_thread_db(monkeypatch, tmp_path, worktree)
+    candidates = store.validation_followup_candidates()
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    args = SimpleNamespace(
+        ledger=store.path,
+        thread_id="thread-1",
+        result_digest=candidate["resultDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    reserved = MODULE.validation_followup_reserve(args)
+    assert reserved["ok"] and not reserved.get("blocked"), reserved
+    args.reservation_digest = reserved["reservationDigest"]
+    source_bytes = result_path.read_bytes()
+
+    def malformed_child(_process):
+        binding = store.validation_followup_delivery_binding(
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            reservation_digest=args.reservation_digest,
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+        assert binding is not None
+        snapshot = MODULE.STATE / binding["snapshotPath"]
+        projection = worktree / binding["worktreeInputPath"]
+        assert snapshot.read_bytes() == projection.read_bytes() == source_bytes
+        assert (
+            stat.S_IMODE(snapshot.stat().st_mode)
+            == stat.S_IMODE(projection.stat().st_mode)
+            == 0o400
+        )
+        fresh_context = _merge_boundary_assert_current_private(store, worktree, result_path)
+        child = json.loads(projection.read_bytes())
+        assert child["contextDigest"] == fresh_context["contextDigest"]
+        for name in ("resultDigest", "reproductionReceipt", "probeReceipt", "independentReview"):
+            child.pop(name, None)
+        actual = subprocess.run(
+            [sys.executable, "-B", "-c", "from runtime import value; assert value == 4"],
+            cwd=worktree,
+            text=True,
+            capture_output=True,
+        )
+        assert actual.returncode == 0, actual.stderr
+        child["tests"] = [
+            {
+                "command": "python -B -c 'from runtime import value; assert value == 4'",
+                "cwd": str(worktree),
+                "phase": "formal",
+                "exitCode": actual.returncode,
+            }
+        ]
+        child["reason"] = "INDEPENDENT_REVIEW_REQUIRED"
+        child["controllerCommitChangedFiles"] = child["changedFiles"][:]
+        child["quality"]["relevant_tests_green"] = True
+        assert child["quality"]["relevant_tests_green"] is True
+        assert child["quality"]["independent_review_passed"] is False
+        result_path.write_text(json.dumps(child))
+
+    _merge_boundary_original_owned_delivery(
+        monkeypatch,
+        store,
+        result_path,
+        thread_db,
+        rollout,
+        args,
+        turn_id="merge-boundary-completed-validation",
+        complete=malformed_child,
+    )
+    _merge_boundary_assert_current_private(store, worktree, result_path)
+    with store.connect() as c:
+        sent = c.execute(
+            "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert json.loads(sent[0])["resultDigest"] == candidate["resultDigest"]
+    return store, managed, worktree, result_path, thread_db, rollout
+
+
+def test_merge_validation_scope_mismatch_is_original_task_block_and_deduplicates(
+    monkeypatch, tmp_path
+):
+    store, _managed, worktree, result_path, _db, _rollout = (
+        _merge_boundary_failed_completed_validation(monkeypatch, tmp_path)
+    )
+    before = (
+        result_path.read_bytes(),
+        result_path.with_name("task-context.json").read_bytes(),
+        run_git(worktree, "rev-parse", "HEAD"),
+    )
+    args = SimpleNamespace(ledger=store.path, key="a/b#1")
+    first = MODULE.ingest_task_results(args)
+    assert first["ok"] and first["errors"] == [], first
+    assert first["ingested"] == first["publicationRequests"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "CONTROLLER_CHANGED_FILES_MODE_MISMATCH",
+            "alreadyRecorded": False,
+        }
+    ]
+    second = MODULE.ingest_task_results(args)
+    assert second["ok"] and second["errors"] == [], second
+    assert second["workBlocked"][0]["alreadyRecorded"] is True
+    assert before == (
+        result_path.read_bytes(),
+        result_path.with_name("task-context.json").read_bytes(),
+        run_git(worktree, "rev-parse", "HEAD"),
+    )
+    with store.connect() as c:
+        assert (
+            c.execute(
+                "SELECT count(*) FROM managed_lifecycle_events "
+                "WHERE event_type='TASK_RESULT_EVIDENCE_BLOCKED'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert c.execute("SELECT count(*) FROM publication_effects").fetchone()[0] == 0
+
+
+def test_merge_validation_scope_recovery_uses_original_nonce_worker_and_intake(
+    monkeypatch, tmp_path
+):
+    store, _managed, worktree, result_path, thread_db, rollout = (
+        _merge_boundary_failed_completed_validation(monkeypatch, tmp_path)
+    )
+    original = (result_path.read_bytes(), result_path.with_name("task-context.json").read_bytes())
+    native = store.recovery_candidates(min_age_minutes=0)
+    assert len(native) == 1
+    listed = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=90))
+    assert len(listed["recoverable"]) == 1, listed
+    candidate = listed["recoverable"][0]
+    assert candidate["invalidMergeValidationScopeRecovery"] is True
+    assert candidate["completionWithoutResult"] is False
+    assert candidate["staleFailedValidationOutputRecovery"] is False
+    assert candidate["recoveryNonce"] == native[0]["recoveryNonce"]
+    assert original == (
+        result_path.read_bytes(),
+        result_path.with_name("task-context.json").read_bytes(),
+    )
+    args = SimpleNamespace(
+        ledger=store.path,
+        thread_id="thread-1",
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        recovery_nonce=candidate["recoveryNonce"],
+    )
+    with pytest.raises((RuntimeError, LedgerError)):
+        MODULE.recovery_reserve(SimpleNamespace(**(vars(args) | {"recovery_nonce": "f" * 64})))
+    reserved = MODULE.recovery_reserve(args)
+    assert reserved["ok"] and reserved["recoveryNonce"] == native[0]["recoveryNonce"]
+    with pytest.raises((RuntimeError, LedgerError)):
+        MODULE.recovery_reserve(args)
+
+    def corrected_child(_process):
+        # Read the same exact immutable authority, and current private context,
+        # through the original recovery worker; never mutate/re-sign the rejected output.
+        old = json.loads(original[0])
+        context = _merge_boundary_assert_current_private(store, worktree, result_path)
+        fresh = copy.deepcopy(old)
+        fresh["contextDigest"] = context["contextDigest"]
+        fresh["controllerCommitChangedFiles"] = fresh["mergeResolutionFiles"][:]
+        actual = subprocess.run(
+            [sys.executable, "-B", "-c", "from runtime import value; assert value == 4"],
+            cwd=worktree,
+            text=True,
+            capture_output=True,
+        )
+        assert actual.returncode == 0, actual.stderr
+        fresh["tests"] = [
+            {
+                "command": "python -B -c 'from runtime import value; assert value == 4'",
+                "cwd": str(worktree),
+                "phase": "formal",
+                "exitCode": actual.returncode,
+            }
+        ]
+        assert fresh["quality"]["independent_review_passed"] is False
+        result_path.write_text(json.dumps(fresh))
+
+    prompt = _merge_boundary_original_owned_delivery(
+        monkeypatch,
+        store,
+        result_path,
+        thread_db,
+        rollout,
+        args,
+        turn_id="merge-boundary-current-context-recovery",
+        complete=corrected_child,
+    )
+    assert "mergeResolutionFiles" in prompt and "controllerCommitChangedFiles" in prompt
+    intake = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert intake["ok"] and intake["errors"] == [], intake
+    assert intake["validationDeferred"] and intake.get("workBlocked", []) == []
+    assert intake["publicationRequests"] == []
+    accepted = json.loads(result_path.read_bytes())
+    assert (
+        accepted["mergeResolutionFiles"]
+        == accepted["controllerCommitChangedFiles"]
+        == ["runtime.py"]
+    )
+    assert accepted["changedFiles"] == ["runtime.py", "support.py"]
+    assert accepted["quality"]["relevant_tests_green"] is True
+    assert accepted["quality"]["independent_review_passed"] is False
+    assert MODULE._controller_review_result(SimpleNamespace(ledger=store.path), accepted) is None
+    assert store.unresolved_recoveries() == []
+    with store.connect() as c:
+        assert (
+            c.execute(
+                "SELECT count(*) FROM events WHERE event_type='THREAD_RECOVERY_RESERVED'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            c.execute(
+                "SELECT count(*) FROM events WHERE event_type='THREAD_RECOVERY_SENT'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert c.execute("SELECT count(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "source",
+        "mirror",
+        "owned_receipt",
+        "latest_turn",
+        "unknown",
+        "active",
+        "private",
+        "task",
+        "head",
+        "wake",
+        "foreign_scope",
+        "review_true",
+        "managed_source_pr_key",
+        "managed_source_retired",
+        "managed_source_authentication",
+        "sent_reservation",
+    ],
+)
+def test_merge_validation_scope_recovery_keeps_existing_exact_gates(monkeypatch, tmp_path, damage):
+    store, _managed, worktree, result_path, _db, rollout = (
+        _merge_boundary_failed_completed_validation(monkeypatch, tmp_path)
+    )
+    args = SimpleNamespace(ledger=store.path, min_age_minutes=90)
+    assert len(MODULE.recovery_list(args)["recoverable"]) == 1
+    raw = json.loads(result_path.read_bytes())
+    if damage in {"source", "mirror"}:
+        native = store.recovery_candidates(min_age_minutes=0)[0]
+        with store.connect() as c:
+            row = c.execute(
+                "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED' "
+                "ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        reservation = json.loads(row[0])["reservationDigest"]
+        binding = store.validation_followup_delivery_binding(
+            thread_id="thread-1",
+            result_digest=native["followupDigest"],
+            reservation_digest=reservation,
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+        path = (
+            MODULE.STATE / binding["snapshotPath"]
+            if damage == "source"
+            else worktree / binding["worktreeInputPath"]
+        )
+        value = json.loads(path.read_bytes())
+        value["controllerCommitChangedFiles"] = ["foreign.py"]
+        path.chmod(0o600)
+        path.write_text(json.dumps(value))
+        path.chmod(0o400)
+    elif damage == "owned_receipt":
+        for path in (MODULE.STATE / "task_turn_receipts").glob("*.json"):
+            value = json.loads(path.read_bytes())
+            if value.get("deliveryKind") == "validation-followup":
+                value["turnStatus"] = "in_progress"
+                path.write_text(json.dumps(value))
+    elif damage in {"latest_turn", "unknown"}:
+        with rollout.open("a") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete" if damage == "latest_turn" else "task_started",
+                            "turn_id": "foreign-latest-turn",
+                        },
+                    }
+                )
+                + "\n"
+            )
+    elif damage == "active":
+        monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _t: {"pid": 1})
+    elif damage == "private":
+        path = result_path.with_name("task-context.json")
+        value = json.loads(path.read_bytes())
+        value["contextDigest"] = "f" * 64
+        path.write_text(json.dumps(value))
+    elif damage == "head":
+        (worktree / "support.py").write_text("value = 5\n")
+        run_git(worktree, "add", "support.py")
+        run_git(worktree, "commit", "-m", "fix: foreign continuation")
+    elif damage.startswith("managed_source_"):
+        native = store.recovery_candidates(min_age_minutes=0)[0]
+        with store.connect() as c:
+            if damage == "managed_source_pr_key":
+                c.execute(
+                    "UPDATE managed_results SET pr_key='a/b#10' WHERE result_digest=?",
+                    (native["followupDigest"],),
+                )
+            elif damage == "managed_source_retired":
+                c.execute(
+                    "UPDATE managed_results SET is_current=0 WHERE result_digest=?",
+                    (native["followupDigest"],),
+                )
+            else:
+                row = c.execute(
+                    "SELECT validation_json FROM managed_results WHERE result_digest=?",
+                    (native["followupDigest"],),
+                ).fetchone()
+                validation = json.loads(row[0])
+                validation["reproductionReceiptAuthenticated"] = False
+                c.execute(
+                    "UPDATE managed_results SET validation_json=? WHERE result_digest=?",
+                    (json.dumps(validation), native["followupDigest"]),
+                )
+    elif damage == "sent_reservation":
+        with store.connect() as c:
+            row = c.execute(
+                "SELECT id,payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT' "
+                "ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            payload = json.loads(row[1])
+            payload["reservationDigest"] = "f" * 64
+            c.execute("UPDATE events SET payload_json=? WHERE id=?", (json.dumps(payload), row[0]))
+    else:
+        if damage == "task":
+            raw["taskId"] = "foreign-intent"
+        elif damage == "wake":
+            raw["followupDigest"] = "f" * 64
+        elif damage == "foreign_scope":
+            raw["controllerCommitChangedFiles"] = ["foreign.py"]
+        else:
+            raw["quality"]["independent_review_passed"] = True
+        result_path.write_text(json.dumps(raw))
+    before = (result_path.read_bytes(), result_path.with_name("task-context.json").read_bytes())
+    assert MODULE.recovery_list(args)["recoverable"] == []
+    assert before == (
+        result_path.read_bytes(),
+        result_path.with_name("task-context.json").read_bytes(),
+    )
+    assert store.unresolved_recoveries() == []
+
+
+def test_merge_validation_scope_recovery_does_not_rearm_original_exhaustion(monkeypatch, tmp_path):
+    store, _managed, worktree, result_path, _db, _rollout = (
+        _merge_boundary_failed_completed_validation(monkeypatch, tmp_path)
+    )
+    listed = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=90))
+    nonce = listed["recoverable"][0]["recoveryNonce"]
+    args = SimpleNamespace(
+        ledger=store.path,
+        thread_id="thread-1",
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        recovery_nonce=nonce,
+    )
+    MODULE.recovery_reserve(args)
+    # Use the original durable exhaustion entry, not fabricated budget rows.
+    store.exhaust_recovery(
+        thread_id="thread-1",
+        nonce=nonce,
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        terminal_error={"status": "interrupted"},
+    )
+    before = (result_path.read_bytes(), result_path.with_name("task-context.json").read_bytes())
+    assert (
+        MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))["recoverable"]
+        == []
+    )
+    with pytest.raises((RuntimeError, LedgerError)):
+        MODULE.recovery_reserve(args)
+    assert before == (
+        result_path.read_bytes(),
+        result_path.with_name("task-context.json").read_bytes(),
+    )
