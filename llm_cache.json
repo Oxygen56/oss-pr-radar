@@ -4416,6 +4416,42 @@
     ],
     "why": "Issue identifies a concrete bug in MilvusVectorStore._parse_output where cosine distance is returned as score, violating the VectorStoreBase contract and causing inverted ranking and dropped matches. The fix is localized and mirrors existing pgvector implementation, with clear reproduction steps."
   },
+  "07df9f341e1342a59595e7ed97dff634b308b97bf749f94af1814798a81b11d5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with gate_decision HUMAN_REVIEW, yet actionability_evidence reports needs_confirmation=false and design_confirmation=false while preTaskEvidence policy is needs_assignment with assignmentRequired=true."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "pydantic_ai/agent/__init__.py: iter()/run lifecycle cleanup path",
+      "pydantic_ai/agent/__init__.py: _run_lifecycle_hooks/_wrap_task GeneratorExit handling",
+      "regression test covering explicit aclose() and GeneratorExit propagation"
+    ],
+    "risks": [
+      "Fix may alter cancellation/cleanup semantics for normal CancelledError paths if GeneratorExit handling is broadened.",
+      "Without confirmed root cause, a minimal patch could mask the underlying async-generator lifecycle bug rather than fix it.",
+      "Repository requires assignment before implementation; proceeding without it may waste effort or violate contribution policy."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test using FunctionModel(stream_function=...) that consumes one event then calls stream.aclose(), asserting no RuntimeError and that the run is not marked completed.",
+      "Add a second test that raises GeneratorExit inside `async with agent.iter(...)` and asserts the original GeneratorExit propagates after cleanup.",
+      "Run the targeted agent test module plus static checks on the changed package."
+    ],
+    "unknowns": [
+      "Whether the issue has been assigned to a contributor or maintainer (assignees list is empty).",
+      "The exact root cause: which await in _run_lifecycle_hooks/_wrap_task or iter cleanup ignores GeneratorExit.",
+      "Whether a maintainer has already started an investigation or fix for this cleanup path."
+    ],
+    "why": "Issue provides a strong, executable reproduction (FunctionModel, no provider, explicit aclose, plus a GeneratorExit-only variant) and a plausible code anchor in pydantic_ai/agent/__init__.py around _run_lifecycle_hooks/_wrap_task and iter's async-with cleanup. However, the supplied evidence does not establish the root cause: the traceback shows the GeneratorExit passing through _run_lifecycle_hooks awaiting _wrap_task, but no evidence identifies whether the coroutine is being awaited after GeneratorExit, whether the async context manager's __aexit__ is mis-handling athrow, or whether the fix belongs in agent.iter, the lifecycle-hook wrapper, or the stream context. The candidate's own actionability evidence marks root_cause_signal=false, and the pre-task policy is needs_assignment with assignmentRequired=true and no assignee, which is a materially blocking unknown for this repository."
+  },
   "07e92bdc0dc46ac869bd902e72a1bbb729c8804233e620a3007dddc4ebfadcf2": {
     "confidence": 0.8,
     "contradictions": [],
@@ -92795,6 +92831,38 @@
     ],
     "why": "Issue has a clear root cause and reproduction, but a maintainer/collaborator already opened PR #12726 directly covering the same fix in the same file, and the issue requires assignment. Competing work is not clearly actionable until the existing PR is resolved or the maintainer explicitly invites a contribution."
   },
+  "98aa073645e7f7198f00d7d12e31c351575be3ed2b4d48c18a553d74a738e441": {
+    "confidence": 0.85,
+    "contradictions": [
+      "candidate.actionability_evidence reports root_cause_signal=false and no reproduction evidence, while issue_body contains a concrete step-by-step repro and workaround"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/session.ts agent-switch model application",
+      "packages/core/src/model.ts agent model resolution"
+    ],
+    "risks": [
+      "Fixing in a new PR may conflict with existing work on #42561/#43179",
+      "Behavior change for users who intentionally rely on global model override"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add failing test: run --agent research with top-level model set, assert request model equals agent model",
+      "Add failing test: switch primary agent mid-session, assert session model follows agent unless user explicitly picked one"
+    ],
+    "unknowns": [
+      "Whether #42561/#43179 are still open and unclaimed",
+      "Whether maintainers want a single consolidated fix or per-issue PRs"
+    ],
+    "why": "Issue is a well-described bug with a clear repro, but the supplied bot comment identifies it as a duplicate of #42561 (run --agent ignores agent model) and #43179 (in-session agent switch keeps prior model), with #54894 already closed as a duplicate of #42561. Duplicate/covered coverage is a materially blocking fact for a new contribution."
+  },
   "98be03f3319ed496c87a82e5a703bc47d8a9c3ef98eb1f9ddb624107317a38b8": {
     "confidence": 0.8,
     "contradictions": [],
@@ -110619,6 +110687,60 @@
       "Maintainer acceptance of the behavior change is not confirmed; no explicit approval or design confirmation."
     ],
     "why": "Issue provides a precise root cause with code anchors and a concrete validation path: MCP tool results are never collapsed because the UI categorization map only knows built-in display names, and MCP provenance is lost before the collapse decision. The suggested fix (propagate MCP provenance structurally) is actionable and testable."
+  },
+  "b7d914f282049822ea27ca5e0eba97a0dca3d042fe3549a1f9500f323d6d93d7": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request cancel scope / avoid shared TaskGroup teardown cancelling concurrent in-flight upstream fetches",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools cancellation is scoped to the owning request"
+    ],
+    "risks": [
+      "Fix may alter request lifecycle semantics for stateless MCP handling",
+      "Upstream anyio/mcp library behavior may constrain the fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two overlapping tools/list requests to POST /mcp against two HTTP streamable MCP servers and assert neither is cancelled",
+      "Run targeted unit tests for the mcp_server_manager module and static checks"
+    ],
+    "unknowns": [
+      "Exact upstream mcp/anyio version pinning that determines whether the fix belongs in litellm or the dependency"
+    ],
+    "why": "Issue provides a concrete, reproducible concurrency bug on the proxy /mcp endpoint with a specific mechanism (shared StreamableHTTPSessionManager TaskGroup teardown cancelling in-flight list_tools fetches), a traceback, ordered repro steps, and a clear expected behavior. This is a user-visible correctness bug on the agent/inference critical path, not plumbing."
+  },
+  "b7de498df2ac92920478411fb2fadf46892190c4a1d2226bbae0566a0c4aa5aa": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate claims high actionability while actionability_evidence shows no reproduction, no root cause, no code anchors beyond a shared library name"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Crash is non-deterministic and tied to memory pressure, so any fix would be speculative",
+      "Overlaps existing v2 MCP fan-out issues already tracked"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [
+      "Whether the crash reproduces on v2",
+      "Actual symbolized stack frames"
+    ],
+    "why": "Issue is an unsymbolized SIGABRT crash report on a stripped Bun binary with no reliable reproduction; maintainer bot already marked it wont_fix for v1 and pointed to v2 and multiple related issues (#51003, #52965, #51249, #48715, #33240). No code surface, no root cause, no reproduction path — not an actionable code contribution."
   },
   "b8133a2661a9e9af8a3267fc2547c0bd80c412a716a798af6e93281c631b15fc": {
     "confidence": 0.7,
@@ -145436,6 +145558,39 @@
       "Whether the maintainers want a distinct follow-up for the #51486 KVTransfer path beyond PR #51489."
     ],
     "why": "Supplied evidence already establishes the root cause and a merged fix: comment evidence states this is the #48822 PIECEWISE-replay metadata-padding regression, fixed by #49302 (de6ec294), with single-variable validation (cherry-pick makes failing cases pass, num_prefill_reqs 512->1) and confirmation that released v0.28.0 passes all cases. The issue is therefore covered by an existing merged fix, making new code work low-value."
+  },
+  "ef992563a12fd58076c0d299af576489f5b36cd64620c079aa23cbc92258504a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/index.ts server-connection resolution",
+      "background service discovery/state path handling under redirected HOME",
+      "clear human-readable error instead of opaque ERROR + bun stack trace"
+    ],
+    "risks": [
+      "Fix could change service discovery semantics for multi-HOME or sandboxed setups",
+      "Port-collision handling may need a maintainer-preferred design (auto-port vs. explicit error)",
+      "Related issues #54267/#49034/#52021 may overlap and need dedup before submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied repro.sh: normal HOME first, then HOME=<empty dir> opencode run, assert exit 0 or a clear actionable error",
+      "Regression test that service discovery honors XDG_STATE_HOME/HOME and does not collide on the fixed default port",
+      "Targeted unit tests for server-connection resolve plus static checks on the CLI package"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer auto-selecting a free port versus a clearer error message",
+      "Whether the related port-in-use issues are already covered by an existing fix"
+    ],
+    "why": "Issue provides a deterministic reproduction (redirected HOME + already-running real-HOME service), a maintainer-bot-confirmed root cause (service discovery file under ~/.local/state/opencode not found, second service binds fixed default port, port-in-use error), and a concrete validation path (repro.sh plus targeted CLI/service tests). Track is agent_ai_infra, so the algorithm-track restriction does not apply."
   },
   "ef9b5d22806d45dfc6fea0aa4c54208ffc5b847af3ae2eb5b0b5d734a2ce11e0": {
     "confidence": 0.7,
