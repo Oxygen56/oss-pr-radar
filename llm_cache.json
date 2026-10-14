@@ -57160,6 +57160,33 @@
     ],
     "why": "The issue's own reproduction is real (dump→validate raises union_tag_invalid for a request-side NativeToolSearchReturnPart), but the supplied bot status comment establishes that the failing shape is only reachable by hand-construction: both producer sites build the part on ModelResponse, durable execution never calls ModelMessagesTypeAdapter, and the AG-UI reachability lead is refuted by MessagesBuilder isinstance dispatch. The proposed one-line union arm was reportedly closed twice on review, and the fix requires a maintainer design call on request-side dispatch/replay/narrowing. This is a materially blocking unknown (supported-path reachability and design intent), not normal implementation uncertainty."
   },
+  "5edb4c40787baad32539f09a096d3a759a3b4d54300af5ec52097bc27ecfa5f3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "candidate.related_issue_assessment reports no related open issues, but the bot comment identifies #50806, #50627, #51612, #49723 as duplicates/related"
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "No new code change warranted; fix belongs to the tracked root cause in #50627"
+    ],
+    "risks": [
+      "Working this issue would duplicate effort already tracked in #50627"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Verify against #50627's reproduction: custom agent with shell deny or restricted tool allowlist on a free Zen model"
+    ],
+    "unknowns": [
+      "Whether the reporter's planner agent has any permission or tool restrictions (bot requested this clarification)"
+    ],
+    "why": "The issue is a duplicate of #50806 with the underlying cause tracked in #50627 (free-tier check rejects requests whose tool list omits standard tools, e.g. shell deny or small allowlist). The bot comment supplies concrete duplicate coverage and workarounds, so this candidate is a covered opportunity rather than a new actionable code contribution."
+  },
   "5ee2313d68c93b824b3c942cbf47040e642a9521c45b28d2cb850ee1ac4055a3": {
     "confidence": 0.85,
     "contradictions": [
@@ -72669,6 +72696,45 @@
       "Whether maintainers prefer bounding the regex vs. a different truncation strategy"
     ],
     "why": "Issue provides a concrete root cause (quadratic regex `data:([^;]+);base64,...` in `_truncate_base64_in_string`), executable reproduction with measured scaling, py-spy evidence of GIL contention on the success-logging path, and a bounded-MIME fix that is claimed byte-identical on representative inputs. This is an actionable performance fix with a clear reference-vs-implementation validation path."
+  },
+  "76dba1beef4d3d4d01ff3f0dc5eab966ac97a0d6ebf90c2f107455424885d1f4": {
+    "confidence": 0.72,
+    "contradictions": [
+      "candidate.actionability_evidence reports public_repro_signals=0 and root_cause_signal=false, while issue_data.issue_body supplies run IDs, per-job queue_wait/exec tables, and a named file:line root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      ".github/workflows/sdk-java.yml: gate strategy.fail-fast on event (true for pull_request, false for push/schedule)",
+      ".github/workflows/.ci-budget: new ratchet baseline of declared PR-stage timeout-minutes per workflow",
+      ".github/scripts/check-ci-budget.mjs: hard-fail on PR-stage jobs missing timeout-minutes, wired into lint_and_static and HELPER_TESTS_DEP_FREE",
+      ".github/workflows/ci.yml: resolve push-vs-pull_request duplication per the header comment at lines 6-18"
+    ],
+    "risks": [
+      "Changing fail-fast semantics could mask post-merge signal if the event gate is applied incorrectly",
+      "Moving macos/windows/fault-gate lanes to merge_group reduces PR-time coverage and may be contested by maintainers",
+      "Enabling the merge queue is a repo-settings change outside the PR's control",
+      "The 36.4 h budget figure is a snapshot and will drift as workflows change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a fixture workflow with a PR-stage job lacking timeout-minutes and assert check-ci-budget.mjs exits non-zero",
+      "Add a fixture where declared budget exceeds .ci-budget and assert the ratchet fails",
+      "Assert the budget check passes on current main after the baseline is recorded",
+      "Verify fail-fast event gating by inspecting the rendered workflow for pull_request vs push triggers"
+    ],
+    "unknowns": [
+      "Whether maintainers accept moving non-discriminating lanes off the PR stage",
+      "Whether a merge queue can be enabled in this repository's settings",
+      "Exact current contents of .size-baseline and check-workflow-size.sh to mirror the ratchet pattern"
+    ],
+    "why": "Issue provides concrete Actions-API measurements (queue_wait vs exec), names the exact root cause (sdk-java.yml:99 fail-fast:false plus 14 jobs with no timeout-minutes), and proposes three concrete, independently testable CI changes. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply. No covering PR exists: #14213 is keyword-overlap only with no shared code paths, and #13219 is the measured run, not a fix."
   },
   "7700955299bf9bb53cae3ddfb0175f757925cca4415f4892ef35a90e50755a5a": {
     "confidence": 0.7,
@@ -102433,6 +102499,38 @@
     ],
     "why": "Issue provides a clear behavioral bug with reproduction steps, expected vs actual timings, and code anchors. Recent comment confirms wire-level serialization is correct, narrowing root cause to provider orchestration. Actionable for a maintainer or contributor to investigate hosted MCP scheduling."
   },
+  "a91f56b5999a4f46c3af689e83fb89a1308ddd5f62298f9a8abba1fb50edb9a9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims account_type PRIVATE for a MEDIA_CREATOR account, but no code anchor or log confirms the mapping source."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "account_type mapping in the Instagram toolkit connection metadata",
+      "possibly OAuth scope request list for managed auth"
+    ],
+    "risks": [
+      "Root cause may be Meta app permission configuration outside the repository, making a code fix ineffective.",
+      "Changing account_type mapping without confirming the token/scope source could mask the real issue."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a fresh managed-auth Instagram connection and a user-initiated DM within 24h; capture HTTP response and Composio log_id.",
+      "Unit test asserting account_type MEDIA_CREATOR is not mapped to PRIVATE."
+    ],
+    "unknowns": [
+      "Whether the managed Meta app actually lacks the messaging scope/Advanced Access.",
+      "Which code path produces account_type and whether it is fixable in-repo.",
+      "Whether the repository requires assignment before contribution (policy status needs_assignment)."
+    ],
+    "why": "Issue reports a 403 messaging failure and an account_type mapping bug, but the suspected cause (missing Advanced Access / scope in the managed Meta app) is external configuration, not a code defect. No root-cause evidence ties the failure to a specific code path, and the account_type mapping claim lacks a code anchor. Track is agent_ai_infra, not llm_algorithm, so no algorithm evidence is required, but actionability is still blocked by unresolved external-configuration dependency and assignment requirement."
+  },
   "a9373d903e99067461f7d2b59641ce743affcbcd072d77ed011fad756b6f7f79": {
     "confidence": 0.6,
     "contradictions": [
@@ -131059,6 +131157,37 @@
       "Exact WorkflowsStorage contract changes required"
     ],
     "why": "Issue clearly describes a race condition in workflow resume with public repro and production evidence, but the proposed fix requires storage-level atomic claim/CAS and maintainer confirmation on the WorkflowsStorage contract. Existing PR #20512 was closed as insufficient, and maintainer input is needed to choose between single-process mitigation and storage-backed solution."
+  },
+  "d8a61e8d29d630bec1e285578d115b7e430cd867c5152a6d7b108fcab8b10d6e": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request MCP session/task scope so concurrent tools/list fetches are not cancelled by shared StreamableHTTPSessionManager teardown",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools cancellation is scoped to the owning request"
+    ],
+    "risks": [
+      "Fix may alter MCP session lifecycle semantics for stateless requests",
+      "Upstream anyio/mcp version differences could change the cancel-scope behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two overlapping POST /mcp tools/list requests against two HTTP streamable MCP servers and assert both complete without MCPServerListError",
+      "Run targeted proxy MCP server manager unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether #24522 was actually fixed on current main or only closed due to non-reproduction",
+      "Exact current code shape of _handle_stateless_request in the pinned mcp dependency"
+    ],
+    "why": "Issue provides a concrete concurrency bug on the proxy /mcp endpoint with traceback, ordered repro steps, and a plausible shared-TaskGroup cancel-scope root cause; no open PR or duplicate coverage found. Track is agent_ai_infra, so the algorithm-specific rejection does not apply. Remaining uncertainty is whether the recurrence of #24522 is already fixed on main, but the supplied evidence shows no merged/open fix."
   },
   "d8b2faee16b8ed4bbad5ff21a33240f330b196477464699e0c37afaca0345962": {
     "confidence": 0.9,
