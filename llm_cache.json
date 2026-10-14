@@ -21898,6 +21898,39 @@
     ],
     "why": "The issue identifies a clear divisibility bug in a diffusion pipeline's causal DMD denoising stage, with a concrete repro and suggested fixes. However, the track is llm_algorithm, which requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The reported bug is a configuration/validation issue in a pipeline stage, not a core algorithm mechanism. The suggested fixes (adjust testcase num_frames or round/pad) are operational and do not involve a reference-vs-implementation test or numerical regression. The algorithm_evidence score is 8 but the mechanisms listed (distributed_training, kernel_algorithm) are not substantiated by the issue body; the matched terms 'block size' and 'shard' are generic. The issue lacks a clear algorithmic root cause and validation path, making it not actionable as an llm_algorithm candidate. Maintainer confirmation is needed to determine if this is a valid algorithm bug or a test configuration issue."
   },
+  "2635d92f8c90c2b2d6d9be57fcb3ddc2d369faa06cf6a7a28b29b07e81257468": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/events/event_handlers/sync_plugin_trigger_when_app_created.py: distinguish draft-save vs publish signals and avoid removing stale plugin-trigger relationships on draft sync",
+      "api/services/trigger/trigger_service.py: sync_plugin_trigger_relationships remove_stale behavior for draft vs published workflow",
+      "api/services/app_dsl_service.py: export/import clearing subscription_id interaction with relationship sync"
+    ],
+    "risks": [
+      "Fix must not regress the scenario PR #41756 addressed (published events lacking subscriber relationship)",
+      "Changing remove_stale semantics could leave orphaned rows for genuinely deleted triggers after publish",
+      "Only GitHub trigger was manually tested; other Integration Trigger providers may have provider-specific paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: create workflow app with Integration Trigger subscription, publish, then save a draft that clears/deletes the trigger node, and assert WorkflowPluginTrigger rows for the published workflow remain and dispatch still resolves subscribers",
+      "Mirror webhook handler test asserting draft sync uses remove_stale=False while publish removes stale rows",
+      "Import/export round-trip test asserting published trigger delivery is unaffected by importing a draft without subscription"
+    ],
+    "unknowns": [
+      "No maintainer confirmation of the inferred root cause or preferred fix location (draft-sync handler vs service-level remove_stale flag)"
+    ],
+    "why": "Issue provides a concrete, ordered reproduction (draft edit stops published Integration Trigger delivery; re-selecting subscription restores it without publish) plus code-anchored root-cause hypothesis: draft sync calls TriggerService.sync_plugin_trigger_relationships with remove_stale semantics, deleting WorkflowPluginTrigger rows that production dispatch queries, whereas webhook handler uses remove_stale=False on draft sync. Merged PR #41756 addressed a different failure and explicitly retained draft synchronization, so it does not cover this draft/published isolation bug."
+  },
   "2636abbef1af18e5323e996bec0ed39d5f4213bd3c3cc3466a33a1c1f0a33aa3": {
     "confidence": 0.8,
     "contradictions": [
@@ -58910,6 +58943,36 @@
     ],
     "why": "Issue documents a clear streaming vs non-streaming discrepancy for reasoning_content on alibabacloud/deepseek-v4.1-flash, but the root cause is explicitly unresolved: the reporter states the direct upstream provider response was never tested, so it is unknown whether the loss occurs in the upstream adapter, the SSE normalizer, or the provider itself. No code anchor or failing test is established, and the candidate's own actionability evidence marks root_cause_signal=false."
   },
+  "61ac378205b6af0dae83ff837ad317994acddcc28bf0ab6858c9612c7fcefde0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/core/mcp/types.py: add 2025-11-25 to the supported protocol version allowlist",
+      "api/core/mcp/session/client_session.py: ensure initialize accepts the new version and still sends notifications/initialized"
+    ],
+    "risks": [
+      "Maintainers may prefer negotiating down to 2025-06-18 rather than adding the new version",
+      "Adding a version without verifying downstream tool compatibility could mask real incompatibilities"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that feeds an initialize result with protocolVersion 2025-11-25 and asserts no RuntimeError and that notifications/initialized is sent",
+      "Regression test that existing versions 2024-11-05, 2025-03-26, 2025-06-18 still connect",
+      "Run targeted MCP client tests and static checks"
+    ],
+    "unknowns": [
+      "Exact initialize request/response JSON was requested but not yet attached, so the precise negotiation exchange is unconfirmed"
+    ],
+    "why": "Issue provides a concrete reproduction (MCP initialize against a server returning protocol version 2025-11-25) and the bot comment anchors the root cause to the client-side version allowlist in api/core/mcp/types.py and the check in client_session.py. This is a bounded, testable bug fix in the MCP client path, not a docs/CLI/plumbing change."
+  },
   "61b1f46e018ac0cfe9572a453b5b5eb0e07f1ac72f39f29b83b2549644a42d71": {
     "confidence": 0.8,
     "contradictions": [],
@@ -80962,6 +81025,43 @@
       "Whether an explicit thinking-mode parameter is required upstream"
     ],
     "why": "The issue documents a clear streaming-vs-non-streaming discrepancy for reasoning_content on the alibabacloud deepseek-v4.1-flash adapter, but the supplied evidence explicitly lacks a root-cause signal (root_cause_signal=false) and the reporter states the direct upstream provider response was never tested independently. It is therefore unknown whether the loss occurs in the upstream adapter, in LiteLLM's stream normalizer, or upstream itself, which determines whether any code change is actionable."
+  },
+  "85eb077c743fc1439de3f24d01034cd96d8d479e27a76e30c2ca7ea5ffdd821a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue proposes incremental optional-field fix while open PR #3292 takes the alternative bigger approach; maintainer preference between them is unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/mcp/server/lowlevel/server.py: make issuer_url optional and add validator requiring it only when resource_server_url is set or auth_server_provider is used",
+      "src/mcp/server/mcpserver/server.py: align AuthSettings validation and resource-server-only construction path",
+      "AuthSettings model: change issuer_url/resource_server_url to AnyHttpUrl | None = None with cross-field validation"
+    ],
+    "risks": [
+      "PR #3292 may already implement an equivalent or broader fix, making a new PR duplicative",
+      "Maintainers may prefer the PR #3292 approach (token verifier without AuthSettings) over the incremental optional-field shape",
+      "Relaxing issuer_url to optional could silently allow misconfigured PRM documents if the validator is incomplete"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test constructing AuthSettings(resource_server_url=None) with token_verifier and no auth_server_provider, asserting no ValidationError",
+      "Add a test asserting issuer_url is still required when resource_server_url is set (PRM authorization_servers path)",
+      "Add a test asserting issuer_url is still required when auth_server_provider is used",
+      "Run the gist repro (https://gist.github.com/AkshayShah03/92d4d4eb6dcbbfa15c7f374e30e506a5) against the patched code to confirm 401/200 behavior unchanged"
+    ],
+    "unknowns": [
+      "Whether PR #3292 already resolves the root cause described in issue #3702",
+      "Whether maintainers prefer the incremental validator shape or the PR #3292 design",
+      "Whether the issue is assigned or maintainers have signaled a preferred implementation"
+    ],
+    "why": "Issue #3702 documents a concrete, verified root cause: AuthSettings.issuer_url is a required field but is never read in resource-server-only mode (token_verifier set, no auth_server_provider, resource_server_url=None). A commenter independently reproduced the ValidationError on current main and audited all issuer_url read sites, confirming the field is only consumed when auth_server_provider or resource_server_url is set. However, open PR #3292 ('Let a token verifier gate the server without AuthSettings') has semantic overlap on the same code paths and the same resource_server_only concept, and the issue itself explicitly frames two competing fix shapes (incremental optional-field validator vs. the bigger PR #3292 approach). The duplicate/coverage status is 'semantic_overlap_requires_review' and the PR is not linked to the issue, so it is unresolved whether #3292 already covers the root cause or whether maintainers prefer that alternative design. This materially determines whether new code work is actionable, so RETRY rather than NO_OBJECTION."
   },
   "8606193b070f198890f2ba4dbcba0cdac6f90ff6735192e1a3c612440a1e8bc0": {
     "confidence": 0.85,
