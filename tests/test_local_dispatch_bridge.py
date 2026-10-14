@@ -45356,3 +45356,106 @@ def test_completed_go_recovery_authenticates_runtime_instead_of_code_root(
         assert [
             tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
         ] == before
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        (
+            "env PATH=/opt/go/bin:/usr/bin GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off make envtest",
+            False,
+        ),
+        ("GOPROXY=off go test ./...", False),
+        ('env GOPROXY="off" make envtest', False),
+        ("GOPROXY='off' make envtest", False),
+        ("GOTOOLCHAIN=local GOPROXY=off make envtest && GOPROXY=off make lint", False),
+        ("GOPROXY=off make envtest\nenv GOPROXY=off make lint", False),
+        ("/bin/sh -c 'GOPROXY=off make envtest; env GOPROXY=off make lint'", False),
+        ("npm_config_offline=true GOPROXY=off go test ./...", False),
+        ("/tmp/GOPROXY=off/bin/go test ./...", False),
+        ("go test -args --diagnostic=GOPROXY=off", False),
+        ("go test -args GOPROXY=off", False),
+        ("printf '%s' 'GOPROXY=off'", False),
+        ("echo 'note;GOPROXY=off go test'", False),
+        ("printf '%s' '(GOPROXY=off go test)'", False),
+        (r"echo note\;GOPROXY=off", False),
+        (r"printf '%s' \(GOPROXY=off go test", False),
+        ("env GOPROXY=offline make envtest", True),
+        ("go test # module lookup disabled", True),
+    ],
+)
+def test_go_offline_command_setting_alone_is_not_dependency_failure(command, expected):
+    failure = {
+        "command": command,
+        "exitCode": 2,
+        "result": "Existing providerOverride assertion received PodCliqueSet instead of TopologyConstraint.",
+    }
+    assert MODULE._is_validation_dependency_failure(failure) is expected
+    assert MODULE.unresolved_current_test_failures({"tests": [failure]}) == [failure]
+    assert not MODULE.assess_submit_ready(
+        {field: True for field in QUALITY_FIELDS}, task_result={"tests": [failure]}
+    ).ready
+
+
+@pytest.mark.parametrize("field", ["summary", "outcome", "result"])
+@pytest.mark.parametrize(
+    "diagnostic",
+    ["GOPROXY=off", "module lookup disabled by GOPROXY=off", "locked but absent module"],
+)
+def test_go_offline_assignment_preserves_original_dependency_diagnostics(field, diagnostic):
+    assert MODULE._is_validation_dependency_failure(
+        {"command": 'env GOPROXY="off" go test ./...', "exitCode": 1, field: diagnostic}
+    )
+
+
+def test_go_offline_execution_flag_keeps_failed_check_in_original_validation(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green",)
+    )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    value = json.loads(result_path.read_text())
+    baseline = worktree / ".oss-pr-radar/baseline-runtime.py"
+    baseline.write_text(run_git(worktree, "show", "main:runtime.py"))
+    probe = worktree / ".oss-pr-radar/execution-setting-regression.py"
+    probe.write_text("import runpy, sys\nassert runpy.run_path(sys.argv[1])['value'] == 2\n")
+    tests = []
+    for target, expected in [(baseline, 1), (worktree / "runtime.py", 0)]:
+        command = "GOPROXY=off " + shlex.join(
+            [sys.executable, str(probe.relative_to(worktree)), str(target.relative_to(worktree))]
+        )
+        actual = subprocess.run(command, shell=True, cwd=worktree, capture_output=True, text=True)
+        assert actual.returncode == expected
+        tests.append(
+            {
+                "command": command,
+                "cwd": str(worktree),
+                "exitCode": actual.returncode,
+                "result": "Real selected baseline failed its assertion."
+                if expected
+                else "The same assertion passed on the current implementation.",
+            }
+        )
+    value["tests"] = tests
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path, store=store)
+    store.record_validation_deferred(
+        "a/b#1", thread_id="thread-1", result_digest=digest, missing=["relevant_tests_green"]
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    assert MODULE._is_validation_dependency_failure(tests[0]) is False
+    assert not MODULE.assess_submit_ready(
+        {field: True for field in QUALITY_FIELDS}, task_result=value
+    ).ready
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert [item["resultDigest"] for item in listed["candidates"]] == [digest]
+    assert listed["environmentBlocked"] == []
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=digest,
+            prefetch_complete=False,
+        )
+    )
+    assert reserved.get("blocked") is not True
+    assert reserved["prefetch"] == []

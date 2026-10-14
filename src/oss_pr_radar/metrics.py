@@ -112,10 +112,15 @@ def is_validation_dependency_failure(item: dict[str, Any]) -> bool:
         "",
         str(item.get("command") or "").casefold(),
     )
-    text = (
-        f"{command}\n{item.get('summary', '')}\n{item.get('outcome', '')}\n{item.get('result', '')}"
+    diagnostics = (
+        f"{item.get('summary', '')}\n{item.get('outcome', '')}\n{item.get('result', '')}"
     ).casefold()
-    if any(marker in text for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS):
+    text = f"{command}\n{diagnostics}"
+    # An offline execution setting alone is not a dependency-failure diagnostic.
+    if any(
+        marker in diagnostics or (marker != "goproxy=off" and marker in command)
+        for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS
+    ):
         return True
     return "locked" in text and any(
         marker in text for marker in (" is absent", " are absent", " missing", "differs from")
