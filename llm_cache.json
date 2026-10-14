@@ -530,6 +530,37 @@
     ],
     "why": "The issue provides deep device-level evidence of a spin loop in the TMEM allocation path of the FlashMLA sparse-decode kernel, but explicitly states it is not a root-cause report and asks for maintainer guidance on the correct owner and diagnostic path. The root cause (phase mismatch, visibility, or hardware state) is undetermined, and the fix likely requires changes in FlashMLA or CUTLASS, not vLLM. The issue is a request for guidance, not a concrete patch proposal."
   },
+  "0130cdfb2b2f384f5634a231b8510b52e66bfa1ea28442b100cb08b4d13d711c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body provides a repro gist, but actionability_evidence reports public_repro_signals=0 and reproduction_evidence=[]"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/mcp/server/lowlevel/server.py AuthSettings validation",
+      "src/mcp/server/mcpserver/server.py auth wiring"
+    ],
+    "risks": [
+      "Open PR #3292 may already implement the same fix, making a new contribution duplicative",
+      "Loosening issuer_url to optional could silently break PRM authorization_servers behavior if validation is not added"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with token_verifier only, no auth_server_provider, resource_server_url=None; assert AuthSettings validates without issuer_url",
+      "Regression: issuer_url still required when resource_server_url or auth_server_provider is set"
+    ],
+    "unknowns": [
+      "Whether PR #3292 already fixes the issuer_url requirement for resource-server-only mode",
+      "Maintainer preference between the two proposed shapes (optional issuer_url vs. token_verifier without auth)"
+    ],
+    "why": "Issue describes a concrete validation bug (issuer_url required but unused in resource-server-only mode) with a public repro gist and code anchors, but the supplied evidence shows no reproduction evidence captured, no root-cause signal, and an open PR #3292 with semantic overlap on 'resource_server_only' that is not linked to the issue. Whether that PR already covers the root cause is a materially blocking unknown for deciding whether new code work is actionable."
+  },
   "015f9c61cedeaed5ba4937c9fd1f9c05e1f56ef8bbe77bbb4f105918acdac9d2": {
     "confidence": 0.55,
     "contradictions": [
@@ -1893,6 +1924,37 @@
       "Exact root cause among the four listed hypotheses is not confirmed; maintainer preference on option A/B/C is unknown."
     ],
     "why": "Issue provides a clear failing assertion, code anchor, and reproduction path; the root cause is well-scoped to the Autocomplete integration test and its interaction with the new test framework. The suggested next steps include concrete validation options (fix, disable, or remove), making the work actionable."
+  },
+  "040ef31325be35298d4c17fefcc9a5bee4dc6315a9670891a3db41025dfc81ad": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate marks duplicate status 'none' while the bot comment identifies #51071 as the same problem"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "subagent tool model resolution / permission enforcement in packages/core/src/model.ts and related runtime paths"
+    ],
+    "risks": [
+      "Overlapping with #51071 may cause duplicate/conflicting fixes",
+      "Broadening permission semantics could change documented subagent behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: parent on free model spawns `explore` with explicit per-call `model`; assert child session model equals parent when no override is authorized",
+      "Regression: verify a permission/policy can deny per-call model overrides without disabling subagents entirely"
+    ],
+    "unknowns": [
+      "Whether #51071 is still open and unaddressed, or already has a merged/active fix",
+      "Whether maintainers consider this a duplicate and want work consolidated there"
+    ],
+    "why": "The issue describes a real behavior (per-call `model` on `subagent` bypasses parent-model inheritance), but the supplied evidence shows a bot-identified duplicate (#51071) covering the same root cause and the same proposed enforcement (a permission covering per-call model choice). Duplicate/merged-fix coverage is unresolved, which materially determines whether new code work is actionable."
   },
   "04117ee2553f1aede3abfa0bf1fe9dff973be4cc8a34ba7e6621e03b52501672": {
     "confidence": 0.7,
@@ -122565,6 +122627,42 @@
     ],
     "why": "The issue describes a plausible DFlash/DSpark draft-KV corruption mechanism with a concrete reproduction sketch and a mitigation PR (#47926), but the reporter explicitly states they have not pinned which step registers unwritten draft blocks, and the supplied evidence shows an open maintainer-owned draft PR (#56723) with overlapping code path and distinctive 'dflash_dspark' semantics that may already cover the root cause. The duplicate/coverage question is unresolved, which materially determines whether independent code work is actionable."
   },
+  "cb9f04de9d6340701e891feeffd625e5c153a49d511053bc8d58b3bfc72bb702": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body says the report does not establish a specific cuBLAS kernel bug or FP8-only defect, while the candidate's algorithm_evidence lists kernel_algorithm and numerics_quantization mechanisms as if root cause were identified",
+      "open_pr_assessment marks duplicate status human_review_required with PR #44094 directly overlapping batch-shape invariance, but root_cause_coverage is false and coverage is unconfirmed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Numerical determinism/batch-invariance handling for BF16 projections and LM head in the scoring path",
+      "Possibly a documented supported configuration or regression test for decision scoring drift"
+    ],
+    "risks": [
+      "Shape-dependent floating-point rounding may be an upstream GEMM/hardware behavior rather than an SGLang defect",
+      "Closed PR #44094 may already cover the batch-shape invariance fix, making new work duplicative",
+      "Fixing via deterministic modes could impose performance costs"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay the provided /v1/score batch-shape sweep (batch 1/8/12/16/24/32) with fixed token IDs and cache flush, asserting P(B) stability within a documented tolerance",
+      "Run the standalone repro_bf16_projection.py to confirm the M=47 vs M=576/752/768 BF16 rounding divergence",
+      "Add a regression test comparing FP8 vs BF16 and BF16 vs FP32 LM head ranges"
+    ],
+    "unknowns": [
+      "Whether closed PR #44094 already resolves the batch-shape invariance issue",
+      "Whether the divergence is an SGLang-side fixable defect or an upstream GEMM/hardware numerical limitation",
+      "Whether the issue is reproducible on current main (reporter tested 0.5.21 and did not verify latest main)"
+    ],
+    "why": "The issue provides a strong reproduction and localization (BF16 projection rounding at a midpoint, FP8/BF16 and LM-head controls), but the root cause is explicitly not established: the report states it does not establish a softmax error, FP8-only defect, cuBLAS kernel bug, or regression, and the first differing projection does not explain all downstream drift. The candidate's own actionability evidence has root_cause_signal=false and rootCauseCoverage=false, and the duplicate assessment is human_review_required with a closed PR #44094 that directly overlaps (batch-shape invariance, cuBLAS/cuDNN determinism) but is unconfirmed as covering the issue. These unresolved coverage and root-cause facts determine whether a concrete code fix is actionable."
+  },
   "cba139601311b5b4db097fe54190965dd3d461e9f29a4457bdb870829c5c73f6": {
     "confidence": 0.7,
     "contradictions": [
@@ -123056,6 +123154,35 @@
       "The exact code path where the enforcement fails, though the parser and model files are identified."
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool calls. The root cause is partially known (finish_reason logic) and the enforcement gap is clearly described. The issue provides a reproduction script and analysis, making it actionable despite the lack of a minimal reproducer."
+  },
+  "cd2e22d30bb162a3c9666d434695f05a564f25ca75a907a0c8e93166b88e46ab": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate actionability_evidence reports root_cause_signal=false, but the bot comment supplies a concrete root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "No new code work; fix belongs to the existing duplicate issue #50627"
+    ],
+    "risks": [
+      "Working this issue would duplicate effort already tracked in #50627",
+      "Misleading free-tier error message may mask the real tool-list cause"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Confirm reproduction against #50627's fix once landed; verify shell `deny` -> `ask` workaround removes the free-tier error"
+    ],
+    "unknowns": [
+      "Whether #50627 has an open PR or merged fix that fully covers this case"
+    ],
+    "why": "Bot comment identifies this as a duplicate of #50627 with a concrete root cause: a full shell `deny` rule on a custom primary agent removes `bash` from the request tool list, causing the free-tier gateway to reject the request. The same trigger is already covered by #50627, #51193, #50806, and #49723, so this candidate is a covered opportunity rather than a new contribution."
   },
   "cd5b5161345eb0f9ba2d3231d207396f21b2ef7f788a8931edfe074635919ca7": {
     "confidence": 0.7,
@@ -124260,6 +124387,38 @@
       "Exact current state of main beyond baseSha dbbe39090d390b4515508cb6f48971020c2a41c3"
     ],
     "why": "Issue #797 documents three concrete mechanisms (TRL config defaults, peft k-bit preparation, unsloth hardcoding) that override training.gradient_checkpointing, with file/line anchors and a CPU reproduction. Maintainer comments confirm #1045 shipped only the k-bit text-path half and enumerate remaining open items (TRL/HF args threading, trainers that never read the field, unsloth mapping, vision/audio test), each with a named-test acceptance bar. This is a concrete, testable training-optimization defect, not plumbing."
+  },
+  "cf763fd7ecaf748986b8768ac26c5c9f435370c6f5426d2dafd4e90c0acb4cc0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/handler/knowledge.go filename extraction/fallback",
+      "internal/utils/security.go ValidateInputSyntax error distinction",
+      "internal/application/service/knowledge_create.go validation call"
+    ],
+    "risks": [
+      "Transcoding fallback could mis-decode ambiguous byte sequences",
+      "Changing error semantics may affect existing API consumers",
+      "Maintainer may prefer documentation-only fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test posting a multipart body with GBK-encoded filename bytes and assert it is accepted or returns a distinct encoding error",
+      "Regression test posting raw UTF-8 CJK filename and asserting success",
+      "Run targeted package unit tests for handler and security utils"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer transcode fallback vs. clearer error vs. docs-only fix"
+    ],
+    "why": "Issue provides an executable curl reproduction, precise code anchors (handler/knowledge.go:346-347, knowledge_create.go:138, utils/security.go ValidateInputSyntax), and a comment that narrows the root cause to non-UTF-8 (GBK/CP936) filename bytes from Windows curl failing utf8.ValidString. A concrete fix path (fallback transcode or clearer error) and a validation path (Python multipart with UTF-8 filename succeeds; Windows curl fails) are established."
   },
   "cf8c7949590b93ed75b39dc05e868101aedec6681403f9d0d6e4ea7b827c1eb3": {
     "confidence": 0.8,
