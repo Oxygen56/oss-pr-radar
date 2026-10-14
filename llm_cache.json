@@ -75824,6 +75824,44 @@
     ],
     "why": "Issue reports a concrete failure (KeyError/ValueError for model_type 'deepseek_v41' in AutoConfig.from_pretrained) with a full traceback and ordered reproduction steps, but the root cause is not established: it is unclear whether the fix belongs in sglang's HF config parsing path or in the transformers version/checkpoint config, and the candidate's own actionability evidence marks root_cause_signal=false. Additionally, three open PRs (#38950, #39370, #39392) semantically overlap on dsv4/dsv4_1/checkpoint, and the duplicate assessment is 'semantic_overlap_requires_review' with no direct code overlap or issue linkage, so coverage is unresolved."
   },
+  "7bec4197e6810b5bb4e0babd13c31412642e566cd00a5a0ef3d85af809597b80": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims broad multi-cause regression while open PR #46438 overlaps the same code paths without referencing the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/middleware/redis_request_batch_middleware.py",
+      "litellm/proxy/auth/auth_object_prefetch.py",
+      "litellm/router.py deployment usage tracking",
+      "litellm/proxy/spend_tracking/*"
+    ],
+    "risks": [
+      "Existing PR #46438 may already cover the root cause, making a new contribution duplicative",
+      "Multiple independent causes make a single minimal fix unlikely to resolve the reported 4-7x regression",
+      "Behavior changes to auth/middleware gating could alter API semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a failing benchmark/test from the issue's Docker Compose + Locust setup comparing v1.101.0 vs v1.105.0",
+      "Add targeted unit tests asserting middleware/auth-prefetch are no-ops when features are unconfigured",
+      "Verify single Redis pipeline per request for deployment usage tracking"
+    ],
+    "unknowns": [
+      "Whether PR #46438 already fixes the root cause",
+      "No public minimal reproduction or maintainer-confirmed root cause",
+      "Which of the six listed causes actually dominates the regression"
+    ],
+    "why": "Issue is a broad multi-cause performance regression (middleware, auth prefetch, double Redis calls, spend tracking) with no public minimal reproduction and no maintainer confirmation. Open PR #46438 has semantic overlap on the same code paths and must be compared before any new work; the issue's own root-cause list is a diff-based hypothesis, not a validated single cause."
+  },
   "7bed06ef6e24083f5e886c2b92c7e22ffd90c7461276fd55f01fdef6cb350369": {
     "confidence": 0.85,
     "contradictions": [],
@@ -117230,6 +117268,40 @@
     ],
     "why": "Issue reports a concrete, reproducible quality regression for compressed-tensors W4A16 int4 symmetric group-128 checkpoints, with PPL/KLD/top-1 evidence and a runnable docker repro. However, the root cause is explicitly unverified: the reporter lists two remaining suspects (packed int4 in_proj_qkv sharding into fused in_proj_qkvz, and the symmetric group-128 WNA16 kernel path) and has not isolated either. The candidate's own actionability evidence marks root_cause_signal=false. Additionally, open PR #31555 ('Add W4A16Sparse24 dense-dequant fallback for compressed-tensors int4') has semantic overlap on checkpoint/compressed_tensors/int4/w4a16 and touches the same code area, but its relation to this issue is unresolved (references_issue=false, direct_code_overlap=false, technical_complete=false, root_cause_coverage=false). Whether that PR already covers the root cause materially determines whether new code work is actionable."
   },
+  "c2ae8a92075bb32d337708ac57ede07b97a0afa9e409f8ceee441ed6c29e277b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue lists two mutually exclusive leading candidate root causes without discriminating evidence"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "crates/goose/src/session/session_manager.rs: WAL checkpoint policy / busy retry",
+      "ACP session/prompt error surfacing for turn failures"
+    ],
+    "risks": [
+      "Root cause is unconfirmed; fix may target the wrong layer",
+      "Changing checkpoint/retry behavior could affect write latency or durability",
+      "Assignment requirement unmet"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with N concurrent sessions performing heavy filesystem work and measure WAL size over time",
+      "Add a regression test asserting WAL stays bounded under sustained concurrent writes",
+      "Verify SQLITE_BUSY retry at transaction boundary does not replay ambiguous commits"
+    ],
+    "unknowns": [
+      "Actual internal error from the failed turns (never persisted)",
+      "Whether maintainers require assignment before PRs",
+      "Whether WAL growth is causal vs. coincidental to turn failures"
+    ],
+    "why": "Issue provides a plausible WAL-growth hypothesis and code anchor in session_manager.rs, but the actual internal failure was never captured (stderr to /dev/null), so the causal link between the 163 MB WAL and 'The agent stopped before it finished' is unverified. The issue itself lists two competing candidate root causes (SQLITE_BUSY contention vs. turn-state contention), and the repository policy requires assignment (needs_assignment) before contribution."
+  },
   "c2b13fbc60fa161c8d130ddadabf0d09a3d9b33c1c2118bb81d7ab35332029b1": {
     "confidence": 0.85,
     "contradictions": [],
@@ -145407,6 +145479,38 @@
       "Whether maintainer prefers system message approach over faster error surfacing"
     ],
     "why": "Issue provides a clear root cause: connection-refused is mapped to retryable NetworkError, and Ollama's generous retry budget causes ~2min delay. Maintainer confirms the behavior and discusses trade-offs, but no PR exists. A focused fix distinguishing permanent connection failures from transient network errors is actionable and testable."
+  },
+  "eee95954fc59997d6338aa4e16ccf37b4bdd172946f248611eee07f38614636f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate duplicate assessment says 'none', but the bot comment identifies #52363 as a likely duplicate with a specific reproduction condition"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Provider registration/activation path for openai after OAuth credential save",
+      "Possibly provider list resolution when multiple providers are connected"
+    ],
+    "risks": [
+      "Working on this may duplicate or conflict with the fix tracked in #52363",
+      "Root cause may be in provider-list resolution rather than OAuth credential wiring, changing the fix location"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with OpenAI as the only connected provider and confirm openai/* models appear",
+      "Reproduce with OpenCode Zen/Go connected and confirm the failure, then add a regression test around provider materialization"
+    ],
+    "unknowns": [
+      "Whether #52363 already covers or has an in-progress fix for this exact failure",
+      "Whether the failure is caused by provider-list resolution when OpenCode Zen/Go is connected rather than by OAuth credential wiring"
+    ],
+    "why": "The issue reports a clear symptom (OpenAI OAuth credential saved but provider never materializes), but the supplied evidence does not establish a root cause. The bot comment identifies #52363 as a likely duplicate with a specific reproduction condition (only occurs when OpenCode Zen/Go is connected), which directly contradicts the candidate's 'duplicate: none' assessment and makes the actionable code path uncertain."
   },
   "eee9db327cfb64d5e8f180d054379a8dc76f15569289aa5557a69d0d7c640c00": {
     "confidence": 0.6,
