@@ -70343,6 +70343,37 @@
     ],
     "why": "Issue provides a concrete distributed-training invariant violation: wait() is non-idempotent on AllGatherHandle/NoGatherHandle, causing a released ZeRO-3 parameter to be marked AVAILABLE over empty storage. Root cause is traced to specific code paths (__all_gather_params_ registering one handle under many params, _fetch_sub_module_impl popping/waited per module) with a step-by-step sequence and two handle-level reproductions on 2 GPUs. This is a genuine algorithm/mechanism bug, not plumbing."
   },
+  "72c5ad7cda6021f4012701067cd1c728656191c37598d00cf46f4250c41108c5": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: avoid tearing down the shared StreamableHTTPSessionManager TaskGroup while other in-flight requests are using it",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools fetches are not cancelled by an unrelated stateless request handler's cancel scope"
+    ],
+    "risks": [
+      "Fix may require changing session-manager lifecycle semantics, which could affect single-request latency or resource cleanup",
+      "The exact upstream anyio/mcp version behavior may differ, so the reproduction must be pinned to the reported environment"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that issues two overlapping tools/list requests to POST /mcp against two HTTP streamable upstreams and asserts both complete without MCPServerListError(ServerListFault(tag=\"internal\"))",
+      "Run the targeted mcp_server_manager unit tests and static checks on the changed module"
+    ],
+    "unknowns": [
+      "Whether the maintainers consider #24522's closure to mean the mechanism is already addressed elsewhere",
+      "Whether the base_sha_changed pre-check failure reflects a stale base rather than a substantive blocker"
+    ],
+    "why": "Issue provides a concrete concurrency bug on the proxy /mcp endpoint with a plausible shared-TaskGroup cancel-scope root cause, ordered reproduction steps, and a real production failure pattern. It is a recurrence of a previously closed issue (#24522) whose fix did not cover this surface, and no open PR or duplicate currently covers it. Track is agent_ai_infra, so the algorithm-specific rejection rule does not apply; this is a runtime/concurrency correctness fix with a clear validation path (two overlapping tools/list requests)."
+  },
   "72d0326c71307d687265ff726b9eb8440664c8e84d24366a34c6b2a90245ab5e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -147624,6 +147655,40 @@
       "Whether the issue qualifies as llm_algorithm track"
     ],
     "why": "The issue describes a fail-open bug in NIXL HMA receive failures causing HTTP 200 with corrupted tokens. It identifies a plausible root cause (HMA block IDs omitted from invalid_block_ids) and references a related PR #52232 that propagates failures by request ID. However, the track is llm_algorithm, and the issue lacks a concrete algorithmic mechanism (no training objective, numerical method, or kernel algorithm). It is primarily a distributed-systems error-handling bug. The deterministic gate is ALLOW_PRIVATE_WORK, but the AI disclosure conflict blocks public action. The related PR #52232 may already address the issue, but its status is unknown. Therefore, maintainer confirmation and PR status verification are needed."
+  },
+  "f3f95254e55b8c9296ba75e66333a7671c81ceb05091f4c6bd421751d23e94a9": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/permission.ts: precedence handling so agent-specific deny is not silently overridden by later global/project allow rules",
+      "packages/core/src/plugin/plan.ts: plan agent permission rule ordering/merging",
+      "possibly startup validation warning when effective plan edit permission resolves to allow"
+    ],
+    "risks": [
+      "Changing findLast precedence could alter documented last-match-wins semantics for other permission rules",
+      "Fix scope may overlap with related issues #53955/#54165 (plan shell rule) and #39715 (warning request)",
+      "No maintainer design preference stated for precedence vs warning approach"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test for Permission.evaluate with plan deny followed by global allow, asserting deny wins",
+      "Reproduce via the supplied drive.ts script: global permission.edit '*' allow, switch to Plan, invoke patch on src/value.ts, assert file unchanged",
+      "Regression test that plan agent still allows edits under ~/.opencode/plan/",
+      "Run targeted package unit tests and static checks for core permission/plugin modules"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer precedence change in Permission.evaluate versus a startup warning (issue lists both options)",
+      "Whether the related plan shell-rule issues should be fixed in the same change"
+    ],
+    "why": "Issue provides a concrete, reproduced root cause: Permission.evaluate uses findLast, so global/project config allow rules appended after the plan plugin's deny override the built-in plan agent's read-only enforcement. A maintainer-side bot reproduced it on dev with a drive.ts script and confirmed the code path (packages/core/src/permission.ts, packages/core/src/plugin/plan.ts). This is a user-visible security/behavior bug with a clear minimal fix and validation path."
   },
   "f3f9d25b050598d268fa98599ba6bc00216eaaf706c346509a83fde42b4965d5": {
     "confidence": 0.7,
