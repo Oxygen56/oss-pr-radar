@@ -145480,6 +145480,36 @@
     ],
     "why": "The issue reports a production crash in DurableAgent inference, with a detailed root-cause analysis pointing to a missing guard in released versions and a deeper bug in message conversion after observational-memory buffering. However, the reporter's own follow-up comments reveal that the initial root cause was incorrect and the actual crash originates from an undefined content entry in OpenAI-compatible message conversion. The maintainer has only labeled the issue for triage, and no maintainer has confirmed the design or approved a fix. The proposed fixes are plausible but require maintainer confirmation on the preferred approach (e.g., filtering undefined parts vs. defensive converter changes) and a release plan. The issue is actionable but needs maintainer input to avoid conflicting with existing design decisions."
   },
+  "ef04696ae92b6a98aa87796dde3cf674e55e092c62fe883cab807767de96e703": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request upstream fetch from shared stateless session TaskGroup teardown",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools cancellation is scoped to the owning request"
+    ],
+    "risks": [
+      "Fix may alter shared session lifecycle semantics for stateless MCP requests",
+      "Maintainer may prefer a different isolation strategy for the TaskGroup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two overlapping tools/list requests to POST /mcp against two HTTP streamable upstreams and assert neither is cancelled",
+      "Run targeted unit tests for the mcp_server_manager module and static checks"
+    ],
+    "unknowns": [
+      "Whether the closed #24522 fix attempt left partial code that changes the minimal fix shape"
+    ],
+    "why": "Issue provides a concrete concurrency bug with traceback, ordered reproduction steps, and a specific mechanism (shared StreamableHTTPSessionManager TaskGroup cancel-scope teardown cancelling in-flight list_tools fetches). Code anchors point to mcp_server_manager.py and experimental_mcp_client/client.py. No open PR or duplicate covers it; no assignment or AI-use prohibition is present. This is agent/inference infra plumbing rather than an algorithm contribution, but the track is agent_ai_infra, so the algorithm-only rejection does not apply."
+  },
   "ef1188aea5cf13d9e35f91a21cbf33c213840ab48c10192b00b3dc1df3b3a641": {
     "confidence": 0.7,
     "contradictions": [],
