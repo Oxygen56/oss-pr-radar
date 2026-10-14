@@ -60250,6 +60250,37 @@
     ],
     "why": "Issue provides a precise root cause (lagged broadcast receiver replays buffered pre-resync events after list_and_watch reconciles from list_state), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a concrete unit-test reproduction on a current-thread runtime with the 16-slot client_with helper, and an expected-vs-actual event ordering. The proposed fix (resubscribe under the list_state read lock) matches the existing mem.rs pattern, giving a concrete validation path. The open PR #15767 covers the same path but lacks tests, so a test-backed fix remains actionable rather than covered."
   },
+  "63a6a81061475247f8e630e3c15a51f10e57ccece2db483d8c854e5a1db44452": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims qualified=true with post_training_objective/evaluation_method, but the issue is a parser bug with no training objective or evaluation methodology"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "api/core/llm_generator/output_parser/structured_output.py reasoning-strip before extraction",
+      "schema validation of parsed object against node schema"
+    ],
+    "risks": [
+      "PR #44005 may already cover the reasoning-strip fix, making a new implementation duplicative",
+      "Schema enforcement scope is explicitly out of scope in the existing PR, so partial overlap only"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Regression fixture: content = '<think>...schema...</think>{\"platform_name\":\"LinkedIn\",\"post_content\":\"...\"}' asserting structured_output equals the post-think JSON",
+      "Assert schema-invalid objects (whole schema, placeholder 'string') fail the node rather than pass downstream"
+    ],
+    "unknowns": [
+      "Whether PR #44005 will be merged and whether it fully resolves the reported failure modes"
+    ],
+    "why": "Issue is a well-diagnosed bug in Dify's structured-output parser (reasoning block contamination), but it is ordinary application/parser plumbing, not an LLM algorithm contribution. Track=llm_algorithm requires a training objective, model mechanism, distributed invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; the matched terms (advantages, contamination) are incidental and the 'algorithm_evidence' is a keyword artifact. Additionally, open PR #44005 already targets the same code path (structured_output.py) with a test file, and the issue itself is a bug report, not a code contribution."
+  },
   "63b2021077396907c0f6968d6da7f69417a9a8f9fcc2f82ed7539de8edf5baf5": {
     "confidence": 0.8,
     "contradictions": [],
