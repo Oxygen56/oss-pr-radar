@@ -45459,3 +45459,168 @@ def test_go_offline_execution_flag_keeps_failed_check_in_original_validation(mon
     )
     assert reserved.get("blocked") is not True
     assert reserved["prefetch"] == []
+
+
+def _same_failed_formal_validation(worktree, token, *, rewritten=False, retry_history=False):
+    command_prefix = "GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off "
+    checks = [
+        {
+            "command": "go test -overlay "
+            + str(worktree / ".oss-pr-radar" / ("validation-" + token) / "baseline-overlay.json")
+            + " ./internal/webhook/validation",
+            "cwd": str(worktree),
+            "phase": "before_fix",
+            "exitCode": 1,
+            "result": "Selected baseline fails the original admission regression.",
+        }
+    ]
+    if retry_history:
+        checks.append(
+            {
+                "command": command_prefix + "make check",
+                "cwd": str(worktree),
+                "phase": "formal",
+                "exitCode": 2,
+                "result": "Tool refresh blocked by module lookup disabled by GOPROXY=off.",
+            }
+        )
+    for command, reason in [
+        ("make check", "Black is absent; generated Python differs."),
+        ("make lint", "Export data version 4 exceeds supported version 2."),
+        ("make test", "PodCliqueSet instead of TopologyConstraint."),
+    ]:
+        checks.append(
+            {
+                "command": command_prefix + command,
+                "cwd": str(worktree),
+                "phase": "formal",
+                "exitCode": 2,
+                "result": "Original check still fails: " + reason if rewritten else reason,
+            }
+        )
+    checks.append(
+        {
+            "command": "go test ./internal/webhook/validation -run TestNamespace",
+            "cwd": str(worktree),
+            "phase": "after_fix",
+            "exitCode": 0,
+            "result": "Current admission regression passes.",
+        }
+    )
+    return {"headSha": "unchanged-head", "contextDigest": "unchanged-context", "tests": checks}
+
+
+def test_same_current_failures_stop_after_historical_paths_and_descriptions_change(tmp_path):
+    store, worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    first = _same_failed_formal_validation(worktree, "8c30ad0f", retry_history=True)
+    repeated = _same_failed_formal_validation(worktree, "7f9ad5b7", rewritten=True)
+    first_digest, repeated_digest = sha256_json(first), sha256_json(repeated)
+    missing = ["relevant_tests_green", "independent_review_passed"]
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=first_digest,
+        missing=missing,
+        progress_marker=MODULE._validation_progress_marker(first),
+    )
+    assert len(store.validation_followup_candidates()) == 1
+    reserved = store.reserve_validation_followup(thread_id="thread-1", result_digest=first_digest)
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest=first_digest,
+        reservation_digest=reserved["reservationDigest"],
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=repeated_digest,
+        missing=missing,
+        progress_marker=MODULE._validation_progress_marker(repeated),
+    )
+    assert store.validation_followup_candidates() == []
+    blocked = store.validation_no_progress()
+    assert len(blocked) == 1
+    assert blocked[0]["resultDigest"] == repeated_digest
+    assert blocked[0]["previousResultDigest"] == first_digest
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.parametrize(
+    "change", ["command", "cwd", "exit", "new_failure", "unnamed_failure", "resolved"]
+)
+def test_stable_current_failure_marker_preserves_real_check_changes(tmp_path, change):
+    original = _same_failed_formal_validation(tmp_path, "first")
+    changed = copy.deepcopy(original)
+    target = changed["tests"][1]
+    if change == "command":
+        target["command"] += " CHECK_SCOPE=all"
+    elif change == "cwd":
+        target["cwd"] = str(tmp_path / "other")
+    elif change == "exit":
+        target["exitCode"] = 1
+    elif change == "new_failure":
+        changed["tests"].append(
+            {"command": "make verify-api", "cwd": str(tmp_path), "phase": "formal", "exitCode": 2}
+        )
+    elif change == "unnamed_failure":
+        changed["tests"].append({"cwd": str(tmp_path), "phase": "formal", "exitCode": 1})
+    else:
+        target["exitCode"] = 0
+    assert MODULE._validation_progress_marker(original) != MODULE._validation_progress_marker(
+        changed
+    )
+
+
+def test_same_legacy_validation_stop_is_not_rearmed_only_by_marker_upgrade(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green", "independent_review_passed")
+    )
+    value = json.loads(result_path.read_text())
+    value["tests"] = _same_failed_formal_validation(worktree, "old")["tests"]
+    result_path.write_text(json.dumps(value))
+    _refresh_reproduction_certificate(result_path)
+    current_marker = MODULE._validation_progress_marker
+    monkeypatch.setattr(
+        MODULE, "_validation_progress_marker", MODULE._legacy_validation_progress_marker
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    first = store.validation_followup_candidates()[0]
+    reservation = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest=first["resultDigest"]
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest=first["resultDigest"],
+        reservation_digest=reservation["reservationDigest"],
+    )
+    value["evidence"] = {"summary": "Original same failed formal checks remain."}
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path)
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["relevant_tests_green", "independent_review_passed"],
+        progress_marker=MODULE._legacy_validation_progress_marker(value),
+    )
+    assert len(store.validation_no_progress()) == 1
+    assert store.validation_followup_candidates() == []
+    monkeypatch.setattr(MODULE, "_validation_progress_marker", current_marker)
+    assert current_marker(value) != MODULE._legacy_validation_progress_marker(value)
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["rearmedReviewFeedback"] == []
+    assert listed["candidates"] == []
+    assert listed["blockedNoProgress"][0]["resultDigest"] == digest

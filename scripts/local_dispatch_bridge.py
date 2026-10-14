@@ -24405,6 +24405,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                     elif (
                         current_progress_marker
                         and current_progress_marker != recorded_progress_marker
+                        and _legacy_validation_progress_marker(value) != recorded_progress_marker
                     ):
                         reason = "VALIDATION_PROGRESS_EVIDENCE_AVAILABLE"
                         review_marker = current_progress_marker
@@ -25032,6 +25033,32 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
 
 
 def _validation_progress_marker(value: dict[str, Any]) -> str | None:
+    """Track current unresolved check identities without descriptive or historical noise."""
+
+    failed = unresolved_current_test_failures(value)
+    if not failed:
+        return _legacy_validation_progress_marker(value)
+    checks = []
+    for item in failed:
+        command = " ".join(str(item.get("command") or "").split())
+        check = {
+            "command": re.sub(
+                r"(?<!\S)TMPDIR=(['\"]?)/private/tmp/opr-[A-Za-z0-9]{6}\1(?=\s|$)",
+                "TMPDIR=/private/tmp/opr-XXXXXX",
+                command,
+            ),
+            "cwd": str(item.get("workingDirectory") or item.get("cwd") or "").strip(),
+        }
+        if isinstance(item.get("exitCode"), int):
+            check["exitCode"] = item["exitCode"]
+        checks.append(check)
+    if not checks:
+        return _legacy_validation_progress_marker(value)
+    checks.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+    return sha256_json({"checks": checks})
+
+
+def _legacy_validation_progress_marker(value: dict[str, Any]) -> str | None:
     """Fingerprint stable check outcomes so new evidence is not treated as a loop."""
 
     checks: list[dict[str, Any]] = []
