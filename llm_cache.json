@@ -67917,6 +67917,38 @@
     ],
     "why": "Issue documents a concrete root cause (vendored hono .d.ts in @mastra/mcp dist/_types causing nominal type mismatch for consumer-supplied SSEStreamingApi) with a minimal repro and a proposed fix mirroring #23774. However, the supplied duplicate assessment flags PR #23776 ('fix(mcp): declare hono as peer dependency and stop vendoring its types') as direct code overlap with the same issue, but its state is CLOSED and coverage is unconfirmed ('human_review_required'). Whether that closed PR already resolves the issue is a materially blocking unknown that determines whether new code work is actionable."
   },
+  "6f104f83d3183c061d0e71aec5e566ade8582e470ab6217fd86b69b44569be0f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Admin UI usage date-range preset calculation (Last 7 days / Last 30 days) to use inclusive 7-day span",
+      "Regression tests covering timezone and calendar-boundary date ranges"
+    ],
+    "risks": [
+      "Changing preset semantics may affect other presets or backend query ranges if shared helper is reused",
+      "Timezone handling could shift boundaries for non-UTC users if fix is not timezone-aware",
+      "Existing open PR #46199 may overlap; coordinate to avoid duplicate implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with browser timezone Asia/Shanghai on a fixed date: select 'Last 7 days' and assert heading shows Oct 7 - Oct 13 and chart has exactly 7 buckets",
+      "Add unit test for the preset date-range helper asserting inclusive day count equals 7 (and 30) across DST/timezone boundaries",
+      "Run targeted Admin UI test suite and lint/type checks"
+    ],
+    "unknowns": [
+      "Exact file/function implementing the preset (code anchor only shows 'Apply')",
+      "Whether maintainers prefer changing preset math vs. relabeling the preset"
+    ],
+    "why": "Issue provides a concrete, reproducible off-by-one in the Admin UI 'Last 7 days' preset with expected/actual date ranges, timezone context, and a plausible root cause (moment().subtract(7,'days') with inclusive endpoints). This is a bounded UI date-range bug with a clear validation path (assert exactly 7 inclusive calendar days across timezone boundaries). Open PR #46199 is a weak competitor with no root-cause coverage, so a focused fix plus regression tests remains actionable."
+  },
   "6f150ce740d6b69e420725756cd86fe5b09bb454426044e770aa27814bc0a710": {
     "confidence": 0.6,
     "contradictions": [
@@ -112679,6 +112711,41 @@
       "Maintainer preference on whether to patch upstream or workaround locally"
     ],
     "why": "Issue provides a clear root cause and minimal reproducer, but the fix requires coordination with upstream blockbuster and maintainer preference on test ordering vs. upstream patch. No existing PR, but the deterministic gate says HUMAN_REVIEW, so we wait for maintainer direction."
+  },
+  "bbf3946944ab37baff1af46a3a2661fd2d35c8228258b8b3998f834b102da955": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.actionability_evidence claims root_cause_signal=true and probe_ready=true, while the issue body states the root cause is unknown and no verified reproducer exists.",
+      "candidate.algorithm_evidence claims qualified=true with three algorithm mechanisms, but matched terms are generic (block size, bootstrap, quantization) and the reported failure is NCCL initialization, not an algorithm/numerical defect."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No actionable code change can be scoped until a reproducible failure and root cause exist; candidate paths (bootstrap.py, pynccl_wrapper.py) are only report-author references, not confirmed fault sites."
+    ],
+    "risks": [
+      "Acting on an unverified historical symptom risks fixing the wrong layer (NCCL/driver/transport vs. model code).",
+      "Potential overlap with issue #40877 (SM120 DeepSeek-V4.1-Flash field report) is unresolved and could duplicate effort.",
+      "Floating image tag dev-dsv41 and missing dependency versions make any fix unverifiable."
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Obtain a current-version reproduction on the stated SM120/DSPARK configuration with exact image digest, model revision, launch command, and per-rank logs; then build a reference-vs-implementation or numerical/behavioral regression around the first failing rank."
+    ],
+    "unknowns": [
+      "Whether the failure reproduces on current upstream.",
+      "First failing rank, error ordering, and whether the hang is deadlock, timeout, or downstream of an earlier failure.",
+      "Exact model revision, image digest, driver/CUDA/NCCL/PyTorch versions for the failing run.",
+      "Whether issue #40877 already covers the same SM120 DSPARK symptom."
+    ],
+    "why": "The issue is explicitly a historical, unverified report: no run ID, no timestamped rank logs, no first error, no verified reproducer, and no matching environment capture. The checklist itself marks reproduction and environment as NOT VERIFIED/MISSING. The algorithm_evidence mechanisms (numerics_quantization, evaluation_method, kernel_algorithm) are keyword matches (block size, bootstrap, quantization) with no formula, no code path, and no concrete training/quantization/kernel/evaluation methodology; the actual symptom is NCCL init failure, i.e. distributed plumbing, not an llm_algorithm contribution."
   },
   "bc23cdeee6ac62f40c2b5c04ba273983db6f01a73995769c887106ca9f56390a": {
     "confidence": 0.82,
