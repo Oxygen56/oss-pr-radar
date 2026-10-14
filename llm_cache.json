@@ -75277,6 +75277,38 @@
     ],
     "why": "Issue describes a plausible deadlock in fastsafetensors ParallelLoader when loading draft models under pipeline parallelism, with a concrete repro and suggested fix. However, the related issue audit timed out, and the existing PR #50514 is open with failed CI and unclear semantic overlap. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with AI disclosure, so work cannot start without maintainer confirmation."
   },
+  "7ba18430d0c4463422016d7407e43f625158767770858cd2719bb4114b11d3ad": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims account_type PRIVATE while Graph reports MEDIA_CREATOR, but no code evidence confirms the mapping source"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "instagram toolkit send-message scope/auth handling",
+      "account_type mapping in connection management"
+    ],
+    "risks": [
+      "Root cause may be external Meta app permission configuration, not fixable in this repo",
+      "Changing OAuth scopes could affect other toolkits"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce INSTAGRAM_SEND_TEXT_MESSAGE 403 with a Creator account inside the 24h window",
+      "Add regression test asserting account_type MEDIA_CREATOR is not reported as PRIVATE"
+    ],
+    "unknowns": [
+      "Whether the managed Meta app actually lacks the messaging scope",
+      "Whether repository assignment requirement is satisfied",
+      "Whether the failure is reproducible in-repo vs external app config"
+    ],
+    "why": "Issue reports a 403 messaging failure with a suspected but unconfirmed cause (missing Advanced Access / scope in the managed Meta app) and a separate account_type mapping bug. No root cause is established in code, and the track is agent_ai_infra where this is provider integration/API plumbing rather than an algorithm contribution. The repository policy requires assignment (needs_assignment) and the issue has no assignee, which is a materially blocking unknown for actionability."
+  },
   "7bafb720133c05b4137486593349fd54f50fbee95133e610fd5dd96615e0caed": {
     "confidence": 0.7,
     "contradictions": [],
@@ -123271,6 +123303,37 @@
       "Whether the underlying offset bug from #37968 will be fixed in tandem"
     ],
     "why": "The issue identifies a concrete root cause: a data-dependent RuntimeError in _adjust_embedding_length during multimodal chunked prefill kills the entire scheduler process via SIGQUIT, amplified by client retries across nodes. The proposed fix (abort request instead of server) is actionable and testable, with clear reproduction evidence and a related issue (#37968) pointing to a specific offset bug."
+  },
+  "cc66e6e02128459ebc86bb0ce406d7d5e5c9012e9b45eeeccc32820a34895756": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/application/service/wiki_ingest.go: normalize loose placeholder variants (wkimg/0010, wkimg_0010, wkimg-0010, 'wkimg 0010', full-width colon) to canonical wkimg:NNNN before urlMap lookup",
+      "internal/application/service/wiki_ingest.go: broaden the drop rule in unmaskImageURLs to a case-insensitive `wkimg` prefix so any residual placeholder is removed rather than persisted"
+    ],
+    "risks": [
+      "Loose normalization could accidentally match legitimate non-placeholder text beginning with 'wkimg'",
+      "Broadening the drop rule may silently remove content the model intended to keep if a real URL ever starts with 'wkimg'",
+      "Maintainer may prefer a different normalization strategy or prompt-level mitigation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for unmaskImageURLs/replaceImagePlaceholderTokens feeding `wkimg/0010`, `wkimg_0010`, `wkimg-0010`, `wkimg 0010`, `wkimg：0010`, and an unknown `wkimg:9999`, asserting known indices restore to their real URL and unknown/loose variants are dropped",
+      "Regression test asserting no output string contains a `wkimg` prefix after unmasking",
+      "Run targeted package tests for internal/application/service plus go vet/staticcheck"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for placeholder normalization vs. prompt hardening"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: unmaskImageURLs only recognizes the exact `wkimg:` prefix, so LLM-rewritten placeholders like `wkimg/0010` are neither restored nor dropped and persist as broken image links. Reproduction steps, expected/actual behavior, and a concrete fix sketch are supplied, and no duplicate or competing PR covers this path."
   },
   "cc76533b6cef1a56b765805556039655f5f7c30deac46f0652b5d24945fa6731": {
     "confidence": 0.8,
