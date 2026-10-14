@@ -19087,6 +19087,40 @@
     ],
     "why": "Issue provides a concrete, reproducible root cause: the COMPOSIO_MANAGE_SKILL tool schema exposes a bare top-level anyOf without an outer type:object, which Vertex AI rejects with HTTP 400 INVALID_ARGUMENT. Reproduction steps, exact error output, and the offending schema are supplied, and the fix (wrap union in an object schema) is well-defined and testable."
   },
+  "2228d14b1e166071e6d647f6b8879305232593f97c96c7b103ed705cac92d525": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "streaming tool-call jail handle_trailing_content: re-jail a Complete start marker in trailing bytes instead of emitting it as content",
+      "chunk/finish/tool-call state propagation across multi-token delta boundaries",
+      "add streaming regression test covering parallel tool calls split across chunk boundaries"
+    ],
+    "risks": [
+      "Potential overlap with issue #15828 (vLLM chat processor parallel tool-call leak) — may share root cause or be a duplicate; needs confirmation before implementation",
+      "Open PR #15829 touches tool-text buffering in the frontend and could partially cover the same behavior",
+      "Avoid widening API behavior changes beyond the jail fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build a failing unit test in the streaming jail (gemma4 parser) feeding the exact delta sequence from the issue and assert both tool calls land in tool_calls and message.content is null",
+      "Add a bursty-chunking regression test over a 3-parallel-call stream for gemma4/llama3_json/pythonic",
+      "Run targeted package unit tests and static checks for the parser crate"
+    ],
+    "unknowns": [
+      "Whether #15828 is the same defect or a distinct code path (vLLM chat processor vs streaming jail)",
+      "Whether PR #15829 already fixes or conflicts with this jail path"
+    ],
+    "why": "Issue provides a deterministic minimal reproduction (ordered deltas with a chunk straddling call A's end and call B's start), names the exact code path (handle_trailing_content only handling MatchResult::Partial, letting MatchResult::Complete fall through), and lists affected/unaffected parser families. This is a concrete streaming tool-call jail state-propagation bug with a clear reference-vs-implementation validation path."
+  },
   "22355f19eb9136e702528c93193209f90055ebe15317909e8aa4ea004b7a5de5": {
     "confidence": 0.9,
     "contradictions": [],
@@ -45025,6 +45059,37 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue describes a clear client-triggerable engine crash with a concrete root-cause hypothesis and reproduction. However, the supplied gate decision is HUMAN_REVIEW and the open PR assessment flags semantic overlap with PR #52097 and #52132, requiring manual comparison before creating a new task. The candidate is actionable but blocked by the need to review existing PRs and maintainer input."
+  },
+  "4cd6536a7d581db32cbf15b4c3616788598864e6562f1e36b73ddb09f4fbe03c": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/provider-utils/src/post-multipart-stream-to-api.ts: connect ReadableStream cancel to dispose(reason) so the active reader and pending source streams are cancelled and locks released before awaiting generator return"
+    ],
+    "risks": [
+      "Cancellation semantics change could affect other multipart upload paths if dispose is invoked too eagerly",
+      "Double-cancel or lock-release ordering could throw if the reader is already released",
+      "Maintainer may prefer a different cancellation wiring, but this is normal review uncertainty, not a blocker"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that cancels the multipart body while a file source read is pending and asserts the cancellation promise settles and the source stream's cancel() is invoked without externally closing the source",
+      "Run the issue's repro.mjs against the patched build to confirm settledBeforeSourceClosed=true and sourceCancelled=true",
+      "Run targeted provider-utils unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact upstream test file/location for the regression test is not specified, but the code path and validation method are concrete"
+    ],
+    "why": "Issue provides a self-contained synthetic reproduction, a concrete code anchor (post-multipart-stream-to-api.ts), and a specific root cause: body-stream cancellation calls iterator.return() which queues behind a pending generator next() awaiting reader.read(), so the generator finally/dispose path never runs and the source stream stays locked. The proposed fix (wire body cancellation to dispose(reason) before awaiting generator return, cancel active reader and not-yet-entered streams once, release locks) is a concrete, testable change with a clear regression test."
   },
   "4cfe7326a709873bfc96d7464efb1836e389c2da62a6ca5bd12dc61a2cf154f5": {
     "confidence": 0.55,
@@ -83771,6 +83836,39 @@
       "Whether a seq-len disable hook is the maintainer-preferred shape versus joint (batch, ctx) keying in #48944"
     ],
     "why": "The issue reports a concrete long-context spec-decode regression on hybrid GDN models with profiled per-cycle drafter attention cost, but the supplied comment thread materially contradicts the proposed mechanism: one commenter retracts the 'drafter rescans full KV' framing (DFlash is single-pass), another shows the DCP asymmetry is not present on the measured release, and the measured 28.85 ms overhead is ~17x larger than layer-count/sharding geometry allows. The root cause is therefore unresolved, and the candidate's own actionability evidence shows zero public reproduction signals and no maintainer confirmation."
+  },
+  "8a9c7729653958e559a19a72a1c56d63bcab24e5cd1a34ff479127f1faf37538": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks semantic_overlap_requires_review while candidate category is PR_COMPETITION_OPPORTUNITY"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/api/workspace-upload-path.ts",
+      "src/api/agent-server-home.ts",
+      "src/api/conversation-file-upload.api.ts"
+    ],
+    "risks": [
+      "Duplicating existing PR #16452 or #17793 work",
+      "Weakening the agent-server workspace guard instead of fixing Canvas path resolution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test for upload destination resolution with relative working dir, absolute working dir, and cloud runtime working dir",
+      "Reproduce 422 via curl with relative path and confirm 200 with absolute in-workspace path"
+    ],
+    "unknowns": [
+      "Whether PR #16452 or #17793 already fixes the exact 422 root cause",
+      "Maintainer preference on which PR should land"
+    ],
+    "why": "Issue provides a concrete reproduction and a plausible root cause (Canvas upload destination resolution diverging from the server's stored workspace.working_dir), but two open PRs (#17793, #16452) already overlap the same code path and semantics, and the duplicate status is explicitly 'semantic_overlap_requires_review'. Whether those PRs already cover the root cause is a materially blocking unknown for deciding if new code work is actionable."
   },
   "8aa5ee7006d1daf22109f7b611474a61d2e62b42029b82a531d5d459155b9cbb": {
     "confidence": 0.8,
@@ -149425,6 +149523,38 @@
     ],
     "why": "Issue provides a precise root cause (asymmetric serialize/deserialize heuristic), a verified local reproducer with expected vs actual outputs, and a concrete sentinel-based fix with regression tests. The affected code is isolated to a single file, and the proposed change is minimal and low-risk."
   },
+  "f77e33b9795548a9f84279a3716edb44c61c31646400cf55af589578d0e73463": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER with gate HUMAN_REVIEW, but open_pr_assessment status is 'none' and both relevant PRs are already MERGED"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code change warranted; covered by merged PRs #39424 and #39587",
+      "At most a docs/config note on SECRET_KEY consistency between api and api_websocket"
+    ],
+    "risks": [
+      "Treating a config/mount issue as a code bug would duplicate merged fixes",
+      "Dosu comment is bot-generated and unverified against the actual merged diffs"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce on tag 1.16.1 with docker compose: confirm api_websocket shares the storage volume and SECRET_KEY matches api",
+      "Verify socket.io handshake succeeds after applying the merged fixes; confirm ENABLE_COLLABORATION_MODE=false workaround restores workflow loading"
+    ],
+    "unknowns": [
+      "Whether the reporter's SECRET_KEY was explicitly set or empty",
+      "Whether the merged PRs are present in the reporter's 1.16.1 deployment"
+    ],
+    "why": "The issue's own logs and the supplied Dosu comment attribute the websocket rejection to two already-merged fixes: PR #39424 (missing shared storage mount causing SECRET_KEY divergence -> Invalid token signature) and PR #39587 (Redis pub/sub socket_timeout). Both are MERGED, so the reported defect is already covered; remaining work is configuration/ops (set SECRET_KEY, ENABLE_COLLABORATION_MODE), not a new code contribution."
+  },
   "f780eef814f26a4bae83c9cc2a0ede195c1bbafcc97fd3b248692e66c1debb6e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -153450,6 +153580,38 @@
       "Whether maintainers consider this proxy health-check bug in scope for the llm_algorithm track"
     ],
     "why": "The issue describes a proxy health-check aggregation bug keyed by litellm_params.model, with a clear root cause and a concrete patch/test. However, track=llm_algorithm requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. This is ordinary proxy health-endpoint plumbing and DB persistence, not an algorithm contribution, so it falls under the explicitly rejected installation/CLI/config/wrapper/provider-integration/API-plumbing category."
+  },
+  "fdd9b2092e765b2b21fedac57cdf2a52f0d9320d8b7c5c97ea45ef42fb9bfa94": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate duplicate status is 'none' while the issue's own bot comment asserts duplication with #51003 and lists five related issues"
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/location-services.ts idleTimeToLive",
+      "packages/core/src/location-activity.ts sweep conditions",
+      "packages/core/src/mcp/stdio.ts process-tree teardown"
+    ],
+    "risks": [
+      "Overlapping open PR #53046 may already address the same fix",
+      "Broadening activity definition could evict locations with active work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by booting multiple directories under opencode serve and measuring MCP child RSS growth",
+      "Regression test asserting all MCP children (including grandchildren) are terminated on location eviction"
+    ],
+    "unknowns": [
+      "Whether #51003 or PR #53046 already resolves the location-eviction and process-leak defects",
+      "Whether the Open Design respawn loop is genuinely uncovered and worth a separate issue"
+    ],
+    "why": "The issue's own maintainer bot comment identifies this as a duplicate of #51003 (with #37844, #51249, #50363, #46253 also covering the same root cause), and PR #53046 is already open against #51003. Duplicate/merged-fix coverage is unresolved, which materially blocks whether new code work is actionable."
   },
   "fddbf32df29d5f6b785936e46bb8a9730f20efad77dcf40db64426fcaf35da40": {
     "confidence": 0.7,
