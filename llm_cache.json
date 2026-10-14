@@ -18207,6 +18207,37 @@
     ],
     "why": "Issue pinpoints the exact line in packages/core/src/workspace/workspace.ts where the skills getter falls back to this._fs ?? new LocalSkillSource(), which is undefined when filesystem is a resolver function, causing skills to be read from the server's local disk. A self-contained, no-LLM reproduction with a control case demonstrates the leak and the missing discovery, and the expected behavior is concrete."
   },
+  "2098200b70186a2177ee0b3ee167fd0ef545e53728d3865a0d99c2752f3174c0": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body provides ordered repro steps and code anchors, but actionability_evidence reports root_cause_signal=false and probe_ready=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "McpSchema.LoggingMessageNotification.data type/deserialization handling",
+      "Client-side notification parsing path in McpClientSession"
+    ],
+    "risks": [
+      "Changing data to a generic JSON type is a public API/behavior change",
+      "Coercing objects to JSON text may lose type fidelity for consumers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test deserializing a notifications/message payload whose data is a JSON object",
+      "Regression test with a FastMCP-style {\"msg\":...,\"extra\":null} payload asserting the notification reaches logging consumers"
+    ],
+    "unknowns": [
+      "Whether repository assignment requirement is satisfied (assignees empty, policy=needs_assignment)",
+      "Maintainer-preferred representation for data (String coercion vs JsonNode/unknown type)"
+    ],
+    "why": "Issue describes a concrete deserialization failure (LoggingMessageNotification.data typed as String rejects object payloads from FastMCP), with a minimal repro and code anchors, but the supplied evidence marks root_cause_signal=false and probe_ready=false, and the repository policy requires assignment (needs_assignment) with no assignee present. The proposed fix (coerce non-string data to JSON text) is only one of several reasonable designs (e.g. JsonNode/unknown type), so the actionable code surface is not yet pinned down."
+  },
   "20c7f520726b094abb49b75fecfbb7aceeb0ca83b0a9197bd3b6c32056e72b58": {
     "confidence": 0.6,
     "contradictions": [],
@@ -67126,6 +67157,40 @@
     ],
     "why": "Issue provides a concrete root cause (lagged broadcast receiver replays buffered pre-Resync events because daemon updates list_state and sends under the same write lock), exact code anchors, a deterministic unit-test reproduction on a current-thread runtime, and a proposed fix matching mem.rs resubscribe-under-lock semantics. Open PR #15767 covers the same path but lacks regression tests, leaving a clear gap for a test-backed fix."
   },
+  "6d777e4eb9f6256d69e42b84c13d3adecd3dcb78c644b769e873e2bd2c60bc2a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "harness/copilot/hooks/aidlc-copilot-adapter.ts: bind child session id to the subagent ledger entry at its first UserPromptSubmit within the justStartedSubagent window",
+      "harness/copilot/hooks/aidlc-copilot-adapter.ts: allow SubagentStop to remove a CLI entry via agent_id, falling back to name match",
+      "harness/copilot/hooks/aidlc-copilot-adapter.ts: retain the toolu_ branch for older CLI versions",
+      "tests/fixtures/copilot-hook-payloads/: add captured CLI 1.0.96 payloads"
+    ],
+    "risks": [
+      "Child-session binding relies on a 5-second brief window; timing variance could misbind or miss the first child event",
+      "Fallback name match on SubagentStop could remove the wrong entry if multiple subagents share a name",
+      "Behavior change in attribution could affect other harnesses sharing the adapter"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Replay the captured sequence in the t249 harness (scratchProject(true)/runAdapter): SubagentStart for aidlc-architecture-reviewer-agent, then PreToolUse for 'aidlc engine orchestrate report --stage code-generation --result approved' from the child session id; assert deny",
+      "Assert the same report call from the parent session is allowed",
+      "Assert the ledger entry is removed after the captured SubagentStop carrying agent_id",
+      "Regression: older CLI toolu_ id path still denies delegated-agent report calls"
+    ],
+    "unknowns": [
+      "Exact adapter internals for justStartedSubagent and ledger schema not shown, but code anchor and reproduction are sufficient to act"
+    ],
+    "why": "Issue provides live-captured payload shapes, an ordered reproduction, a concrete code anchor (harness/copilot/hooks/aidlc-copilot-adapter.ts), and a specific root cause: CLI 1.0.96 subagent calls arrive under a fresh child session id instead of the expected toolu_ id, so activeSubagentCandidates misattributes them to the conductor and SubagentStop's agent_id fails to match the synthesized cli-<pid>-<time> ledger entry. Proposed fix is scoped to the adapter with a clear validation path."
+  },
   "6d79f37125651ebefd54341d2a16724f6b47ef7b763c0d3450f7fa400210e3c4": {
     "confidence": 0.85,
     "contradictions": [],
@@ -76790,6 +76855,44 @@
       "Whether maintainers prefer forwarding the param vs raising UnsupportedParamsError under drop_params"
     ],
     "why": "Issue provides a concrete, reproducible defect: get_supported_openai_params omits reasoning_effort for gpt-4.1/gpt-4o, and drop_params silently strips it, converting a provider 400 into a silent 200 with reasoning_tokens:0. Reproduction steps, expected behavior, and code anchors are supplied; no duplicate or merged fix covers this path."
+  },
+  "7d2695cdb2762c2f2b94e4001c55f07ac77591beeb87ae64cda4d9a3268ed1cd": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/middleware/redis_request_batch_middleware.py: make batch scope/flush a no-op when no Redis batching is used",
+      "litellm/proxy/auth/auth_object_prefetch.py: gate the 7-table prefetch join (e.g. skip for master-key auth or when objects are not needed)",
+      "litellm/router.py: collapse the eager + deferred _increment_deployment_usage into a single Redis pipeline per request",
+      "litellm/proxy/spend_tracking/spend_counter_batch.py: avoid per-request object allocation when spend batching is inactive"
+    ],
+    "risks": [
+      "Perf attribution is aggregate; individual fixes may not recover the full 4-7x, so partial improvements could be judged insufficient",
+      "Gating the auth prefetch or budget-state stamping could change auth/budget semantics if the prefetched objects are relied on downstream",
+      "Removing the eager deployment-usage increment may alter TPM/RPM accounting timing",
+      "Benchmark environment is a shared 8-core CI runner, so measurements are noisy and need repeated runs"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the reported regression with the issue's Docker Compose + Locust setup (750 concurrent users, 60 s) pinned to v1.101.0 vs v1.105.0 and record median/p95/RPS",
+      "Add a targeted regression test asserting RedisRequestBatchMiddleware performs no Redis calls and allocates no batch state when batching is unused",
+      "Add a test asserting prefetch_auth_objects is skipped for master-key auth and that deployment usage issues exactly one Redis pipeline per request",
+      "Re-run the gzip sub-case from #46339/#46362 (824 KB embeddings response, 8 in flight) and confirm /health/liveliness p99 returns to baseline"
+    ],
+    "unknowns": [
+      "No maintainer statement on which of the six identified overheads is the intended fix target or whether a design preference exists",
+      "No confirmation that the issue's own reproduction script is committed/available beyond the prose description",
+      "Whether the gzip fix in #46362 is intended to close this issue or only a partial sub-cause"
+    ],
+    "why": "Issue provides a detailed version-diff root-cause analysis with concrete code anchors (redis_request_batch_middleware.py, auth_object_prefetch.py, router.py double _increment_deployment_usage, spend_tracking subsystem) and a reproducible load-test methodology (Locust 750 users, Docker Compose, version pin as sole variable). A commenter supplies an independent measured sub-cause (gzip middleware on event loop, ~165 ms for 824 KB response, p99 529 ms -> 34 ms with fix) with a benchmark script. No duplicate/merged fix covers the issue; open PRs are keyword-overlap only with no overlapping paths. Track is agent_ai_infra, so the llm_algorithm rejection rule does not apply. Actionable as a perf regression with a reference-vs-implementation validation path."
   },
   "7d26e0275f0e931401b7a9ade03791bfeaad3d300e3af5cfd5b850ad8756bddc": {
     "confidence": 0.6,
@@ -112032,6 +112135,35 @@
     ],
     "why": "Issue identifies two concrete, code-anchored bugs on the scale-out token path: (A) derenderer decodes untruncated token IDs so stop text leaks and include_stop_str_in_output is ignored, and (B) --tokens-only sets detokenize=False after SamplingParams validation, silently disabling stop strings. Root cause (text-level stop enforcement vs token-ID transport) is clear, code anchors are specific, and a concrete validation path exists (derender parity test coupled vs derendered, plus a 400 assertion for --tokens-only)."
   },
+  "b9cea43e5e6a1e9cc136d9634c6a7ada9677fdb77a86cfaa9e7b3aef2f5c1554": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "integrations/hermes-plugin-mem0/_oss_providers.py: change pgvector default_config user from os.getenv(...) to a callable lambda resolved by vector_default_config"
+    ],
+    "risks": [
+      "Changing user to a callable could break any consumer that reads default_config directly without going through vector_default_config",
+      "The reported 'cannot access local variable os' error may stem from a broader import-context issue rather than only this field"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that imports _oss_providers in a restricted import context and asserts no NameError/UnboundLocalError",
+      "Assert vector_default_config('pgvector')['user'] is a string after call-time resolution",
+      "Run the target package's focused unit tests and static checks"
+    ],
+    "unknowns": [
+      "No public reproduction script or failing test is supplied in the issue body",
+      "Whether other default_config entries in _oss_providers.py have the same import-time evaluation pattern"
+    ],
+    "why": "Issue identifies a concrete import-time os.getenv evaluation in the PGVector default_config within _oss_providers.py, gives the exact failing code, error message, and a minimal lazy-lambda fix consistent with the existing Qdrant provider pattern; vector_default_config already resolves callables, so the change is localized and testable."
+  },
   "b9db9b78955bec014b000a0eacf9959aef3efa9f114b530bf859ed6a4bdcf821": {
     "confidence": 0.7,
     "contradictions": [],
@@ -127899,6 +128031,42 @@
     ],
     "why": "Issue provides a clear regression: 0.5.17 breaks generation for Qwen3.5-arch model, while 0.5.6.dev works. Detailed repro steps and isolation (with/without DFLASH, parser, tools) confirm a generation-level bug independent of speculative decoding. Code anchors point to qwen3 model files. Actionable fix path: add failing test and debug logits/sampling path."
   },
+  "d37aef2adcfe012c5d376e9e12959ccb78846572dfc0c63c5457cf905342dbf1": {
+    "confidence": 0.55,
+    "contradictions": [
+      "The bot claims this is a duplicate of #52363, while the reporter argues it is a version regression independent of provider coexistence.",
+      "The reporter initially stated the regression window was 2.0.26→2.0.29, then corrected it to 2.0.23→2.0.26."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/ai/src/providers/openai.ts",
+      "packages/ai/src/providers/opencode.ts",
+      "packages/core/src/plugin/provider/openai.ts"
+    ],
+    "risks": [
+      "The root cause may be server-side Console policy enforcement rather than a client code bug, making a code fix ineffective.",
+      "The issue may be a duplicate of #52363 despite the reporter's objection.",
+      "The regression window is uncertain (2.0.23→2.0.26, candidates .24/.26/.27), so the exact breaking change is unknown."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a real ChatGPT OAuth sign-in and an OpenCode Console account, then disconnect the Console credential and check whether openai/* models reappear.",
+      "Add a regression test that asserts the openai provider is registered after a successful OAuth credential save."
+    ],
+    "unknowns": [
+      "Whether the root cause is client-side provider registration or server-side Console policy enforcement.",
+      "Whether the issue is actually a duplicate of #52363.",
+      "The exact version and code change that introduced the regression."
+    ],
+    "why": "The issue reports a real, reproducible symptom (OpenAI OAuth credential saved but provider never materializes), but the supplied evidence does not establish a root cause. The bot's leading hypothesis is that OpenCode Console organization policies silently remove the provider, and it explicitly says a maintainer with Console access is needed. The reporter's regression window (2.0.23→2.0.26) is also self-corrected and uncertain. Without a confirmed root cause or a code-level anchor, the fix is not actionable."
+  },
   "d38468962b55ad6afda6bce9a3a2a15e5957b5fb557717b3c272877bb0cbd241": {
     "confidence": 0.9,
     "contradictions": [
@@ -132661,6 +132829,45 @@
       "Whether existing PR #38818 or #38719 already fully fixes the issue; requires manual comparison."
     ],
     "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced stream=True in transform_responses_api_request and incomplete aggregation in the streaming iterator, with concrete evidence and suggested fix locations. This is actionable for an agent."
+  },
+  "da5ce9b47428ad625255947e6d1ee4d02830cc1a19ec59dfa6be14845d2f2063": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels the issue as high-value/actionable while its own actionability evidence records root_cause_signal=false and probe_ready=false",
+      "Open PR #12823 overlaps the same code paths and drops the codex-acp smoke test, potentially removing the failing coverage rather than fixing it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/acp/provider.rs pending_confirmations / permission request emission",
+      "crates/goose/tests/providers.rs run_permission_test harness delivery path",
+      "crates/goose/src/agents/agent.rs submit_tool_confirmation duplicate-answer handling (only if root cause points there)"
+    ],
+    "risks": [
+      "Fixing by making duplicate answers idempotent would hide the real defect, which the maintainer explicitly rejected",
+      "Live Codex account dependency makes the test flaky and non-hermetic",
+      "Shared ~/.codex sqlite state and stack-size flake can mislead reproducers"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a mock ACP agent that emits permission requests deterministically and reproduce the duplicate ActionRequired without a live Codex account",
+      "Instrument the harness to log each ActionRequired tool_call_id and each submitted confirmation to determine whether duplication is in request emission or delivery",
+      "Add a regression test asserting exactly one confirmation per tool_call_id and that the permission phase passes"
+    ],
+    "unknowns": [
+      "Whether the duplicate originates from the adapter emitting a second permission request or from duplicate delivery of one ActionRequired",
+      "Whether a mock ACP agent reproduction is feasible with the current test harness",
+      "Whether PR #12823 already resolves or intentionally removes this coverage",
+      "Whether repository assignment (needs_assignment) has been granted"
+    ],
+    "why": "Issue explicitly states 'Not root-caused': it is unknown whether the duplicate ActionRequired comes from the adapter issuing a second permission request or from duplicate delivery to the harness. The maintainer comment additionally requires reproducing with a mock ACP agent rather than a live Codex account, and warns against masking the symptom by making duplicate answers idempotent. Without a determined root cause or a mock-based reproduction, the concrete code change is not yet actionable."
   },
   "da7144810136c4c4ea7f2386b3e4e4ca46c91cc259b368a33cc802ecb9563ca1": {
     "confidence": 0.85,
