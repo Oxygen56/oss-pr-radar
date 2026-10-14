@@ -12466,6 +12466,35 @@
     ],
     "why": "The issue's core mechanism (KiroCrew writes a top-level `permissions` key that kiro-cli 2.10.0 rejects via deny_unknown_fields) is corroborated by measured evidence, but the causal link to the reported MCP OAuth banner is explicitly unverified, and the fix space is an unresolved maintainer design decision: removing the key breaks KAS agent registration (pinned by tests), version-gating has no measured cutoff, and backend-gating changes the write funnel's contract. The issue also requires assignment (policy status needs_assignment), and the closest open PR (#10373, maintainer-owned) overlaps the ACP/permissions paths without covering the root cause, so duplicate coverage is unresolved."
   },
+  "1647e52bb3430f1920ecde62de57d68652751257f0dee31129c0595c8fd57b35": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER and gate HUMAN_REVIEW imply open work, but open_pr_assessment shows the relevant fixes already merged"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No new code change warranted; deployment config already fixed by merged PR #39424"
+    ],
+    "risks": [
+      "Duplicate effort against already-merged fixes",
+      "Issue may be closed as configuration/environment rather than code defect"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Verify docker-compose mounts shared storage for api_websocket and that SECRET_KEY is consistent across api and api_websocket services"
+    ],
+    "unknowns": [
+      "Whether the reporter's environment has an explicitly configured SECRET_KEY or relies on the empty-key fallback"
+    ],
+    "why": "The issue is a self-hosted Docker deployment misconfiguration: api_websocket generates a different signing key because the shared storage volume is not mounted, causing JWT signature verification failure. The supplied evidence shows this is already covered by merged PR #39424 (mount shared storage volume in api_websocket) and the Redis pub/sub timeout by merged PR #39587, with a maintainer confirming both fixes in another 1.16.1 report. This is deployment/configuration plumbing, not an agent/AI-infra algorithm contribution, and the actionable code fix is already merged."
+  },
   "16519cf5533c5654742400de797e7d911887310a0a6b24e3edbbb4325f9395cb": {
     "confidence": 0.7,
     "contradictions": [],
@@ -106242,6 +106271,37 @@
       "Which fix shape (seq-len hook, DCP metadata, or joint table) maintainers will accept"
     ],
     "why": "The issue reports a concrete long-context spec-decode regression with profiled ~182 ms/cycle drafter attention cost and a clear missing per-sequence-length control hook, but the supplied comment thread materially contradicts the proposed mechanism: one commenter retracts the 'drafter rescans full KV' explanation (DFlash is single-pass), another points at missing dcp_local_seq_lens in DFlashSpeculator.propose as a DCP-sharding bug, and the magnitude is unexplained (17x beyond geometry). The root cause is therefore not settled, and the fix shape (per-seq-len schedule vs DCP metadata fix vs joint batch×ctx table) is unresolved."
+  },
+  "b17b16bb2934961a2668e752b26a5a53a2a94d0166c79267d59646c5e9efc7d7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate marks duplicate status 'none' while the maintainer bot comment identifies #51071 as the same issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "subagent tool model resolution / permission enforcement in packages/core/src/model.ts and related runtime paths"
+    ],
+    "risks": [
+      "Overlapping with #51071 may cause duplicate/conflicting implementation",
+      "Broadening permission semantics could change documented subagent behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: parent on free model spawns `explore` with explicit per-call `model`; assert child inherits parent model or is denied",
+      "Regression test for a parent-model-only enforcement permission"
+    ],
+    "unknowns": [
+      "Whether #51071 is still open and unaddressed, or already has a merged/planned fix",
+      "Whether maintainers want this tracked in #51071 rather than a new issue"
+    ],
+    "why": "The issue describes a real behavior (per-call `model` on `subagent` bypasses parent-model inheritance), but the maintainer bot has flagged it as a duplicate of #51071, which covers the same root cause and proposes the same enforcement (a permission covering per-call model choices). Duplicate/merged-fix coverage is unresolved and materially determines whether new code work is actionable."
   },
   "b18eea0758739cda074d404cb4c63f32ab707058e7b09f54fce58178fc7b9995": {
     "confidence": 0.85,
