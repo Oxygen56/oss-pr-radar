@@ -33839,7 +33839,7 @@ def _completed_go_environment_recovery(
 ) -> dict[str, Any] | None:
     """Observe genuine completed missing-cache work and newly usable locked input."""
     try:
-        require_operational_authorization(ROOT)
+        require_operational_authorization(STATE.parent)
         source = candidate["environmentSource"]
         pending_nonce = candidate.get("reservationDigest") if reserved else None
         if reserved and not pending_nonce:
@@ -34046,7 +34046,7 @@ def _completed_go_environment_recovery(
                 != journal
             ):
                 return None
-            require_operational_authorization(ROOT)
+            require_operational_authorization(STATE.parent)
             if (
                 context_refresh is not None
                 and context_refresh.get("mode") == "FULL_CURRENT_READONLY_REVALIDATION"

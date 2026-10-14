@@ -45219,3 +45219,140 @@ def test_fresh_current_go_audit_adapter_rejects_malformed_current_authority(
     else:
         payload["liveAudit"]["capturedAt"] = None
     assert MODULE._fresh_readonly_revalidation_audit(intent, payload) is None
+
+
+def _completed_go_signed_separate_runtime(monkeypatch, tmp_path):
+    """Keep the original Go source in the same ledger as real temporary auth."""
+    from test_stage7 import _consume_signed_staging_fixture, _runtime
+
+    import oss_pr_radar.operational_auth as auth
+    from oss_pr_radar.local_publication import worker_specs
+    from oss_pr_radar.managed_security import sign_current
+
+    probe_root = tmp_path / "probe"
+    probe_root.mkdir()
+    old_store, worktree, result, _cache, _journal, _old = _completed_go_environment_fixture(
+        monkeypatch, probe_root
+    )
+    runtime = _runtime(tmp_path / "authority")
+    target = runtime / "state/ledger-releases/completed-go.sqlite3"
+    target.parent.mkdir(mode=0o700)
+    with old_store.connect() as source, sqlite3.connect(target) as destination:
+        source.backup(destination)
+    target.chmod(0o600)
+    (runtime / "state/current-ledger").symlink_to(target)
+    store = RadarLedger(target)
+    current = auth._current_ledger_identity(runtime)
+    release = runtime / "current-release"
+    unsigned = {
+        "schema": "oss-pr-radar.stage7-counts-evidence.v1",
+        "runtimeRootDigest": auth.runtime_root_digest(runtime),
+        "releaseId": "stage7-test",
+        "releaseHead": "a" * 40,
+        "observedAt": iso_z(datetime.now(UTC)),
+        "ledgerGeneration": current["generation"],
+        "ledgerSha256": current["sha256"],
+        "managedPrProjectionDigest": current["managedPrProjectionDigest"],
+    }
+    counts = tmp_path / "counts.json"
+    counts.write_text(
+        json.dumps({**unsigned, **sign_current(unsigned, context="stage7-counts-evidence-v1")})
+        + "\n"
+    )
+    counts.chmod(0o600)
+    home = tmp_path / "worker-home"
+    specs = worker_specs(release.resolve(), home=home, runtime_root=runtime)
+    auth.issue_worker_staging_authorization(runtime, managed_counts_evidence=counts, home=home)
+    _consume_signed_staging_fixture(runtime, home, specs)
+    automation = tmp_path / "automation.json"
+    automation.write_text('{"schema":"isolated-test-automation"}\n')
+    automation.chmod(0o600)
+    preflight = {
+        "ok": True,
+        "strictMode": "preflight",
+        "managedCountsEvidenceValid": True,
+        "stagedWorkerReceiptValid": True,
+        "actualAutomationEvidence": {"valid": True},
+        "pendingPublicationEffectsValid": True,
+        "runtimeReleasePolicyIdentityMatch": True,
+        "noRuntimeCodeDrift": True,
+        "noSharedGitWrites": True,
+        "dangerousBridgeReachable": False,
+        "oldMonolithicWorkerReachable": False,
+        "ledger": current,
+        "workerSpecDigest": auth.worker_spec_digest(specs),
+        "workers": [
+            {
+                "label": spec["Label"],
+                "actualConfigMatch": True,
+                "launchConfigMatch": True,
+                "loaded": False,
+            }
+            for spec in specs
+        ],
+    }
+    auth.issue_operational_authorization(
+        runtime,
+        preflight=preflight,
+        managed_counts_evidence=counts,
+        automation_snapshot=automation,
+    )
+    auth.finalize_operational_authorization(runtime)
+    assert auth.require_operational_authorization(runtime)["state"] == "ACTIVE"
+    monkeypatch.setattr(MODULE, "ROOT", release)
+    monkeypatch.setattr(MODULE, "STATE", runtime / "state")
+    monkeypatch.setattr(
+        MODULE, "require_operational_authorization", auth.require_operational_authorization
+    )
+    assert MODULE.ROOT != MODULE.STATE.parent == runtime
+    assert store.path == (runtime / "state/current-ledger").resolve()
+    return store, worktree, result, runtime
+
+
+@pytest.mark.parametrize(
+    "mutation", ["valid", "missing", "bad-signature", "foreign-runtime", "revoke-after-go"]
+)
+def test_completed_go_recovery_authenticates_runtime_instead_of_code_root(
+    monkeypatch, tmp_path, mutation
+):
+    import oss_pr_radar.operational_auth as auth
+    from oss_pr_radar.managed_security import sign_current
+
+    store, _worktree, result, runtime = _completed_go_signed_separate_runtime(monkeypatch, tmp_path)
+    source = store.completed_environment_recovery_sources()[0]
+    raw = result.read_bytes()
+    context_path = result.with_name("task-context.json")
+    context_raw = context_path.read_bytes()
+    with store.connect() as connection:
+        before = [tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")]
+    assert MODULE._completed_go_environment_recovery(store, source) is not None
+    if mutation != "valid":
+        path = auth.authorization_path(runtime)
+        if mutation == "missing":
+            path.unlink()
+        elif mutation in {"bad-signature", "foreign-runtime"}:
+            value = json.loads(path.read_bytes())
+            if mutation == "bad-signature":
+                value["signature"] = "0" * 64
+            else:
+                value = {k: v for k, v in value.items() if k not in {"keyId", "signature"}}
+                value["runtimeRootDigest"] = "f" * 64
+                value.update(sign_current(value, context=auth.OPERATIONAL_AUTH_CONTEXT))
+            path.write_text(json.dumps(value) + "\n")
+        else:
+            original = MODULE._go_locked_reproduction_cache
+
+            def ready_then_revoke(*args, **kwargs):
+                ready = original(*args, **kwargs)
+                assert ready is not None
+                path.unlink()
+                return ready
+
+            monkeypatch.setattr(MODULE, "_go_locked_reproduction_cache", ready_then_revoke)
+        assert MODULE._completed_go_environment_recovery(store, source) is None
+    assert result.read_bytes() == raw
+    assert context_path.read_bytes() == context_raw
+    with store.connect() as connection:
+        assert [
+            tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+        ] == before
