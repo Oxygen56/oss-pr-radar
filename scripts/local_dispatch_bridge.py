@@ -25052,7 +25052,7 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "及全部实际改动文件的并集。使用当前获准的安全分支名，并提供非空、单行、至多120字符的"
         "安全 commitMessage；保留本轮真实 tests 和缺口，复核结论仍由系统填写，保持未通过。"
         "不要自己提交或修改 Git 元数据，由系统根据这份新结果完成提交。"
-        "若当前没有未提交源码改动，则保留输入的 controller_commit_complete 或"
+        "若当前没有未提交源码改动，则保留 controller_commit_complete 或输入已有的"
         " controller_merge_complete 以及实际现有提交，不制造新提交。"
         "对于 controller_merge_complete，在该提交与两个父提交仍符合当前上下文时，"
         "必须保留控制器提供的 mergeResolutionFiles、controllerCommitChangedFiles、"
