@@ -25068,7 +25068,9 @@ def _validation_progress_marker(value: dict[str, Any]) -> str | None:
 
     failed = unresolved_current_test_failures(value)
     if not failed:
-        return _legacy_validation_progress_marker(value)
+        return _review_only_validation_progress_marker(value) or _legacy_validation_progress_marker(
+            value
+        )
     checks = []
     for item in failed:
         command = " ".join(str(item.get("command") or "").split())
@@ -25087,6 +25089,80 @@ def _validation_progress_marker(value: dict[str, Any]) -> str | None:
         return _legacy_validation_progress_marker(value)
     checks.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
     return sha256_json({"checks": checks})
+
+
+def _review_only_validation_progress_marker(value: dict[str, Any]) -> str | None:
+    """Keep an unchanged review gap independent of historical reproduction evidence."""
+
+    quality = value.get("quality")
+    commit = value.get("commitSha")
+    head = value.get("headSha")
+    context = value.get("contextDigest")
+    if (
+        not isinstance(quality, dict)
+        or quality.get("independent_review_passed") is not False
+        or set(assess_submit_ready(quality, task_result=value).missing)
+        != {"independent_review_passed"}
+        or value.get("stage") != "FIX_READY"
+        or value.get("handoffMode")
+        not in {"controller_commit_complete", "controller_merge_complete"}
+        or not isinstance(commit, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", commit)
+        or head != commit
+        or not isinstance(context, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", context)
+        or not isinstance(value.get("tests"), list)
+    ):
+        return None
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in value["tests"]:
+        if not isinstance(item, dict):
+            return None
+        phase = str(item.get("phase") or "").casefold().replace("-", "_").replace(" ", "_")
+        if phase in {
+            "before_fix",
+            "pre_fix",
+            "before_patch",
+            "pre_patch",
+            "baseline",
+            "reproduction",
+            "auxiliary",
+        }:
+            continue
+        if phase not in {"formal", "after_fix"}:
+            return None
+        command = item.get("command")
+        cwd = item.get("workingDirectory") or item.get("cwd")
+        if not isinstance(command, str) or not command.strip() or not isinstance(cwd, str):
+            return None
+        if not cwd.strip():
+            return None
+        command = re.sub(
+            r"(?<!\S)TMPDIR=(['\"]?)/private/tmp/opr-[A-Za-z0-9]{6}\1(?=\s|$)",
+            "TMPDIR=/private/tmp/opr-XXXXXX",
+            " ".join(command.split()),
+        )
+        latest[(command, cwd.strip())] = {
+            "command": command,
+            "cwd": cwd.strip(),
+            "exitCode": item.get("exitCode"),
+        }
+    if not latest or any(
+        type(item["exitCode"]) is not int or item["exitCode"] != 0 for item in latest.values()
+    ):
+        return None
+    checks = sorted(
+        latest.values(), key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":"))
+    )
+    return sha256_json(
+        {
+            "gap": "independent_review_passed",
+            "commitSha": commit,
+            "headSha": head,
+            "contextDigest": context,
+            "checks": checks,
+        }
+    )
 
 
 def _legacy_validation_progress_marker(value: dict[str, Any]) -> str | None:

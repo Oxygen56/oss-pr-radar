@@ -46055,3 +46055,319 @@ def test_stale_validation_recovery_keeps_existing_activity_and_proof_gates(
         result.write_text(json.dumps(value))
     assert MODULE.recovery_list(args)["recoverable"] == []
     assert store.unresolved_recoveries() == []
+
+
+def _review_only_green_validation(worktree, token):
+    quality = {name: True for name in QUALITY_FIELDS}
+    quality["independent_review_passed"] = False
+    return {
+        "stage": "FIX_READY",
+        "handoffMode": "controller_commit_complete",
+        "commitSha": "a" * 40,
+        "headSha": "a" * 40,
+        "contextDigest": "b" * 64,
+        "quality": quality,
+        "tests": [
+            {
+                "command": "go test -overlay "
+                + str(worktree / ".oss-pr-radar" / ("validation-" + token) / "baseline.json")
+                + " ./internal/validation",
+                "cwd": str(worktree),
+                "phase": "before_fix",
+                "exitCode": 1,
+                "result": "Original selected baseline fails the regression.",
+            },
+            {"command": "make check", "cwd": str(worktree), "phase": "formal", "exitCode": 0},
+            {"command": "make test", "cwd": str(worktree), "phase": "formal", "exitCode": 0},
+            {
+                "command": "python runtime.py",
+                "cwd": str(worktree),
+                "phase": "after_fix",
+                "exitCode": 0,
+            },
+        ],
+    }
+
+
+def test_review_only_marker_ignores_historical_paths_and_descriptions(tmp_path):
+    first = _review_only_green_validation(tmp_path, "first")
+    repeated = _review_only_green_validation(tmp_path, "second")
+    repeated["tests"][0]["result"] = "The same selected baseline failure has fresh evidence."
+    repeated["tests"][1].update(
+        summary="Current checks remain green.", logFile="/private/new-evidence/check.log"
+    )
+    repeated["tests"].append(
+        {"command": "cat /private/new-evidence/context.json", "phase": "auxiliary", "exitCode": 0}
+    )
+    assert MODULE.unresolved_current_test_failures(first) == []
+    assert MODULE.assess_submit_ready(first["quality"], task_result=first).missing == (
+        "independent_review_passed",
+    )
+    assert MODULE._validation_progress_marker(first) == MODULE._validation_progress_marker(repeated)
+    assert first["quality"]["independent_review_passed"] is False
+    assert repeated["quality"]["independent_review_passed"] is False
+
+
+@pytest.mark.parametrize("change", ["command", "cwd", "exit", "checkset", "commit", "context"])
+def test_review_only_marker_keeps_real_current_changes(tmp_path, change):
+    first = _review_only_green_validation(tmp_path, "first")
+    changed = copy.deepcopy(first)
+    if change == "command":
+        changed["tests"][1]["command"] += " -overlay /private/current-overlay.json"
+    elif change == "cwd":
+        changed["tests"][1]["cwd"] = str(tmp_path / "other")
+    elif change == "exit":
+        changed["tests"][1]["exitCode"] = 2
+    elif change == "checkset":
+        changed["tests"].append(
+            {"command": "make build", "cwd": str(tmp_path), "phase": "formal", "exitCode": 0}
+        )
+    elif change == "commit":
+        changed["commitSha"] = changed["headSha"] = "c" * 40
+    else:
+        changed["contextDigest"] = "d" * 64
+    assert MODULE._validation_progress_marker(first) != MODULE._validation_progress_marker(changed)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "quality",
+        "review_zero",
+        "review_true",
+        "other_gap",
+        "stage",
+        "handoff",
+        "commit",
+        "head",
+        "context",
+        "checks",
+        "no_current",
+        "unnamed",
+        "cwd",
+        "unknown_exit",
+        "bool_exit",
+        "unknown_phase",
+        "missing_phase",
+        "unknown_green_extra",
+    ],
+)
+def test_review_only_marker_keeps_legacy_for_incomplete_results(tmp_path, damage):
+    value = _review_only_green_validation(tmp_path, "same")
+    if damage == "quality":
+        value["quality"] = None
+    elif damage == "review_zero":
+        value["quality"]["independent_review_passed"] = 0
+    elif damage == "review_true":
+        value["quality"]["independent_review_passed"] = True
+    elif damage == "other_gap":
+        value["quality"]["relevant_tests_green"] = False
+    elif damage == "stage":
+        value["stage"] = "PR_OPEN"
+    elif damage == "handoff":
+        value["handoffMode"] = "controller_commit_required"
+    elif damage == "commit":
+        value["commitSha"] = value["headSha"] = "unknown"
+    elif damage == "head":
+        value["headSha"] = "c" * 40
+    elif damage == "context":
+        value["contextDigest"] = "unknown"
+    elif damage == "checks":
+        value["tests"] = []
+    elif damage == "no_current":
+        value["tests"] = value["tests"][:1]
+    elif damage == "unnamed":
+        value["tests"][1].pop("command")
+    elif damage == "cwd":
+        value["tests"][1].pop("cwd")
+    elif damage == "unknown_exit":
+        value["tests"][1].pop("exitCode")
+    elif damage == "unknown_phase":
+        value["tests"][1]["phase"] = "current"
+    elif damage == "missing_phase":
+        value["tests"][1].pop("phase")
+    elif damage == "unknown_green_extra":
+        value["tests"].append({"command": "make api-check", "cwd": str(tmp_path), "exitCode": 0})
+    else:
+        value["tests"][1]["exitCode"] = False
+    assert MODULE._validation_progress_marker(value) == MODULE._legacy_validation_progress_marker(
+        value
+    )
+
+
+def test_review_only_marker_uses_latest_successful_current_retry(tmp_path):
+    first = _review_only_green_validation(tmp_path, "first")
+    repeated = copy.deepcopy(first)
+    failed_retry = copy.deepcopy(repeated["tests"][1])
+    failed_retry["exitCode"] = 2
+    repeated["tests"].insert(1, failed_retry)
+    assert MODULE.unresolved_current_test_failures(repeated) == []
+    assert MODULE._validation_progress_marker(first) == MODULE._validation_progress_marker(repeated)
+
+
+def test_review_only_same_gap_stops_original_followup_after_ordinary_ingestion(tmp_path):
+    checks = _review_only_green_validation(tmp_path / "worktree", "first")["tests"]
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        controller_policy_complete=True,
+        missing_quality=("independent_review_passed",),
+        validation_checks=checks,
+    )
+    args = SimpleNamespace(ledger=store.path)
+    value = json.loads(result_path.read_bytes())
+    context = json.loads(result_path.with_name("task-context.json").read_bytes())
+    assert value["contextDigest"] == context["contextDigest"]
+    assert value["commitSha"] == value["headSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert all(item["cwd"] == str(worktree) for item in value["tests"])
+    assert MODULE.unresolved_current_test_failures(value) == []
+    assert MODULE.assess_submit_ready(value["quality"], task_result=value).missing == (
+        "independent_review_passed",
+    )
+    first_ingested = MODULE.ingest_task_results(args)
+    assert first_ingested["errors"] == []
+    assert first_ingested["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    first = store.validation_followup_candidates()[0]
+    reservation = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest=first["resultDigest"]
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest=first["resultDigest"],
+        reservation_digest=reservation["reservationDigest"],
+    )
+    value = json.loads(result_path.read_bytes())
+    value["tests"][0]["command"] = value["tests"][0]["command"].replace(
+        "validation-first", "validation-second"
+    )
+    value["tests"][0]["result"] = "Same expected baseline failure, fresh evidence directory."
+    result_path.write_text(json.dumps(value))
+    _refresh_reproduction_certificate(result_path, store=store)
+    second_ingested = MODULE.ingest_task_results(args)
+    assert second_ingested["errors"] == []
+    assert second_ingested["publicationRequests"] == []
+    final = json.loads(result_path.read_bytes())
+    assert final["quality"]["independent_review_passed"] is False
+    assert store.validation_followup_candidates() == []
+    assert len(store.validation_no_progress()) == 1
+    assert store.validation_no_progress()[0]["previousResultDigest"] == first["resultDigest"]
+
+    # Retain the original one-time handoff for actual untracked preparation work.
+    (worktree / "prepared-tool.bin").write_bytes(b"original prepared tool")
+    listed = MODULE.validation_followup_list(args)
+    assert listed["errors"] == []
+    assert listed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "WORKTREE_PROGRESS_PENDING_RESULT"}
+    ]
+    current = store.validation_followup_candidates()[0]
+    reservation = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest=current["resultDigest"]
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest=current["resultDigest"],
+        reservation_digest=reservation["reservationDigest"],
+    )
+    value = json.loads(result_path.read_bytes())
+    value["tests"][0]["command"] = value["tests"][0]["command"].replace(
+        "validation-second", "validation-third"
+    )
+    result_path.write_text(json.dumps(value))
+    _refresh_reproduction_certificate(result_path, store=store)
+    third_ingested = MODULE.ingest_task_results(args)
+    assert third_ingested["errors"] == []
+    assert third_ingested["publicationRequests"] == []
+    assert store.validation_followup_candidates() == []
+    repeated = MODULE.validation_followup_list(args)
+    assert repeated["errors"] == []
+    assert repeated["rearmedReviewFeedback"] == []
+    assert repeated["candidates"] == []
+    assert json.loads(result_path.read_bytes())["quality"]["independent_review_passed"] is False
+
+
+def test_review_only_legacy_stop_is_not_rearmed_by_marker_upgrade(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        controller_policy_complete=True,
+        missing_quality=("independent_review_passed",),
+        validation_checks=_review_only_green_validation(tmp_path / "worktree", "same")["tests"],
+    )
+    initial = json.loads(result_path.read_bytes())
+    context = json.loads(result_path.with_name("task-context.json").read_bytes())
+    assert initial["contextDigest"] == context["contextDigest"]
+    assert initial["commitSha"] == initial["headSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert MODULE.assess_submit_ready(initial["quality"], task_result=initial).missing == (
+        "independent_review_passed",
+    )
+    assert MODULE._review_only_validation_progress_marker(initial) is not None
+    current_marker = MODULE._validation_progress_marker
+    monkeypatch.setattr(
+        MODULE, "_validation_progress_marker", MODULE._legacy_validation_progress_marker
+    )
+    first_ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first_ingested["errors"] == []
+    first = store.validation_followup_candidates()[0]
+    reservation = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest=first["resultDigest"]
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest=first["resultDigest"],
+        reservation_digest=reservation["reservationDigest"],
+    )
+    value = json.loads(result_path.read_bytes())
+    value["evidence"] = {"summary": "Same pending independent review."}
+    result_path.write_text(json.dumps(value))
+    digest = _refresh_reproduction_certificate(result_path, store=store)
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["independent_review_passed"],
+        progress_marker=MODULE._legacy_validation_progress_marker(value),
+    )
+    assert len(store.validation_no_progress()) == 1
+    monkeypatch.setattr(MODULE, "_validation_progress_marker", current_marker)
+    assert current_marker(value) != MODULE._legacy_validation_progress_marker(value)
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "CONTROLLER_REVIEW_PENDING"}
+    ]
+    assert listed["candidates"] == []
+    again = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert again["rearmedReviewFeedback"] == []
+    assert again["candidates"] == []
+
+
+def test_review_only_merge_complete_marker_preserves_same_committed_gap(tmp_path):
+    first = _review_only_green_validation(tmp_path, "first")
+    repeated = _review_only_green_validation(tmp_path, "second")
+    first["handoffMode"] = repeated["handoffMode"] = "controller_merge_complete"
+    assert MODULE.unresolved_current_test_failures(first) == []
+    assert MODULE.assess_submit_ready(first["quality"], task_result=first).missing == (
+        "independent_review_passed",
+    )
+    marker = MODULE._validation_progress_marker(first)
+    assert marker is not None
+    assert marker == MODULE._validation_progress_marker(repeated)
+    assert MODULE._review_only_validation_progress_marker(first) == marker
+    assert MODULE.assess_submit_ready(repeated["quality"], task_result=repeated).ready is False
+
+
+@pytest.mark.parametrize(
+    "handoff_mode,commit",
+    [
+        ("controller_merge_required", None),
+        ("controller_merge_required", "a" * 40),
+        ("controller_commit_required", None),
+        ("controller_merge_complete", None),
+        ("controller_merge_complete", "c" * 40),
+    ],
+)
+def test_review_only_uncommitted_merge_gap_keeps_legacy(tmp_path, handoff_mode, commit):
+    value = _review_only_green_validation(tmp_path, "first")
+    value["handoffMode"] = handoff_mode
+    value["commitSha"] = commit
+    assert MODULE._review_only_validation_progress_marker(value) is None
+    assert MODULE._validation_progress_marker(value) == MODULE._legacy_validation_progress_marker(
+        value
+    )
