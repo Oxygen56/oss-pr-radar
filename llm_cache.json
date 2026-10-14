@@ -52204,6 +52204,45 @@
     ],
     "why": "The issue reports a broad failure ('every hook dispatch fails') but the only supplied human evidence (Darsh-Nandu) states that on current main the CLI's own hook payloads validate fine, so the reported failure may already be fixed. The remaining actionable scope is only improving the error message to name the offending field, which is a diagnostics/UX change rather than a root-cause fix. The candidate's own actionability evidence shows no public reproduction, no root-cause signal, and probe_ready=false, and the pre-review gate already failed on base_sha_changed and reproduction_or_validation_missing."
   },
+  "56c93d63352001cb408a19e79ecde4546fb0b48b9b6d9ded21d26b0380d099b4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body labels the report p2/triaged while the first bot comment says it stays p3; a later bot comment moves it back to p2",
+      "Issue body describes the race as timing-dependent and needing a held response, while the maintainer-bot reproduction shows it occurs on its own with an initial agent"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/app/src/runtime/directory-sync/workspace-replica.ts: acceptWorkspaces() should seed only missing rows instead of overwriting rows already delivered by the directory stream",
+      "packages/app/src/runtime/directory-sync/workspace-create-pin-race.test.ts: regression tests for stale creation snapshot vs live pin, seeding a never-received row, and not resurrecting a manually unpinned row",
+      "Optional server-side narrowing: session.ts provision callback should build the response descriptor from the freshly fetched record (line 4110) rather than the captured descriptor (line 4112)"
+    ],
+    "risks": [
+      "Changing acceptWorkspaces() to seed-only alters the new-workspace screen's immediate 'running' marking, which currently relies on that same path",
+      "The guard is a membership test, not a timestamp comparison; a timestamp rule would incorrectly let a captured pinnedAt win over a manual unpin",
+      "The server-side window is only narrowed, not closed, since descriptor building is asynchronous",
+      "Removal/tombstone races and reconnect behavior were not verified"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the replica regression: feed a pinned workspace_update via applyDelta(), then feed the older unpinned descriptor via acceptWorkspaces(); assert the row keeps pinnedAt",
+      "Assert a row never received from the directory is still seeded by acceptWorkspaces()",
+      "Assert a stale pinned snapshot cannot undo a manual unpin",
+      "Run vitest on packages/app src/runtime/directory-sync plus workspace-handling store tests (expected 79 passing)",
+      "Optional: server ordering test comparing the workspace.create.response descriptor against the pin broadcast"
+    ],
+    "unknowns": [
+      "Whether the maintainer prefers the client seed/ownership change or the server-side descriptor rebuild",
+      "Whether the new-workspace screen's immediate 'running' marking must be preserved under the seed-only guard"
+    ],
+    "why": "Issue #5447 has a confirmed root cause: the daemon's workspace.create response ships a descriptor captured during provisioning (session.ts:4100-4117), and the client's acceptWorkspaces() unconditionally overwrites the row (workspace-replica.ts:84-86), so a pin landing during agent startup is lost. A maintainer-bot reproduced it on main, and a contributor supplied a verified one-line guard plus regression tests (3 new tests, 8 total passing, 79 in the wider directory-sync run) anchored on current main. This is a concrete, testable client-merge fix, not plumbing."
+  },
   "56e2102ee12c7fb04a4b8bc33895b5e6476b2b95780a3bd80551305182779b8e": {
     "confidence": 0.85,
     "contradictions": [
@@ -101209,6 +101248,35 @@
     ],
     "why": "Issue provides a clear regression with exact version comparison, isolated variables, and a reproducible command. Root cause is narrowed to generation-level changes in 0.5.17 for Qwen3.5-arch models, with code anchors in qwen3 model files. Actionable fix path is to add a regression test and investigate sampling/logits pipeline."
   },
+  "a7b5ca5b9789836cc97ea4806225cfb9ef6bae09e13e476b9dee48f58a640e6b": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/location-services.ts idleTimeToLive",
+      "packages/core/src/location-activity.ts sweep conditions",
+      "packages/core/src/mcp/stdio.ts process tree termination"
+    ],
+    "risks": [
+      "Duplicate coverage means any fix would conflict with or duplicate PR #53046",
+      "Issue is pending bot closure as duplicate"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce by booting multiple directories under opencode serve and measuring MCP child RSS growth",
+      "Verify eviction kills all descendants including grandchildren (no PPID 1 orphans)"
+    ],
+    "unknowns": [
+      "Whether the Open Design MCP respawn loop is genuinely uncovered and could be a separate actionable issue"
+    ],
+    "why": "The issue's root cause is well documented, but the supplied evidence shows it is already covered by existing issues (#51003, #37844, #51249, #50363, #46253) and an open PR (#53046) targeting the same MCP process reclamation problem. The bot flagged it as a duplicate with a 1-day close window, and the candidate's own duplicate assessment found keyword overlap with PR #53046. This is a covered opportunity, not a new actionable contribution."
+  },
   "a7bc89b8fc6e845c21c03d1714571f7a04833292d8514b3726d29837d7176945": {
     "confidence": 0.9,
     "contradictions": [
@@ -122953,6 +123021,33 @@
     ],
     "why": "The issue describes a plausible production failure (Flux stream stays open but stops sending events, leaving an open user turn), and code anchors are supplied. However, the reporter explicitly states it is not reproducible on demand and provides no public reproduction; the pre-task evidence also flags reproduction_or_validation_missing and probe_ready=false. Without a reproducible trigger or a concrete validation path for the 'server goes quiet' condition, it is not yet determinable whether a service-level watchdog is actionable code work or a speculative feature request."
   },
+  "cc1f4d17d602a627a2a4c641f3c117b133c1647f72b92af81c76f865e39d4814": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Candidate labels include 'pending close' and 'triaging' while the gate decision is HUMAN_REVIEW; the bot comment explicitly states the issue will be closed as a duplicate of #52042."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code work: the fix belongs to the already-tracked duplicate #52042 (default capability detection / unsupportedParts handling in packages/core/src/session/model-request.ts)."
+    ],
+    "risks": [
+      "Implementing against this issue would duplicate work already tracked in #52042 and could conflict with the eventual fix there."
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursued, add a regression test asserting that a model with no declared capabilities and a text-only provider response strips image parts from tool-result history before request assembly."
+    ],
+    "unknowns": [
+      "Whether #52042 already has an accepted fix or open PR that fully covers the tool-result image path."
+    ],
+    "why": "The supplied bot comment establishes that this issue is a duplicate of #52042 with the same root cause (uncatalogued custom models defaulting to input:[\"text\",\"image\"], so unsupportedParts in packages/core/src/session/model-request.ts never strips the image). The only difference is the image source (tool result vs pasted attachment), which does not change the code path. The candidate's own duplicate assessment also found no direct code overlap with the only open PR, and the issue is already flagged 'pending close' as a duplicate."
+  },
   "cc20b2fbc19436d608f26cea5dce0565d20391546fd87ed1d536115320168658": {
     "confidence": 0.85,
     "contradictions": [],
@@ -136121,6 +136216,35 @@
       "Exact scope of changes needed in openai-protocol crate"
     ],
     "why": "Issue clearly identifies a version mismatch between Rust openai-protocol crate and Python protocol.py causing router rejection of custom tool types. However, existing PR #31184 is open but lacks tests and has CI failures, and maintainer approval is absent. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "e26225a35ee422548802f11c13cd1ef160af3a421e1d00098fa7c21320982803": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate claims high-impact agent/inference/RAG critical path, but the evidence shows a CLI boot hang in a removed v1 project-copy path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No actionable change on the current dev branch; the referenced copy.ts/copy-strategies.ts path is absent in v2"
+    ],
+    "risks": [
+      "Fixing a removed v1 code path would be wasted effort",
+      "Duplicate reports already cover the same v1 symptom"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce on v2 (opencode upgrade --major) and confirm whether the hang persists before any code work"
+    ],
+    "unknowns": [
+      "Whether the hang reproduces on v2"
+    ],
+    "why": "The issue targets OpenCode v1.19.0, but the maintainer bot states the traced code path (ProjectCopy.refresh -> GitWorktree.list) no longer exists in v2, where project copies and the copy-strategy registry were replaced by a separate worktree service. The same v1 hang was already reported in #41806, #42857, and #40439, so this is a duplicate/covered low-value opportunity on a deprecated branch."
   },
   "e265d39e79f447b188b4782e061757e8d32c2f52e0386ae44cccecd67daa6e50": {
     "confidence": 0.85,
