@@ -2541,6 +2541,37 @@ def _legacy_result_context_digest_migration_allowed(
     return value.get("contextDigest") in legacy_digests
 
 
+def _stale_validation_failure_is_task_local(
+    candidate: dict[str, Any], context: dict[str, Any], value: dict[str, Any]
+) -> bool:
+    """Identify a failed stale output to reject, never to accept or rebind."""
+    quality = value.get("quality")
+    publication = value.get("publication")
+    return bool(
+        (publication is None or isinstance(publication, dict))
+        and not (publication or {}).get("prUrl")
+        and not (publication or {}).get("publicationReceipt")
+        and candidate.get("stage") == context.get("stage") == "VALIDATION_PENDING"
+        and context.get("taskStage") == "IMPLEMENTATION_READY"
+        and value.get("stage") == "FIX_READY"
+        and value.get("reason") == "REQUIRED_CHECKS_FAILED"
+        and value.get("contextDigest") != context.get("contextDigest")
+        and re.fullmatch(r"[0-9a-f]{64}", str(value.get("contextDigest") or ""))
+        and isinstance(quality, dict)
+        and quality.get("relevant_tests_green") is False
+        and quality.get("independent_review_passed") is False
+        and unresolved_current_test_failures(value)
+        and value.get("taskId") == context.get("intentId") == candidate.get("intentId")
+        and isinstance(value.get("taskId"), str)
+        and value["taskId"]
+        and context.get("prFollowup") is None
+        and context.get("publicationReceipt") is None
+        and value.get("prFollowup") is None
+        and value.get("publicationReceipt") is None
+        and not value.get("prUrl")
+    )
+
+
 def _validation_result_context_refresh_proof(
     store: RadarLedger,
     *,
@@ -29111,10 +29142,18 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         else:
                             quarantined.append(entry)
                         continue
+                    stale_validation_failure = _stale_validation_failure_is_task_local(
+                        candidate, context, value
+                    )
                     if (
-                        candidate.get("stage") == "DISPATCHED"
-                        and context.get("stage") == "DISPATCHED"
-                        and value.get("stage") in {"AUDIT_NO_GO", "REPRODUCTION_REQUIRED"}
+                        (
+                            (
+                                candidate.get("stage") == "DISPATCHED"
+                                and context.get("stage") == "DISPATCHED"
+                                and value.get("stage") in {"AUDIT_NO_GO", "REPRODUCTION_REQUIRED"}
+                            )
+                            or stale_validation_failure
+                        )
                         and not context.get("publicationReceipt")
                         and not context.get("prFollowup")
                         and not value.get("prUrl")
@@ -29134,12 +29173,21 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             )
                         except (OSError, RuntimeError, ValueError):
                             verified_context = None
-                        if verified_context == context and _private_context_matches_current_ledger(
-                            store, context
+                        if (
+                            verified_context == context
+                            and _private_context_matches_current_ledger(store, context)
+                            and (
+                                not stale_validation_failure
+                                or (
+                                    _read_task_result_bytes_from_private(result_access) == raw
+                                    and _read_task_context_bytes_from_private(result_access)
+                                    == context_raw
+                                )
+                            )
                         ):
                             # Reject these exact obsolete bytes without
-                            # parking the task's normal recovery or stopping
-                            # independent, fully verified contributions.
+                            # stopping independent, fully verified work.
+                            # Recovery eligibility remains a separate gate.
                             raise TaskResultEvidenceBlocked(RESULT_CONTEXT_DIGEST_MISMATCH)
                     completed_review = _completed_review_feedback_validation(store, candidate, args)
                     if completed_review is not None:
@@ -34111,6 +34159,52 @@ def _completed_go_environment_recovery(
         return None
 
 
+def _completed_stale_validation_failure_recovery(
+    store: RadarLedger, candidate: dict[str, Any], turn_state: dict[str, Any]
+) -> bool:
+    """Permit the existing recovery nonce, without accepting the stale output."""
+    try:
+        with _task_worktree_private_descriptor(candidate) as opened:
+            context_raw = _read_task_context_bytes_from_private(opened)
+            raw = _read_task_result_bytes_from_private(opened)
+            context, value = json.loads(context_raw), json.loads(raw)
+            if not isinstance(context, dict) or not isinstance(value, dict):
+                return False
+            scoped = candidate | {"stage": context.get("stage")}
+            if (
+                not _stale_validation_failure_is_task_local(scoped, context, value)
+                or value.get("schemaVersion") != TASK_RESULT_SCHEMA
+                or not store.task_result_binding_gate(candidate, context)
+                or not store.task_result_binding_gate(candidate, value)
+                or value.get("handoffMode") != "controller_commit_complete"
+            ):
+                return False
+            completion: dict[str, Any] = {}
+            task_id = _completed_validation_input_task_id(
+                store,
+                ManagedLedger(store.path, ensure_schema=False),
+                candidate=scoped,
+                context=context,
+                value=value,
+                result_access=opened,
+                context_raw=context_raw,
+                validation_context_digest=value["contextDigest"],
+                completion_proof=completion,
+            )
+            receipt = completion.get("receipt") or {}
+            return bool(
+                task_id == candidate.get("intentId")
+                and receipt.get("turnStatus") == "completed"
+                and not receipt.get("turnError")
+                and not receipt.get("error")
+                and receipt.get("turnId") == turn_state.get("turnId")
+                and _read_task_result_bytes_from_private(opened) == raw
+                and _read_task_context_bytes_from_private(opened) == context_raw
+            )
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+        return False
+
+
 def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     quarantined_reader = getattr(store, "quarantined_validation_followups", lambda: [])
@@ -34299,6 +34393,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             if correction is not None:
                 candidate = candidate | {"scopeCorrection": correction}
             completed_validation_without_result = False
+            stale_failed_validation_output_recovery = False
             if (
                 candidate.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT"
                 and turn_state
@@ -34312,9 +34407,14 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                     ).hexdigest() == str(candidate.get("followupDigest") or "")
                 except (OSError, RuntimeError):
                     completed_validation_without_result = False
+                if not completed_validation_without_result:
+                    stale_failed_validation_output_recovery = (
+                        _completed_stale_validation_failure_recovery(store, candidate, turn_state)
+                    )
             immediate_recovery = (
                 _is_immediate_recovery(turn_state)
                 or completed_validation_without_result
+                or stale_failed_validation_output_recovery
                 or candidate.get("environmentRecovery") is not None
             )
             turn_worker = (
@@ -34356,6 +34456,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 "terminalError": terminal_error,
                 "immediateRecovery": immediate_recovery,
                 "completionWithoutResult": completed_validation_without_result,
+                "staleFailedValidationOutputRecovery": stale_failed_validation_output_recovery,
             }
             if active_deferred or recoverable:
                 queued_deferred.append(eligible | {"reason": "serialized_recovery_queue"})

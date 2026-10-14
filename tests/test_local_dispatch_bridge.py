@@ -45624,3 +45624,434 @@ def test_same_legacy_validation_stop_is_not_rearmed_only_by_marker_upgrade(monke
     assert listed["rearmedReviewFeedback"] == []
     assert listed["candidates"] == []
     assert listed["blockedNoProgress"][0]["resultDigest"] == digest
+
+
+def _stale_validation_failure_after_refresh_fixture(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+        controller_policy_complete=True,
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+        validation_checks=[{"command": "python -m pytest -q", "exitCode": 1}],
+    )
+    initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert initial["ok"] and initial["validationDeferred"], initial
+    context_path = MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    old_context = json.loads(context_path.read_bytes())
+    value = json.loads(result_path.read_bytes())
+    value.update(contextDigest=old_context["contextDigest"], reason="REQUIRED_CHECKS_FAILED")
+    value.pop("reproductionReceipt", None)
+    value.pop("probeReceipt", None)
+    value.pop("resultDigest", None)
+    value["quality"]["relevant_tests_green"] = False
+    value["quality"]["independent_review_passed"] = False
+    value["tests"] = [{"command": "python -m pytest -q", "exitCode": 1}]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    audit = json.loads(json.dumps(old_context["liveAudit"]))
+    audit["capturedAt"] = iso_z(datetime.now(UTC))
+    audit["evidence"]["digest"] = "e" * 64
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": audit,
+            "targetBase": old_context.get("targetBase"),
+            "authorization": {"status": "ALLOW", "evidence_digest": "e" * 64},
+        },
+        dedupe_key="intent-1:stale-validation-failure-refresh",
+    )
+    MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    context = json.loads(context_path.read_bytes())
+    assert context["stage"] == "VALIDATION_PENDING"
+    assert context["taskStage"] == "IMPLEMENTATION_READY"
+    assert context["contextDigest"] != value["contextDigest"]
+    assert not store.task_result_digest_seen(
+        "a/b#1",
+        hashlib.sha256(result_path.read_bytes()).hexdigest(),
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=str(worktree),
+    )
+    verified, _ = MODULE._verified_private_context_with_singleton_guard(
+        store, worktree, context_path.read_bytes(), context_path.stat()
+    )
+    assert verified == context
+    assert MODULE._private_context_matches_current_ledger(store, context)
+    return store, worktree, result_path, context_path
+
+
+def test_stale_failed_validation_is_rejected_without_new_ingestion(tmp_path):
+    store, worktree, result_path, context_path = _stale_validation_failure_after_refresh_fixture(
+        tmp_path
+    )
+    result_raw, context_raw = result_path.read_bytes(), context_path.read_bytes()
+    head = run_git(worktree, "rev-parse", "HEAD")
+    with store.connect() as connection:
+        original_events = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id,event_type,payload_json,created_at FROM events ORDER BY id"
+            )
+        ]
+    args = SimpleNamespace(ledger=store.path, key="a/b#1")
+    first = MODULE.ingest_task_results(args)
+    assert first["ok"] is True, json.dumps(first, sort_keys=True)
+    assert first["errors"] == []
+    assert first["ingested"] == first["publicationRequests"] == first["validationDeferred"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": MODULE.RESULT_CONTEXT_DIGEST_MISMATCH,
+            "alreadyRecorded": False,
+        }
+    ]
+    repeated = MODULE.ingest_task_results(args)
+    assert repeated["ok"] is True and repeated["errors"] == [], repeated
+    assert repeated["workBlocked"] == [dict(first["workBlocked"][0], alreadyRecorded=True)]
+    assert result_path.read_bytes() == result_raw and context_path.read_bytes() == context_raw
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    with store.connect() as connection:
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id,event_type,payload_json,created_at FROM events ORDER BY id"
+            )
+        ] == original_events
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events WHERE opportunity_key='a/b#1' "
+                "AND event_type='TASK_RESULT_EVIDENCE_BLOCKED'"
+            ).fetchone()[0]
+            == 1
+        )
+    assert store.active_task_quarantine("a/b#1") is None
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ["task", "thread", "green", "false_type", "no_failure", "private", "nested_publication"],
+)
+def test_stale_failed_validation_does_not_hide_hard_refusals(tmp_path, damage):
+    store, _worktree, result_path, context_path = _stale_validation_failure_after_refresh_fixture(
+        tmp_path
+    )
+    baseline = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert baseline["ok"] and baseline["workBlocked"], baseline
+    value = json.loads(result_path.read_bytes())
+    if damage == "task":
+        value["taskId"] = "foreign-intent"
+    elif damage == "thread":
+        value["threadId"] = "foreign-thread"
+    elif damage == "green":
+        value["quality"]["relevant_tests_green"] = True
+    elif damage == "false_type":
+        value["quality"]["independent_review_passed"] = 0
+    elif damage == "no_failure":
+        value["tests"] = [{"command": "python -m pytest -q", "exitCode": 0}]
+    elif damage == "nested_publication":
+        value["publication"] = {"prUrl": "https://github.com/a/b/pull/2"}
+    else:
+        context = json.loads(context_path.read_bytes())
+        context["contextDigest"] = "f" * 64
+        context_path.write_text(json.dumps(context), encoding="utf-8")
+    if damage != "private":
+        result_path.write_text(json.dumps(value), encoding="utf-8")
+    result_raw, context_raw = result_path.read_bytes(), context_path.read_bytes()
+    rejected = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert rejected["errors"], rejected
+    assert rejected["ingested"] == rejected["publicationRequests"] == []
+    assert rejected.get("workBlocked", []) == []
+    assert result_path.read_bytes() == result_raw and context_path.read_bytes() == context_raw
+
+
+@pytest.mark.parametrize("changed", ["result", "context"])
+def test_stale_failed_validation_rechecks_owned_snapshot_bytes(monkeypatch, tmp_path, changed):
+    store, _worktree, result_path, context_path = _stale_validation_failure_after_refresh_fixture(
+        tmp_path
+    )
+    original = MODULE._verified_private_context_with_singleton_guard
+    path = result_path if changed == "result" else context_path
+    verified_calls = []
+
+    def drift(*args, **kwargs):
+        verified = original(*args, **kwargs)
+        verified_calls.append(True)
+        value = json.loads(path.read_bytes())
+        value["observationChangedAfterVerification"] = True
+        path.write_text(json.dumps(value), encoding="utf-8")
+        return verified
+
+    monkeypatch.setattr(MODULE, "_verified_private_context_with_singleton_guard", drift)
+    rejected = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert verified_calls
+    assert rejected["errors"], rejected
+    assert rejected["ingested"] == rejected["publicationRequests"] == []
+    assert rejected.get("workBlocked", []) == []
+
+
+def _completed_stale_failed_validation_fixture(monkeypatch, tmp_path):
+    store, worktree, result, source_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path, monkeypatch
+    )
+    source = json.loads(source_path.read_bytes())
+    value = json.loads(result.read_bytes())
+    value.update(taskId="intent-1", reason="REQUIRED_CHECKS_FAILED")
+    value["quality"]["relevant_tests_green"] = False
+    value["quality"]["independent_review_passed"] = False
+    value["tests"] = [
+        {
+            "command": "python -m pytest tests/runtime",
+            "exitCode": 1,
+            "phase": "formal",
+            "result": "required assertion failed",
+        }
+    ]
+    value["publication"] = {"baseBranch": "main", "title": "draft", "bodyFile": "draft.md"}
+    result.write_text(json.dumps(value))
+    context_path = result.with_name("task-context.json")
+    old_context = json.loads(context_path.read_bytes())
+    assert value["contextDigest"] == old_context["contextDigest"]
+    audit = json.loads(json.dumps(old_context["liveAudit"]))
+    audit["capturedAt"] = iso_z(datetime.now(UTC))
+    audit["evidence"]["digest"] = "d" * 64
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": audit,
+            "targetBase": old_context.get("targetBase"),
+            "authorization": {"status": "ALLOW", "evidence_digest": "d" * 64},
+        },
+        dedupe_key="intent-1:completed-stale-validation-refresh",
+    )
+    MODULE.write_task_context(
+        store, issue_url="https://github.com/a/b/issues/1", thread_id="thread-1", cwd=worktree
+    )
+    context = json.loads(context_path.read_bytes())
+    assert context["contextDigest"] != value["contextDigest"]
+    assert context["stage"] == "VALIDATION_PENDING"
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as c:
+        c.execute(
+            "CREATE TABLE threads (id TEXT,archived INTEGER,title TEXT,first_user_message TEXT,cwd TEXT,git_origin_url TEXT,updated_at INTEGER,rollout_path TEXT)"
+        )
+        c.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                0,
+                "task",
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(worktree),
+                "https://github.com/a/b.git",
+                int(datetime.now(UTC).timestamp()),
+                None,
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "latest_thread_turn_state",
+        lambda _p: {"status": "completed", "turnId": "completed-validation-turn"},
+    )
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _t: None)
+    return store, worktree, result, source
+
+
+def test_completed_stale_failed_validation_has_original_recovery_nonce(monkeypatch, tmp_path):
+    store, worktree, result, _source = _completed_stale_failed_validation_fixture(
+        monkeypatch, tmp_path
+    )
+    before = (
+        result.read_bytes(),
+        result.with_name("task-context.json").read_bytes(),
+        run_git(worktree, "rev-parse", "HEAD"),
+    )
+    candidates = store.recovery_candidates(min_age_minutes=0)
+    assert len(candidates) == 1
+    listed = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=90))
+    assert len(listed["recoverable"]) == 1, json.dumps(listed, sort_keys=True)
+    candidate = listed["recoverable"][0]
+    assert candidate["staleFailedValidationOutputRecovery"] is True
+    assert candidate["completionWithoutResult"] is False
+    assert candidate["recoveryNonce"] == candidates[0]["recoveryNonce"]
+    assert before == (
+        result.read_bytes(),
+        result.with_name("task-context.json").read_bytes(),
+        run_git(worktree, "rev-parse", "HEAD"),
+    )
+
+
+def test_stale_failed_validation_original_recovery_delivers_current_context(monkeypatch, tmp_path):
+    store, worktree, result, _source = _completed_stale_failed_validation_fixture(
+        monkeypatch, tmp_path
+    )
+    args = SimpleNamespace(ledger=store.path, min_age_minutes=90)
+    listed = MODULE.recovery_list(args)
+    assert len(listed["recoverable"]) == 1, listed
+    candidate = listed["recoverable"][0]
+    reserve_args = SimpleNamespace(
+        ledger=store.path,
+        thread_id="thread-1",
+        recovery_nonce=candidate["recoveryNonce"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+    )
+    with store.connect() as c:
+        original_events = [
+            tuple(r) for r in c.execute("SELECT id,event_type,payload_json FROM events ORDER BY id")
+        ]
+    reserved = MODULE.recovery_reserve(reserve_args)
+    assert reserved["ok"] and reserved["recoveryNonce"] == candidate["recoveryNonce"]
+    with pytest.raises((RuntimeError, LedgerError)):
+        MODULE.recovery_reserve(reserve_args)
+    historical_raw = result.read_bytes()
+    current_context_raw = result.with_name("task-context.json").read_bytes()
+    current = json.loads(current_context_raw)
+    process = _FakeTaskTurnProcess()
+    original_popen, original_which = subprocess.Popen, shutil.which
+
+    @contextmanager
+    def session(*_a, **_k):
+        yield process
+
+    def response(_p, _s, buffer, *, response_id, **_k):
+        if response_id == 0:
+            return buffer, {"result": {}}
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": "thread-1"}}}
+        return buffer, {"result": {"turn": {"id": "current-context-recovery"}}}
+
+    def complete(*_a, **_k):
+        new = json.loads(historical_raw)
+        new["contextDigest"] = current["contextDigest"]
+        new["tests"][0]["result"] = "required assertion still fails under current context"
+        result.write_text(json.dumps(new))
+        return {"turnId": "current-context-recovery", "status": "completed"}
+
+    def launch(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        finished = MODULE.task_turn_worker_entry(
+            SimpleNamespace(
+                ledger=store.path,
+                delivery_kind="recovery",
+                thread_id="thread-1",
+                delivery_token=reserved["recoveryNonce"],
+                receipt=argv[argv.index("--receipt") + 1],
+                intent_id="intent-1",
+                worktree_path=str(worktree),
+                delivery_attempt_digest=None,
+            )
+        )
+        assert finished["ok"] and finished["turnStatus"] == "completed", finished
+        return SimpleNamespace(pid=os.getpid())
+
+    with monkeypatch.context() as delivery:
+        delivery.setattr(MODULE, "_app_server_action_session", session)
+        delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+        delivery.setattr(MODULE, "_read_app_server_response", response)
+        delivery.setattr(MODULE, "_wait_for_app_server_terminal_turn", complete)
+        delivery.setattr(
+            MODULE.shutil,
+            "which",
+            lambda n: "/usr/bin/codex" if n == "codex" else original_which(n),
+        )
+        delivery.setattr(MODULE.subprocess, "Popen", launch)
+        sent = MODULE.recovery_deliver(reserve_args)
+    assert sent["ok"], sent
+    turns = [m for m in _task_turn_messages(process) if m.get("method") == "turn/start"]
+    assert len(turns) == 1
+    assert turns[0]["params"]["threadId"] == "thread-1"
+    assert turns[0]["params"]["model"] == "gpt-6.1-sol" and turns[0]["params"]["effort"] == "medium"
+    assert result.with_name("task-context.json").read_bytes() == current_context_raw
+    assert json.loads(result.read_bytes())["contextDigest"] == current["contextDigest"]
+    intake = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert intake["ok"] and intake["validationDeferred"], intake
+    assert intake["publicationRequests"] == [] and intake.get("workBlocked", []) == []
+    assert store.unresolved_recoveries() == []
+    with store.connect() as c:
+        assert [
+            tuple(r)
+            for r in c.execute(
+                "SELECT id,event_type,payload_json FROM events WHERE id<=? ORDER BY id",
+                (original_events[-1][0],),
+            )
+        ] == original_events
+        assert (
+            c.execute(
+                "SELECT count(*) FROM events WHERE event_type='THREAD_RECOVERY_RESERVED'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            c.execute(
+                "SELECT count(*) FROM events WHERE event_type='THREAD_RECOVERY_SENT'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "active",
+        "unknown",
+        "wrong_turn",
+        "private",
+        "green",
+        "nested_publication",
+        "receipt",
+        "binding",
+        "current_digest",
+    ],
+)
+def test_stale_validation_recovery_keeps_existing_activity_and_proof_gates(
+    monkeypatch, tmp_path, damage
+):
+    store, worktree, result, _source = _completed_stale_failed_validation_fixture(
+        monkeypatch, tmp_path
+    )
+    args = SimpleNamespace(ledger=store.path, min_age_minutes=90)
+    assert len(MODULE.recovery_list(args)["recoverable"]) == 1
+    if damage == "active":
+        monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _t: {"pid": 1})
+    elif damage == "unknown":
+        monkeypatch.setattr(
+            MODULE,
+            "latest_thread_turn_state",
+            lambda _p: {"status": "in_progress", "turnId": "completed-validation-turn"},
+        )
+    elif damage == "wrong_turn":
+        monkeypatch.setattr(
+            MODULE,
+            "latest_thread_turn_state",
+            lambda _p: {"status": "completed", "turnId": "foreign-turn"},
+        )
+    elif damage == "private":
+        path = result.with_name("task-context.json")
+        value = json.loads(path.read_bytes())
+        value["contextDigest"] = "f" * 64
+        path.write_text(json.dumps(value))
+    elif damage == "receipt":
+        for path in (MODULE.STATE / "task_turn_receipts").glob("*.json"):
+            value = json.loads(path.read_bytes())
+            value["turnStatus"] = "in_progress"
+            path.write_text(json.dumps(value))
+    else:
+        value = json.loads(result.read_bytes())
+        if damage == "green":
+            value["quality"]["independent_review_passed"] = True
+        elif damage == "binding":
+            value["taskId"] = "foreign-intent"
+        elif damage == "current_digest":
+            value["contextDigest"] = json.loads(result.with_name("task-context.json").read_bytes())[
+                "contextDigest"
+            ]
+        else:
+            value["publication"]["prUrl"] = "https://github.com/a/b/pull/2"
+        result.write_text(json.dumps(value))
+    assert MODULE.recovery_list(args)["recoverable"] == []
+    assert store.unresolved_recoveries() == []
