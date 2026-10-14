@@ -16674,6 +16674,41 @@
     ],
     "why": "Issue provides a precise root cause (InstructionPart missing from ModelRequestPart union), a concrete reproduction with failing tests, and a verified minimal fix. The bug affects core serialization boundaries and is clearly actionable."
   },
+  "1d10a7d2f42ca043c51c389620cadd0a1486d75cad32f1da3fdbfb1ceb5f6808": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body correction says the opencode-pty/503 theory is a red herring, while the original report and bot comment treat persistentPty as the likely cause",
+      "Reporter comment states 'Fixed on Windows' via PR #55554, but the duplicate assessment lists #55554 as CLOSED with root_cause_coverage=false and no test files"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Desktop main-process openPath handler: special-case shell entries to spawn with -NoExit and cwd instead of passing the folder positionally",
+      "Surface/log the underlying cause instead of swallowing it into the generic 'Desktop IPC handler failed' toast"
+    ],
+    "risks": [
+      "Changing openPath argv handling could regress editor entries that legitimately take the folder positionally",
+      "Detached/unref spawn changes error propagation semantics (ENOENT handling)",
+      "Duplicate/closed PR #55554 may already cover the fix, making a new contribution redundant"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Regression test asserting the shell entry spawns with -NoExit and cwd set to the target folder (not the folder as a positional arg)",
+      "Manual/automated check that 'Open in… → PowerShell' opens a prompt at the folder for both Windows PowerShell 5.1 and pwsh 7, including paths with spaces",
+      "Verify editors (VS Code, Cursor, Zed, Sublime) still receive the folder positionally"
+    ],
+    "unknowns": [
+      "Whether CLOSED PR #55554 actually merged or otherwise resolved the issue, i.e. whether the fix is already covered",
+      "Whether the repository requires assignment or maintainer pre-approval before a fix PR is accepted"
+    ],
+    "why": "The issue's own correction and the maintainer comment establish a concrete root cause (Desktop main process runs `powershell.exe \"<folder>\"` via execFile; PowerShell 5.1 treats the positional folder as -Command, exits 1, IPC handler surfaces failure) and a measured fix path (-NoExit + cwd + detached spawn). However, the supplied duplicate assessment reports a CLOSED PR #55554 that references this issue with COVERAGE relation and the reporter's own comment says 'Fixed on Windows' via that PR, so coverage/duplicate status is unresolved and materially determines whether new code work is actionable."
+  },
   "1d13f4fa3db2b7b64ead997bded6805227a6a7d465ff3ddcccaefbde2f8833d2": {
     "confidence": 0.88,
     "contradictions": [],
@@ -24414,6 +24449,44 @@
       "Whether PR #1458 will be merged or needs rework"
     ],
     "why": "Issue provides a detailed root-cause analysis and clear reproduction steps, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#1458) with semantic overlap that needs maintainer comparison before new work starts."
+  },
+  "299f7e09de7d56e35068f004886d1a62fcd08fbaee80b6422eadc866634a81d7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no timeout/error handling exists, but merged PR #6913 titled 'vLLM weight sync fails instead of hanging' suggests timeout/server-error handling was added"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "trl/experimental/async_grpo/async_grpo_trainer.py: add timeout/error propagation for weight sync",
+      "optional progress logging during initial weight sync",
+      "documentation of server --gpu-memory-utilization headroom"
+    ],
+    "risks": [
+      "Core fix may already be covered by merged PR #6913, making new work duplicative",
+      "Requires multi-GPU H100 hardware to validate",
+      "Remaining scope may be docs/logging rather than algorithm work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with fsdp_offload_params: true and 4 trainer ranks; assert trainer raises instead of hanging",
+      "Inject a server-side collective_rpc failure and assert trainer-side error surfaces",
+      "Regression test for tp2 x 2-rank topology with weight_sync_steps=4"
+    ],
+    "unknowns": [
+      "Whether #6913 fully resolves the trainer-side hang described in this issue",
+      "Whether a follow-up issue/assignment for remaining diagnostics has been created",
+      "Whether maintainers still want the remaining diagnostics work"
+    ],
+    "why": "Issue describes a real distributed-training failure (NCCL weight-sync hang/deadlock in AsyncGRPO), but the supplied evidence shows the core timeout/server-error handling was already addressed by merged maintainer PR #6913, and the issue itself is unassigned with assignmentRequired=true. The remaining actionable scope (progress logging, headroom docs) is diagnostics/documentation rather than an algorithm mechanism, and the comment thread shows an unresolved question about whether a follow-up issue/assignment exists."
   },
   "29b292b8889276945c449c4c589467b9796d1d50f8d02f102feaa56a294c8cb2": {
     "confidence": 0.7,
@@ -58674,6 +58747,38 @@
     ],
     "why": "Issue provides a concrete, reproducible attribution bug: built-in git commit interception only fills unattested holes and never re-diffs lines carrying stale AI attestation, while the known_human checkpoint path does. A commenter independently reproduced a narrower variant on the base SHA with explicit checkpoints and controls, and identified the reconciliation of pending working-log attribution as the locus. Code anchors (post_commit.rs, checkpoint.rs, working_log.rs, git_handlers.rs) and a validation path (blame before/after commit, known_human control) are supplied."
   },
+  "60facc678e085db940eb307378b387d56b66cf7f041e1e1b485ea757537ed795": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Desktop side preview pane Fit/zoom scale computation to allow upscaling for vector content (SVG) while preserving existing raster behavior",
+      "Regression test covering Fit on a small SVG in the preview pane"
+    ],
+    "risks": [
+      "Changing the Fit cap may alter zoom/pan behavior for raster images or large images; scope the change to vector content or verify raster expectations",
+      "The exact intended Fit semantics (contain vs cover, upscaling policy) may need maintainer confirmation, though this does not block drafting a fix and test"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: open a 100x100 SVG in the Desktop side preview pane and click Fit; assert the rendered content fills the panel (contain, scale > 1) rather than staying ~100px",
+      "Add a unit/component test around the Fit scale calculation asserting scale is not clamped to 1 for SVG and that raster images retain prior behavior",
+      "Run the targeted Desktop preview package tests and static checks"
+    ],
+    "unknowns": [
+      "Whether older versions upscaled SVGs on Fit (reporter only recalls it did, no proof)",
+      "Whether small PNG/JPG are affected the same way",
+      "Exact file/module implementing the Fit scale cap was not supplied as a code anchor beyond the `Fit` label"
+    ],
+    "why": "Issue gives a concrete repro (small SVG + Fit in Desktop side preview stays at native size) and the bot's code reading points to a Fit scale capped at 1x introduced by the zoom/pan rework in #54590. That is a plausible, localized root cause with a clear expected behavior (contain with upscaling allowed for vectors). No duplicate/merged fix, no open PR, no assignment requirement, and no AI-use prohibition in the supplied evidence. Remaining uncertainty is normal implementation/review uncertainty, not a materially blocking unknown."
+  },
   "61210b716be6567645da519194eb7312f03a441814c5d8b3c9eb5596111e54c6": {
     "confidence": 0.8,
     "contradictions": [
@@ -84375,6 +84480,33 @@
       "Exact scope of existing PR #13438's tests and whether it fully addresses the preview issue"
     ],
     "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter each assume a fixed 'command' key), a concrete reproduction (object-form commands with guessed keys fail with '✖ Invalid input' and preview shows '[object Object]'), and a validated local patch. The proposed fix is actionable and testable, and the existing PR #13438 lacks root-cause coverage, leaving room for a competitive contribution."
+  },
+  "89fb6abe1ec76e79d743454ab80f9dc023b0c7aad338b505aa9c4682f2a5aab7": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.related_issue_assessment reports no related open issues, but the bot comment explicitly cites #50627, #51193, #50806, #49723 as duplicates/related."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "No new code change warranted; fix belongs to the existing #50627 workstream (tool-list construction for custom agents with shell deny)."
+    ],
+    "risks": [
+      "Fixing here would duplicate effort and potentially diverge from the canonical fix in #50627."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Verify against #50627: reproduce with a custom primary agent having shell deny, confirm error, then confirm the fix in #50627 resolves it."
+    ],
+    "unknowns": [
+      "Whether #50627 is still open and unresolved at the current base SHA."
+    ],
+    "why": "The supplied bot comment identifies this as a duplicate of #50627 with a concrete root cause: a full shell `deny` rule on a custom primary agent removes `bash` from the request tool list, causing the free-tier gateway rejection. The issue is already covered by an existing tracked issue, so it is not an actionable new code contribution."
   },
   "8a0b02b49da354b32c130f56dbe571d362651f4bc54ff779331be7d1dfece2b2": {
     "confidence": 0.82,
@@ -146764,6 +146896,40 @@
       "Whether the proposed root cause (renderer executor) fully explains the regression, and whether a fix is already in progress or merged."
     ],
     "why": "The issue provides a reproducible throughput regression with detailed benchmarks and bisection, and a comment identifies a plausible root cause in vLLM's pooling entrypoint executor configuration, with a concrete one-flag test to confirm. This is a valuable performance investigation with a clear validation path."
+  },
+  "efe65466e7856203fe64bd76042c3d14f5b2b0bde55a2c6e79b2d1cc99a05d16": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue proposes incremental optional-field fix while open PR #3292 takes the alternative bigger approach; no maintainer preference recorded"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/mcp/server/lowlevel/server.py: make issuer_url/resource_server_url optional and add validator requiring issuer_url only when resource_server_url is set or auth_server_provider is used",
+      "src/mcp/server/mcpserver/server.py: align AuthSettings validation with resource-server-only mode"
+    ],
+    "risks": [
+      "PR #3292 may already cover the root cause with a different design, making a new fix redundant",
+      "Changing AuthSettings field requirements is a public API behavior change",
+      "Maintainer may prefer the alternative approach of allowing token_verifier without auth="
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test constructing AuthSettings(resource_server_url=None) without issuer_url and asserting no ValidationError",
+      "Add a test that MCPServer(token_verifier=...) without auth= mounts only /mcp, returns 401 for missing token and 200 for valid token",
+      "Add a test that issuer_url is still required when resource_server_url is set or auth_server_provider is used"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the incremental fix or PR #3292's approach",
+      "Whether PR #3292 will be merged or closed, which determines if a new implementation is actionable"
+    ],
+    "why": "Issue #3702 has a clear root cause (AuthSettings.issuer_url is Field(...) required but never read in resource-server-only mode) and a concrete validation path, but open PR #3292 takes the alternative, larger approach (token verifier without AuthSettings) and overlaps the same code paths. The duplicate/coverage status is 'semantic_overlap_requires_review' with no maintainer decision, so whether a new implementation is actionable is materially undetermined."
   },
   "effa63f421553c49a9e9613d95dee31f3750c9c9ab9074ebf1afa0baea11a6cf": {
     "confidence": 0.85,
