@@ -44363,6 +44363,34 @@
     ],
     "why": "Issue provides concrete production evidence of cache busts after tool-calls, with deterministic correlation and reproducible SQL queries. Root cause is clearly identified and matches prior issue #24841. Existing PR #40796 only adds warnings, not a fix, leaving room for a valuable code contribution."
   },
+  "4abfae6c83e4c8ebc4ca16969fc33b7a293e43dde14e651b16cc20d6fe4c1e8f": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate claims probe_ready and high actionability, but the bot states the code is not in this repository and cannot be reproduced"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "none actionable in-repo; failure is in hosted Console service"
+    ],
+    "risks": [
+      "Any in-repo change would be speculative and cannot be validated against the actual failing service"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "not possible without Console workspace access and Worker logs"
+    ],
+    "unknowns": [
+      "Whether any relevant Console Worker code exists in this repository",
+      "Actual Worker error/logs for the 7d path"
+    ],
+    "why": "The failure occurs in the hosted Console Worker service, whose code is not in this repository; the bot explicitly states the 7d aggregation cannot be reproduced or tested without a real Console workspace and Worker logs. No in-repo root cause or validation path exists."
+  },
   "4ac0decc54fb82a89e6cc839568479947709537e4a10d80fcd2848a78a7684da": {
     "confidence": 0.85,
     "contradictions": [],
@@ -46089,6 +46117,36 @@
       "Whether open PR #52866 already addresses this exact gap"
     ],
     "why": "Issue reports a real first-token hang on OpenCode v1.18.31, but the maintainer bot states v1 is in maintenance-only mode and v2 already has chunkTimeout/idle-timeout handling; the report is against a version unlikely to receive the fix, and no reproduction on v2 is provided. Related v2 issues (#53747, #53896, #52866, #54538) suggest the v2 surface may already be covered or under active work, making the actionable target ambiguous."
+  },
+  "4d2f985381986883c9187743ae72c4ce99eced7c4ba8a5952aa2a32dbd94ba62": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Restore components/src/dynamo/frontend/perf_instrumentation.py with enter_generator/exit_generator and an in-flight counter, or remove --dyn-debug-perf and debug_perf branches from sglang_processor.py",
+      "Fix --dyn-debug-perf help text to reflect actual backend support",
+      "Update docs/fern/pages/reference/components/frontend-configuration.mdx to match chosen behavior"
+    ],
+    "risks": [
+      "Choosing between restore vs removal may conflict with maintainer intent from #7024",
+      "Restoring the module could reintroduce behavior the maintainers deliberately removed",
+      "Help text and docs must stay consistent with the chosen fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts the frontend with --dyn-chat-processor sglang and DYN_DEBUG_PERF=1 and sends one /v1/chat/completions request, asserting no ModuleNotFoundError and expected [perf] lines",
+      "Run targeted frontend unit tests and static checks (mypy) to confirm the import is no longer hidden by type: ignore"
+    ],
+    "unknowns": [
+      "Maintainer preference between restoring perf_instrumentation.py and removing the flag entirely"
+    ],
+    "why": "Issue provides a precise root cause: SGLang chat processor lazily imports dynamo.frontend.perf_instrumentation, which was removed in #7024 while the SGLang processor added in #6834 re-introduced the flag and import. Reproduction steps and two concrete fix options are given, with code anchors in sglang_processor.py and vllm_processor.py. No open PR or duplicate issue covers it."
   },
   "4d461c5ccac9c63dd3d4dbce29de147554d9e39a4ec960d229ae384932d1bca3": {
     "confidence": 0.8,
@@ -95705,6 +95763,35 @@
     "wait_reason": "ASSIGNMENT",
     "why": "The issue is a well-specified design with clear root cause, concrete code anchors, and a detailed verification plan. However, the repository requires assignment before implementation, and the issue-spec runner comments show unauthorized command attempts, indicating assignment is not yet confirmed. The design has been approved by a maintainer, but the assignment gate is still blocking."
   },
+  "9ac37d8a5569b83ba339041638715d1edb0963ca7417083a00d0ffa30ec1ae37": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue reports persistent 503 (3/3 attempts), but maintainer bot reproduced 201 and successful pairing, indicating the failure was transient"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No code change warranted for the outage itself; at most optional retry/error-message polish in the pair CLI path"
+    ],
+    "risks": [
+      "Chasing a transient third-party outage as a code bug would produce no valid fix",
+      "Any retry logic could mask genuine service outages or add unwanted behavior"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Re-run `opencode pair --remote -y` on 2.0.30 to confirm the tunnel now creates; if pursuing UX work, add a test that a 503 from POST /api/tunnel surfaces an actionable message rather than raw OpenTunnelClientError"
+    ],
+    "unknowns": [
+      "Whether maintainers want the optional retry/clearer-error UX change at all"
+    ],
+    "why": "The reported failure is a transient upstream outage of the third-party opentunnel.xyz service (HTTP 503 'storage unavailable'), not a defect in opencode code. The maintainer bot reproduced the same request successfully (201) and confirmed `opencode pair --remote -y` now works, tying it to the earlier outage #54596. The only residual code suggestion (retry/clearer error message) is a minor UX improvement, not an actionable root-cause fix."
+  },
   "9ac3a081967301d7cbf944a1deb7845518b28094661d4f95996287ef6120c134": {
     "confidence": 0.8,
     "contradictions": [],
@@ -144009,6 +144096,38 @@
     ],
     "why": "Issue clearly identifies a shared-boundary bug where download_item trusts Content-Type without byte validation, with a verified repro and suggested direction. However, an existing PR (#7162) is closed and technically incomplete (CI failures), and the repository requires assignment, so maintainer confirmation is needed before starting."
   },
+  "ea06f4d5136962a9bf8df21833d75d445b9402ee69d88e607e84726c0473f714": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Desktop side preview pane Fit/zoom scaling logic: allow upscaling for vector content (contain fit) instead of clamping scale to 1x",
+      "Regression test covering Fit on a small SVG in the preview pane"
+    ],
+    "risks": [
+      "Fix may need to distinguish vector (SVG) from raster (PNG/JPG) content, since the issue notes raster behavior is unknown",
+      "Changing the 1x cap could regress the zoom/pan behavior introduced in #54590",
+      "Desktop UI behavior may not be reproducible in CI sandbox, so validation may require manual Desktop verification"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: open a 100x100 SVG in the Desktop side preview pane and click Fit; assert rendered size fills the panel (contain, upscale allowed) rather than staying at native size",
+      "Add a unit/component test on the preview scale computation asserting scale > 1 for a small SVG when Fit is active",
+      "Run the targeted preview/artifact-stage package tests and static checks"
+    ],
+    "unknowns": [
+      "Exact file/function implementing the Fit scale cap is not named in the supplied evidence",
+      "Whether small raster images (PNG/JPG) should also upscale on Fit is explicitly unknown"
+    ],
+    "why": "Issue gives an ordered reproduction (open 100x100 SVG in Desktop side preview, click Fit, observe ~100px centered) plus expected/actual pair, and the bot comment points to a concrete code anchor: the Fit scale is capped at 1x, introduced with the zoom/pan rework in #54590. That is enough to locate the preview scaling path and write a failing test, even though the exact file/function is not named and the reporter cannot confirm historical behavior."
+  },
   "ea0ddd73e685c76b27692f05a34d6ad8d55a86921710b631bf524751b00f8e7c": {
     "confidence": 0.7,
     "contradictions": [
@@ -153595,6 +153714,38 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "Issue is a well-scoped, maintainer-approved proposal with confirmed root causes and clear success criteria. However, the repository requires assignment and the issue explicitly requests maintainer approval before implementation begins, so work cannot start without that approval."
+  },
+  "f91d21a9f1b44c94defd0b6b41e48694c3c4f7c596e1b15a1ffa495d858d7c2c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas: 0 on the PCS create path (defer creation, pass through as idle, or reject at DGD admission with a clear error)",
+      "operator DGD admission/validation behavior for zero-replica Grove-backed components"
+    ],
+    "risks": [
+      "Two reasonable fixes exist (defer creation vs. reject at admission); maintainer may prefer one, but this is normal implementation choice, not a blocker",
+      "Grove GREP-0677 (ai-dynamo/grove#686) may change the intended semantics of replicas: 0, affecting which fix is correct long-term",
+      "Changing admission behavior could affect existing users who currently rely on the operator accepting the spec"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Apply the issue's minimal DGD YAML with replicas: 0 and multinode nodeCount: 2 into a Grove-enabled namespace; assert the operator either creates a valid PCS or rejects at DGD admission with a clear error instead of a downstream Grove webhook failure",
+      "Add a unit test in the operator package covering PCSG rendering when component.Replicas == 0 on the create path (no existing PCS), asserting minAvailable is not greater than replicas",
+      "Regression test for the existing scale-down-to-zero path (#11837) to confirm preserveGrovePodCliqueSetReplicas behavior is unchanged"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer deferring Grove resource creation or rejecting at DGD admission (design preference, not a blocking unknown)",
+      "Whether GREP-0677 will land and change the intended zero-replica semantics"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD with replicas: 0 on Grove-backed multinode component), the exact Grove admission error, and a specific root cause in deploy/operator/internal/dynamo/graph.go where component.Replicas is passed unchecked and minAvailable is hardcoded to 1 on the create path. This is an actionable operator bug with a clear validation path (apply the YAML, observe admission rejection, then verify the fix renders a valid PCS or rejects at admission)."
   },
   "f92282b095c0711039eb0eebc5dc2e5bae8069ed8087ff295789ad83d9c96ee9": {
     "confidence": 0.9,
