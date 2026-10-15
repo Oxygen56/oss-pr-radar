@@ -22045,6 +22045,43 @@
     ],
     "why": "Issue provides a concrete root cause in _ToolExecutor._deliver_reply: wait_for_idle() returns while the owning activity is draining for a handoff, so generate_reply() routes to session._next_activity and raises 'cannot schedule new speech' plus 'no activity context found'. A full scripted-LLM reproduction and a proposed minimal fix are supplied, and the code anchors match the described path. The open PR #7633 is a coverage candidate but lacks root-cause coverage, so it does not fully cover the issue."
   },
+  "2603b6710c3817414eda05c1a5eded531e810de1bb81fb1ecf66b3cd195b5101": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue reports a clean torch.OutOfMemoryError traceback, while a commenter observed a crash with no traceback, suggesting possibly two failure modes"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/attention/dsv4/sparse_prefill_utils.py: add mem_get_info budget check and/or chunking before torch.empty in SparsePrefillWorkspace.get()",
+      "python/sglang/srt/layers/attention/deepseek_v4_backend.py: bound num_tokens passed to the workspace in _forward_prefill_sparse",
+      "python/sglang/srt/managers/scheduler.py: avoid whole-TP-group kill on a single oversized prefill allocation"
+    ],
+    "risks": [
+      "Second commenter could not reproduce on a different TP/layout, so the trigger may be layout-dependent and the fix may not cover all reported OOMs",
+      "A separate no-traceback SIGKILL failure mode may be conflated with this allocator OOM",
+      "Chunking the prefill batch may change numerics or throughput and needs tolerance/seed-controlled comparison"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test SparsePrefillWorkspace.get() with a mocked mem_get_info returning insufficient free memory and assert it chunks or raises a retryable error instead of calling torch.empty for the oversized shape",
+      "Regression test reproducing the mixed-length batch (one long prompt plus many short requests) and asserting workspace rows scale with per-request packed lengths rather than num_reqs * max_seq_len",
+      "Multi-rank TP test asserting a single oversized prefill does not terminate the process group"
+    ],
+    "unknowns": [
+      "Whether the uniformly-long-request queue case is fully covered by the merged per-request packing fix (#43921) or still needs a row-budget split",
+      "Exact free-memory headroom on the reporter's TP2 B300 layout versus the non-reproducing TP4 layout"
+    ],
+    "why": "Issue provides a concrete traceback into SparsePrefillWorkspace.get() in sparse_prefill_utils.py, a code snippet showing an unbounded torch.empty allocation with no mem_get_info guard or chunking, and batch-state evidence (#queue-req 73, #pending-token 337719) showing the allocation is not bounded by --max-prefill-tokens. A contributor confirms the same call site and identifies the padding-to-longest-extent mechanism. This is a kernel/attention workspace allocation invariant with a clear reference-vs-implementation validation path."
+  },
   "260aab41783267ddbf700c84f6772f9ac8c3cb3339d8ae95fa1759a7cee6f684": {
     "confidence": 0.85,
     "contradictions": [],
@@ -24593,6 +24630,34 @@
       "Whether PR #1458 will be merged or needs rework"
     ],
     "why": "Issue provides a detailed root-cause analysis and clear reproduction steps, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#1458) with semantic overlap that needs maintainer comparison before new work starts."
+  },
+  "299e37871e233070cb2111f3249dce613e6778d0be5073f3ba8cf436698a1a4d": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/mocker/src/generalized_live.rs: settle due G2 transfers before each pass start (e.g. before execute_pass or inside select_pass_start boundary handling)"
+    ],
+    "risks": [
+      "Fix must not double-settle or alter pass timing semantics for non-offload paths",
+      "Overlap with open PR #16555 may cause duplicate work if not differentiated by tests/root-cause coverage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a paused-Tokio unit test in generalized_live.rs with native_host_offload, two 1MB prompts at 0.2 GB/s D2H finishing 5ms/10ms after the first pass boundary, submit a third prompt at the boundary, hold 20ms before finish(), and assert no panic and correct G2 store ordering",
+      "Run the targeted mocker package unit tests and cargo check/clippy on the changed crate"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred settlement point (loop top vs. inside execute_pass) that would change the minimal fix shape"
+    ],
+    "why": "Issue provides a concrete root cause in lib/mocker/src/generalized_live.rs: run_until_stopped settles due work at loop top, but select_pass_start can pick a later wall-clock start, so execute_pass stores blocks while transfers due between settlement and start remain unticked, tripping the FIFO tier assertion. A deterministic paused-Tokio reproduction with two 1MB prompts at 0.2 GB/s D2H and a third prompt at the boundary is specified, plus a scale repro. Existing PR #16555 overlaps the same file but lacks tests and root-cause coverage, leaving room for a test-backed fix."
   },
   "299f7e09de7d56e35068f004886d1a62fcd08fbaee80b6422eadc866634a81d7": {
     "confidence": 0.8,
@@ -28873,6 +28938,40 @@
       "Whether existing PR or branch already addresses this"
     ],
     "why": "Issue reports a concrete telemetry gap: ContextState.user_id is not emitted as a span attribute, affecting Langfuse and OTLP backends. The reproduction is detailed and actionable, but the gate decision is HUMAN_REVIEW and maintainer confirmation is needed before implementation."
+  },
+  "312457e0a04424a634cfbb936cdbc00f838e76c3cead7d059f8e335429c93130": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas:0 on the create path for Grove-backed components (defer PCS creation or pass through idle state)",
+      "operator admission/validation: optionally reject replicas:0 at DGD admission with a clear error if creation-at-zero is not supported"
+    ],
+    "risks": [
+      "Two reasonable fixes exist (defer creation vs. reject at admission); maintainer may prefer one, but this is normal implementation choice, not a blocker",
+      "Grove GREP-0677 (ai-dynamo/grove#686) may change the intended idle-state modeling, affecting which fix is durable",
+      "Behavior change to operator admission could affect external control planes relying on holding DGD at 0"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Apply the issue's minimal DGD YAML with replicas:0 and multinode nodeCount:2 into a Grove-enabled namespace; assert no webhook rejection and a defined state",
+      "Add a unit test in deploy/operator/internal/dynamo for graph rendering with component.Replicas=0 asserting the rendered PCS/PCSG is valid or the create is deferred",
+      "Regression test for the existing scale-down-to-zero path (#11837) to ensure it still works"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer deferring PCS creation vs. rejecting replicas:0 at admission",
+      "Whether Grove GREP-0677 will land and change the recommended operator behavior"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD with replicas:0 on Grove-backed multinode component), the exact admission webhook error, and a specific code anchor (deploy/operator/internal/dynamo/graph.go) where component.Replicas is passed unchecked and minAvailable is hardcoded to 1. This is a user-visible operator bug with a clear reference-vs-implementation validation path (apply the YAML, observe webhook rejection, then verify the fix renders a valid PCS or rejects at admission)."
   },
   "313a2336d5d09dafa2c250f1489749dc267149e6808b06f92ed40205b1381701": {
     "confidence": 0.7,
@@ -71396,6 +71495,35 @@
     ],
     "why": "Issue provides a concrete reproduction, code anchors, and a clear root cause (forced reconnect_on_error=False plus no retry path for failed first connect). However, two open PRs (#6031, #6032) semantically overlap with the exact code path and fix, and the duplicate status is 'semantic_overlap_requires_review' with no maintainer resolution. Whether the candidate work is already covered is a materially blocking unknown for actionability."
   },
+  "732f5521f25efa3303512595f9f961f6ecabb43c929cec58ad327dc9def910c3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter initially disputed the #52363 duplicate claim, then confirmed the Console-coexistence mechanism in the final comment"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No actionable repo-side change identified; behavior is driven by Console organization provider policies"
+    ],
+    "risks": [
+      "Fixing provider-policy suppression without Console access risks masking intended policy enforcement",
+      "Duplicate of #52363, so a new PR would fragment the discussion"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Disconnect Console credential, restart service, verify openai provider reappears (already performed by reporter)"
+    ],
+    "unknowns": [
+      "Whether maintainers want a repo-side guard for policy-suppressed providers rather than a Console-side fix"
+    ],
+    "why": "The reporter's own final test confirms the bot's duplicate theory: disconnecting the OpenCode Console (opencode/Personal) credential restores the openai provider and 16 models, matching #52363. The remaining work is Console-side provider-policy behavior, not a code path in this repo that the candidate can reproduce or validate without Console access."
+  },
   "733337bcf3c87277414f60dd1315f1676fd748dcac6334cf725cfd865868f68b": {
     "confidence": 0.6,
     "contradictions": [
@@ -91754,6 +91882,42 @@
       "Whether the failure is code, driver, or compile-cache related"
     ],
     "why": "The issue reports two intermittent, non-deterministic CUDA runtime failures (cudaErrorInvalidValue in cuDNN SM90 sparse-attention backward, cudaErrorUnknown in packed-THD build_attention_indices) with no small deterministic reproducer, no confirmed root cause, and explicit uncertainty about whether the two incidents share a cause. The reporter also notes CUDA_LAUNCH_BLOCKING was off, so the reported call may not be the originating kernel. Multiple open PRs (#6848, #6910, #6939, #7169) already overlap the failing code paths, and the duplicate assessment status is semantic_overlap_requires_review, leaving unresolved coverage. This is a materially blocking unknown for actionable code work."
+  },
+  "94ca436945c94f6bd4cb6d6a8a21d11c48c03cbd8ab7b884d93509b525dbf353": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body lists code anchors and ordered repro steps suggesting actionability, but explicitly states the root cause is not established"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/acp/provider.rs permission_routing/pending_confirmations path",
+      "crates/goose/tests/providers.rs run_permission_test harness",
+      "possibly crates/goose/src/agents/agent.rs submit_tool_confirmation idempotency"
+    ],
+    "risks": [
+      "Fixing the wrong layer (harness vs adapter) would mask the real defect",
+      "Making duplicate answers silently idempotent is explicitly rejected by the maintainer as a substitute for root-causing",
+      "Live Codex account and shared ~/.codex sqlite state make the current repro non-hermetic"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a mock ACP agent that emits ActionRequired confirmations deterministically and reproduce the duplicate answer without a live Codex account",
+      "Instrument whether the same ActionRequired is delivered twice to the harness or the adapter issues a second permission request for an already-answered tool_call_id",
+      "Add a regression test asserting exactly one confirmation submission per tool_call_id"
+    ],
+    "unknowns": [
+      "Whether the duplicate originates from the harness reply stream or the ACP adapter's permission request issuance",
+      "Whether a mock ACP agent harness already exists or must be built",
+      "Whether the issue is assigned (assignmentRequired=true, assignees empty)"
+    ],
+    "why": "Issue explicitly states 'Not root-caused': it is unknown whether the duplicate ActionRequired comes from the harness stream or the adapter issuing a second permission request. The maintainer comment requires reproducing with a mock ACP agent and establishing whether the duplicate originates from permission requests or their delivery before fixing. This is a materially blocking unknown that determines the fix location."
   },
   "94cd7d2d474f06193aff4c84b24421e1940c68b3dfed6bf5530bd36c0ece50fa": {
     "confidence": 0.9,
@@ -130018,6 +130182,39 @@
       "Whether the remaining work is only a backport to rc/1.101.0 rather than a new fix"
     ],
     "why": "Issue provides a precise root cause (arity mismatch between _on_deferred_native_stream_complete and _deferred_stream_complete_args producers) and a concrete fix, but a recent comment states the bug is already fixed on main by PR #40869, with only a backport to rc/1.101.0 missing. This unresolved merged-fix coverage directly determines whether new code work is actionable, and the supplied duplicate assessment only flags semantic overlap with unrelated open PRs (#41220, #41356, #41328) without confirming or refuting the #40869 fix."
+  },
+  "d48d80681ee2ee4b14d4d126a55f13ce8d6557dc341aa911b7262b9eff02040f": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/llms/src/providers/vendors/ollama.ts: resolveOllamaThinkFlag should query /api/show and map reasoning effort to advertised thinking.values",
+      "Reasoning-effort selector UI for Ollama models advertising named levels",
+      "Default handling when no think field is configured"
+    ],
+    "risks": [
+      "Requires network call to /api/show which may need caching or fallback behavior",
+      "UI selector changes could expand scope beyond the adapter fix",
+      "Ollama Cloud vs local Ollama API differences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test resolveOllamaThinkFlag with mocked /api/show returning thinking.values [false,'low','high','max'] and [false,true]",
+      "Regression test that think:'high' is emitted for a model advertising named levels",
+      "Verify boolean-only models still map to think:true/false"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer adapter-only fix vs UI selector change",
+      "Whether /api/show is already called elsewhere in the codebase for model metadata"
+    ],
+    "why": "Issue identifies a concrete code anchor (resolveOllamaThinkFlag in sdk/packages/llms/src/providers/vendors/ollama.ts) that hardcodes boolean think and never reads /api/show thinking.values, with a clear reproduction path via Ollama Cloud and /api/show. No duplicate or merged fix covers this; the only related PR (#13433) is keyword-overlap only on a different provider (cerebras)."
   },
   "d4a877e9daf642fc612ca284fb7f448575cb9517b8ae251a201da6e009992335": {
     "confidence": 0.85,
