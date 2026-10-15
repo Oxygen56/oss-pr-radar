@@ -46451,6 +46451,41 @@
     ],
     "why": "Issue provides a detailed, code-anchored root cause chain: 5s DYN_TCP_REQUEST_TIMEOUT ack timeout in tcp_client.rs, timeout treated as instance-down in push_router.rs is_inhibited, unconditional removal in client.rs, and no single-instance fallback. A verified workaround (DYN_TCP_REQUEST_TIMEOUT=600 + DYN_RUNTIME_INHIBITED_DURATION_SECS=0 yielding 96/96) and a concrete minimal reproduction (GIL-bound Python handler via Endpoint.client().round_robin() with ~32 concurrent requests) establish an actionable fix path. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific gate does not apply."
   },
+  "4e2aa8c2d2d0ba5da1a9416603c29f468eff34a5729cbdc94ad74dfeb4194fce": {
+    "confidence": 0.72,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body supplies a specific function and file as root cause"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/llms/src/providers/vendors/ollama.ts: resolveOllamaThinkFlag should read model thinking.values and map reasoning effort to named levels",
+      "Reasoning-effort selector/UI surface for Ollama models advertising named levels",
+      "Default handling when no think field is configured"
+    ],
+    "risks": [
+      "UI selector work may span beyond the single adapter file, expanding scope",
+      "Named levels must match /api/show exactly; mismatched strings could be rejected by Ollama",
+      "Maintainer may prefer a different default-resolution behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test for resolveOllamaThinkFlag mapping none/low/high/max to think values against a mocked /api/show thinking.values payload",
+      "Regression test that boolean-only models still map to think=true/false",
+      "Manual repro: configure Ollama Cloud, select deepseek-v4.1-flash, verify selector offers off/low/high/max and sends think:\"<level>\""
+    ],
+    "unknowns": [
+      "Whether the reasoning-effort selector is rendered from a shared UI component that also needs changes",
+      "Whether maintainers want the resolved default level surfaced in the UI"
+    ],
+    "why": "Issue pinpoints a concrete code anchor (resolveOllamaThinkFlag in sdk/packages/llms/src/providers/vendors/ollama.ts) that hardcodes boolean think and never reads /api/show thinking.values, with a reproducible path via Ollama Cloud /api/show. No duplicate or merged fix covers this path; open PRs only share the 'reasoning_effort' keyword with no code-path overlap. Track is agent_ai_infra, so the algorithm-track rejection rule does not apply."
+  },
   "4e311b2b951c422449e7647c68408bf1dc1d4a3fecc617b98452cff1aa78ed78": {
     "confidence": 0.55,
     "contradictions": [
