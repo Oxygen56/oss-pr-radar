@@ -79660,6 +79660,39 @@
     ],
     "why": "Issue reports a deterministic SWA KV position corruption in hierarchical cache for DeepSeek-V4, with strong evidence (kv-canary logs, deterministic across ranks). However, the open PR #30393 is actively being developed and may already address this bug; the issue author is waiting for that PR to merge. The related issue audit and open PR lookup failed due to timeout, leaving uncertainty about duplicate coverage. Maintainer confirmation is needed before starting a new fix."
   },
+  "817ac24fdad62a346d85b79ab89baa91c0e2711e752fce14c9fbcf3961dbd330": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/index.ts server-connection resolution",
+      "managed service port/state-path handling under redirected HOME",
+      "human-readable error instead of opaque ERROR + bun stack trace"
+    ],
+    "risks": [
+      "Fix may alter default port/state-path semantics for existing users",
+      "Maintainer may prefer a specific port-allocation or XDG_STATE_HOME design",
+      "Related issues #54267/#49034/#52021 may overlap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied repro.sh: normal HOME then HOME=<empty dir> opencode run, assert no exit-1 crash",
+      "Regression test that a second service is not spawned on the same default port when state dir differs",
+      "Assert a clear error message when the port is genuinely occupied"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for port/state resolution",
+      "Whether related issues already cover the same fix"
+    ],
+    "why": "Issue provides a 100% reproducible failure with a bot-confirmed root cause: redirected HOME hides the state file under ~/.local/state/opencode, so opencode starts a second managed service on the fixed default port and fails with 'port already in use'. Concrete code anchors (cli/server-connection, service.ensure) and a repro script are supplied."
+  },
   "817e5887008a1a53e8891f84475b107b8af7397cde0dcf65495ddd649cb37196": {
     "confidence": 0.7,
     "contradictions": [
@@ -155548,6 +155581,44 @@
       "Whether the maintainer-preferred chunk contract or the cheaper --max-body-size plus documentation route will be chosen"
     ],
     "why": "Root cause is well documented (single unchunked POST to /session/:id/attachments, express.raw 8mb, no chunk protocol), but triage reclassified this as an enhancement/design gap and explicitly deferred the transport decision to the v0.16.x containerized/reverse-proxy milestone (#3803). The 413 originates from the operator's proxy, not qwen-code, and the affected deployment shape is documented as out of scope. The gap is also not attachments-specific: /file/upload (50 MiB), extension archive (10 MiB), voice (10 MiB) and JSON routes (10 MiB) are all single unchunked POSTs, so a targeted attachments-only patch would be incoherent and the cheaper tracked option (--max-body-size flag plus documented proxy requirement) already covers the deployment case."
+  },
+  "fdaa9b37e6319b7fbec2ea1999ac051b61954a1963e37e84a7bd4003c138b883": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.score=10 and category=WAIT_MAINTAINER imply high actionability, while preTaskEvidence.policy.status=needs_assignment and assignmentRequired=true indicate a blocking assignment requirement",
+      "candidate.risk cites reproduction_or_validation_missing, but issue_data.issue_body supplies detailed runtime red/green evidence and a native unit test"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-proxy/provider/vertex.go: replace unchecked parsedKey.(*rsa.PrivateKey) with comma-ok assertion returning a descriptive error",
+      "plugins/wasm-go/extensions/ai-proxy/provider/vertex_auth_key_test.go: add regression test generating an ECDSA P-256 PKCS#8 key and asserting createJWT errors without producing a token"
+    ],
+    "risks": [
+      "Repository requires assignment before implementation; no assignee is present",
+      "PR #4739 touches the same file (provider/vertex.go) but is credential-unrelated; overlap is semantic only and needs human comparison to rule out duplicate coverage",
+      "Behavior change from silent credential loss to HTTP 500 could affect operators relying on the previous (broken) path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add TestCreateJWTNonRSAKeyDoesNotPanic: generate ECDSA P-256 PKCS#8 key in-process, feed as service-account private_key, assert error returned and no token",
+      "Confirm the test panics on the pre-fix revision and passes after the fix",
+      "Run the full ./provider/ suite to confirm RSA-key behavior is unchanged",
+      "Re-run the wasm-runtime-verification harness with the ECDSA key to confirm HTTP 500 with the RSA-requirement message instead of a recovered panic"
+    ],
+    "unknowns": [
+      "Whether a maintainer will assign this issue to the contributor",
+      "Whether PR #4739's changes to provider/vertex.go overlap with the credential-handling code path",
+      "Whether the repository's agent-assisted contribution policy requires maintainer approval of the Proposal and Design before any PR is opened"
+    ],
+    "why": "The issue is a well-specified proposal with a clear root cause (unchecked type assertion at vertex.go:1538) and a concrete validation path (ECDSA P-256 PKCS#8 key through createJWT, plus runtime harness evidence). However, the supplied pre-task evidence explicitly sets policy.status=needs_assignment with assignmentRequired=true and no assignees, and the candidate's own risk field records a failed pre-check for assignment_required and reproduction_or_validation_missing. Repository assignment is a materially blocking unknown per the review rules, so this cannot be NO_OBJECTION."
   },
   "fdac5bbb164978edcc21118aa5e1443d1497c868c5363fac65f364af02de6b5e": {
     "confidence": 0.8,
