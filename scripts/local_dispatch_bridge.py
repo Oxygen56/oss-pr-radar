@@ -24369,7 +24369,19 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     blocked_environment: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = list(completion_errors)
     concurrent_deferred: list[dict[str, Any]] = []
+    system_preparation_metadata: dict[tuple[str, ...], dict[str, Any]] = {}
     for blocked in store.validation_no_progress():
+        blocked_identity = tuple(
+            str(blocked.get(field) or "")
+            for field in (
+                "key",
+                "intentId",
+                "threadId",
+                "worktreePath",
+                "resultDigest",
+                "progressMarker",
+            )
+        )
         try:
             worktree = Path(blocked["worktreePath"]).resolve()
             dirty_files = _local_changed_files(worktree) if worktree.is_dir() else []
@@ -24379,6 +24391,14 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             verdict = str(review.get("verdict") or "") if review else ""
             current_progress_marker = _validation_progress_marker(value)
             recorded_progress_marker = str(blocked.get("progressMarker") or "")
+            if authenticated is not None:
+                preparation = _blocked_system_preparation_metadata(
+                    store, blocked, value, authenticated[1]
+                )
+                if preparation is not None:
+                    system_preparation_metadata[blocked_identity] = {
+                        "systemPreparationRequired": preparation
+                    }
             if dirty_files:
                 reason = "WORKTREE_PROGRESS_PENDING_RESULT"
                 review_marker = sha256_json({"dirtyFiles": dirty_files})
@@ -24488,6 +24508,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                     }
                 )
         except ValidationResultChanged as exc:
+            system_preparation_metadata.pop(blocked_identity, None)
             concurrent_deferred.append(
                 {
                     "key": str(blocked.get("key") or ""),
@@ -24498,6 +24519,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                 }
             )
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            system_preparation_metadata.pop(blocked_identity, None)
             errors.append(
                 {
                     "key": str(blocked.get("key") or ""),
@@ -24750,6 +24772,20 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     blocked_environment_keys = {str(item.get("key") or "") for item in blocked_environment}
     blocked_no_progress = [
         item
+        | system_preparation_metadata.get(
+            tuple(
+                str(item.get(field) or "")
+                for field in (
+                    "key",
+                    "intentId",
+                    "threadId",
+                    "worktreePath",
+                    "resultDigest",
+                    "progressMarker",
+                )
+            ),
+            {},
+        )
         for item in store.validation_no_progress()
         if str(item.get("key") or "") not in blocked_environment_keys
     ]
@@ -25081,8 +25117,11 @@ def _validation_progress_marker(value: dict[str, Any]) -> str | None:
 
     failed = unresolved_current_test_failures(value)
     if not failed:
-        return _review_only_validation_progress_marker(value) or _legacy_validation_progress_marker(
-            value
+        preparation = _system_owned_validation_preparation_gap(value)
+        return (
+            _review_only_validation_progress_marker(value)
+            or (sha256_json(preparation) if preparation is not None else None)
+            or _legacy_validation_progress_marker(value)
         )
     checks = []
     for item in failed:
@@ -25176,6 +25215,164 @@ def _review_only_validation_progress_marker(value: dict[str, Any]) -> str | None
             "checks": checks,
         }
     )
+
+
+def _system_owned_validation_preparation_gap(value: dict[str, Any]) -> dict[str, Any] | None:
+    """Fingerprint an explicit unfulfilled system obligation, without authorizing it.
+
+    Partial child checks cannot fulfill work which that same result explicitly
+    says the child may not perform. Their original commands and paths remain
+    untouched; real current failures retain the original failure marker.
+    """
+
+    quality = value.get("quality")
+    evidence = value.get("evidence")
+    if not isinstance(quality, dict) or not isinstance(evidence, dict):
+        return None
+    missing = {"relevant_tests_green", "independent_review_passed"}
+    if (
+        any(quality.get(field) is not False for field in missing)
+        or set(assess_submit_ready(quality, task_result=value).missing) != missing
+        or unresolved_current_test_failures(value)
+        or value.get("stage") != "FIX_READY"
+        or value.get("reason") != "VALIDATION_CORE_CHECKS_INCOMPLETE"
+        or value.get("handoffMode") != "controller_commit_complete"
+        or not isinstance(value.get("commitSha"), str)
+        or not re.fullmatch(r"[0-9a-f]{40}", value["commitSha"])
+        or value.get("headSha") != value["commitSha"]
+        or not isinstance(value.get("contextDigest"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", value["contextDigest"])
+        or any(
+            not isinstance(value.get(field), str) or not value[field].strip()
+            for field in ("taskId", "key", "issueUrl", "threadId", "worktreePath")
+        )
+        or value.get("publicationReceipt") is not None
+        or value.get("prFollowup") is not None
+    ):
+        return None
+    action = evidence.get("systemActionRequired")
+    native = evidence.get("nativePreparation")
+    commands = evidence.get("requiredFormalCommands")
+    unresolved = evidence.get("unresolvedChecks")
+    tests = value.get("tests")
+    if not isinstance(tests, list) or not tests:
+        return None
+    current_checks = []
+    for item in tests:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("command"), str)
+            or not item["command"].strip()
+            or not isinstance(item.get("workingDirectory") or item.get("cwd"), str)
+            or not (item.get("workingDirectory") or item.get("cwd")).strip()
+            or type(item.get("exitCode")) is not int
+            or item.get("phase") not in {"before_fix", "formal", "after_fix"}
+        ):
+            return None
+        if item["phase"] != "before_fix":
+            current_checks.append(item)
+    if not current_checks or any(item["exitCode"] != 0 for item in current_checks):
+        return None
+    if not isinstance(action, dict) or not isinstance(native, dict):
+        return None
+    if (
+        action.get("childMayProceed") is not False
+        or not isinstance(action.get("owner"), str)
+        or not action["owner"].strip()
+        or any(
+            not isinstance(items, list)
+            or not items
+            or any(not isinstance(item, str) or not item.strip() for item in items)
+            for items in (action.get("steps"), commands, unresolved)
+        )
+        or native.get("reportInspectedThisRound") is not True
+        or native.get("executedThisRound") is not False
+        or native.get("artifactPresent") is not True
+        or native.get("provenanceBoundToCurrentContext") is not False
+        or type(native.get("reportBuildExitCode")) is not int
+        or native["reportBuildExitCode"] != 0
+        or native.get("reportVerification") != "VERIFIED"
+        or type(native.get("reportGateCount")) is not int
+        or native["reportGateCount"] <= 0
+        or native.get("reportFailedGates") != []
+        or not isinstance(native.get("report"), str)
+        or not native["report"].strip()
+    ):
+        return None
+    return {
+        "gap": "SYSTEM_OWNED_VALIDATION_PREPARATION_REQUIRED",
+        **{
+            field: value[field]
+            for field in (
+                "taskId",
+                "key",
+                "issueUrl",
+                "threadId",
+                "worktreePath",
+                "commitSha",
+                "headSha",
+                "contextDigest",
+            )
+        },
+        "missing": sorted(missing),
+        "pendingSystemWork": {
+            "systemActionRequired": {
+                field: action[field] for field in ("owner", "steps", "childMayProceed")
+            },
+            "nativePreparation": {
+                field: native[field]
+                for field in (
+                    "report",
+                    "reportInspectedThisRound",
+                    "executedThisRound",
+                    "reportBuildExitCode",
+                    "reportVerification",
+                    "reportGateCount",
+                    "reportFailedGates",
+                    "artifactPresent",
+                    "provenanceBoundToCurrentContext",
+                )
+            },
+            "requiredFormalCommands": commands,
+            "unresolvedChecks": unresolved,
+        },
+    }
+
+
+def _blocked_system_preparation_metadata(
+    store: RadarLedger,
+    blocked: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+) -> dict[str, Any] | None:
+    """Expose pending work only from the exact current authenticated private result."""
+
+    preparation = _system_owned_validation_preparation_gap(value)
+    if preparation is None or sha256_json(preparation) != blocked.get("progressMarker"):
+        return None
+    if (
+        _task_result_digest(value, raw) != blocked.get("resultDigest")
+        or value.get("taskId") != blocked.get("intentId")
+        or not store.task_result_binding_gate(blocked, value)
+    ):
+        return None
+    with _task_worktree_private_descriptor(blocked) as opened:
+        if _read_task_result_bytes_from_private(opened) != raw:
+            return None
+        context_raw = _read_task_context_bytes_from_private(opened)
+        context_stat = os.stat("task-context.json", dir_fd=opened.private_fd, follow_symlinks=False)
+        context, _ = _verified_private_context_with_singleton_guard(
+            store, opened.worktree, context_raw, context_stat
+        )
+        if (
+            not _private_context_matches_current_ledger(store, context)
+            or value["contextDigest"] != context.get("contextDigest")
+            or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree) != value["headSha"]
+            or _read_task_result_bytes_from_private(opened) != raw
+            or _read_task_context_bytes_from_private(opened) != context_raw
+        ):
+            return None
+    return preparation["pendingSystemWork"]
 
 
 def _legacy_validation_progress_marker(value: dict[str, Any]) -> str | None:

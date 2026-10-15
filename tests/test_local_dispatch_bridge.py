@@ -47005,3 +47005,397 @@ def test_merge_validation_scope_recovery_does_not_rearm_original_exhaustion(monk
         result_path.read_bytes(),
         result_path.with_name("task-context.json").read_bytes(),
     )
+
+
+def _system_preparation_pending_evidence():
+    return {
+        "nativePreparation": {
+            "report": "build/native-results.json",
+            "reportInspectedThisRound": True,
+            "executedThisRound": False,
+            "reportBuildExitCode": 0,
+            "reportVerification": "VERIFIED",
+            "reportGateCount": 56,
+            "reportFailedGates": [],
+            "artifactPresent": True,
+            "provenanceBoundToCurrentContext": False,
+        },
+        "requiredFormalCommands": ["bun scripts/build-binaries.ts", "bash tests/run-tests.sh"],
+        "unresolvedChecks": [
+            "Current-context native provenance",
+            "Original compiled runner",
+            "Review",
+        ],
+        "systemActionRequired": {
+            "owner": "System-controlled preparation outside the restricted child",
+            "steps": ["Bind native provenance", "Run original compiled coverage", "Review"],
+            "childMayProceed": False,
+        },
+    }
+
+
+def _system_preparation_pending_value(worktree, token):
+    value = _review_only_green_validation(worktree, token)
+    value.update(
+        taskId="intent-1",
+        key="a/b#1",
+        issueUrl="https://github.com/a/b/issues/1",
+        threadId="thread-1",
+        worktreePath=str(worktree),
+        reason="VALIDATION_CORE_CHECKS_INCOMPLETE",
+        evidence=_system_preparation_pending_evidence(),
+    )
+    value["quality"]["relevant_tests_green"] = False
+    value["tests"][0]["command"] = "python runtime.py"
+    value["tests"][0]["result"] = str(worktree / token / "before-fix.log")
+    value["tests"][1]["cwd"] = str(worktree / ".oss-pr-radar" / token / "baseline")
+    return value
+
+
+def _system_preparation_original_committed_result(tmp_path):
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    checks = _system_preparation_pending_value(worktree, "first")["tests"]
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        controller_policy_complete=True,
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+        validation_checks=checks,
+        worktree=worktree,
+    )
+    value = json.loads(result_path.read_bytes())
+    value["reason"] = "VALIDATION_CORE_CHECKS_INCOMPLETE"
+    value["evidence"] = _system_preparation_pending_evidence()
+    result_path.write_text(json.dumps(value))
+    _refresh_reproduction_certificate(result_path, store=store)
+    value = json.loads(result_path.read_bytes())
+    context = json.loads(result_path.with_name("task-context.json").read_bytes())
+    assert value["contextDigest"] == context["contextDigest"]
+    assert value["commitSha"] == value["headSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert MODULE.unresolved_current_test_failures(value) == []
+    assert set(MODULE.assess_submit_ready(value["quality"], task_result=value).missing) == {
+        "relevant_tests_green",
+        "independent_review_passed",
+    }
+    return store, worktree, result_path
+
+
+def test_system_preparation_gap_marker_tracks_obligation_not_partial_child_logs(tmp_path):
+    first = _system_preparation_pending_value(tmp_path, "first")
+    repeated = _system_preparation_pending_value(tmp_path, "second")
+    assert MODULE.unresolved_current_test_failures(first) == []
+    assert MODULE.unresolved_current_test_failures(repeated) == []
+    assert first["tests"][1]["cwd"] != repeated["tests"][1]["cwd"]
+    assert MODULE._legacy_validation_progress_marker(
+        first
+    ) != MODULE._legacy_validation_progress_marker(repeated)
+    before = copy.deepcopy((first, repeated))
+    assert MODULE._validation_progress_marker(first) == MODULE._validation_progress_marker(repeated)
+    assert (first, repeated) == before
+
+
+def test_system_preparation_gap_ignores_extra_observation_metadata_without_mutating_raw(tmp_path):
+    first = _system_preparation_pending_value(tmp_path, "same")
+    observed = copy.deepcopy(first)
+    observed["evidence"]["systemActionRequired"]["observedAt"] = "later observation"
+    observed["evidence"]["nativePreparation"].update(lastCheckedAt="later", logPath="new/log.json")
+    original = copy.deepcopy(observed)
+    assert MODULE._validation_progress_marker(first) == MODULE._validation_progress_marker(observed)
+    assert observed == original
+
+
+def test_system_preparation_gap_original_ingest_stops_repeat_and_reports_pending(tmp_path):
+    store, worktree, result_path = _system_preparation_original_committed_result(tmp_path)
+    args = SimpleNamespace(ledger=store.path)
+    first_ingested = MODULE.ingest_task_results(args)
+    assert first_ingested["errors"] == [], first_ingested
+    assert first_ingested["validationDeferred"]
+    first = store.validation_followup_candidates()[0]
+    reserved = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest=first["resultDigest"]
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest=first["resultDigest"],
+        reservation_digest=reserved["reservationDigest"],
+    )
+    value = json.loads(result_path.read_bytes())
+    first_legacy_marker = MODULE._legacy_validation_progress_marker(value)
+    value["tests"][0]["result"] = "fresh-log-directory/before-fix.log"
+    value["tests"][1]["cwd"] = str(worktree / ".oss-pr-radar" / "second" / "baseline")
+    result_path.write_text(json.dumps(value))
+    _refresh_reproduction_certificate(result_path, store=store)
+    repeated_raw = result_path.read_bytes()
+    assert (
+        MODULE._legacy_validation_progress_marker(json.loads(repeated_raw)) != first_legacy_marker
+    )
+    repeated = MODULE.ingest_task_results(args)
+    assert repeated["errors"] == [], repeated
+    assert repeated["publicationRequests"] == []
+    # The physical old bridge fails here, after the real original ingest/reserve/SENT chain.
+    assert store.validation_followup_candidates() == []
+    assert len(store.validation_no_progress()) == 1
+    before = (result_path.read_bytes(), result_path.with_name("task-context.json").read_bytes())
+    listed = MODULE.validation_followup_list(args)
+    assert listed["errors"] == [], listed
+    assert listed["candidates"] == [] and listed["rearmedReviewFeedback"] == []
+    assert len(listed["blockedNoProgress"]) == 1
+    blocked = listed["blockedNoProgress"][0]
+    assert blocked["resultDigest"] == MODULE._task_result_digest(
+        json.loads(repeated_raw), repeated_raw
+    )
+    assert blocked["systemPreparationRequired"] == _system_preparation_pending_evidence()
+    again = MODULE.validation_followup_list(args)
+    assert again["candidates"] == [] and again["rearmedReviewFeedback"] == []
+    assert before == (
+        result_path.read_bytes(),
+        result_path.with_name("task-context.json").read_bytes(),
+    )
+    value = json.loads(result_path.read_bytes())
+    assert value["quality"]["relevant_tests_green"] is False
+    assert value["quality"]["independent_review_passed"] is False
+    assert value.get("publicationReceipt") is None
+    with store.connect() as c:
+        assert (
+            c.execute(
+                "SELECT count(*) FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert c.execute("SELECT count(*) FROM publication_effects").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["head", "context", "commands", "steps", "owner", "unresolved", "report", "gate_count"],
+)
+def test_system_preparation_gap_marker_keeps_real_obligation_changes(tmp_path, change):
+    value = _system_preparation_pending_value(tmp_path, "same")
+    changed = copy.deepcopy(value)
+    if change == "head":
+        changed["commitSha"] = changed["headSha"] = "c" * 40
+    elif change == "context":
+        changed["contextDigest"] = "d" * 64
+    elif change == "commands":
+        changed["evidence"]["requiredFormalCommands"].append("make test")
+    elif change in {"steps", "owner"}:
+        changed["evidence"]["systemActionRequired"][change] = (
+            ["Different preparation"] if change == "steps" else "Different owner"
+        )
+    elif change == "unresolved":
+        changed["evidence"]["unresolvedChecks"].append("Additional obligation")
+    elif change == "report":
+        changed["evidence"]["nativePreparation"]["report"] = "another/native.json"
+    else:
+        changed["evidence"]["nativePreparation"]["reportGateCount"] = 57
+    assert MODULE._validation_progress_marker(value) != MODULE._validation_progress_marker(changed)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "failure",
+        "false_int",
+        "native_exit_bool",
+        "child_zero",
+        "provenance",
+        "executed",
+        "artifact",
+        "extra_missing",
+        "green",
+        "review",
+        "mode",
+        "identity",
+        "reason",
+        "empty_commands",
+        "failed_gates",
+    ],
+)
+def test_system_preparation_gap_keeps_original_failure_and_legacy_boundaries(tmp_path, damage):
+    value = _system_preparation_pending_value(tmp_path, "same")
+    if damage == "failure":
+        value["tests"][2]["exitCode"] = 3
+    elif damage == "false_int":
+        value["quality"]["relevant_tests_green"] = 0
+    elif damage == "native_exit_bool":
+        value["evidence"]["nativePreparation"]["reportBuildExitCode"] = False
+    elif damage == "child_zero":
+        value["evidence"]["systemActionRequired"]["childMayProceed"] = 0
+    elif damage in {"provenance", "executed", "artifact", "failed_gates"}:
+        key = {
+            "provenance": "provenanceBoundToCurrentContext",
+            "executed": "executedThisRound",
+            "artifact": "artifactPresent",
+            "failed_gates": "reportFailedGates",
+        }[damage]
+        value["evidence"]["nativePreparation"][key] = (
+            ["real failed gate"] if damage == "failed_gates" else damage != "artifact"
+        )
+    elif damage == "extra_missing":
+        value["quality"]["regression_test_verified"] = False
+    elif damage in {"green", "review"}:
+        value["quality"][
+            "relevant_tests_green" if damage == "green" else "independent_review_passed"
+        ] = True
+    elif damage == "mode":
+        value["handoffMode"] = "controller_commit_required"
+    elif damage == "identity":
+        value.pop("taskId")
+    elif damage == "reason":
+        value["reason"] = "OTHER_PENDING_REASON"
+    else:
+        value["evidence"]["requiredFormalCommands"] = []
+    assert MODULE._system_owned_validation_preparation_gap(value) is None
+    if damage == "failure":
+        marker = MODULE._validation_progress_marker(value)
+        changed = copy.deepcopy(value)
+        changed["tests"][0]["result"] = "irrelevant new historical log"
+        changed["evidence"]["systemActionRequired"]["steps"].append("unrelated plan")
+        assert MODULE._validation_progress_marker(changed) == marker
+    else:
+        assert MODULE._validation_progress_marker(value) == (
+            MODULE._review_only_validation_progress_marker(value)
+            or MODULE._legacy_validation_progress_marker(value)
+        )
+
+
+def _system_preparation_original_stopped(tmp_path):
+    store, worktree, result_path = _system_preparation_original_committed_result(tmp_path)
+    args = SimpleNamespace(ledger=store.path)
+    intake = MODULE.ingest_task_results(args)
+    assert intake["errors"] == [] and intake["validationDeferred"], intake
+    candidate = store.validation_followup_candidates()[0]
+    reserved = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest=candidate["resultDigest"]
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest=candidate["resultDigest"],
+        reservation_digest=reserved["reservationDigest"],
+    )
+    value = json.loads(result_path.read_bytes())
+    value["evidence"]["summary"] = "Unchanged system obligation; another child report."
+    result_path.write_text(json.dumps(value))
+    _refresh_reproduction_certificate(result_path, store=store)
+    intake = MODULE.ingest_task_results(args)
+    assert intake["errors"] == [], intake
+    assert store.validation_followup_candidates() == []
+    (blocked,) = store.validation_no_progress()
+    return store, worktree, result_path, blocked
+
+
+@pytest.mark.parametrize("damage", ["marker", "digest", "identity", "context", "private", "race"])
+def test_system_preparation_gap_pending_metadata_keeps_exact_current_private_binding(
+    monkeypatch, tmp_path, damage
+):
+    store, _worktree, result_path, blocked = _system_preparation_original_stopped(tmp_path)
+    raw = result_path.read_bytes()
+    value = json.loads(raw)
+    assert (
+        MODULE._blocked_system_preparation_metadata(store, blocked, value, raw)
+        == _system_preparation_pending_evidence()
+    )
+    if damage == "marker":
+        blocked = blocked | {"progressMarker": "f" * 64}
+    elif damage == "digest":
+        blocked = blocked | {"resultDigest": "f" * 64}
+    elif damage == "identity":
+        blocked = blocked | {"intentId": "foreign-intent"}
+    elif damage == "context":
+        value["contextDigest"] = "f" * 64
+        raw = json.dumps(value).encode()
+        result_path.write_bytes(raw)
+        # Even a caller supplying a matching marker/digest cannot bypass current binding.
+        blocked = blocked | {
+            "resultDigest": MODULE._task_result_digest(value, raw),
+            "progressMarker": MODULE._validation_progress_marker(value),
+        }
+    elif damage == "private":
+        path = result_path.with_name("task-context.json")
+        context = json.loads(path.read_bytes())
+        context["contextDigest"] = "f" * 64
+        path.write_text(json.dumps(context))
+    else:
+        original = MODULE._read_task_result_bytes_from_private
+        calls = 0
+
+        def replace_on_final_read(opened):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                changed = json.loads(result_path.read_bytes())
+                changed["evidence"]["unresolvedChecks"].append("New obligation during read")
+                result_path.write_text(json.dumps(changed))
+            return original(opened)
+
+        monkeypatch.setattr(MODULE, "_read_task_result_bytes_from_private", replace_on_final_read)
+    before = (result_path.read_bytes(), result_path.with_name("task-context.json").read_bytes())
+    if damage == "private":
+        with pytest.raises(RuntimeError):
+            MODULE._blocked_system_preparation_metadata(store, blocked, value, raw)
+    else:
+        assert MODULE._blocked_system_preparation_metadata(store, blocked, value, raw) is None
+    if damage != "race":
+        assert before == (
+            result_path.read_bytes(),
+            result_path.with_name("task-context.json").read_bytes(),
+        )
+
+
+def test_system_preparation_gap_legacy_stop_is_not_rearmed_by_marker_upgrade(monkeypatch, tmp_path):
+    current = MODULE._validation_progress_marker
+    monkeypatch.setattr(
+        MODULE, "_validation_progress_marker", MODULE._legacy_validation_progress_marker
+    )
+    store, _worktree, result_path, blocked = _system_preparation_original_stopped(tmp_path)
+    monkeypatch.setattr(MODULE, "_validation_progress_marker", current)
+    value = json.loads(result_path.read_bytes())
+    assert current(value) != blocked["progressMarker"]
+    assert MODULE._legacy_validation_progress_marker(value) == blocked["progressMarker"]
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["errors"] == [] and listed["candidates"] == []
+    assert listed["rearmedReviewFeedback"] == []
+    assert "systemPreparationRequired" not in listed["blockedNoProgress"][0]
+
+
+def test_system_preparation_gap_new_requirement_reaches_original_followup_without_green(tmp_path):
+    store, _worktree, result_path, _blocked = _system_preparation_original_stopped(tmp_path)
+    value = json.loads(result_path.read_bytes())
+    value["evidence"]["systemActionRequired"]["steps"].append("New genuine system requirement")
+    result_path.write_text(json.dumps(value))
+    _refresh_reproduction_certificate(result_path, store=store)
+    intake = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert intake["errors"] == [] and intake["publicationRequests"] == []
+    assert len(store.validation_followup_candidates()) == 1
+    value = json.loads(result_path.read_bytes())
+    assert value["quality"]["relevant_tests_green"] is False
+    assert value["quality"]["independent_review_passed"] is False
+
+
+def test_system_preparation_gap_list_drops_cached_metadata_after_real_result_race(
+    monkeypatch, tmp_path
+):
+    store, _worktree, result_path, _blocked = _system_preparation_original_stopped(tmp_path)
+    original_metadata = MODULE._blocked_system_preparation_metadata
+    original_plan = MODULE._validation_prefetch_plan
+    metadata_proved = False
+
+    def read_metadata(*args):
+        nonlocal metadata_proved
+        result = original_metadata(*args)
+        metadata_proved = result is not None
+        return result
+
+    def change_before_plan(candidate):
+        if metadata_proved:
+            value = json.loads(result_path.read_bytes())
+            value["evidence"]["summary"] = "A real new result replaced the authenticated snapshot"
+            result_path.write_text(json.dumps(value))
+        return original_plan(candidate)
+
+    monkeypatch.setattr(MODULE, "_blocked_system_preparation_metadata", read_metadata)
+    monkeypatch.setattr(MODULE, "_validation_prefetch_plan", change_before_plan)
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert metadata_proved
+    assert listed["concurrentDeferred"], listed
+    assert listed["candidates"] == []
+    assert "systemPreparationRequired" not in listed["blockedNoProgress"][0]
