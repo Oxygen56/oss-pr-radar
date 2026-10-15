@@ -27480,6 +27480,38 @@
     ],
     "why": "Issue reports a concrete traceback (KeyError/ValueError on model_type 'deepseek_v41' in transformers AutoConfig) but the root cause is not established: it is unclear whether the fix belongs in sglang's config parsing (python/sglang/srt/utils/hf_transformers/config.py) or requires a transformers version/registration change, and the issue explicitly follows PR #38950 which already touches the same config paths. Open PR #38950 ([NPU][DSV4.1] Adapt NPU with DeepSeek V4.1) and maintainer-owned PR #39370 semantically overlap with this issue and may already cover the root cause, so duplicate/merged-fix coverage is unresolved."
   },
+  "2ddc92c163d49aab775aa14e5eb942ed67831f3ef69d817984831a976a6161c2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/llms/src/providers/vendors/ollama.ts: resolveOllamaThinkFlag should read model-advertised thinking.values and pass named levels as think string",
+      "Reasoning-effort selector/UI surface for Ollama models advertising named levels",
+      "Default handling when no think is configured (explicit default or visible resolved level)"
+    ],
+    "risks": [
+      "Requires live Ollama Cloud /api/show access to fully validate named-level values",
+      "UI selector change may exceed minimal adapter fix scope",
+      "Maintainer may prefer a different default-resolution policy"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test resolveOllamaThinkFlag with a mocked /api/show response advertising thinking.values [false,\"low\",\"high\",\"max\"] and assert think:\"high\" is emitted for high effort",
+      "Regression test that boolean-only models still map to think:true/false",
+      "Test that no configured effort produces the documented default behavior"
+    ],
+    "unknowns": [
+      "Whether maintainers want the UI selector change in the same PR as the adapter fix"
+    ],
+    "why": "Issue identifies a concrete code anchor (sdk/packages/llms/src/providers/vendors/ollama.ts, resolveOllamaThinkFlag) that hardcodes boolean think and never reads /api/show thinking.values, with ordered reproduction steps and a clear expected behavior (send think as named level string). No duplicate/merged fix found; PR #13433 is keyword-only overlap on a different provider (cerebras)."
+  },
   "2e05b990ce3713484d60fa91a45024c2e4a126131dea56c09822c9f49c7d012c": {
     "confidence": 0.8,
     "contradictions": [],
@@ -28697,6 +28729,42 @@
       "Whether the repository's AI-disclosure policy permits an automated contribution on this issue"
     ],
     "why": "The issue presents a concrete, well-anchored root cause: moe_wna16_gemm_kernel combines split-K partial sums via 16-bit atomicAdd on a zeroed output, making results order-dependent for gridDim.z >= 3, with a clear reference-vs-implementation validation path (bit-exact run-to-run comparison against the Triton kernel control). However, the supplied evidence contains materially blocking unknowns: the issue body is truncated mid-reproduction command, so the exact probe invocation and observed result are not available; the duplicate assessment flags PR #54706 ('[ROCm][RDNA3] Fix W4A16 split-K accuracy and determinism') with distinctive overlap on 'split_k' and status 'semantic_overlap_requires_review', which may already cover the same root cause; and the policy status is 'ai_disclosure_conflict' with submission_policy 'ai_disclosure_conflict', an unresolved repository disclosure requirement. These facts determine whether independent code work is actionable."
+  },
+  "30b34b45436b54f1c45fc768d43fc2bc3690c38fe120a1772222db3f1f6e3112": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body says root cause unknown, while candidate metadata lists code anchors as if the failing path were localized"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/acp/provider.rs permission_routing/pending_confirmations path",
+      "crates/goose/tests/providers.rs run_permission_test harness",
+      "crates/goose/src/agents/agent.rs submit_tool_confirmation handling"
+    ],
+    "risks": [
+      "Fixing by making duplicate answers idempotent would mask the real defect and is explicitly rejected by the collaborator",
+      "Live Codex account and shared ~/.codex sqlite state make the current repro non-hermetic",
+      "Stack-overflow flake noted in the issue may confound reproduction"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a mock ACP agent that emits a single ActionRequired per tool call and assert exactly one confirmation submission",
+      "Add a regression test that fails on duplicate ActionRequired delivery or duplicate adapter permission requests",
+      "Run cargo test -p goose --test providers -- test_codex_acp_provider with RUST_MIN_STACK=67108864"
+    ],
+    "unknowns": [
+      "Whether the duplicate originates in ActionRequired delivery or in the adapter's permission request issuance",
+      "Whether a mock ACP agent harness exists or must be built before the fix can be validated",
+      "Whether repository assignment is required before implementation (policy status needs_assignment)"
+    ],
+    "why": "Issue explicitly states 'Not root-caused': the duplicate confirmation could come from the harness receiving the same ActionRequired twice or the adapter issuing a second permission request. A collaborator comment additionally requires reproducing with a mock ACP agent rather than a live Codex account, and forbids treating idempotent suppression as a substitute for finding the cause. The supplied evidence has no root-cause signal and no probe-ready reproduction, so the concrete code change is not yet determined."
   },
   "30c26583efe157ac7da9e8bd3c5f591df583e4073b93a5f2c5e608523d11b4d1": {
     "confidence": 0.8,
@@ -146513,6 +146581,35 @@
     ],
     "why": "Issue provides detailed measurements showing default residual_diff_threshold is inert for MiniMax-H3, but lacks root-cause isolation and open PR/issue lookup failed, so duplicate work cannot be excluded."
   },
+  "ee4f53ab8dfcea63e443de43ee8bb060fb9b0e489e9d5ddf11c1ab0c3ae8305e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/mocker/src/generalized_live.rs: settle due internal G2 transfers before selecting/executing each live pass",
+      "Add regression test in generalized_live.rs tests using paused Tokio time and native_host_offload"
+    ],
+    "risks": [
+      "Overlapping open PR #16555 may already implement a similar fix; compare before submitting to avoid duplicate work",
+      "Settlement timing change could alter pass scheduling semantics if applied too broadly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce deterministically: one engine with native_host_offload, two 1 MB prompts at 0.2 GB/s D2H finishing 5 ms and 10 ms after the first pass boundary; submit a third prompt at the boundary and hold 20 ms before finish(); assert no panic and correct G2 store behavior",
+      "Run targeted mocker package unit tests and static checks after the fix"
+    ],
+    "unknowns": [
+      "Whether PR #16555 will be revised to include the missing regression test before a competing fix is warranted"
+    ],
+    "why": "Issue provides a concrete panic, a precise root cause in lib/mocker/src/generalized_live.rs (pass start read after settlement, so due G2 transfers remain unticked before execute_pass), a deterministic paused-time reproduction, and a clear expected behavior. Open PR #16555 overlaps the same path but lacks regression tests and root-cause coverage, leaving room for a test-backed fix."
+  },
   "ee50fdc92833ab1daad4507ac7c1700f988f1a147289a5810f645341446fa1ae": {
     "confidence": 0.85,
     "contradictions": [],
@@ -150137,6 +150234,40 @@
       "No missing facts that block actionability; fix choice is a maintainer decision, not a blocker"
     ],
     "why": "Issue provides concrete algorithmic bugs with root cause, reproduction, and acceptance criteria. Maintainer confirmed both claims with measurements. Track llm_algorithm requires concrete mechanism and validation path; this qualifies."
+  },
+  "f43b9e2d4146802d36f921111708369f05ec78dc12523a65f9ca4e5e2762d80c": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas:0 on the create path (defer Grove resource creation or pass replicas:0/minAvailable:0 consistently)",
+      "DGD admission/validation: either accept zero as idle or reject with a clear error instead of failing downstream"
+    ],
+    "risks": [
+      "Two valid fix directions (defer creation vs. pass-through idle) may need maintainer design preference",
+      "Grove GREP-0677 semantics on derived PodClique/PCSG vs PCS template may affect the chosen implementation",
+      "Changing admission behavior could affect existing scale-down/scale-up paths (#11837, #14298)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Apply the issue's minimal DGD YAML with replicas:0 on a Grove-enabled cluster and confirm the current webhook rejection reproduces",
+      "Add a unit test in deploy/operator/internal/dynamo for PCSG rendering with component.Replicas=0 asserting no invalid replicas/minAvailable combination",
+      "Regression test that scaling an existing PCS to 0 still works and that creating at 0 then scaling up reconciles correctly"
+    ],
+    "unknowns": [
+      "Which of the two expected-behavior options maintainers prefer (defer creation vs. reject at admission) is not stated",
+      "Whether Grove GREP-0677 has landed in the target Grove version"
+    ],
+    "why": "Issue provides a concrete, reproducible operator bug: graph.go passes component.Replicas through unchecked and hardcodes minAvailable=1 when rendering the PCSG, so a Grove-backed DGD created with replicas:0 is rejected by Grove's admission webhook. Root cause is anchored to deploy/operator/internal/dynamo/graph.go and preserveGrovePodCliqueSetReplicas, with a minimal YAML reproduction and a clear validation path (apply DGD, observe webhook rejection, then verify fix). No open PR or duplicate coverage found."
   },
   "f45157484590c1183376e3d642ebea17c7004fba4e6e29bc58d85033f984b76e": {
     "confidence": 0.8,
