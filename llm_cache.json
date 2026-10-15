@@ -35698,6 +35698,42 @@
     ],
     "why": "The issue describes a bug in 'Qwen Desktop 1.0.3', but the maintainer's triage states that no such version exists in this repository and the UI strings do not match Qwen Code's permission model. The affected product is likely a different application (Qwen chat desktop app), making the issue not actionable in this repo. The root cause is unconfirmed and the reproduction path is not valid for this codebase."
   },
+  "3c53bffc070c88cf9cbbf8daadd14376d96dcfb60304a5e0663b3548e7c4ead7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels the issue as high-value actionable while the issue body states the root cause is not determined and the collaborator requires a mock-based reproduction first"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/agents/agent.rs submit_tool_confirmation idempotency or duplicate-answer handling",
+      "crates/goose/src/acp/provider.rs pending_confirmations / ActionRequired emission path",
+      "crates/goose/tests/providers.rs permission test harness using a mock ACP agent"
+    ],
+    "risks": [
+      "Fixing the wrong side (harness vs adapter) leaves the real duplicate-answer bug in place",
+      "Making duplicate answers silently idempotent could mask a genuine double-permission-request defect",
+      "Live Codex account and shared ~/.codex sqlite state make the current repro flaky and non-deterministic"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a mock ACP agent (no live Codex account) that emits a single tool confirmation and assert exactly one ActionRequired is delivered and one answer is accepted",
+      "Add a regression test asserting a second submission for an already-answered live request does not error, or that no duplicate ActionRequired is emitted",
+      "Run cargo test -p goose --test providers -- test_codex_acp_provider with the mock agent"
+    ],
+    "unknowns": [
+      "Whether the duplicate originates from ActionRequired delivery or from the adapter issuing a second permission request",
+      "Whether a mock ACP agent harness already exists or must be built",
+      "Whether the maintainer requires assignment before work (policy status needs_assignment)"
+    ],
+    "why": "Issue explicitly states 'Not root-caused': the duplicate 'tool confirmation request was already answered' could come from the same ActionRequired reaching the harness twice or the adapter issuing a second permission request. A collaborator also requires reproducing with a mock ACP agent rather than a live Codex account, and forbids silently ignoring the second answer. Without a determined root cause or a mock-based reproduction, the concrete code change is not yet actionable."
+  },
   "3c6257863d0ec057d0914ddabd1ee2c877859d2c29d86a3a273ee98e9fab1f82": {
     "confidence": 0.7,
     "contradictions": [],
