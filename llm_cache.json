@@ -49179,6 +49179,39 @@
     ],
     "why": "The issue's own status update retracts the earlier root-cause claims and states the original H20 crash remains unconfirmed; the concrete, merged fix (#38346, clamp in qsa_indexer.py) is already covered, and the remaining open PR #37638 is explicitly not credited with fixing this issue. No uncovered, actionable code work is established."
   },
+  "518540d4252fc5b9ffe9f566613686866f754145b3d5969bd9c092b5ea2db99b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/index.ts server-connection/service resolution",
+      "state-dir/port resolution under redirected HOME or XDG_STATE_HOME",
+      "human-readable error instead of opaque ERROR + bun stack trace"
+    ],
+    "risks": [
+      "Fix could alter service discovery/port semantics for normal HOME users",
+      "Maintainer may prefer a specific state-dir or port-selection design",
+      "Related issues #54267/#49034/#52021 may overlap and need dedup check"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied repro.sh: normal HOME then HOME=<empty dir> opencode run, assert exit 0 and no port-in-use crash",
+      "Regression test that a redirected HOME/XDG_STATE_HOME either reuses the existing service or selects a non-conflicting port",
+      "Assert the failure path emits a clear message rather than an opaque ERROR stack trace"
+    ],
+    "unknowns": [
+      "Whether maintainers consider this a CLI plumbing fix vs. a broader service-lifecycle redesign",
+      "Whether related issues already cover the same fix"
+    ],
+    "why": "Bot reproduced the crash and identified the root cause: with redirected HOME, the state file under ~/.local/state/opencode is not found, so a second managed service starts on the fixed default port and fails with 'port already in use'. Concrete repro script and code anchors (packages/cli/src/index.ts, HOME, XDG_STATE_HOME) are supplied, giving a clear reference-vs-implementation validation path."
+  },
   "51886d543cddbf638856261d8e52a055b349eb048b069b810975a172a9c4fcb2": {
     "confidence": 0.55,
     "contradictions": [
@@ -57084,6 +57117,37 @@
       "Exact fix boundary between client header construction and server-side 405 handling"
     ],
     "why": "Issue describes a concrete header/transport defect with a runnable repro, but the supplied evidence leaves two materially blocking facts unresolved: (1) duplicate coverage is only 'semantic_overlap_requires_review' against open PRs #3129 and #3338, neither of which is confirmed to cover the client-side Accept/Content-Type root cause, and (2) the repository policy status is 'ai_disclosure_conflict' with aiDisclosureConflict=true, which is a disclosure requirement that determines whether code work is actionable. Root-cause signal is explicitly false in actionability_evidence and probe_ready is false, so the fix boundary is not yet established."
+  },
+  "5cee65de3bc5659129e1140a4e8ff022c5860e12c68930ca297cd0065cc60baa": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels this as agent/inference/RAG critical path, but the issue is a hosted Console MCP usage-aggregation error with no in-repo code anchor."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No in-repo module can be identified; the failing aggregation lives in the hosted Console service, not this repository."
+    ],
+    "risks": [
+      "Attempting a fix would target the wrong codebase (hosted Console service vs. this repo).",
+      "The 7d failure may be a transient or month-boundary edge case rather than a deterministic bug."
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Not constructible in-repo: reproducing requires a real Console workspace with 7d usage data and Worker logs, which the supplied evidence says is unavailable."
+    ],
+    "unknowns": [
+      "Whether any code in this repository actually implements the 7d aggregation path.",
+      "Whether a maintainer with Console access and Worker logs can reproduce the failure.",
+      "Whether the failure is deterministic or environment/timing dependent."
+    ],
+    "why": "The reported failure is in the hosted Console service's 7d aggregation path, and the bot comment states that server code is not in this repository and cannot be reproduced without a real Console workspace with usage data. No root cause is established and no in-repo code path is identified, so the candidate is not actionable as a code contribution here."
   },
   "5cf211765f9f5d711ac0b4f7f31491ca9e8ad8920812b34f6798768a0e74fccb": {
     "confidence": 0.8,
@@ -74838,6 +74902,40 @@
     ],
     "why": "The issue provides a clear root cause: FlashInfer b12x MoE workspace is allocated lazily inside profile_run, causing OOM on memory-constrained Blackwell GPUs. It includes detailed reproduction steps, tracebacks, and controlled experiments showing the regression is specific to flashinfer_b12x backend. The suggested fixes (pre-allocate workspace before profiling or size it against profiling budget) are concrete and testable."
   },
+  "7841fb4e4573920a123914c52b50213769d2fb162de045d217421c2368960a93": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body claims PR #8485 leaves input conversion unchanged, but open_pr_assessment reports semantic overlap on lib/llm/src/protocols/anthropic/types.rs with status semantic_overlap_requires_review"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/protocols/anthropic/types.rs converter branch for thinking:disabled",
+      "lib/llm/src/http/service/anthropic.rs handler default insertion"
+    ],
+    "risks": [
+      "PR #8485 may already cover the same converter path, making a new fix duplicative",
+      "The issue's own measurements show quality regression (3/4 to 2/4 correct) with thinking disabled, so the fix is not quality-neutral",
+      "Track is llm_algorithm but the change is protocol/API plumbing rather than an algorithm mechanism"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the pinned reproduce.py experiment without GPU to confirm chat_template_args lacks enable_thinking:false",
+      "Add a converter unit test asserting disabled maps to enable_thinking:false while enabled/omitted keep existing behavior",
+      "Run the 107 Anthropic protocol tests and 11 HTTP replay tests"
+    ],
+    "unknowns": [
+      "Whether PR #8485 already modifies the thinking:disabled converter branch",
+      "Whether the maintainers consider this converter fix in scope for the llm_algorithm track versus protocol plumbing"
+    ],
+    "why": "The issue describes a concrete converter defect (thinking:disabled not mapped to enable_thinking:false) with a reproduction path, but the supplied evidence is internally contradictory about coverage: the duplicate assessment flags PR #8485 as semantic_overlap_requires_review with overlapping path lib/llm/src/protocols/anthropic/types.rs, while the issue body asserts #8485 only gates response representation and leaves input conversion unchanged. This unresolved duplicate/coverage question determines whether new code work is actionable."
+  },
   "784a86e1a05fce4e47020789e55922a6ac3f54e66450970a8f80f6e954c80fbe": {
     "confidence": 0.85,
     "contradictions": [],
@@ -81675,6 +81773,39 @@
     ],
     "why": "Issue clearly identifies a detached promise in Agent#executeOnFinish causing title loss on serverless runtimes, with a minimal repro and a contributor asking for design direction. However, the deterministic gate is HUMAN_REVIEW and the contributor explicitly requests maintainer preference on whether to await title persistence or use a background hook, which changes latency and durability semantics. Existing PRs have semantic overlap but none directly address this issue, so a new PR could be viable but requires design confirmation."
   },
+  "84719b8699d49ab42083ddbd7cb9ebf6df3e49de7526a1ba7a1a6336f6d136cc": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas: 0 when rendering PodCliqueScalingGroup config (defer creation or pass through idle state) and make minAvailable consistent with replicas",
+      "DGD admission/validation path: either accept zero with correct downstream rendering or reject with a clear error",
+      "operator status/events: surface a clear error instead of the buried Grove webhook message"
+    ],
+    "risks": [
+      "Choosing between deferring Grove resource creation and passing replicas: 0 through depends on Grove GREP-0677 (ai-dynamo/grove#686) availability; the fix may need to be staged",
+      "Changing minAvailable semantics could affect scheduling/availability behavior for nonzero replicas if not scoped carefully",
+      "Related issue #14298 (reconcile errors during scale up from zero) may interact with the chosen fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test in the operator package that renders the PCSG config for a Grove-backed multinode component with replicas: 0 and asserts the rendered replicas/minAvailable are valid (minAvailable <= replicas) or that creation is deferred",
+      "Reproduce with the issue's YAML in a namespace with Grove enabled and verify the DGD no longer ends Ready=False/state=failed with the admission error",
+      "Regression test for the existing scale-down-to-zero path (#11837) to ensure preserveGrovePodCliqueSetReplicas behavior is unchanged"
+    ],
+    "unknowns": [
+      "Whether Grove GREP-0677 (ai-dynamo/grove#686) is available in the target Grove version, which determines whether pass-through or deferral is the correct fix",
+      "Maintainer preference between supporting creation at zero versus rejecting at DGD admission"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD with replicas: 0 on a Grove-backed multinode component), the exact Grove admission error, and a specific root cause in deploy/operator/internal/dynamo/graph.go where component.Replicas is passed through unchecked and minAvailable is hardcoded to 1 while preserveGrovePodCliqueSetReplicas only applies when an existing PCS exists. This is an actionable operator bug with a clear reference-vs-implementation validation path (render PCSG config for replicas: 0 and assert it is not rejected / minAvailable <= replicas). No duplicate open PR or issue is reported, and no assignment or AI-use prohibition is present."
+  },
   "847abd8cfccd18622ebc25bb16c0be6fbfb6766d4dbb52d6b3ba8d14e0e4c919": {
     "confidence": 0.7,
     "contradictions": [],
@@ -85013,6 +85144,41 @@
       "No maintainer confirmation on preferred approach (error vs fallback)."
     ],
     "why": "Issue identifies a concrete kernel availability bug: AVX2-only CPUs lack the AVX-512-gated cpu_gemm_wna16 op, causing AttributeError at runtime. Root cause is clearly located in code guards and can_implement() logic, with a reproducible example and a clear validation path via CPU tests."
+  },
+  "892d63e52d9c31d4edfd1489d1909bf3f0c66afef9ffd23ccb51d250715e4902": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "harness/copilot/hooks/aidlc-copilot-adapter.ts: bind child session id to the waiting subagent entry on its first UserPromptSubmit within the brief window",
+      "harness/copilot/hooks/aidlc-copilot-adapter.ts: let SubagentStop remove a CLI entry via agent_id, falling back to name match",
+      "harness/copilot/hooks/aidlc-copilot-adapter.ts: retain toolu_ branch for older CLI versions",
+      "tests/fixtures/copilot-hook-payloads/: add captured 1.0.96 payload fixtures"
+    ],
+    "risks": [
+      "Open PR #2663 touches the same adapter path with semantic overlap; implementation boundary must be compared before duplicating work",
+      "Child-session binding heuristic (first prompt within 5s brief window) could misattribute if multiple subagents start concurrently",
+      "Behavior change to delegated-agent refusal scope could affect existing VS Code path if fallback logic is wrong"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Replay the captured sequence (SubagentStart for aidlc-architecture-reviewer-agent, child UserPromptSubmit, child PreToolUse for 'aidlc engine orchestrate report') through the t249 harness and assert the child call is denied while the parent call is allowed",
+      "Assert the ledger entry is removed after the captured SubagentStop carrying agent_id",
+      "Regression: older toolu_ subagent id still denied for delegated lifecycle commands",
+      "Regression: conductor parent-session calls remain allowed"
+    ],
+    "unknowns": [
+      "Whether PR #2663 already fixes the same root cause or only an adjacent attempt-id issue",
+      "Whether maintainers have a preferred binding strategy for child session ids"
+    ],
+    "why": "Issue provides live-captured payload shapes, a concrete replay reproduction, and a specific root cause: the adapter's activeSubagentCandidates only recognizes toolu_ session ids, so Copilot CLI 1.0.96 child-session calls are misattributed to the conductor and SubagentStop's agent_id never matches the synthesized cli-<pid>-<time> ledger entry. Proposed fix is scoped to harness/copilot/hooks/aidlc-copilot-adapter.ts with a clear validation path."
   },
   "893003b7b90a888ba94150b0bb76bb74ab832e433bf8f241e020735c213fad67": {
     "confidence": 0.8,
@@ -94515,6 +94681,41 @@
     ],
     "why": "Issue identifies a deterministic contract mismatch in a live smoke script, with detailed evidence and proposed fixes. However, the gate decision is HUMAN_REVIEW and open PR lookup failed, so duplicate work cannot be excluded. Maintainer approval is absent, and the issue is a bug report rather than a direct code contribution."
   },
+  "989cb495333f93b52e4bd462d22c5350d280da0735716cbece119eaebfd53907": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence reports public_repro_signals=0 and root_cause_signal=false, while the issue body supplies a concrete reproduction and verified code-path root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/harness-claude-code/src/claude-code-harness.ts: add optional typed onDebug to ClaudeCodeHarnessSettings and forward to both SandboxChannel constructors",
+      "packages/harness-claude-code/src/claude-code-harness.test.ts: capture onDebug in FakeSandboxChannel and add forwarding regression test"
+    ],
+    "risks": [
+      "Open maintainer-owned PR #23287 touches the same test file; overlapping edits may conflict even though its scope (credential refresh in tests) differs",
+      "Debug cause values may contain connection details, so forwarding must not encourage indiscriminate logging",
+      "Scope creep toward automatic retry or session-level health API beyond the minimal observability fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add debugHooks capture in FakeSandboxChannel and the proposed 'forwards channel debug events for fresh and attached sessions' test; confirm it fails on unmodified main with [undefined, undefined]",
+      "Confirm the same test passes after adding the typed setting and forwarding at both constructors",
+      "Run the existing 'uses a caller-minted bridge token and reuses it when attaching' control plus the adapter package's targeted unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the minimal onDebug forwarding or a session-level transport-health API",
+      "Whether PR #23287's test-file changes will conflict with the proposed regression test"
+    ],
+    "why": "Issue provides a concrete, independently verified observability gap: SandboxChannel emits onDebug and exposes isClosed(), but createClaudeCode keeps the channel private and forwards neither callback nor health getter through either constructor. A minimal typed onDebug setting forwarded to both constructors is proposed, with a red/green adapter regression test using existing mocks and no external dependencies."
+  },
   "98a1bfc3c37ba1464a0d11ae0d197a1a085ce7b3480475755acedd0eb0284535": {
     "confidence": 0.8,
     "contradictions": [
@@ -101984,6 +102185,40 @@
       "Whether #1884 is a true duplicate or a distinct defect"
     ],
     "why": "The issue is a broad six-site 'silently dropped settings' report, but the actionable scope is already claimed: contributor ndablizov took four sites (serve flags, Liger, unsloth 8bit, bench) and the OWNER explicitly granted '#1811 is yours for the four sites', while the remaining two sites (--gate on mlx/prm/unlearn/moe_lora_routing and MLX adafactor) are reserved for named area holders @taljeon and @dryn85-max. Additionally, open PRs #1946 (unsloth 8bit) and #1947 (Liger) already cover two of the four claimed sites, and issue #1884 shares the same 'silently ignored flags' failure signature. The remaining unclaimed work is therefore not clearly available, and the ownership/duplicate facts materially determine whether new code work is actionable."
+  },
+  "a514cb2c4d59185d7c2bc8736a94601ef87cf23ce80f4cd778541487077b3eb7": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/permission.ts (rule precedence / agent-specific deny handling)",
+      "packages/core/src/plugin/plan.ts (plan agent permission rules)",
+      "possibly startup validation warning for overridden plan permissions"
+    ],
+    "risks": [
+      "Changing findLast precedence could alter intended config-override semantics for other agents/tools",
+      "Open PRs #55246 and #1542 show semantic overlap on 'read_only'/'built_in' but no direct code overlap or issue linkage; must compare before implementing to avoid duplicate work",
+      "Fix scope may expand into shell-rule gap (#53955/#54165) which is a separate issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test asserting that with global permission.edit {'*':'allow'}, the plan agent still denies edit/write/patch outside ~/.opencode/plan/",
+      "Run the drive.ts reproduction from the issue and confirm the file is unchanged in Plan mode",
+      "Run targeted unit tests for packages/core permission evaluation and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer precedence change in Permission.evaluate vs a startup warning (issue lists both options)",
+      "Whether PR #55246 or #1542 already touches the same permission precedence code path"
+    ],
+    "why": "Issue provides a concrete root cause (Permission.evaluate uses findLast so config-appended allow rules override the plan plugin's early deny), a maintainer-bot reproduction on latest dev with a drive.ts script, and a clear validation path (patch tool modifies src/value.ts in Plan mode with the config line, denied without it). This is a user-visible permission-enforcement bug with a minimal, testable fix."
   },
   "a51d0bfdb88e17baa5d0e47c56f0686bfbc16bce15b05b10276a84b8882a089d": {
     "confidence": 0.8,
@@ -120944,6 +121179,43 @@
       "Whether issue is marked Ready on project board"
     ],
     "why": "Issue reports a user-visible OAuth MCP connection regression after upgrading to v1.45.0, with a clear repro and a suspected rmcp version bump. However, the root cause is not confirmed, and the issue explicitly instructs not to begin implementation until it reaches Ready on the project board. The deterministic gate is HUMAN_REVIEW, and there is no maintainer approval or design confirmation."
+  },
+  "c587d1f808bdca32c13125c18745e318ab7e025426262cbd17b52bf8b4daf71c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter says the interrupted call is stored with clean object input and replayed as tool_use, yet Anthropic rejects tool_use.input as non-object",
+      "Maintainer bot could not reproduce on 2.0.30 across three setups, while the reporter observed it in all 3 sessions on one restart"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/ai/src/providers/anthropic.ts message serialization",
+      "packages/core/src/session/shell.ts interrupted tool-call state handling"
+    ],
+    "risks": [
+      "Root cause may be in a plugin hook rather than core serialization, making a core fix ineffective",
+      "The failing index in session C is one lower than the interrupted call, suggesting a different or additional cause",
+      "Changing replay/serialization behavior could alter API request shape for all providers"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture the outgoing Anthropic request body for a failing request and assert the tool_use.input at the failing index is an object",
+      "Reproduce with a mock Anthropic Messages API that returns 400 when any tool_use.input is not an object, using a long history and the reported plugins/variant",
+      "Regression test: restart during a running shell call, then send the next request and assert it succeeds with an error tool_result"
+    ],
+    "unknowns": [
+      "The outgoing request body at the failing index (is input a string, empty, or partial JSON, and which tool call it belongs to)",
+      "Whether the issue reproduces with the compound-engineering and local plugins disabled",
+      "The exported messages at and before the failing index",
+      "Whether the failing index in session C corresponds to the interrupted call or a different block"
+    ],
+    "why": "The issue reports a real 400 from Anthropic after a restart interrupts a shell tool call, but the supplied evidence does not establish the root cause. The reporter explicitly did not capture the outgoing request body and notes stored inputs are clean, so the malformed tool_use.input exists only in the serialized request. The maintainer bot attempted reproduction on 2.0.30 with a mock Anthropic API across three setups and could not reproduce; the interrupted call was correctly replayed as a tool_use with object input plus an error tool_result. The bot's requested diagnostics (outgoing request body at the failing index, behavior with plugins disabled, exported messages at the failing index) are unanswered. Without a reproduction or root-cause anchor, the code change is not actionable."
   },
   "c59cd4dbdc685c2589947ab1e731c1d5afafc71289870fec9d837e2acfe8f47a": {
     "confidence": 0.7,
