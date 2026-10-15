@@ -15084,6 +15084,38 @@
     ],
     "why": "The issue gives a clear, bisected root cause (borrowed Gemma4 methods read _enable_mm_lora, which DiffusionGemma never sets) and a concrete reproduction path, but the supplied evidence shows an open PR #54309 that already implements the suggested fix on the same file, and a contributor comment states a fix already exists there. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review', which is a materially blocking unknown for deciding whether new code work is actionable."
   },
+  "1ab7229ff18492e69966ea4ae36e034c93161c7aa091fb31918ccaf9d6f0c895": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/mocker/src/generalized_live.rs: settle due internal host-offload work before selecting/executing each live pass",
+      "Add regression test in generalized_live.rs tests using paused Tokio time, native_host_offload, and 1 MB prompts at 0.2 GB/s D2H"
+    ],
+    "risks": [
+      "Overlapping open PR #16555 may already implement a similar fix; compare before submitting to avoid duplicate work",
+      "Settling before every pass could add latency or alter scheduling semantics if not scoped to due transfers",
+      "CI failures on PR #16555 (lychee, planner CPU test) are diagnostic only and not evidence of contribution value"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the deterministic unit test: two 1 MB prompts whose G2 stores finish 5 ms and 10 ms after the first pass boundary, submit a third prompt at the boundary, hold 20 ms before finish(), and assert no panic and correct completion",
+      "Run the targeted mocker package unit tests plus static checks after the fix",
+      "Confirm the same scenario without native_host_offload still passes"
+    ],
+    "unknowns": [
+      "Whether PR #16555 will be revised to include the missing regression test",
+      "Whether maintainers have a preferred settlement point or API for this fix"
+    ],
+    "why": "Issue provides a concrete panic, deterministic paused-time reproduction, and a specific root cause in lib/mocker/src/generalized_live.rs: select_pass_start can pick a start later than the last settlement, so execute_pass stores blocks while due G2 transfers remain unticked. The fix path (settle internal work before every pass, as apply_command and aisimulate replay drivers already do) is concrete and testable. Open PR #16555 overlaps the same file but lacks tests and root-cause coverage, so a test-backed fix remains actionable."
+  },
   "1acfc834a95ee38dd86f6eec9043cf7fa5b74402a3351f5b56dfc8bff1aec3db": {
     "confidence": 0.85,
     "contradictions": [
@@ -127526,6 +127558,45 @@
     ],
     "why": "The issue reports a reproducible CUDA illegal memory access in the GDN kernel, with multiple independent reproductions and a confirmed workaround (disabling fuse_allreduce_rms). However, the root cause is not yet identified, and the open PR search failed due to rate limits, so duplicate or competing implementations cannot be ruled out. The deterministic gate requires HUMAN_REVIEW."
   },
+  "d06234a33321ab9bccfe33c66d662fdaa827145cc6e02a8e48fec3765a592a63": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while the issue body supplies a detailed root cause and proposed fix",
+      "open_pr_assessment marks PR #2663 as semantic_overlap_requires_review but root_cause_coverage false and draft, leaving coverage unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "harness/copilot/hooks/aidlc-copilot-adapter.ts: bind child session id to the subagent ledger entry at first child event",
+      "harness/copilot/hooks/aidlc-copilot-adapter.ts: let SubagentStop remove CLI entry via agent_id with name-match fallback",
+      "harness/copilot/hooks/aidlc-copilot-adapter.ts: retain toolu_ branch for older CLI versions",
+      "tests/fixtures/copilot-hook-payloads/: add captured CLI 1.0.96 payloads"
+    ],
+    "risks": [
+      "Draft PR #2663 may already implement the same root-cause fix, making a duplicate contribution low value",
+      "Changing subagent attribution could alter reviewer scope or lifecycle refusals for legitimate conductor calls",
+      "CLI version-specific payload shapes may drift in future Copilot CLI releases"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay captured sequence in t249 harness: SubagentStart for aidlc-architecture-reviewer-agent, then child-session PreToolUse for 'aidlc engine orchestrate report' — expect deny",
+      "Verify parent-session report is allowed",
+      "Verify ledger entry is removed after SubagentStop carrying agent_id",
+      "Regression: older toolu_ subagent id still denied"
+    ],
+    "unknowns": [
+      "Whether draft PR #2663 already fixes the same child-session attribution and ledger-orphan root cause",
+      "Whether maintainers consider the issue assigned or reserved before independent work",
+      "Whether the t249 harness and captured fixtures are available in the current base SHA"
+    ],
+    "why": "Issue provides a detailed live-captured reproduction and a concrete proposed adapter fix, but the supplied evidence shows an open draft PR #2663 touching the same adapter path with semantic overlap and no direct issue link, and the pre-task duplicate status is 'semantic_overlap_requires_review'. Whether that draft already covers the same root cause is unresolved, which materially determines whether independent code work is actionable."
+  },
   "d068cef6c28bb825cb1280daeb009505c684b065e6ff01859550a7e896c39925": {
     "confidence": 0.7,
     "contradictions": [
@@ -144889,6 +144960,38 @@
       "Whether the zero reasoning_tokens is generated by LiteLLM or reported by upstream"
     ],
     "why": "The issue documents a clear user-visible streaming/non-streaming discrepancy for reasoning_content on the alibabacloud DeepSeek alias, but it explicitly states the direct upstream provider response was not tested. The root cause is therefore unresolved: the loss could be in the upstream adapter, the provider's SSE field shape, or LiteLLM's stream normalizer. No code path or failing test is identified, and the candidate's own actionability evidence has root_cause_signal=false. This is a materially blocking unknown for an actionable code contribution."
+  },
+  "eb3230eff40aafa60a2b4d7a650954acbf345848c778197e5f6747a7e653d544": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas: 0 on the PCS create path (defer Grove resource creation until replicas > 0, or pass through an intentional idle state once Grove GREP-0677 lands)",
+      "DGD admission/validation: alternatively reject replicas: 0 on creation with a clear error and document zero as scale-down-only"
+    ],
+    "risks": [
+      "Choosing between deferring creation and passing replicas: 0 through depends on Grove GREP-0677 (ai-dynamo/grove#686) availability; the fix may need to be staged",
+      "Behavior change to DGD admission could affect external control planes that currently rely on accepting replicas: 0",
+      "Related issue #14298 (reconcile errors during scale up from zero) may interact with the chosen fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test in the operator package that renders a DGD with a multinode component at replicas: 0 and asserts the generated PodCliqueSet is either not created or has replicas/minAvailable consistent with Grove admission",
+      "Reproduce with the issue's YAML in a Grove-enabled namespace and confirm the DGD no longer ends Ready=False/state=failed with the webhook error",
+      "Run targeted operator unit tests and static checks for deploy/operator"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer option 1 (support creation at zero) or option 2 (reject at admission) as the intended fix",
+      "Whether Grove GREP-0677 / ai-dynamo/grove#686 is available in the targeted operator version"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD with replicas: 0 on a Grove-backed multinode component), the exact Grove admission error, and a specific root cause in deploy/operator/internal/dynamo/graph.go where component.Replicas is passed through unchecked and minAvailable is hardcoded to 1. No open PR or duplicate covers the create path; #11837 only fixed scale-down. This is an actionable operator bug with a clear validation path."
   },
   "eb4151d2b59ac8eedb80497c7f28e59697ff73b8ccc14de51eb99bafb7a7346f": {
     "confidence": 0.7,
