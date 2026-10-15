@@ -37807,6 +37807,39 @@
     ],
     "why": "The issue provides a precise root cause in StreamingPostProcessor's flush condition, a concrete reproduction with timing measurements, and a suggested minimal fix. The evidence includes code anchors and a validation path via offline parser comparison and production patching results."
   },
+  "40913eee71a5a52c155aa1fded5ad5584f0cdcb2f36fae5c58c67cd39759dbcd": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas: 0 on the PCS create path, either by deferring Grove resource creation until replicas > 0 or by rendering a Grove-accepted idle state",
+      "DGD admission/validation: if zero-on-create is not supported, reject with a clear error instead of failing downstream"
+    ],
+    "risks": [
+      "Two reasonable fixes exist (defer creation vs. render idle state); choice may depend on Grove GREP-0677 / ai-dynamo/grove#686 landing",
+      "Changing create-path behavior could affect external control planes that rely on DGD creation at zero",
+      "Related issue #14298 (reconcile errors during scale up from zero) may interact with the chosen fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Apply the issue's minimal DGD YAML with replicas: 0 and multinode nodeCount: 2 into a Grove-enabled namespace; assert the DGD does not end in state=failed with the PCSG admission error",
+      "Add a unit test for the graph.go PCSG rendering path asserting the rendered PodCliqueSet is accepted by Grove validation for replicas: 0",
+      "Regression test that scaling an existing PodCliqueSet down to 0 still works (per #11837)"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer deferring Grove resource creation or passing replicas: 0 through once Grove GREP-0677 lands",
+      "Whether the fix should be scoped to the create path only or also cover the companion issue #16548"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD YAML with replicas: 0 on a Grove-backed multinode component), the exact Grove admission error, and a specific root cause in deploy/operator/internal/dynamo/graph.go where component.Replicas is passed through unchecked and minAvailable is hardcoded to 1, with preserveGrovePodCliqueSetReplicas only applying on the update path. This is a user-visible lifecycle inconsistency with a clear validation path."
+  },
   "409c1fb92fda5744106e5961fa983064e89f5687738fa6452ce8755648537972": {
     "confidence": 0.85,
     "contradictions": [],
@@ -42074,6 +42107,41 @@
       "Whether the reported crash still reproduces on current main"
     ],
     "why": "The issue reports a concrete CUDA graph capture crash (cudaErrorStreamCaptureUnsupported) in MRV2 MTP speculative decoding with a full traceback and executable serve command, and the algorithm evidence points at real code paths (glm_ocr_mtp.py, glm4_moe_lite_mtp.py, speculator.py). However, a recent comment states the bug is already fixed on main by PR #56447, and the duplicate assessment flags semantic overlap with open PRs (#51966, #57319) plus a potential duplicate issue #44185. Whether the root cause is already covered by a merged fix is a materially blocking unknown that determines whether new code work is actionable."
+  },
+  "477afc83bf7e288d4812c890a909c8cb4e2162297e902fcc675df7f6b486b32b": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims custom providers cannot set supports_vision at all, while collaborator comment says #12769 makes explicit vision overrides work"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/model_config.rs: prefer catalog_provider_id in canonical vision/limits lookup",
+      "crates/goose-provider-types/src/canonical/name_builder.rs: resolve catalog provider id before raw name",
+      "crates/goose-provider-types/src/model.rs: with_canonical_vision_support honoring resolved catalog id"
+    ],
+    "risks": [
+      "Merged PR #12769 may already cover part of the fix, making the remaining change redundant or conflicting",
+      "Changing canonical lookup key could alter model picker/pricing behavior beyond vision resolution"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Regression test: custom provider named non-canonically but with catalog_provider_id set resolves supports_vision=true for a catalog vision model",
+      "Test that explicit per-model true/false vision overrides still take precedence over catalog lookup",
+      "Reproduce with /tmp/vision_test.png and confirm image is sent rather than replaced by placeholder"
+    ],
+    "unknowns": [
+      "Whether catalog_provider_id-based vision lookup remains unfixed after merged PR #12769",
+      "Whether the collaborator-requested verification (renamed provider vs catalog entry, override precedence) has been performed",
+      "Whether repository assignment requirement (needs_assignment) is satisfied"
+    ],
+    "why": "Issue provides a detailed, source-anchored root cause (vision lookup keyed on raw provider name; catalog_provider_id ignored at runtime) and a concrete reproduction. However, a collaborator comment states merged PR #12769 already makes explicit vision overrides work and asks to keep the issue focused on catalog_provider_id lookup, with a specific test requirement (renamed provider vs catalog entry, explicit true/false precedence). The supplied evidence does not establish whether the catalog_provider_id path is still unfixed after #12769, nor whether the requested verification has been done, so the remaining actionable scope is uncertain."
   },
   "477dc03a7b3a67b3c04962c25431fb23ed294c621ee5072c9de53286f237f2c5": {
     "confidence": 0.8,
@@ -106811,6 +106879,28 @@
     ],
     "why": "Issue provides a clear root cause: scheduler fails to check chunk budget after resuming a chunked request, leading to unnecessary waiting-queue scans and potential host-cache load-back. Reproduction steps are concrete and deterministic at scheduler level. Existing PR #35645 addresses the same issue but lacks tests, leaving room for a more complete contribution."
   },
+  "af38f7f0f30bc2b402a7f7ffecea98a2d0f0d23ff6d350b664cea28a4705eacc": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Non-default Copilot endpoints (GitHub Enterprise/data residency) may still fail during the early window, but that is a separate residual concern not established as actionable here."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new test needed; verify on 2.0.27+ that the first prompt after idle eviction routes to /v1/messages and no longer 404s."
+    ],
+    "unknowns": [],
+    "why": "The supplied maintainer-bot comment already identifies the root cause (early request before Copilot plugin model list loads, falling back to models.dev settings and hitting a nonexistent /v1/chat/completions path) and states it is fixed on dev (8ffbcc2c8) and in release 2.0.27 via #54210. The issue is covered by an existing merged fix, so no new code contribution is actionable."
+  },
   "af4905abb2c6f7c5ca458e686d74f867e637fe5ef57211e5d9b67c59073a64a7": {
     "confidence": 0.6,
     "contradictions": [
@@ -139908,6 +139998,34 @@
       "Whether the missing args are the sole root cause or if additional kernel signature mismatches exist."
     ],
     "why": "Issue #39402 describes a concrete TypeError in ep_scatter_from_psum missing expert_start/num_experts positional args, with a clear code anchor and reproduction path. However, the supplied duplicate assessment shows PR #39399 directly references this issue with COVERAGE relation and overlapping path python/sglang/kernels/ops/moe/ep_moe_kernels.py, and PR #37211 also targets the same fix with a test file. The duplicate status is human_review_required, meaning unresolved coverage by existing PRs materially blocks independent implementation actionability."
+  },
+  "e48bb6e76acdf0b0873aa016bdbaa61c496082187e50eeb3407479dbb6b78911": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/google/adk/integrations/model_armor/_plugin.py: _regional_endpoint should resolve via _mtls_utils.get_api_endpoint() with default and mTLS templates"
+    ],
+    "risks": [
+      "Changing endpoint resolution could alter behavior for non-Agent-Identity deployments if the mTLS detection is misapplied",
+      "Maintainer may prefer a different helper or endpoint strategy"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a unit test asserting _regional_endpoint returns the plain host when no client cert is available and the .rep.mtls. host when mtls.should_use_client_cert() is true",
+      "Regression test that ModelArmorPlugin builds its client against the resolved endpoint rather than a hard-coded host"
+    ],
+    "unknowns": [
+      "Whether the repository requires assignment before external contribution (policy status 'needs_assignment', assignmentRequired=true, no assignees)",
+      "Whether a maintainer has confirmed the proposed _mtls_utils.get_api_endpoint() approach for this plugin"
+    ],
+    "why": "Issue provides a clear root cause (hard-coded non-mTLS regional endpoint in ModelArmorPlugin._regional_endpoint) and a concrete suggested fix using the existing _mtls_utils.get_api_endpoint() helper, with a detailed reproduction matrix. However, the supplied pre-task evidence marks policy status as 'needs_assignment' with assignmentRequired=true and assignees empty, and the candidate's own risk note flags 'assignment_required' as a pre-review failure. This is a materially blocking unknown: without repository assignment, code work is not actionable under the stated submission policy."
   },
   "e490af9ce720ec0bc50c18608c2d955da6aa252317f07c841e707bdf64c7407e": {
     "confidence": 0.85,
