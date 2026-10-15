@@ -42004,6 +42004,36 @@
     ],
     "why": "Issue clearly identifies a real bug: local capability-contributed tools drop token usage from RunUsage and UsageLimits. Root cause is well-documented with a verified repro and implementation note. However, the issue is explicitly gated on #6886, which awaits a maintainer design decision on durable-exec return channels. Also, existing PR #6324 has semantic overlap and requires human comparison. Thus, work should wait for maintainer guidance."
   },
+  "477e3b4b7a31a2395655c75ce1d431f335936826574a3e1f2dfbb968dc736676": {
+    "confidence": 0.72,
+    "contradictions": [
+      "open_pr_assessment reports technical_complete=true but root_cause_coverage=false for PR #16542, leaving coverage of the stated root cause uncertain"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vLLM embedding worker dispatch in WorkerFactory.create()/_create_embedding_worker() to forward and reuse snapshot_engine instead of calling setup_vllm_engine()"
+    ],
+    "risks": [
+      "Open PR #16542 may already implement the same fix, risking duplicate work",
+      "Change touches engine lifecycle/GPU memory behavior and could regress cold-start or non-snapshot paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting _create_embedding_worker() reuses a supplied snapshot_engine and does not invoke setup_vllm_engine()",
+      "Reproduce the snapshot-restore path with Qwen/Qwen3-Embedding-8B and verify restored embeddings match cold-start vectors without a second engine init"
+    ],
+    "unknowns": [
+      "Whether PR #16542 already fixes the exact snapshot_engine forwarding path described in the issue"
+    ],
+    "why": "Issue gives a concrete root cause (WorkerFactory.create() not forwarding snapshot_engine to _create_embedding_worker(), which unconditionally calls setup_vllm_engine()), an ordered reproduction with expected/actual pair, and a validated fix path. Open PR #16542 covers the same area but is marked root_cause_coverage=false and has no direct code overlap, so it does not fully cover the opportunity."
+  },
   "47866fe4bf00c8bedf7600281d046d92f91809cebdd7b2d277539db5d253bc46": {
     "confidence": 0.7,
     "contradictions": [
@@ -79571,6 +79601,38 @@
     ],
     "why": "The issue gives a plausible approval-routing identity mismatch (inner child toolCallId vs outer delegation toolCallId) with code anchors, but the reporter explicitly states a clean-main reproduction has not been performed and the evidence (failed request, stored suspension, logs) is retained locally and not attached. The bot comment also instructs waiting for maintainer triage before opening a PR, so the actionable code work is not yet established."
   },
+  "819836c1b518b32548196714af48a1354448f18e385a54ba8c69507d828c74ae": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims tools/list discovery rejects per-request x-mcp-{alias}-authorization with a 500, but recent comment reports the same gate accepts the per-request credential on main and v1.105.1 and cannot reproduce the failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py (prepare_mcp_client / validate_static_credential gate)",
+      "litellm/proxy/_experimental/mcp_server/operations.py (per-request header threading into _get_tools_from_server)"
+    ],
+    "risks": [
+      "Fixing a gate that may already accept the per-request header on main could introduce a redundant or behavior-changing credential path",
+      "Open PRs #42917/#46293 touch tools_list/MCP auth semantics and may overlap"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the exact failing surface (direct /{server}/mcp tools/list vs /mcp virtual tool-search) on v1.105.0 and current main with a BYOK bearer_token server and no stored credential, asserting whether prepare_mcp_client raises the misconfigured 500 or constructs with the per-request header"
+    ],
+    "unknowns": [
+      "Which exact entry surface (direct /{server}/mcp, /mcp virtual tool-search, or REST preview) produces the 500",
+      "Whether the reporter's server config (spec_path vs live transport, static_headers, upstream_token_header) differs from the commenter's exercised shapes",
+      "Whether the failure still reproduces on current main / v1.106.0-rc"
+    ],
+    "why": "The issue supplies a detailed root-cause trace and reproduction, but the only substantive comment (choksi2212) reports an empirical matrix on current main and v1.105.1 showing the per-request header IS honored at discovery time and the gate failure cannot be reproduced, directly contradicting the issue's root-cause claim. This unresolved contradiction determines whether any code fix is actionable."
+  },
   "81c92ca26a2e801dd468e4b9ebf40dbd28a447fea78b44cc2616d3d5c6fb0d9d": {
     "confidence": 0.8,
     "contradictions": [],
@@ -100965,6 +101027,51 @@
       "Whether the contributor's in-progress work has produced a PR that supersedes this issue"
     ],
     "why": "Issue #806 describes a concrete, code-anchored defect: use_flash_attn/use_liger are validated for every task and auto-enabled by autopilot for DPO/GRPO/pretrain, yet only SFT's _setup_transformers reads them. Root cause and acceptance criteria are clear. However, three open PRs (#983, #965, #955) semantically overlap on the same fields and config schema, and a contributor comment claims to be actively taking the fix. The duplicate/coverage status is 'semantic_overlap_requires_review' and no PR is confirmed to close the issue, so whether code work is still actionable is materially unresolved."
+  },
+  "a50c2135c90d2e38b405d4cd21bf2257982fd7eec7272a3b4c79fab78b7b3a17": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue is labeled 'claimed' and the owner granted four sites to ndablizov, yet the candidate is scored as a PR competition opportunity",
+      "Open PRs #1946/#1947 overlap two claimed sites while the issue remains open and unassigned in preTaskEvidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/serve.py (structured output / reasoning parser / trace log on vllm|sglang|mii)",
+      "src/soup_cli/utils/liger.py (claim success only for supported model types)",
+      "src/soup_cli/utils/unsloth.py (refuse or map quantization 8bit)",
+      "src/soup_cli/commands/bench.py (backend label vs actual engine)",
+      "src/soup_cli/trainer/mlx_optim.py (adafactor relative_step/scale_parameter)",
+      "src/soup_cli/config/schema.py (eval_gate refusal table)"
+    ],
+    "risks": [
+      "Overlapping open PRs #1946 and #1947 may already cover the unsloth and Liger sites",
+      "Issue #1884 shares the same silently-ignored-flags failure signature and may be a duplicate",
+      "Claimed sites are owned by ndablizov and two remaining sites by named area holders, so a new PR risks conflicting with active work",
+      "Some sites (MLX, vLLM, SGLang, MII) cannot be executed on the reporter's CPU-only environment, limiting end-to-end validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the issue's CPU-only commands: --gate --dry-run on mlx/prm/unlearn/moe_lora_routing and grep build_soup_trainer_callback counts",
+      "Recording-stand-in test that unsloth load_model_and_tokenizer receives identical kwargs for 8bit and none",
+      "Recording mlx.optimizers stand-in asserting adafactor receives relative_step=False and the configured schedule",
+      "Stand-in liger package test that apply_liger_kernel returns False for gpt_neox/phi/gpt2 and True for llama",
+      "Stubbed infer._load_model/_generate test that soup bench --backend vllm|sglang|mlx does not silently run transformers"
+    ],
+    "unknowns": [
+      "Whether ndablizov has opened any PR for the four claimed sites",
+      "Whether #1946/#1947 fully resolve the unsloth and Liger sites or leave gaps",
+      "Whether the two reserved sites (eval_gate, MLX adafactor) have been released by @taljeon / @dryn85-max",
+      "Whether #1884 is a true duplicate or a distinct defect"
+    ],
+    "why": "The issue is a broad six-site 'silently dropped settings' report, but the actionable scope is already claimed: contributor ndablizov took four sites (serve flags, Liger, unsloth 8bit, bench) and the OWNER explicitly granted '#1811 is yours for the four sites', while the remaining two sites (--gate on mlx/prm/unlearn/moe_lora_routing and MLX adafactor) are reserved for named area holders @taljeon and @dryn85-max. Additionally, open PRs #1946 (unsloth 8bit) and #1947 (Liger) already cover two of the four claimed sites, and issue #1884 shares the same 'silently ignored flags' failure signature. The remaining unclaimed work is therefore not clearly available, and the ownership/duplicate facts materially determine whether new code work is actionable."
   },
   "a51d0bfdb88e17baa5d0e47c56f0686bfbc16bce15b05b10276a84b8882a089d": {
     "confidence": 0.8,
