@@ -25346,7 +25346,7 @@ def _blocked_system_preparation_metadata(
     value: dict[str, Any],
     raw: bytes,
 ) -> dict[str, Any] | None:
-    """Expose pending work only from the exact current authenticated private result."""
+    """Expose pending work only with current private or proven audit continuity."""
 
     preparation = _system_owned_validation_preparation_gap(value)
     if preparation is None or sha256_json(preparation) != blocked.get("progressMarker"):
@@ -25357,6 +25357,7 @@ def _blocked_system_preparation_metadata(
         or not store.task_result_binding_gate(blocked, value)
     ):
         return None
+    context_refresh = None
     with _task_worktree_private_descriptor(blocked) as opened:
         if _read_task_result_bytes_from_private(opened) != raw:
             return None
@@ -25367,12 +25368,60 @@ def _blocked_system_preparation_metadata(
         )
         if (
             not _private_context_matches_current_ledger(store, context)
-            or value["contextDigest"] != context.get("contextDigest")
             or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree) != value["headSha"]
-            or _read_task_result_bytes_from_private(opened) != raw
+        ):
+            return None
+        if value["contextDigest"] != context.get("contextDigest"):
+            candidates = [
+                candidate
+                for candidate in store.task_result_candidates_for_ingestion()
+                if candidate.get("stage") == "VALIDATION_PENDING"
+                and all(
+                    candidate.get(field) == blocked.get(field)
+                    for field in ("key", "intentId", "threadId", "worktreePath", "issueUrl")
+                )
+            ]
+            if len(candidates) != 1 or not store.task_result_binding_gate(candidates[0], value):
+                return None
+            context_refresh = _validation_result_context_refresh_proof(
+                store,
+                candidate=candidates[0],
+                context=context,
+                value=value,
+                worktree=opened.worktree,
+                raw=raw,
+            )
+            if (
+                context_refresh is None
+                or not _private_context_matches_current_ledger(store, context)
+                or command(["git", "rev-parse", "HEAD"], cwd=opened.worktree) != value["headSha"]
+                or _local_changed_files(opened.worktree)
+            ):
+                return None
+        if (
+            _read_task_result_bytes_from_private(opened) != raw
             or _read_task_context_bytes_from_private(opened) != context_raw
         ):
             return None
+    if context_refresh is not None:
+        return preparation["pendingSystemWork"] | {
+            "contextRefreshProof": {
+                field: context_refresh[field]
+                for field in (
+                    "previousContextDigest",
+                    "contextDigest",
+                    "previousAuthorityEventId",
+                    "authorityEventId",
+                    "previousAuditEventId",
+                    "auditEventId",
+                    "validationFollowupEventId",
+                    "validationResultDigest",
+                    "commitSha",
+                    "reservationDigest",
+                    "turnId",
+                )
+            }
+        }
     return preparation["pendingSystemWork"]
 
 

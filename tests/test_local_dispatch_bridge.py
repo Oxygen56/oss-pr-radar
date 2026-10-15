@@ -47409,3 +47409,366 @@ def test_system_preparation_gap_malformed_phase_keeps_public_marker_legacy(tmp_p
     expected = MODULE._legacy_validation_progress_marker(value)
     assert expected is not None
     assert MODULE._validation_progress_marker(value) == expected
+
+
+def _completed_system_gap_after_audit_refresh(monkeypatch, tmp_path):
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    checks = _system_preparation_pending_value(worktree, "first")["tests"]
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=worktree,
+        controller_policy_complete=True,
+        target_base_bound=True,
+        complete_normal_validation_audit=True,
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+        validation_checks=checks,
+    )
+    value = json.loads(result_path.read_bytes())
+    value.update(
+        reason="VALIDATION_CORE_CHECKS_INCOMPLETE",
+        evidence=_system_preparation_pending_evidence(),
+    )
+    result_path.write_text(json.dumps(value))
+    _refresh_reproduction_certificate(result_path, store=store)
+    args = SimpleNamespace(ledger=store.path)
+    initial = MODULE.ingest_task_results(args)
+    assert initial["errors"] == [] and initial["validationDeferred"], initial
+    previous_marker = MODULE._validation_progress_marker(json.loads(result_path.read_bytes()))
+    store, worktree, result_path, input_path = _completed_validation_result_with_omitted_task_id(
+        tmp_path,
+        monkeypatch,
+        target_base_bound=True,
+        complete_normal_validation_audit=True,
+        completed_fixture=(store, worktree, result_path),
+    )
+    immutable_input = input_path.read_bytes()
+    child = json.loads(result_path.read_bytes())
+    child.update(
+        reason="VALIDATION_CORE_CHECKS_INCOMPLETE",
+        evidence=_system_preparation_pending_evidence(),
+        tests=copy.deepcopy(checks),
+    )
+    child["quality"]["relevant_tests_green"] = False
+    child["quality"]["independent_review_passed"] = False
+    child["evidence"]["summary"] = "Completed child reports the same unfulfilled preparation."
+    result_path.write_text(json.dumps(child))
+    # The child output uses the real original immutable-input/completed-receipt intake.
+    completed = MODULE.ingest_task_results(args)
+    assert completed["errors"] == [] and completed["validationDeferred"], completed
+    assert completed["publicationRequests"] == [] and input_path.read_bytes() == immutable_input
+    normalized = json.loads(result_path.read_bytes())
+    assert normalized["taskId"] == "intent-1"
+    assert MODULE._validation_progress_marker(normalized) == previous_marker
+    assert store.validation_followup_candidates() == []
+    (blocked,) = store.validation_no_progress()
+    raw = result_path.read_bytes()
+    old_context = json.loads(result_path.with_name("task-context.json").read_bytes())
+    with store.connect() as connection:
+        previous = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='AUDIT_SNAPSHOT' "
+                "ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+    refreshed = copy.deepcopy(previous)
+    digest = sha256_json({"previous": old_context["contextDigest"], "audit": "new-observation"})
+    refreshed["liveAudit"]["capturedAt"] = iso_z(datetime.now(UTC))
+    refreshed["liveAudit"]["evidence"]["digest"] = digest
+    if "evidenceDigest" in refreshed["liveAudit"]["evidence"]:
+        refreshed["liveAudit"]["evidence"]["evidenceDigest"] = digest
+    if "evidenceDigest" in refreshed:
+        refreshed["evidenceDigest"] = digest
+    refreshed["authorization"] = {"status": "ALLOW", "evidence_digest": digest}
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence=refreshed,
+        dedupe_key="intent-1:system-gap:active-context-refresh",
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    recovered = MODULE.recover_task_contexts(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"], recovered
+    context = json.loads(context_path.read_bytes())
+    assert context["contextDigest"] != old_context["contextDigest"]
+    assert result_path.read_bytes() == raw and input_path.read_bytes() == immutable_input
+    value = json.loads(raw)
+    assert value["contextDigest"] == old_context["contextDigest"]
+    assert MODULE._private_context_matches_current_ledger(store, context)
+    (candidate,) = store.task_result_candidates_for_ingestion()
+    assert candidate["stage"] == "VALIDATION_PENDING"
+    proof = MODULE._validation_result_context_refresh_proof(
+        store,
+        candidate=candidate,
+        context=context,
+        value=value,
+        worktree=worktree,
+        raw=raw,
+    )
+    assert proof is not None, "fixture must pass the unchanged original audit-refresh proof"
+    return store, worktree, result_path, blocked, context, proof, input_path, immutable_input
+
+
+def test_system_preparation_gap_keeps_pending_metadata_after_completed_audit_refresh(
+    monkeypatch, tmp_path
+):
+    store, _worktree, result_path, blocked, context, proof, input_path, immutable_input = (
+        _completed_system_gap_after_audit_refresh(monkeypatch, tmp_path)
+    )
+    raw = result_path.read_bytes()
+    context_raw = result_path.with_name("task-context.json").read_bytes()
+    with store.connect() as connection:
+        before_events = [
+            tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+        ]
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert listed["ok"] and listed["errors"] == [] and listed["candidates"] == [], listed
+    (reported,) = listed["blockedNoProgress"]
+    # This is the physical-97500 mechanism assertion, after all real proof prerequisites.
+    pending = reported["systemPreparationRequired"]
+    assert pending["systemActionRequired"]["childMayProceed"] is False
+    assert {k: v for k, v in pending.items() if k != "contextRefreshProof"} == (
+        _system_preparation_pending_evidence()
+    )
+    references = pending["contextRefreshProof"]
+    assert references["previousContextDigest"] == json.loads(raw)["contextDigest"]
+    assert references["contextDigest"] == context["contextDigest"]
+    assert references["reservationDigest"] == proof["reservationDigest"]
+    assert references["turnId"] == proof["turnId"]
+    assert "sourceResultBytesBase64" not in references
+    assert reported["progressMarker"] == blocked["progressMarker"]
+    assert result_path.read_bytes() == raw
+    assert result_path.with_name("task-context.json").read_bytes() == context_raw
+    assert input_path.read_bytes() == immutable_input
+    with store.connect() as connection:
+        assert [tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")] == (
+            before_events
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+    assert store.validation_no_progress() == [blocked]
+    assert json.loads(raw)["quality"]["relevant_tests_green"] is False
+    assert json.loads(raw)["quality"]["independent_review_passed"] is False
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "green",
+        "non_explicit",
+        "changed_obligation",
+        "unknown_phase",
+        "marker",
+        "digest",
+        "identity",
+        "candidate_missing",
+        "candidate_duplicate",
+        "candidate_foreign",
+        "candidate_stage",
+        "active",
+        "bad_input",
+        "bad_receipt",
+        "source_unavailable",
+        "head",
+        "dirty",
+        "private",
+        "current_ledger",
+        "revoked_authority",
+    ],
+)
+def test_system_preparation_gap_audit_refresh_keeps_original_refusal_boundaries(
+    monkeypatch, tmp_path, damage
+):
+    store, worktree, result_path, blocked, context, _proof, input_path, _input = (
+        _completed_system_gap_after_audit_refresh(monkeypatch, tmp_path)
+    )
+    raw = result_path.read_bytes()
+    value = json.loads(raw)
+    assert MODULE._blocked_system_preparation_metadata(store, blocked, value, raw) is not None
+    if damage in {"green", "non_explicit", "changed_obligation", "unknown_phase"}:
+        if damage == "green":
+            value["quality"]["relevant_tests_green"] = True
+        elif damage == "non_explicit":
+            value["evidence"].pop("systemActionRequired")
+        elif damage == "changed_obligation":
+            value["evidence"]["systemActionRequired"]["steps"].append("New real obligation")
+        else:
+            value["tests"][1]["phase"] = []
+        raw = json.dumps(value).encode()
+        result_path.write_bytes(raw)
+    elif damage in {"marker", "digest", "identity"}:
+        field = {"marker": "progressMarker", "digest": "resultDigest", "identity": "intentId"}[
+            damage
+        ]
+        blocked = blocked | {field: "f" * 64}
+    elif damage.startswith("candidate_"):
+        # Negative-only reader seams: the positive uses the original ledger reader.
+        (candidate,) = store.task_result_candidates_for_ingestion()
+        altered = {
+            "candidate_missing": [],
+            "candidate_duplicate": [candidate, dict(candidate)],
+            "candidate_foreign": [candidate | {"intentId": "foreign-intent"}],
+            "candidate_stage": [candidate | {"stage": "IMPLEMENTATION_READY"}],
+        }[damage]
+        monkeypatch.setattr(store, "task_result_candidates_for_ingestion", lambda: altered)
+    elif damage == "active":
+        monkeypatch.setattr(
+            MODULE, "_active_task_turn_for_result", lambda candidate: {"active": True}
+        )
+    elif damage == "bad_input":
+        input_path.chmod(0o600)
+        input_path.write_bytes(input_path.read_bytes() + b"\n")
+        input_path.chmod(0o400)
+    elif damage == "bad_receipt":
+        (receipt_path,) = (tmp_path / "state" / "task_turn_receipts").glob("*.json")
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["turnStatus"] = "failed"
+        receipt_path.write_text(json.dumps(receipt))
+    elif damage == "source_unavailable":
+        original_read_result = ManagedLedger.read_result
+        source_key = f"intent-1||{value['commitSha']}|{_proof['validationResultDigest']}"
+        source_reads = []
+
+        def missing_exact_source(self, key):
+            source_reads.append(key)
+            return None if key == source_key else original_read_result(self, key)
+
+        monkeypatch.setattr(ManagedLedger, "read_result", missing_exact_source)
+    elif damage == "head":
+        run_git(worktree, "commit", "--allow-empty", "-m", "new actual head")
+    elif damage == "dirty":
+        runtime = worktree / "runtime.py"
+        runtime.write_text(runtime.read_text() + "\n# new actual change\n")
+    elif damage == "private":
+        path = result_path.with_name("task-context.json")
+        changed = json.loads(path.read_bytes())
+        changed["contextDigest"] = "f" * 64
+        path.write_text(json.dumps(changed))
+    elif damage == "current_ledger":
+        store.record_audit_snapshot(
+            "a/b#1",
+            evidence={
+                "liveAudit": dict(context["liveAudit"], capturedAt=iso_z(datetime.now(UTC))),
+                "targetBase": context["targetBase"],
+                "authorization": {"status": "DENY", "evidence_digest": "f" * 64},
+            },
+            dedupe_key="intent-1:system-gap:later-denial",
+        )
+    else:
+        with store.transaction() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND' "
+                "ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            observed = iso_z(datetime.now(UTC))
+            revoked = json.loads(row[0]) | {
+                "revocationObservedAt": observed,
+                "authorityObservedAt": observed,
+                "revokedContinuationDedupeKey": "closed-earlier-continuation",
+            }
+            store._event(
+                connection,
+                "a/b#1",
+                "TASK_CONTEXT_AUTHORITY_BOUND",
+                sha256_json(revoked),
+                revoked,
+                iso_z(datetime.now(UTC)),
+            )
+    before = (result_path.read_bytes(), result_path.with_name("task-context.json").read_bytes())
+    with store.connect() as connection:
+        before_events = [
+            tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+        ]
+    if damage == "private":
+        with pytest.raises(RuntimeError):
+            MODULE._blocked_system_preparation_metadata(store, blocked, value, raw)
+    else:
+        assert MODULE._blocked_system_preparation_metadata(store, blocked, value, raw) is None
+    if damage == "source_unavailable":
+        assert source_key in source_reads
+    assert before == (
+        result_path.read_bytes(),
+        result_path.with_name("task-context.json").read_bytes(),
+    )
+    with store.connect() as connection:
+        assert [
+            tuple(row) for row in connection.execute("SELECT * FROM events ORDER BY id")
+        ] == before_events
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("damage", ["raw", "context", "ledger", "head", "dirty"])
+def test_system_preparation_gap_audit_refresh_rechecks_after_real_proof(
+    monkeypatch, tmp_path, damage
+):
+    store, _worktree, result_path, blocked, context, _proof, input_path, immutable_input = (
+        _completed_system_gap_after_audit_refresh(monkeypatch, tmp_path)
+    )
+    raw = result_path.read_bytes()
+    original_proof = MODULE._validation_result_context_refresh_proof
+    proven = []
+
+    def prove_then_change(*args, **kwargs):
+        proof = original_proof(*args, **kwargs)
+        assert proof is not None
+        proven.append(proof)
+        if damage in {"raw", "context"}:
+            path = result_path if damage == "raw" else result_path.with_name("task-context.json")
+            path.write_bytes(path.read_bytes() + b"\n")
+        elif damage == "head":
+            run_git(_worktree, "commit", "--allow-empty", "-m", "new head during proof")
+        elif damage == "dirty":
+            runtime = _worktree / "runtime.py"
+            runtime.write_text(runtime.read_text() + "\n# new dirty scope during proof\n")
+        else:
+            store.record_audit_snapshot(
+                "a/b#1",
+                evidence={
+                    "liveAudit": dict(context["liveAudit"], capturedAt=iso_z(datetime.now(UTC))),
+                    "targetBase": context["targetBase"],
+                    "authorization": {"status": "DENY", "evidence_digest": "f" * 64},
+                },
+                dedupe_key="intent-1:system-gap:denial-during-read",
+            )
+        return proof
+
+    monkeypatch.setattr(MODULE, "_validation_result_context_refresh_proof", prove_then_change)
+    assert MODULE._blocked_system_preparation_metadata(store, blocked, json.loads(raw), raw) is None
+    assert len(proven) == 1 and input_path.read_bytes() == immutable_input
+    assert store.validation_followup_candidates() == []
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0] == 0
+
+
+def test_system_preparation_gap_audit_refresh_clears_cached_metadata_after_result_race(
+    monkeypatch, tmp_path
+):
+    store, _worktree, result_path, _blocked, _context, _proof, input_path, immutable_input = (
+        _completed_system_gap_after_audit_refresh(monkeypatch, tmp_path)
+    )
+    original_metadata = MODULE._blocked_system_preparation_metadata
+    original_plan = MODULE._validation_prefetch_plan
+    proved = []
+
+    def read_metadata(*args):
+        metadata = original_metadata(*args)
+        assert metadata is not None and metadata["contextRefreshProof"]
+        proved.append(metadata)
+        return metadata
+
+    def replace_before_plan(candidate):
+        if proved:
+            changed = json.loads(result_path.read_bytes())
+            changed["evidence"]["summary"] = "A real new result replaced the authenticated payload"
+            result_path.write_text(json.dumps(changed))
+        return original_plan(candidate)
+
+    monkeypatch.setattr(MODULE, "_blocked_system_preparation_metadata", read_metadata)
+    monkeypatch.setattr(MODULE, "_validation_prefetch_plan", replace_before_plan)
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path))
+    assert len(proved) == 1 and listed["concurrentDeferred"], listed
+    assert listed["candidates"] == [] and listed["rearmedReviewFeedback"] == []
+    assert "systemPreparationRequired" not in listed["blockedNoProgress"][0]
+    assert input_path.read_bytes() == immutable_input
