@@ -25266,6 +25266,7 @@ def _system_owned_validation_preparation_gap(value: dict[str, Any]) -> dict[str,
             or not isinstance(item.get("workingDirectory") or item.get("cwd"), str)
             or not (item.get("workingDirectory") or item.get("cwd")).strip()
             or type(item.get("exitCode")) is not int
+            or not isinstance(item.get("phase"), str)
             or item.get("phase") not in {"before_fix", "formal", "after_fix"}
         ):
             return None

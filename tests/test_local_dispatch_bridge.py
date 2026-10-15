@@ -47399,3 +47399,13 @@ def test_system_preparation_gap_list_drops_cached_metadata_after_real_result_rac
     assert listed["concurrentDeferred"], listed
     assert listed["candidates"] == []
     assert "systemPreparationRequired" not in listed["blockedNoProgress"][0]
+
+
+@pytest.mark.parametrize("phase", [[], {}])
+def test_system_preparation_gap_malformed_phase_keeps_public_marker_legacy(tmp_path, phase):
+    value = _system_preparation_pending_value(tmp_path, "same")
+    value["tests"][1]["phase"] = phase
+    assert MODULE.unresolved_current_test_failures(value) == []
+    expected = MODULE._legacy_validation_progress_marker(value)
+    assert expected is not None
+    assert MODULE._validation_progress_marker(value) == expected
