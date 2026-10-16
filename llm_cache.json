@@ -15772,6 +15772,34 @@
     ],
     "why": "The issue identifies a clear performance bug in subprocess spawning caused by an O(RLIMIT_NOFILE) close() loop, with a deterministic failing test and a concrete fix using close_range(). The proposed change is minimal, well-scoped, and directly addresses the root cause. No competing PR or related issue exists, and the maintainer has not expressed a conflicting preference."
   },
+  "1b42d56687c8abcf6008f45ed83ad6138b9c9159448e9cda195b2d577dc68a40": {
+    "confidence": 0.82,
+    "contradictions": [
+      "candidate.why claims verifiable LLM algorithm mechanisms, but candidate.actionability_evidence shows root_cause_signal=false and probe_ready=false",
+      "candidate.algorithm_evidence.qualified=true conflicts with the issue body being a deployment/config report with no code path or objective"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Treating an operational field report as an algorithm contribution would produce no reviewable diff",
+      "The thread's numbers are explicitly retracted/scoped by the author, so any derived 'fix' would rest on unstable evidence"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [
+      "No identified code defect or target module for a patch",
+      "No reproduction of a software bug (only throughput measurements)"
+    ],
+    "why": "The candidate is a field report / operational configuration write-up for DeepSeek-V4.1-Flash on SM120 hardware, not a code contribution. It contains no root-cause diagnosis of a code defect, no proposed patch, and no reference-vs-implementation or numerical regression path. The supplied actionability evidence itself records root_cause_signal=false and probe_ready=false, and the pre-review gate already failed on duplicate_changed and reproduction_or_validation_missing. The 'algorithm' terms (all reduce, fp4, fp8, moe, block size) are configuration/operational vocabulary, not a training objective, model mechanism, distributed-training invariant, quantization method, kernel algorithm, or evaluation methodology. The thread is a measurement discussion (KV pool sizing, concurrency ladders, flag corrections) with no actionable code change."
+  },
   "1b4a3e9e814a738eaadeddd3642675fbf089a7a652e4c2733f00c6fe5a7cfaf7": {
     "confidence": 0.8,
     "contradictions": [],
@@ -91494,6 +91522,39 @@
       "Whether the mobile repository accepts contributions for this scope"
     ],
     "why": "The supplied evidence establishes a code-level root cause on the mobile side (EXCLUDED_PROVIDER_IDS filters ollama in DesktopConnectionRuntime.ts, and Pi runtime lacks an ollama-chat adapter), but the issue itself is an unverified intake report with no reporter build, steps, or device capture. The bot comment explicitly states the record is waiting on a maintainer decision about scope and that no coding task is assigned from it. The fix is a product-scope question (explicit unsupported-provider UX vs. native Ollama support), not a concrete, actionable code change."
+  },
+  "90e952beb24f1f8e89559b2f6c2297f60db54cf6d8d097436947c91996e16bec": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment status is 'semantic_overlap_requires_review' while PR #43884 title explicitly references issue #43412 and implements the requested blast-radius handling"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/speculative/eagle_utils.py: make sampling-op JIT failure non-fatal / add fallback path",
+      "startup preflight to warm speculative sampling ops and clear partial flashinfer cached_ops build state"
+    ],
+    "risks": [
+      "PR #43884 may already cover the same root cause and blast-radius fix, making a new PR duplicative",
+      "Changing scheduler exception handling could mask other fatal errors if scoped too broadly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on pip cu13 env: launch with --speculative-algorithm NGRAM --attention-backend triton, send temperature 0.7 request, confirm server survives and request errors cleanly",
+      "Regression test that a simulated sampling-op JIT failure does not invoke kill_process_tree and that a poisoned cached_ops/sampling partial build is cleared on restart"
+    ],
+    "unknowns": [
+      "Whether maintainers consider PR #43884 sufficient or still want a separate/complementary contribution",
+      "Whether the issue is effectively claimed by the #43884 author"
+    ],
+    "why": "Issue has a clear root-cause chain (flashinfer JIT of top_k_renorm_probs in eagle_sample fails due to bundled cccl vs pip cu13 nvcc mismatch, then kill_process_tree SIGKILLs the server) and a concrete reproducer. However, the supplied evidence shows an open PR #43884 that explicitly references this issue (#43412) and implements the exact blast-radius fix (startup preflight, poisoned-cache clearing, flag-gated triton fallback), plus PR #43591 pinning the toolchain. The duplicate/coverage status is 'semantic_overlap_requires_review' with no maintainer confirmation that a complementary contribution is still needed, so whether new code work is actionable is materially unresolved."
   },
   "90f30eb26da6a502f914578d2e1502acf8729d730dfd4d9d12d5c9b305ab3a7d": {
     "confidence": 0.55,
