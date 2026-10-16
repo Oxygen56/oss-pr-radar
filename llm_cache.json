@@ -59875,6 +59875,42 @@
     ],
     "why": "Issue clearly describes a race condition in workflow resume with a public repro and production evidence, but the fix requires design confirmation on storage-level atomic claim semantics and adapter compatibility. Existing PR #20512 is closed and insufficient, and maintainer input is explicitly requested."
   },
+  "606ab861f16ba554dd93c87bba2e0f7cb937749395781f2d0f407d3bb2ffe8f5": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue analysis blames unbudgeted SparsePrefillWorkspace.get() growth, while divyvasal attributes the OOM to SparsePrefillChunkCache padding and says merged #43921 fixes the mixed-length case",
+      "Lei-010 reports inability to reproduce the workspace OOM on TP4 96GB and observes a different no-traceback crash, contradicting the single-root-cause framing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/attention/dsv4/sparse_prefill_utils.py: bound or chunk SparsePrefillWorkspace allocation for uniformly long prefill batches",
+      "python/sglang/srt/layers/attention/deepseek_v4_backend.py: pass a row/token budget into the workspace sizing path"
+    ],
+    "risks": [
+      "Merged PR #43921 may already cover the reported trigger, making a new fix redundant",
+      "Open draft PRs #44031/#44730/#44731 touch the same backend path and may conflict",
+      "Distinguishing the allocator OOM from the separate no-traceback watchdog/SIGKILL crash mode reported by Lei-010"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a deep queue of uniformly long (170k-212k token) cold prefills on TP2 B300 with DSPARK and fp8_e4m3 KV, confirming OOM before the change",
+      "Regression: mixed-length batch (one ~820K prompt plus many short requests) must remain OOM-free after the change",
+      "Verify workspace allocation is bounded by a mem_get_info-derived budget and that oversized batches chunk or raise a retryable error instead of killing the TP group"
+    ],
+    "unknowns": [
+      "Whether the uniformly-long-batch gap explicitly left open by #43921 is still reproducible on the reporter's TP2 B300 layout",
+      "Whether any open draft PR (#44031/#44730/#44731) already implements the row-budget chunking follow-up",
+      "Whether the reporter's crash ever occurs without a traceback, which would indicate a second failure mode"
+    ],
+    "why": "Issue reports a concrete OOM in SparsePrefillWorkspace.get() with traceback and code anchors, but supplied evidence shows the root cause is contested: contributor divyvasal attributes it to SparsePrefillChunkCache padding and states merged PR #43921 already fixes the mixed-length case, while explicitly noting uniformly-long batches remain uncovered. Another commenter (Lei-010) could not reproduce on a different layout and observed a distinct no-traceback crash mode. Whether the remaining uniformly-long-batch gap is actionable, and whether it overlaps the open draft PRs (#44031, #44730, #44731), is unresolved."
+  },
   "606b7a722a3169e4c9bdff9527c3ef0861f1f080a00727db237390b5644d35a9": {
     "confidence": 0.85,
     "contradictions": [],
@@ -84784,6 +84820,32 @@
       "Whether maintainers have already started work on this issue"
     ],
     "why": "Issue reports a concrete user-facing bug: cache_control blocks are ordered incorrectly, causing API 400 errors. The bug is reproducible and likely in the proxy's cache_control handling. No competing PR directly addresses this issue; PR #2771 is related but not a direct fix. The issue is actionable with a clear test path."
+  },
+  "86d1fd171c01aa04c04489928cee478b68eef1c6a30d463898e5ae017825690d": {
+    "confidence": 0.82,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and mechanism list (model_architecture, distributed_training, numerics_quantization, kernel_algorithm) conflict with the issue body, which is a production config/throughput report with no algorithm implementation or code path to change",
+      "actionability_evidence.root_cause_signal=false and probe_ready=false conflict with the gate's claim of a verifiable LLM algorithm mechanism"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Treating an operational field report as an actionable code task would produce no verifiable code change",
+      "The thread is largely vLLM-side measurements and corrections, not SGLang code work"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [
+      "No concrete code change, module, or algorithm invariant is identified anywhere in the supplied evidence"
+    ],
+    "why": "The candidate is a field report / operational configuration write-up for DeepSeek-V4.1-Flash on SM120 hardware, not a code contribution. It contains no proposed code change, no root-cause fix, and no algorithm mechanism (training objective, kernel, quantization method, or evaluation methodology) to implement. The discussion is about launch flags, KV pool sizing, and benchmark methodology, which is installation/configuration/operational work explicitly excluded from the llm_algorithm track."
   },
   "86d5ff5d439b49e953fcdc485318f0d7596b8b8f0340a8b04c134c71ec1ce330": {
     "confidence": 0.8,
@@ -138391,6 +138453,39 @@
       "Whether the failure is reproducible at all on current main outside the reporter's packaged install"
     ],
     "why": "The issue gives a plausible root cause (scrubbed env lacks LD_LIBRARY_PATH for the relocated PEP 517 build interpreter), but a contributor could not reproduce it on current main in an isolated Linux pod under a relocatable CPython with relative RPATH, and the maintainer triage explicitly says the trigger is narrower than reported and that the proposed remedy crosses a security boundary (LD_LIBRARY_PATH is on multiple deny lists). The fix shape is therefore not mechanically actionable without a maintainer security ruling and host-specific loader metadata."
+  },
+  "dcbd32ff2e92e9ef02fb64a00599db6f7d76e1478e25e24e8cc95e805707a88c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue reports agents invoking browser tools with no attachment, but #52309 (in v2.0.25) denies browser tools by default until a desktop attaches"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/plugin-browser/src/connection.ts target() error semantics for no-current-attachment",
+      "possibly browser tool exposure gating when no desktop attach exists"
+    ],
+    "risks": [
+      "Changing the error code/message is a public API behavior change that maintainers may prefer to scope differently",
+      "The observed agent behavior (stopped retries) is a hypothesis, not established causation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a session that has no browser RPC attachment and confirm whether browser.tabs.list is reachable at all under #52309 gating",
+      "Add a failing test asserting tabs.list returns a non-throwing status when no attachment exists, then verify the chosen error-code/wording change"
+    ],
+    "unknowns": [
+      "Whether the affected sessions were fresh or resumed and their Code Mode/permissions state",
+      "Whether the real defect is the error wording/code or the #54044 tool-exposure bypass",
+      "Maintainer preference between the two suggested shapes"
+    ],
+    "why": "The bot comment confirms the code path (BrowserConnection.target() throws the never-attached message for every action including tabs.list), but the issue itself flags unresolved reproduction uncertainty: v2.0.25 gates browser tools behind desktop attach (#52309), so it is unexplained how the affected sessions could invoke browser tools at all. The bot points to #54044 (deny bypassed via Code Mode execute) as a possible cause, which is a separate defect. Whether the actionable fix is the error-code/wording change or the tool-exposure bypass is unresolved, and the issue is explicitly treated as a feature request pending maintainer consideration."
   },
   "dccf5b2881641fe09d9fb27c1f49e437f3141f8c5d031d8abbb9a2da7939301f": {
     "confidence": 0.8,
