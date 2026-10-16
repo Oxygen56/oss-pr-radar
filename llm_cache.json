@@ -122525,6 +122525,35 @@
     "wait_reason": null,
     "why": "Issue provides a precise root cause (pricing keys stripped/not registered for public model name), a minimal reproduction, and a concrete fix direction (deployment-aware lookup). The bug is user-visible and affects savings reporting for custom models. No competing PR or issue found."
   },
+  "c72409c731365b489bc0c67c7eba0eca6cadf028b3bff54faf6ae1462e13fe98": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate claims agent/inference/RAG critical path and high actionability, but the maintainer bot states the failing code is not in this repository"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "No actionable in-repo change identified; the failing aggregation lives in the hosted Console service"
+    ],
+    "risks": [
+      "Attempting a fix in this repo would target the wrong codebase",
+      "Cannot validate any change without Console service access"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Not constructible in-repo: requires a real Console workspace with 7d usage data and Worker logs"
+    ],
+    "unknowns": [
+      "Whether any in-repo code path actually participates in the 7d aggregation",
+      "Whether a maintainer with Console access will investigate"
+    ],
+    "why": "The reported failure is in the hosted Console service's 7d aggregation path, which the maintainer bot states is not in this repository. No in-repo code anchor or root cause is established, and the failure cannot be reproduced without a real Console workspace with usage data."
+  },
   "c72ebf196b8f56830404aef6dc504ca85f7b17a79548323f04fd9dcfb2336143": {
     "confidence": 0.7,
     "contradictions": [],
@@ -141392,6 +141421,40 @@
       "Maintainer design preference for error handling"
     ],
     "why": "Issue provides a clear, reproducible bug with a detailed matrix of failing configurations, but the root cause is not identified. An existing PR (#8611) attempts a fix but is closed and has failed CI, and the repository requires assignment. Maintainer confirmation is needed before starting new work."
+  },
+  "e4be0dffe2f8c1dd87d8ee3f78da26ebefcbbdac65e49ee60ee7598dd4a875d9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas: 0 on the PCS create path (defer Grove resource creation until replicas > 0, or pass replicas: 0 through once Grove GREP-0677 lands)",
+      "DGD admission/validation: alternatively reject replicas: 0 on creation with a clear error and document zero as scale-down-only",
+      "Regression test covering DGD creation with replicas: 0 on a Grove-backed multinode component"
+    ],
+    "risks": [
+      "Two reasonable fixes exist (defer creation vs. reject at admission); maintainer preference may differ, but this is normal implementation choice rather than a blocker",
+      "Grove GREP-0677 (ai-dynamo/grove#686) may change how scale-to-zero should be driven, potentially affecting the chosen approach",
+      "Behavior change to DGD admission could affect external control planes that rely on holding a DGD at zero"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Apply the issue's minimal DGD YAML (frontend replicas: 0, worker replicas: 0 with multinode nodeCount: 2) into a Grove-enabled namespace and assert the DGD does not end up Ready=False/state=failed with the PCSG admission error",
+      "Add a unit test in deploy/operator/internal/dynamo for the PCS rendering path asserting the generated PodCliqueScalingGroup does not carry replicas: 0 with minAvailable: 1",
+      "Run the operator package's targeted unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer deferring Grove resource creation versus rejecting replicas: 0 at DGD admission",
+      "Whether Grove GREP-0677 will land in a timeframe that makes the pass-through approach viable"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD with replicas: 0 on a Grove-backed multinode component), the exact Grove admission error, and a specific root cause in deploy/operator/internal/dynamo/graph.go where component.Replicas is passed through unchecked and minAvailable is hardcoded to 1, with preserveGrovePodCliqueSetReplicas only applying on the update path. This is an actionable operator bug with a clear reference-vs-implementation validation path."
   },
   "e4da855f9c0c329abd63059838d3de767c4c4b5bf452986f6c662ae565c121a8": {
     "confidence": 0.85,
