@@ -27963,6 +27963,37 @@
     ],
     "why": "Issue provides a precise root cause: the native Rust sidecar omits native_offloading_capacity in runtime_data, with code anchors and a concrete reproduction. An open PR #14313 directly addresses the same code path but lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "2ec6d2b9200847014478bfd6249ab477ff491bfd93d69fe16fcbf08b625462c3": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate claims high actionability and a reproducible fix path, but the bot comment states the failing code is outside this repository and not reproducible in the test sandbox"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No in-repo module identified; the failing aggregation lives in the hosted Console service, not this repository"
+    ],
+    "risks": [
+      "Attempting a fix would target the wrong codebase (CLI/SDK instead of the hosted Console Worker)",
+      "Speculative changes to get_usage plumbing could alter unrelated range behavior"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Not constructible in-repo: requires a real Console workspace with 7d usage data and Worker logs, which the supplied evidence says is unavailable"
+    ],
+    "unknowns": [
+      "Whether any in-repo code path actually participates in the 7d aggregation",
+      "Whether a maintainer with Console access and Worker logs has confirmed the root cause",
+      "Whether the failure is a month-boundary edge case or a transient timing issue"
+    ],
+    "why": "The reported failure is in the hosted Console service's 7d aggregation, and the bot comment states that server code is not in this repository and cannot be reproduced without a real Console workspace with usage data. No in-repo root cause or code anchor is established, so no actionable code change can be validated here."
+  },
   "2ecdada8e232e45a8bd9a8f096912df3450df6b0ac11d1699329fc69ce652278": {
     "confidence": 0.8,
     "contradictions": [
@@ -64015,6 +64046,39 @@
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW. An existing PR #33458 directly addresses the issue but has failing CI checks, and a commenter has proposed a focused fix. Maintainer direction is not confirmed."
   },
+  "684fbaedabdbc573741be809594891cd36025e737102901347805183dfce3344": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas: 0 on the PCS create path (defer Grove resource creation until replicas > 0, or pass replicas: 0 through once Grove GREP-0677 lands)",
+      "DGD admission validation: reject replicas: 0 on creation with a clear error if zero-on-create is not supported",
+      "deploy/operator/internal/dynamo/graph.go: make minAvailable consistent with replicas instead of hardcoding 1"
+    ],
+    "risks": [
+      "Fix direction depends on whether Grove GREP-0677 (ai-dynamo/grove#686) is available; deferring creation vs. passing replicas: 0 through are materially different implementations",
+      "Changing minAvailable semantics could affect scheduling/availability behavior for non-zero replicas",
+      "Companion issue #16548 (updates applied while at zero) may require coordinated handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test in deploy/operator/internal/dynamo that renders a Grove-backed multinode component with replicas: 0 and asserts the resulting PodCliqueSet is either not created or has replicas/minAvailable values Grove accepts",
+      "Reproduce with the issue's YAML on a Grove-enabled cluster and verify the DGD reaches a non-failed state or is rejected at admission with a clear message",
+      "Regression test for the existing scale-down-to-zero path (#11837) to ensure it still works"
+    ],
+    "unknowns": [
+      "Whether Grove GREP-0677 is implemented in the target Grove version, which determines which of the two fix directions is viable",
+      "Maintainer preference between deferring creation and rejecting at admission"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD with replicas: 0 on Grove-backed multinode component), exact admission webhook error, and a specific root cause in deploy/operator/internal/dynamo/graph.go where component.Replicas is passed unchecked and minAvailable is hardcoded to 1. Two concrete fix directions are offered, and the create path is distinct from the already-fixed scale-down path (#11837). No open PR or duplicate issue covers this."
+  },
   "6860618c55fdef4936fd65d3ee34d56591b4a6332b6f26781999989ccad3631f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -96395,6 +96459,36 @@
     ],
     "why": "The issue clearly identifies a user-visible bug: conversation LLM config is frozen at creation, causing permanent authentication failures after key rotation. The proposed fix is actionable and well-scoped, with a clear reproduction and multiple solution levels. No competing PR or issue found."
   },
+  "9b65453923003ebc5a5ddc504e59fe64957e0c628f56bbc93e624652f1fc0b3f": {
+    "confidence": 0.82,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and mechanism_count=4 vs actionability_evidence.root_cause_signal=false and probe_ready=false",
+      "Issue body describes SGLang config, but the substantive code-anchor discussion (cli_args.py, serving.py, usage_processor.py) is about vLLM behavior"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Treating an operational field report as an algorithm contribution would produce no reviewable diff.",
+      "Cross-engine (vLLM vs SGLang) numbers in the thread are explicitly not like-for-like, so any derived 'fix' would rest on confounded measurements."
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No reference-vs-implementation or numerical regression is defined; the only 'validation' is re-running throughput benchmarks, which is not a code-level test."
+    ],
+    "unknowns": [
+      "No stated code defect, file, or function in SGLang that the issue asks to change",
+      "No reproduction of a software bug (only of a configuration/throughput observation)"
+    ],
+    "why": "This is a field report / operational configuration write-up (docker env vars, throughput tables, topology rejections) on an issue, not a code contribution. For track=llm_algorithm the required concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is absent; the content is installation/CLI/config/ops plumbing plus benchmark anecdotes. No root-cause signal, no code change proposed, and the cited code anchors (usage_processor.py, cli_args.py, serving.py) belong to a vLLM-side discussion about prompt_tokens_details, not to an actionable SGLang fix."
+  },
   "9b7304752031c20a7457f0b3d50c9e568d271dca4a88a761faefac5bdfb5c7bb": {
     "confidence": 0.55,
     "contradictions": [
@@ -98945,6 +99039,36 @@
       "Whether the issue is already fixed by the referenced PR or if additional work is needed in verl"
     ],
     "why": "Issue provides a clear root cause (Ray placement group deadlock due to insufficient CPU capacity), a concrete reproduction command, and a validated workaround. The referenced TransferQueue PR #165 directly addresses the root cause with a fail-fast mechanism, and the issue is open with no conflicting evidence. The work is actionable and testable."
+  },
+  "9f8fb79fce6025f1be633c8f7e870b204cf506b57c9957eeeb5fd29b6cae8f2f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request cancel scopes / avoid shared TaskGroup teardown cancelling concurrent upstream fetches",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools cancellation is scoped to the owning request"
+    ],
+    "risks": [
+      "Fix may alter session-manager lifecycle semantics for stateless requests",
+      "Maintainer may prefer a different isolation strategy for the shared TaskGroup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two overlapping tools/list requests to POST /mcp against two HTTP streamable MCP servers and assert both complete without MCPServerListError",
+      "Run the targeted mcp_server_manager unit tests and static checks on the changed package"
+    ],
+    "unknowns": [
+      "Whether the closed #24522 fix attempt left partial code that constrains the new fix shape"
+    ],
+    "why": "Issue provides a concrete, reproducible concurrency bug: overlapping POST /mcp requests cancel each other's in-flight upstream list_tools fetches via the shared StreamableHTTPSessionManager TaskGroup teardown. Traceback, ordered repro steps, and a clear expected behavior are supplied, and the candidate is a NEW_CLEAN_CANDIDATE with no open PR or duplicate coverage. This is agent/inference infrastructure plumbing, not an llm_algorithm track item, so the algorithm-specific bar does not apply."
   },
   "9f9cc5517cf9c86ce9cd45093c2946cba3c0ae12262f014935276f8957ed1b7a": {
     "confidence": 0.85,
@@ -108117,6 +108241,41 @@
       "Exact implementation details of the existing PR #13438 and whether it already covers all three seams."
     ],
     "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter all assume string-only or specific key), a concrete reproduction (object command with alias key fails with 'Invalid input' and preview shows '[object Object]'), and a proposed three-seam fix. Existing PR #13438 is open but lacks root-cause coverage, leaving room for a more complete contribution."
+  },
+  "b006be82bfa5e9bd8370a587678e468a237b5e70b04a5fe122617ee8a1451896": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue attributes the 2.0.30 failure to the app's own concurrent spawns racing for the port, while the bot comment says six concurrent service starts on Linux connected to one service without conflict and that duplicates likely come from the desktop app startup path or Windows itself"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/client/src/service.ts (Service.ensure spawn/adopt logic)",
+      "packages/cli/src/acp/service.ts (serve --service port binding and error logging)"
+    ],
+    "risks": [
+      "Environment-specific behavior (WSL2 mirrored networking) may not be reproducible in CI or on Linux, making validation weak",
+      "Changing port selection or adoption semantics could alter service discovery behavior for existing users",
+      "The reported duplicate-spawn source may be outside the repository (desktop app startup or Windows), so a code fix may not address the actual cause"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on Windows 11 + WSL2 mirrored networking with hostAddressLoopback=true and capture main.log plus Windows-side service log",
+      "Add a regression test that simulates concurrent spawns racing for the managed service port and asserts a running instance is adopted rather than treated as fatal",
+      "Verify the underlying bind error is written to main.log on spawn failure"
+    ],
+    "unknowns": [
+      "Whether the duplicate spawns originate in repository code or in the desktop app/Windows layer",
+      "Whether the failure is reproducible outside a Windows + WSL2 mirrored-networking environment",
+      "Which specific code path in Service.ensure treats a failed spawn as fatal and omits the bind error from main.log"
+    ],
+    "why": "The issue describes a plausible Windows/WSL2 mirrored-networking port race, but the supplied evidence does not establish a root cause in the repository code. The bot comment explicitly states it could not reproduce and that the duplicate starts likely originate from the desktop app startup path or Windows itself, not the shared client. The candidate's own actionability evidence has root_cause_signal=false, and the code anchors are generic (handler failed, main.log, Service.ensure, service.json) rather than a confirmed faulty code path. Without a reproducible root cause or a concrete code-level defect, the work is not yet actionable."
   },
   "b00e9299037398dc49066ddbcb7d2cc676fadb9ea21e3acb84735238aa7634ff": {
     "confidence": 0.8,
