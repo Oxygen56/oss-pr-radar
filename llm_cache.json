@@ -707,6 +707,47 @@
     ],
     "why": "The issue bundles 13 distinct findings across cross-entropy, MTP, MoE routing, cross-attention, LLaVA, attention sinks, CP loss means, GDN, FSDP checkpointing, and CP group restoration. Several findings (1, 2, 3, 8, 9) have concrete numerical reproductions and root-cause anchors, but the candidate's own actionability evidence reports reproduction_or_validation_missing and probe_ready=false, and the open-PR assessment flags semantic overlap with PR #5088 on the same padding_mask scatter path (finding 5) that requires human comparison before any code work. The issue is also explicitly AI-generated and self-described as unverified, so the actionable scope is not yet narrowed to a single root cause with a concrete validation path."
   },
+  "017987ff41fe666342877e77a6975324aa6bf0b7cb83f0a8d4ea009a9af71f2f": {
+    "confidence": 0.72,
+    "contradictions": [
+      "algorithm_evidence claims qualified=true with formula/experiment signals, but the issue's actual fixes are config/CLI refusals and plumbing, not algorithm mechanisms",
+      "open_pr_assessment reports semantic overlap with PRs #1946/#1947 while the issue's assigned sites are still unclaimed by those PRs"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/serve.py: refuse --structured-output/--json-schema/--reasoning-parser/--trace-log on vllm/sglang/mii before engine construction",
+      "src/soup_cli/utils/liger.py: return False with a warning when the model type is absent from liger's kernel table",
+      "src/soup_cli/utils/unsloth.py / config schema: refuse quantization: 8bit on backend: unsloth at config load",
+      "src/soup_cli/commands/bench.py: refuse explicit vllm/sglang/mlx backends or label honestly; align help, SUPPORTED_BACKENDS and error text"
+    ],
+    "risks": [
+      "Open PRs #1946 and #1947 show semantic overlap on config/schema.py, utils/unsloth.py and utils/liger.py; a duplicate implementation may already be in flight",
+      "The two unassigned sites (eval_gate on mlx/prm/unlearn/moe_lora_routing, MLX adafactor) are reserved for other holders and must not be touched",
+      "Owner stated this is the third claim without an open PR; further claims wait until #1811/#1814/#1815 has a PR",
+      "Pre-review flag base_sha_changed means the base commit may have moved since the issue's evidence was collected"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "CPU-only regression per site using recording stand-ins for engines, liger and unsloth, mirroring the issue's reproductions",
+      "Controls: --backend transformers keeps all flags; llama still gets Liger; 4bit/none on unsloth still load; soup bench on transformers unchanged",
+      "Mutation check: removing any one new refusal fails its test"
+    ],
+    "unknowns": [
+      "Whether PRs #1946/#1947 already implement any of the four assigned sites",
+      "Whether the owner's assignment to ndablizov is exclusive for the four sites or open to other contributors",
+      "Current base SHA relative to the issue's 837794f4 evidence commit"
+    ],
+    "why": "Issue #1811 documents six concrete dropped-setting defects with executed reproductions, file:line anchors, and controls; the owner explicitly assigned four sites (serve flags, Liger, unsloth 8bit, bench) to ndablizov with one PR per site and Refs #1811, and the unsloth 8bit fix is confirmed to be a config-load refusal. The remaining two sites (eval_gate on mlx/prm/unlearn/moe_lora_routing, MLX adafactor) are explicitly left open for other holders. The candidate's algorithm_evidence is keyword-driven (adamw, lora, dpo, grpo, quantization) and does not establish a training-objective, kernel, or numerical-method contribution; the actionable work is config/CLI refusal plumbing, which is outside the llm_algorithm track's required scope. No supplied evidence contradicts the root cause or the validation path."
+  },
   "019dc891b99a11e4121f6501603094c3184ab3ef806089a806aaf128e308f66a": {
     "confidence": 0.72,
     "contradictions": [
@@ -18261,6 +18302,41 @@
     ],
     "why": "Issue provides two self-contained reproductions of a distributed ring-backend failure: deterministic GPU-stream watchdog timeout and probabilistic CPU-stream deadlock (~3-4%/collective) in all_sum/average_gradients. A second reporter independently reproduced the hang with py-spy stack traces showing both ranks blocked inside mx.distributed.all_sum in _share_object, corroborating a socket-level race in the ring backend. This is a concrete distributed-training invariant failure with a clear validation path (fixed-seed synthetic gradient tree, multi-rank loop, stack-trace confirmation), not ordinary API plumbing."
   },
+  "2039489cde6781acc723d14f8093179f7774432a20d4cd2ec9314a0ccecb0948": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence reports root_cause_signal=false while the issue body asserts a specific mechanism (temp path, no knowledges row, no OCR logs); this is a hypothesis, not a confirmed root cause"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "embed channel upload handler / attachment lifecycle",
+      "knowledge ingestion path (ProcessCreateKnowledge → DocReader → OCR) for embed uploads",
+      "configuration/UI option for auto-ingesting embed uploads into a target knowledge base"
+    ],
+    "risks": [
+      "Fix may require a product/design decision (auto-ingest vs documented limitation), so a code PR could be rejected as out of scope",
+      "Changing embed upload semantics could affect session isolation, storage lifecycle, and security expectations for anonymous visitors",
+      "No code anchors supplied, so the exact module to modify is unconfirmed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: create embed channel, upload scanned PDF, ask content question, verify knowledges table has no new row and no DocReader/OCR logs",
+      "After fix: assert embed upload triggers ingestion and OCR/VLM invocation, and scanned content is retrievable via read_document",
+      "Regression: verify main-platform upload path and session-token expiry behavior are unchanged"
+    ],
+    "unknowns": [
+      "Whether maintainers intend embed uploads to be ingestible or explicitly session-scoped",
+      "Which code path handles embed uploads and where ingestion should be hooked",
+      "Whether an existing design/config option already covers this case"
+    ],
+    "why": "Issue describes a plausible user-visible gap: embed-channel uploads create session-scoped temp attachments and never enter the knowledge ingestion/OCR pipeline. Reproduction steps and expected/actual behavior are concrete, but the supplied evidence contains no root-cause signal (root_cause_signal=false) and no code anchors beyond generic 'Method/Docker'. The issue itself frames the expected behavior as a design choice ('provide an option to auto-ingest' or 'document unsupported scope'), so it is not yet established whether the correct contribution is a code fix or a documented limitation."
+  },
   "204dfffbb2a264c700eea6663bb5db29b4be7294f904bd704b2e151639b41e5d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -21362,6 +21438,42 @@
       "Whether the three layers should be split into separate issues before implementation"
     ],
     "why": "Issue is a concrete feature request with in-repo TODO anchor (tools.ts:1195-1198) and an existing end-to-end reason channel (ToolConfirmationPayload.cancelMessage -> coreToolScheduler fallback -> functionResponse.response.error) that is never fed from a permission UI. Two independent collaborator verifications agree on the root cause and the minimal core change (thread reason from resolvePermissionOutcome into cancelMessage at coreToolScheduler.ts:4358). Protocol layer is not a hard blocker: response-level _meta already exists and is already used on this exact response (bridgeClient.ts:578-593)."
+  },
+  "24dabd655cbe774f9b6023bf51a7cbd5d14dd6820d024e03af8514cd55841de1": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body claims Swift-full.gguf is downloadable from the HF repo, but collaborator states no such file exists there",
+      "Issue body claims architecture support is proven, but collaborator links PR #18443 which adds Q2_0 tensor support, implying the parser may not yet handle this quantization"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "fs/gguf/gguf.go tensor size/offset calculation for Q2_0 block size",
+      "internal/testutil/gguf/gguf.go test fixtures for Q2_0 tensors"
+    ],
+    "risks": [
+      "The referenced GGUF file is not present at the stated URL, so reproduction may be impossible without the reporter's merged file",
+      "PR #18443 may already implement Q2_0 support, making this issue covered",
+      "Merging split GGUFs with llama-gguf-split.exe may itself introduce malformed metadata"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Obtain the exact GGUF file (or reconstruct via llama-gguf-split) and run ollama create to reproduce the overflow",
+      "Add a unit test parsing a Q2_0 tensor with ne0=640 and verify byte size calculation does not overflow",
+      "Compare against llama.cpp's tensor size computation for the same tensor"
+    ],
+    "unknowns": [
+      "Whether PR #18443 already fixes the Q2_0 tensor size overflow",
+      "Whether the merged GGUF file is valid or corrupted by the split/merge process",
+      "The exact code path in fs/gguf/gguf.go that computes tensor size and whether it uses int32 or int64"
+    ],
+    "why": "The issue reports an 'unsupported tensor size overflows' error for a GSQ-RCO quantized Qwen3.8-Flash-Next GGUF, but the collaborator rick-github notes the referenced Swift-full.gguf does not exist in the linked Hugging Face repo, and the reporter admits they merged two split GGUF parts with llama-gguf-split.exe. The collaborator also points to PR #18443 (Q2_0 GGUF tensor support) and issue #18967, suggesting the root cause may already be covered by an open PR. The exact tensor is Q2_0 with ne0=640, which is a concrete quantization/block-size issue, but the reproduction artifact is not directly available and duplicate/merged-fix coverage is unresolved."
   },
   "24dedaf1ca3ea9c16e82d27b40f5fa3c952804a5996b9a481fa26a9c24819561": {
     "confidence": 0.55,
@@ -80850,6 +80962,42 @@
     ],
     "why": "Issue reports a concrete, reproducible greedy-equivalence failure (DFlash2 vs target-only diverging at token 30, K=1, eager, no prefix cache) with logprobs and a repro script, and comments propose several competing root causes (BF16 numerical path, GDN gate row misalignment #51812, kernel defects). However, the supplied evidence does not establish which root cause applies to this BF16 TP=4 configuration, and the candidate's own pre-task evidence flags an unresolved duplicate/overlap (PR #52487, issue #56605) plus an AI-disclosure policy conflict that blocks the automated action. These are materially blocking unknowns rather than normal implementation uncertainty."
   },
+  "8138c93d2bf30bf985b22ae75b170ae473453cdf4b112b027e8e01d02d9ca2d0": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue provides a concrete repro snippet, but actionability_evidence records public_repro_signals=0 and reproduction_evidence=[]",
+      "preTaskEvidence validationPathPlan=true while probe_ready=false and codePathsPlan=[]"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "dspy/_vendor/lm15/providers/openai.py: openai_model_has_cache_options model-id matching or capability-based decision",
+      "dspy.LM / CacheConfig ingestion path to allow Config.extensions or preserve prompt_cache_options mode"
+    ],
+    "risks": [
+      "PR #10648 may already implement or supersede the fix, making a new contribution duplicative",
+      "Changing model-id matching could alter cache behavior for other model families",
+      "Allowing extensions through dspy.LM may conflict with documented guidance against combining prompt_cache with provider-shaped options"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro snippet against gpt-5.6-luna and gpt-6-luna and assert prompt_cache_options mode is explicit for both",
+      "Add a regression test asserting the built request body contains {'mode': 'explicit'} when CacheConfig(prefix='stable') is set on a gpt-6 id",
+      "Compare PR #10648's changed files/tests against the issue's code anchors before writing new code"
+    ],
+    "unknowns": [
+      "Whether PR #10648 already fixes the gpt-6 prompt_cache_options mode gap",
+      "Whether maintainers prefer model-id pattern extension vs capability metadata vs exposing Config.extensions",
+      "Whether the issue is assigned or has an explicit maintainer design decision"
+    ],
+    "why": "Issue describes a concrete prompt-cache mode bug in vendored lm15 with a reproducible snippet, but the supplied evidence shows no reproduction evidence recorded (public_repro_signals=0, reproduction_evidence=[]), no code paths plan, and an unresolved semantic-overlap PR #10648 ('Consolidate Jev on dspy.LM via bundled lm15') that may already cover the same lm15/dspy.LM surface. These are materially blocking unknowns for deciding whether new code work is actionable."
+  },
   "81431966aeefcf41b7e0edb2a4bc392507e482e1cfa8aaa2817af9dc46c8538a": {
     "confidence": 0.85,
     "contradictions": [],
@@ -82045,6 +82193,40 @@
       "Exact desktop module/file owning the workspace-selection persistence is not confirmed by supplied evidence"
     ],
     "why": "Issue provides ordered reproduction steps, a concrete persisted-state root cause (workspaces array under cline.code.workspace-selection.v2 never validated against filesystem), and code anchors (workspaces, lastWorkspace). No duplicate or merged fix covers it; the only nearby PR #14855 is keyword-overlap-only with no direct code overlap and does not reference the issue. Track is agent_ai_infra, so the llm_algorithm rejection rule does not apply."
+  },
+  "8407882d2e471a996b1e2ef6455dfdc4cf545b4cb66062365b2c2af395526d43": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Audit/memory persistence layer: bound or exclude oversized request-body fields before DB insert",
+      "Logging path: stop emitting full base64 request bodies and system prompts at info level",
+      "Possibly schema/migration or field-length handling for audit and actor log tables"
+    ],
+    "risks": [
+      "Truncation strategy may lose audit fidelity if not chosen carefully",
+      "Changing log verbosity could reduce debuggability for legitimate cases",
+      "Schema change may require migration coordination"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by uploading a large image/file and asserting no 'value too long for type character varying(1000)' errors and that audit rows are persisted",
+      "Regression test asserting base64 payload and system prompt are absent from info-level logs",
+      "Targeted unit tests for the audit/memory write path with oversized payloads"
+    ],
+    "unknowns": [
+      "Exact code location of the audit/memory write path is not pinned in the supplied evidence",
+      "Whether maintainers prefer truncation, exclusion, or schema widening"
+    ],
+    "why": "Issue reports a concrete, reproducible failure: audit/memory writes of full request bodies (including base64 file payloads) exceed varchar(1000), causing DB insert errors and unredacted base64/prompt content in application logs. Reproduction steps and expected/actual behavior are supplied; no duplicate or open PR coverage found. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply. The remaining design question (truncate vs. exclude base64 vs. redact) is a normal implementation choice, not a blocking unknown."
   },
   "840f049b1af16ab1fa4991aef344f33ec427b5b1aea0d59a178b2fa50e231455": {
     "confidence": 0.7,
@@ -92887,6 +93069,37 @@
       "Whether the Cloud deployment uses the same code path as the self-hosted fix"
     ],
     "why": "Issue reports a concrete, reproducible -32603 'closed transaction inside context manager' failure on MCP tools/call, and supplied evidence (bot analysis plus a code-trail comment) anchors the root cause to sessionmaker(...).begin() in api/controllers/mcp/mcp.py interacting with an internal commit in the generation path. A concrete minimal fix (plain Session with explicit commit) and a validation path exist, so the work is actionable despite the open competing PR #40013 lacking regression tests."
+  },
+  "94ac595ea58c0cadb588a2febd1e4ae3ee4f4de2b05b4e5466611f75697f8e74": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with design_confirmation=true, yet open PRs already target the same mechanism, suggesting coverage rather than design uncertainty."
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/application/service/session_attachment_staging.go",
+      "internal/sandbox/session_manager.go"
+    ],
+    "risks": [
+      "Existing open PRs #4220/#3921 may already cover the root cause, making a new contribution duplicative.",
+      "Fix scope may require maintainer design confirmation on rebind vs. recreate semantics."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by binding a Docker sandbox session, letting the idle sweeper reclaim the container, then re-calling /api/v1/agent-chat/{session_id} with an attachment and asserting staging succeeds via rebind/retry."
+    ],
+    "unknowns": [
+      "Whether PR #4220 or #3921 fully resolves the 'stopped-but-not-deleted' container window described in the issue.",
+      "Whether maintainers consider this issue already covered by #3942/#4220."
+    ],
+    "why": "Issue reports a real, reproducible sandbox attachment staging failure (docker MakeDir exit=128) with a plausible root cause (idle-swept container still bound to session). However, supplied evidence shows two open PRs (#4220, #3921) with semantic overlap on the same code paths and the distinctive token 'invalid_request', and the duplicate status is explicitly 'semantic_overlap_requires_review'. A contributor comment also states #4220 is already fixing the same mechanism and that this issue is a duplicate of #3942. Whether code work is actionable depends on whether existing PRs already cover the root cause, which is unresolved."
   },
   "94ac77edf879c92efcd9be5809f884d9e0c8fed3363d3404ec2e1cdbae9e75a1": {
     "confidence": 0.9,
@@ -119228,6 +119441,39 @@
     ],
     "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >=4, with multiple user confirmations and a plausible root cause in mixed-batch indexing. However, the deterministic gate is HUMAN_REVIEW, and the related-issue lookup failed due to rate limiting, leaving unknown whether existing PRs or fixes already address this. The candidate is technically valuable but requires maintainer confirmation and evidence of no competing implementation."
   },
+  "c0d07df84a9d69a8527923b8bad43858214fc9440132e80e793eaddef033ca80": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims tools/list rejects the per-request x-mcp-{alias}-authorization header with a 500, but recent_comments reports the same path on main and v1.105.1 constructs the client cleanly and honors the per-request credential"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py (prepare_mcp_client / validate_static_credential gate)",
+      "litellm/proxy/_experimental/mcp_server/operations.py (tools/list discovery path threading of mcp_auth_header)"
+    ],
+    "risks": [
+      "Fixing a gate that may already accept the per-request header on main could introduce a redundant or behavior-changing credential path",
+      "Overlapping open PR #46293 touches operations.py and may already cover or conflict with the discovery-path change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the exact failing surface (direct /{server}/mcp tools/list vs /mcp virtual tool-search) on v1.105.0 and current main with a BYOK bearer_token server and no stored credential, asserting whether the 500 'requires a usable upstream credential' still occurs",
+      "Add a regression test that a valid x-mcp-{alias}-authorization header satisfies the tools/list credential gate and returns the upstream tool list"
+    ],
+    "unknowns": [
+      "Which exact surface (direct /{server}/mcp, /mcp virtual tool-search, or REST/dashboard preview) still fails",
+      "Whether the failure reproduces on current main or only on v1.105.0",
+      "Whether open PR #46293 already resolves the discovery-path gap"
+    ],
+    "why": "The issue gives a detailed root-cause trace and a concrete repro, but the only supplied discussion evidence directly contradicts it: a commenter exercising main and v1.105.1 reports the per-request credential is already honored at discovery time and cannot reproduce the 500, while the reporter's own follow-up PR claim is unverified. This unresolved reproduction/coverage contradiction determines whether any code work is actionable."
+  },
   "c0d7b9e0e9989bd638906c9dc3a5df0da0ae2c61f8f79cc3a9be61e203d13288": {
     "confidence": 0.85,
     "contradictions": [
@@ -144831,6 +145077,39 @@
       "Whether maintainers prefer a specific implementation approach or have already accepted PR #35645."
     ],
     "why": "Issue provides a clear root cause (scheduler fails to check budget state after resuming chunked request) and a deterministic reproduction path at the scheduler level. The expected behavior is well-defined, and the fix is localized to scheduler control flow. Existing PR #35645 directly addresses the issue but lacks tests, leaving room for a more complete contribution."
+  },
+  "e8bcdc37153fdbf2a9aadcd7876d6e4ebe27994ce634d9c10e7d9a04c6ab409c": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Candidate labels this a high-impact agent/inference/RAG key-path fix, but the evidence shows a documentation/API-contract mismatch with no runtime algorithm change"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "docs: remove or correct the 'catalogs' entry in /build/plugins/migrate-v1 context-domain prose",
+      "docs: add a catalog->provider/model rename mapping table to the migration guide"
+    ],
+    "risks": [
+      "Duplicate/overlapping work with open PR #55657",
+      "Docs-only change may not warrant a competing submission",
+      "If maintainers intend to re-expose a catalog domain, a docs-only fix could conflict with planned API work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the supplied repro.sh against a fresh config and confirm ctx.catalog is undefined and the plugin is reported failed",
+      "After the docs change, verify the guide no longer advertises a nonexistent domain and that ctx.provider.transform/ctx.model.transform are documented"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to restore a catalog domain rather than only fix the docs",
+      "Whether PR #55657 will be merged, making a competing docs fix redundant"
+    ],
+    "why": "The issue is a documentation/API-contract mismatch: the migrate-v1 guide lists a `catalogs` context domain that no longer exists after the catalog domain was split into `ctx.provider`/`ctx.model` (per the reproduced bot comment and the KeenaNet rename analysis). The actionable work is prose/table correction in the migration guide, not an algorithm, training, kernel, quantization, or evaluation contribution. Track is agent_ai_infra, but the change surface is docs-only, and an open PR (#55657, 'docs(plugin): correct catalog migration guidance') already covers the same correction, so this is a low-value/covered opportunity."
   },
   "e8c4d4b762feac31cda3c10be78620396223ab599af50d6ef3a500e32ba2869a": {
     "confidence": 0.9,
