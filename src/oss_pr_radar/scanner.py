@@ -5547,7 +5547,7 @@ class Radar:
             "cohort_eligibility": {
                 "horizonsDays": [14, 30, 60],
                 "rightCensoredLabel": "censored",
-                "selectionCount": len(allocation.get("mature") or []),
+                "selectionCount": len(self.capacity_allocation.get("mature") or []),
             },
             "rejection_summary": self.rejection_summary,
             "rejection_examples": self.rejection_examples,

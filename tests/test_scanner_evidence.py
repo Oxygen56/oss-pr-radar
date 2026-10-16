@@ -2338,3 +2338,97 @@ forward and backward in the same process.
         "DEPENDENCY",
         "OWNERSHIP_REVIEW",
     ]
+
+
+def test_main_reports_installation_rate_limit_without_advancing_last_success(
+    monkeypatch, tmp_path, capsys
+):
+    from oss_pr_radar.contracts import ContractError
+
+    now = "2026-10-06T15:57:30Z"
+    previous_state = {
+        "last_successful_scan": "2026-10-06T15:30:00Z",
+        "last_successful_candidates": 4,
+        "last_scan_ok": True,
+    }
+    state_path = tmp_path / "runtime-state.json"
+    report_path = tmp_path / "scan.json"
+    atomic_write_json(state_path, previous_state)
+    rate_limit_error = (
+        "gh: API rate limit exceeded for installation. If you reach out to GitHub "
+        "Support for help, please include the request ID "
+        "EC23:36687A:89F026:1C2885A:6AC519C9 and"
+    )
+    calls = []
+
+    def installation_rate_limit(args, **_kwargs):
+        assert args[:2] == ["gh", "api"]
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr=rate_limit_error)
+
+    real_radar = scanner.Radar
+
+    def isolated_radar(*args, **kwargs):
+        return real_radar(
+            *args,
+            **kwargs,
+            notification_outbox_path=tmp_path / "notification-outbox.json",
+            sleep_fn=lambda _seconds: None,
+        )
+
+    monkeypatch.setattr(scanner, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(scanner, "Radar", isolated_radar)
+    monkeypatch.setattr(scanner.subprocess, "run", installation_rate_limit)
+    monkeypatch.setattr(
+        scanner.sys,
+        "argv",
+        [
+            "oss-pr-radar",
+            "--now",
+            now,
+            "--window-hours",
+            "24",
+            "--state",
+            str(state_path),
+            "--scan-out",
+            str(report_path),
+            "--seen",
+            str(tmp_path / "seen.json"),
+            "--repo-cache",
+            str(tmp_path / "repo-cache.json"),
+            "--controller-feedback",
+            str(tmp_path / "controller-feedback.json"),
+            "--ledger",
+            str(tmp_path / "ledger.sqlite3"),
+            "--no-notify",
+        ],
+    )
+
+    assert scanner.main() == 0
+
+    printed = json.loads(capsys.readouterr().out)
+    report = json.loads(report_path.read_text())
+    state = json.loads(state_path.read_text())
+    with pytest.raises(ContractError, match="^scan failed: github_secondary_rate_limit$"):
+        validate_report(report)
+    assert calls
+    assert any("repos/BerriAI/litellm/issues" in args for args in calls)
+    assert report["scan_ok"] is False
+    assert printed["scan_ok"] is False
+    assert report["scan_error"] == "github_secondary_rate_limit"
+    assert printed["scan_error"] == report["scan_error"]
+    assert any(rate_limit_error in error for error in report["errors"])
+    assert report["cohort_eligibility"]["selectionCount"] == 0
+    assert report["candidates"] == 0
+    assert report["candidate_details"] == []
+    assert report["auto_spawn_candidates"] == 0
+    assert report["auto_spawn_titles"] == []
+    assert report["sent"] is False
+    assert printed["report_digest"] == report["report_digest"]
+    assert state == {
+        **previous_state,
+        "last_attempt": now,
+        "last_scan_ok": False,
+        "last_scan_error": "github_secondary_rate_limit",
+        "last_effective_window_hours": 24.0,
+    }
