@@ -1,0 +1,38 @@
+name: Native schedule diagnostic explicit-asia-shanghai
+
+on:
+  schedule:
+    - cron: "17 */1 * * *"
+      timezone: "Asia/Shanghai"
+
+permissions: {}
+
+jobs:
+  observe:
+    name: Observe scheduler metadata only
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Record allowlisted scheduler metadata
+        shell: bash
+        run: |
+          python3 - <<'PY_DIAGNOSTIC'
+          import datetime
+          import json
+          import os
+
+          if os.environ.get("GITHUB_EVENT_NAME") != "schedule":
+              raise SystemExit("Only native schedule events are permitted")
+          now = datetime.datetime.now(datetime.UTC)
+          start = datetime.datetime.fromisoformat("2026-10-16T07:17:00+00:00")
+          expires = datetime.datetime.fromisoformat("2026-10-16T19:17:00+00:00")
+          status = "OBSERVATION" if start <= now < expires else "OUTSIDE_FIXED_WINDOW"
+          names = ("GITHUB_EVENT_NAME", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT",
+                   "GITHUB_RUN_NUMBER", "GITHUB_SHA", "GITHUB_WORKFLOW_REF",
+                   "GITHUB_ACTOR", "GITHUB_REPOSITORY")
+          print(json.dumps({"schema": "native-scheduler-diagnostic-v1",
+                            "status": status, "observedAt": now.isoformat(),
+                            "windowStart": start.isoformat(), "windowEnd": expires.isoformat(),
+                            "metadata": {name: os.environ.get(name) for name in names}},
+                           sort_keys=True))
+          PY_DIAGNOSTIC
