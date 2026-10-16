@@ -15264,6 +15264,38 @@
     ],
     "why": "The issue describes a bug in 'Qwen Desktop 1.0.3', but the maintainer's triage comment states that this product is not built from this repository, and the UI strings and version do not match. The issue is misdirected and not actionable in this repo."
   },
+  "1af3c47fecf484002d359aaf8f36723269284bf3dc928c3632f3da3c4efc1c93": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER with gate HUMAN_REVIEW and pre-review failure 'no_code_surface' conflicts with the claim of a probe-ready, actionable fix"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unclear; likely no Dify-side change until root cause is isolated (possibly Celery/Kombu worker reconnect behavior or Dify worker configuration)"
+    ],
+    "risks": [
+      "Fixing third-party Celery/Kombu/redis-py behavior is out of scope for this repository",
+      "Intermittent issue may be environment-specific (external managed Redis, gevent) and not reproducible in CI",
+      "Premature patch could mask the real cause or alter worker reconnect semantics"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Establish a deterministic reproduction of the worker stall (e.g., forced Redis connection reset with worker task consumption assertion) before proposing any fix",
+      "If a Dify-side fix is identified, add a regression test that simulates broker disconnect and verifies task consumption resumes"
+    ],
+    "unknowns": [
+      "No deterministic reproduction or root-cause evidence",
+      "Whether the stall originates in Dify code or in Celery/Kombu/redis-py/gevent",
+      "Whether any Dify-side configuration or worker code is responsible for the failure to resume consuming"
+    ],
+    "why": "Issue reports an intermittent worker stall after Redis connection reset, but the reporter explicitly states there is no deterministic reproduction and the traceback only shows a transient ConnectionResetError inside Kombu/redis-py. No root-cause evidence ties the stall to Dify code; all code anchors are third-party site-packages (redis, kombu, celery, gevent), and the candidate's own actionability evidence has root_cause_signal=false and no code surface. Without a reproducible failure or a Dify-side root cause, the code work is not actionable."
+  },
   "1af685d1164d22cda70faf6d471a6184019a0542052ef11c3343cee42458e234": {
     "confidence": 0.7,
     "contradictions": [],
@@ -29945,6 +29977,39 @@
       "Whether an explicit thinking-mode parameter is required for streaming on this provider"
     ],
     "why": "Issue documents a clear streaming-vs-non-streaming discrepancy for reasoning_content on Alibaba Cloud DeepSeek V4.1 Flash, but the supplied evidence explicitly lacks a root-cause signal (root_cause_signal: false) and the reporter states the upstream provider response was never tested independently. It is unresolved whether the loss occurs in the upstream adapter, the stream normalizer, or the provider itself, so the concrete code change is not yet determined."
+  },
+  "3260b5a0a758ae082117b81b5b6b5cfdf2e6dff73dc140c3ebf8b2c7115d6b20": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas: 0 on the PCS create path (defer Grove resource creation or pass zero through) or reject at DGD admission with a clear error",
+      "deploy/operator/internal/dynamo/graph.go: stop hardcoding minAvailable to 1 when replicas is 0",
+      "Possibly lib/runtime component replica handling if validation is added there"
+    ],
+    "risks": [
+      "Fix direction choice (defer creation vs. reject at admission vs. pass-through) may need maintainer design preference; GREP-0677/ai-dynamo/grove#686 may change the intended semantics",
+      "Changing minAvailable/replicas rendering could affect non-zero multinode deployments",
+      "Admission-time rejection would be a user-visible behavior change requiring documentation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test in deploy/operator/internal/dynamo that renders a Grove-backed DGD with replicas: 0 and asserts the resulting PodCliqueSet is either not created or has replicas/minAvailable consistent with Grove admission rules",
+      "Reproduce with the issue's YAML against a Grove-enabled namespace and confirm the DGD no longer ends in state=failed with the webhook error",
+      "Regression test that scaling an existing PCS down to 0 still works (guard #11837 behavior)"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer deferring Grove resource creation, rejecting at DGD admission, or waiting on Grove GREP-0677 support for replicas: 0"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD with replicas: 0 on a Grove-backed multinode component), the exact Grove admission error, and a specific root cause in deploy/operator/internal/dynamo/graph.go where component.Replicas is passed unchecked and minAvailable is hardcoded to 1. Two concrete fix directions are offered, and the create path is distinct from the already-fixed scale-down path (#11837), so no duplicate coverage."
   },
   "3269a7237bc484d4863fa0f5bf425fbbb098a7a7be2e9e7eb31bd7e927bf8a52": {
     "confidence": 0.8,
@@ -91039,6 +91104,45 @@
     ],
     "why": "The issue provides a clear root cause: the managed Zoom OAuth app lacks webinar write scopes, the toolkit lacks webinar creation tools, and search/workbench mislead users into an unfixable OAuth loop. The reproduction steps and minimal example are concrete, and the requested fixes are actionable code changes in the Composio platform."
   },
+  "9203982efa0ad7bf4672a05fd2befb026a51016cf14e9159777c121e97594ae9": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body presents all six sites as open work, but recent comments show four are assigned to ndablizov and two reserved for area holders"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/serve.py (structured output/reasoning parser/trace log on vllm/sglang/mii)",
+      "src/soup_cli/utils/liger.py (model-type table check)",
+      "src/soup_cli/utils/unsloth.py (8bit refusal)",
+      "src/soup_cli/commands/bench.py (backend label vs engine)",
+      "src/soup_cli/trainer/mlx_optim.py (adafactor relative_step)",
+      "src/soup_cli/config/schema.py (eval_gate compat)"
+    ],
+    "risks": [
+      "Six independent sites in one issue; a single PR would be unreviewably large and the owner explicitly wants one PR per site",
+      "Two sites are reserved for area holders and may be claimed separately",
+      "Open PRs #1946/#1947 semantically overlap (unsloth 8bit, liger) without referencing the issue, risking duplicate work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Recording stand-ins for engine entry points, liger and unsloth as in the issue; assert refusal or applied arguments per site",
+      "MLX adafactor: recording mlx.optimizers stand-in asserting relative_step=False and configured schedule",
+      "Mutation: removing any one new refusal fails its test"
+    ],
+    "unknowns": [
+      "Whether the assigned contributor has opened any PR yet (owner notes none open)",
+      "Whether the two reserved sites have been claimed by @taljeon or @dryn85-max",
+      "Whether PRs #1946/#1947 already cover the unsloth-8bit and Liger sites"
+    ],
+    "why": "The issue is a broad multi-site bug report (six unrelated settings dropped across serve, gate, MLX adafactor, Liger, unsloth, bench). The owner has explicitly assigned four of the six sites to contributor ndablizov (one PR per site, Refs #1811), and the remaining two sites (--gate on mlx/prm/unlearn/moe_lora_routing and MLX adafactor) are reserved for area holders @taljeon and @dryn85-max. The owner also states this is the claimant's third claim without an open PR, so further claims wait. This is an unmet repository assignment/ownership requirement that materially blocks new code work on the assigned sites."
+  },
   "920e471950bcd3ab8079fde74d9bfe952bf8770cbde263a034772f144ca5d271": {
     "confidence": 0.7,
     "contradictions": [
@@ -94681,6 +94785,34 @@
       "Maintainer preference on whether to accept the behavior change; no explicit approval yet"
     ],
     "why": "Issue provides a precise root cause with code anchors and a concrete validation path: MCP tool results are never collapsed because the UI's category map only knows built-in display names, and MCP provenance is lost before the collapse decision. The suggested fix (propagate MCP provenance structurally) is actionable and testable via a minimal reproduction with the reference MCP server."
+  },
+  "982f18e09b1a501d7bcc250d6525b167345e19ddad6ac4df10234a2fe34d53c0": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/ai/src/protocols/utils/bedrock-cache.ts: derive cache support from catalog identity (models map key, family, or canonical model) or honor compatibility.cacheFormat on the Bedrock Converse route instead of raw modelID substring match"
+    ],
+    "risks": [
+      "Broadening cache-point emission could alter request payloads for non-Claude or non-cacheable Bedrock models if the identity check is too permissive",
+      "Two reasonable fix directions (catalog identity vs. cacheFormat flag) may need maintainer preference, but this is normal review, not a blocker"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using a mock Bedrock runtime that records Converse requests and asserts cachePoint blocks are present when modelID is an application inference profile ARN with cacheFormat 'anthropic'",
+      "Run the existing bedrock-cache unit tests and the target package's directed tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer catalog-identity derivation or honoring compatibility.cacheFormat as the canonical fix"
+    ],
+    "why": "Issue provides a concrete root cause in packages/ai/src/protocols/utils/bedrock-cache.ts where BedrockCache.breakpoints() derives cache support from the raw wire modelID via substring match on 'anthropic.claude-', which fails for application inference profile ARNs that carry no model name. A bot comment independently reproduced it on dev (eeec76bb) with a mock Bedrock runtime counting cachePoint blocks: plain model ID yields 2/4 cachePoints, ARN yields 0 even with cacheFormat 'anthropic'. This is a concrete, testable behavioral defect with a clear validation path (mock Converse request cachePoint count)."
   },
   "983e755434f181ab15a1f26c254a6eb2847566bf7dfb3e578cf6fda8935516f0": {
     "confidence": 0.85,
@@ -149419,6 +149551,37 @@
       "Whether the repository's AI-disclosure policy permits the intended contribution workflow"
     ],
     "why": "The issue reports a concrete, reproducible numerical anomaly (identical batches give different logprobs; batch-vs-alone drift up to ~0.2) with a minimal script and code anchors, and a commenter narrows the run-to-run part to batch composition in vllm/v1/engine/core.py. However, the actual root cause of the remaining shared-step divergence is unresolved: the commenter's FP8 in_proj_qkvz/Marlin finding on sm_89 does not explain the reporter's observation that the effect persists with the bf16 checkpoint and with FP8 kernels disabled, and the reporter explicitly lists three unseparated kernel candidates (Triton fused MoE, GDN chunked prefill, FA2 varlen). The supplied evidence also flags a semantic-overlap PR (#55947) requiring manual duplicate comparison and an ai_disclosure_conflict policy, both of which materially affect whether code work is actionable."
+  },
+  "f027569a123dc95c8d9528ab14835ba069651d8f4c35261b5f6438a877158c6c": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims array/string mix is a distinct mismatch, but the bot notes only null→\"\" was needed and asks for a v2 array-content repro"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/ai/src/protocols/openai-chat.ts: emit \"\" or omit content instead of null on tool-call turns",
+      "packages/ai/test/provider/openai-chat.test.ts: assert typeof content === 'string'"
+    ],
+    "risks": [
+      "Fixing here without consolidating on #51661 fragments the work and may conflict with the existing tracker",
+      "Array/string content mismatch may be a separate cause not reproduced on v2"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Serialize a history with an assistant tool_calls turn and assert every emitted message has string content or no content key",
+      "Replay the captured Cloudflare body with null→\"\" to confirm 200"
+    ],
+    "unknowns": [
+      "Whether #51661 already has an in-flight fix or assignee that would make this redundant"
+    ],
+    "why": "The issue's root cause is clearly identified (content: null on tool-call turns in packages/ai/src/protocols/openai-chat.ts), but the maintainer bot explicitly marks it as a duplicate of open issue #51661, which tracks the same defect and already holds the reporter's Cloudflare proof. The bot also notes the packages/llm path (#52819/#52820) is not in v2, so the only v2 producer is the same line #51661 covers. This is a covered opportunity, not a new actionable contribution."
   },
   "f0288d19e295765da423ba03ed337217c30ff388626bf486ecc19612026bcd0c": {
     "confidence": 0.6,
