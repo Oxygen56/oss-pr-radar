@@ -502,6 +502,43 @@
     ],
     "why": "The issue reports a server-side rejection ('free tier can only be used from within OpenCode') from the Console provider in the Desktop app. The stack trace points into bundled app.asar chunks (postToApi23), not into repository source, and the failure is a server-side entitlement/context check. No root cause in the repo is established, and the candidate's own actionability evidence has root_cause_signal=false. This is provider/entitlement plumbing, not an agent/inference/RAG algorithm fix."
   },
+  "0104b644052722b4a5c86d7f5a40eacb5041fea24cbf6ba88c98f156a03aa7e9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "electron/main.mjs: stop hardcoding nativeTheme.themeSource = \"dark\"; derive it from the active palette appearance",
+      "electron/preload-main.cjs and src/utils/desktop-shell.ts: extend the existing IPC bridge to carry the appearance value",
+      "Renderer theme system (src/themes/color-theme/): emit appearance changes to the main process when the openhands-color-theme preference changes",
+      "Windows/Linux menu bar: apply light/dark surface and legible label colors consistent with the selected palette"
+    ],
+    "risks": [
+      "nativeTheme.themeSource affects more than window chrome (e.g. native dialogs, scrollbars), so the change could have wider visual side effects",
+      "Windows may draw some chrome from the OS theme, limiting how much the app can control",
+      "Menu bar theming on Windows/Linux may require explicit menu rebuild or color overrides rather than only nativeTheme",
+      "macOS hiddenInset handling must not regress"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `npm run desktop` on Windows, select Light+, and verify the title bar and File/Edit/View/Window/Help menu bar turn light without restart",
+      "Switch back to a dark palette and verify chrome returns to dark without restart",
+      "Relaunch the app with Light+ active and verify light chrome persists",
+      "Verify menu labels and window control glyphs remain legible in both appearances",
+      "Regression: `npm run dev` in a browser and the macOS desktop app (hiddenInset traffic lights) behave unchanged"
+    ],
+    "unknowns": [
+      "No independent from-source reproduction was performed by the reporter, though triage confirms the code path in the repository"
+    ],
+    "why": "Triage evidence pins the root cause: electron/main.mjs forces nativeTheme.themeSource = \"dark\" at ready, and Windows/Linux keep the native frame plus Electron's default menu, so native chrome never follows the renderer theme. The fix path is concrete: propagate the per-palette `appearance` value through the existing desktopShell preload/IPC bridge and apply it to nativeTheme/menu. Reproduction (npm run desktop on Windows, select Light+) and acceptance criteria are explicit, and no duplicate/merged coverage or assignment blocker is present."
+  },
   "0110a994ce0245b2d28898dcbdd831dd893ac2ab6700c75061938e436dd183b8": {
     "confidence": 0.7,
     "contradictions": [],
@@ -9661,6 +9698,42 @@
       "Whether the issue is a duplicate of #51572 or a distinct bug"
     ],
     "why": "The issue reports a deterministic hang in DeepSeek-V4-Flash MTP speculative decoding when batch drains to 3 requests, with no worker traceback. It identifies a reproducible scenario and rules out a related fix, but the root cause is not isolated to a specific algorithm mechanism. The supplied gate decision is HUMAN_REVIEW, and there is a potential duplicate issue #51572 sharing stack signatures. The candidate is not a code contribution but a bug report; actionability requires maintainer investigation and design confirmation."
+  },
+  "10de7bdcfadba7e98d16110bffe9a9f134151d00042379c76d319542f530331d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with gate HUMAN_REVIEW, but actionability evidence shows no maintainer approval, no design confirmation, and no reproduction"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "permission evaluation path for model selection",
+      "session model pinning enforcement in shell/CLI and Code Mode API paths",
+      "agent option to reject model overrides"
+    ],
+    "risks": [
+      "Feature scope spans permissions, agent config, shell tool, and Code Mode API; unclear which surface maintainers want",
+      "No reproduction or failing test means the exact behavior gap is not pinned down",
+      "Overlapping issues #51071, #47040, #53060 may already cover parts of this"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that an agent shell command with --model override is denied when a session model is pinned",
+      "Add a failing test that Code Mode session-model API call is rejected under a pinned model",
+      "Regression test that normal model selection still works when no pin is set"
+    ],
+    "unknowns": [
+      "Which enforcement surface maintainers prefer (permission action vs agent option vs CLI ignore)",
+      "Whether existing related issues already cover the shell/CLI and Code Mode vectors",
+      "Concrete code location where session model is resolved and where overrides are accepted"
+    ],
+    "why": "The issue is a feature request for pinning a session/agent model, with a workaround and a bot restatement confirming the plugin hook gap. However, no reproduction evidence, no failing test, and no concrete root-cause code anchor beyond a plugin file the reporter wrote themselves. The candidate's own actionability evidence shows public_repro_signals=0, root_cause_signal=false, probe_ready=false, and pre-review failed on reproduction_or_validation_missing. The requested change is a design-level feature (new permission action or agent option) with no maintainer design confirmation, so the concrete implementation surface is undetermined."
   },
   "10e6762a91c3e8b6208edb4e35c473088390d1a278068b33c0013ad371ad30b1": {
     "confidence": 0.85,
@@ -58487,6 +58560,34 @@
     ],
     "why": "Comments establish the root cause is outside this repo: the SDK's toJsonSchemaCompat/mapMiniTarget defaults to draft-07 and McpServer never passes target; zod-to-json-schema is not even on the code path for zod v4. The fix is tracked upstream (typescript-sdk#2084/#2085/#2653/#2677/#2721), so no actionable code change exists in modelcontextprotocol/servers beyond a dependency bump after upstream lands. The only in-repo option (post-processing SDK-generated schemas) is explicitly conditional on the SDK stalling."
   },
+  "5eafb1fde40004c53de91fcb22e8b39518ae35f4b22aa4508a3312039b591ffa": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Audit/memory persistence layer: truncate or exclude base64 request bodies before writing to varchar(1000) columns",
+      "Logging layer: redact base64 payloads and system prompts, gate verbose content behind debug level"
+    ],
+    "risks": [
+      "Truncation strategy may lose audit fidelity; maintainer may prefer hashing or storing a reference instead",
+      "Redaction scope must not break legitimate debug diagnostics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test uploading a file/image with base64 body and assert audit/memory DB insert succeeds without length error",
+      "Assert application logs at info level do not contain full base64 payload or system prompt content"
+    ],
+    "unknowns": [
+      "Exact code location of audit/memory write path not confirmed by supplied evidence"
+    ],
+    "why": "Issue provides concrete reproduction steps, expected/actual behavior, and exact error messages showing varchar(1000) overflow when base64 file content is written to audit/memory fields, plus a secondary logging leak of base64 and system prompts. Root cause is clear and fix is localized (truncate/redact before persistence and logging)."
+  },
   "5eca0334d6ee40043c2701508a9255982f8ce5d0428eb69c8b25d880b807bf30": {
     "confidence": 0.8,
     "contradictions": [
@@ -95772,6 +95873,43 @@
     "unknowns": [],
     "why": "Issue documents a concrete, reproducible UI state inconsistency: two independent archive notions (sandbox_status-derived indicator vs browser-local archived store) disagree, with named code anchors and a triage-confirmed interim direction (treat MISSING/non-resumable runtime as archived everywhere, unify behind a single predicate, keep ERROR distinct). Acceptance criteria and a regression-test requirement are explicit, giving a clear reference-vs-implementation validation path."
   },
+  "98d126a953a23b43254b8c3b7b47d9fe86accd79ff330a7674a9ecafbc5ac192": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue is labeled breaking-change cleanup but candidate category is LOCAL_FIX_ONLY",
+      "Pre-task policy status is ai_disclosure_conflict while user authorization states AI disclosure is permitted"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Remove deprecated MCP compatibility surfaces across python/packages/agent-framework and related packages",
+      "Update exports, type stubs, docs, samples, and tests to drop removed symbols"
+    ],
+    "risks": [
+      "Large breaking-change surface spanning multiple packages and samples",
+      "Potential accidental removal of supported legacy MCP wire compatibility",
+      "Dependency on PR #9237 and #9236 landing first",
+      "Repository AI-disclosure policy conflict may prohibit automated submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run repository-wide search for removed symbols and confirm absence",
+      "Run full Python formatting, linting, typing, package tests, sample checks, and public-API validation",
+      "Confirm legacy MCP peer negotiation and operation coverage still passes"
+    ],
+    "unknowns": [
+      "Whether PR #9237 and #9236 have merged",
+      "Whether maintainers have approved this cleanup for the next major release",
+      "Whether the repository permits automated/AI-assisted PRs under its current policy"
+    ],
+    "why": "The issue is a broad, multi-package API-removal checklist for a future major release, not a concrete bug with a reproduction. It explicitly depends on PR #9237 and #9236 landing first, and the supplied evidence shows no reproduction, no failing test, and no maintainer approval or assignment. The repository policy also reports an AI-disclosure conflict, which is a materially blocking unknown for automated contribution."
+  },
   "98e2f618fa730be0f2715bbd17995145d29b5fd6917d0461057d8657729699dd": {
     "confidence": 0.85,
     "contradictions": [
@@ -113127,6 +113265,42 @@
       "Whether maintainers have a preferred fix shape (resubscribe-under-lock vs. dropping pre-resync events) for this watch path"
     ],
     "why": "Issue pinpoints the lag-resync replay bug at lib/runtime/src/discovery/kube.rs:552, explains the daemon's lock ordering (daemon.rs:364-376) that makes buffered events predate the reconciled snapshot, and cites the Discovery::list_and_watch contract (mod.rs:1684-1687) plus the mem.rs:245-252 resubscribe-under-lock precedent. A concrete unit-test reproduction on a current-thread runtime with the 16-slot client_with channel is given, with expected vs actual events. This is a concrete runtime/concurrency fix with a clear validation path, not plumbing."
+  },
+  "b66eeba8413f2d6ee06bb8be9b074149fee180e4a3d22dd404d0bed68e257a58": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims qualified algorithm mechanisms while the issue body describes config/CLI acceptance-and-drop plumbing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/serve.py flag refusal/plumbing",
+      "src/soup_cli/utils/liger.py kernel-table check",
+      "src/soup_cli/utils/unsloth.py quantization handling",
+      "src/soup_cli/commands/bench.py backend labeling"
+    ],
+    "risks": [
+      "Overlapping open PR #1946 may already cover the unsloth/config portion",
+      "Work is claimed by another contributor and two sites are reserved for named area holders",
+      "Most sites are config/CLI plumbing, not algorithm work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce each of the six sites with recording stand-ins as in the issue",
+      "Add regression tests per site with controls (transformers backend keeps flags, llama still gets Liger, 4bit/none still load)"
+    ],
+    "unknowns": [
+      "Whether the maintainer would accept a contribution on the two reserved sites from an unassigned contributor",
+      "Whether PR #1946 already resolves the unsloth 8bit site"
+    ],
+    "why": "Issue #1811 is a broad six-site bug report; the maintainer explicitly assigned four sites to @ndablizov and reserved the two remaining sites (--gate on mlx/prm/unlearn/moe_lora_routing and MLX adafactor) for named area holders @taljeon and @dryn85-max. The candidate's own evidence shows no assignment to this work, no maintainer approval, and an unresolved semantic-overlap PR (#1946) touching the same unsloth/config paths. The issue is also largely configuration/CLI plumbing (serve flags, bench backend labels, unsloth quantization refusal) rather than an LLM algorithm mechanism, so the llm_algorithm track fit is weak."
   },
   "b67113900b65d7e541f3126fe751b0b35834e936c4b263e882ed98d4c4daac16": {
     "confidence": 0.55,
@@ -133551,6 +133725,41 @@
     ],
     "why": "The issue is a well-evidenced upstream regression report: Ollama v0.34.1+ removed LoRA-adapter GGUF creation (ollama/ollama#14969), breaking test/scripts/build_ollama_uncertainty_adapter.sh and the uncertainty_ollama.py example. Root cause is clear and verified against Ollama source, but the actionable code work is not yet determined: maintainer gabe-l-hart redirects effort to llama.app for compositional adapters, and the issue itself lists open design decisions (whether a provisioning path is needed now, merge_and_unload vs Granite Switch, whether aLoRA activation fires on Ollama). No concrete mellea-side code change is specified, and the candidate's own pre-review flagged no_code_surface."
   },
+  "d65d2c20228d464ca496a99a976084fbb0ed47817ef59c40a175a8b097f606d1": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence reports root_cause_signal=false while the issue asserts a specific mechanism (temp path, no knowledges row, no OCR calls); the mechanism is plausible but not code-confirmed"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "embed channel upload handler / attachment lifecycle",
+      "knowledge ingestion + DocReader/OCR trigger path for embed uploads",
+      "configuration/UI option for auto-ingesting visitor uploads (if design confirms)"
+    ],
+    "risks": [
+      "Design ambiguity: maintainers may intend embed uploads to remain ephemeral, making the 'fix' a product decision rather than a bug fix",
+      "Scope creep into API/behavior changes for embed channel",
+      "No code surface identified, so fix location is speculative"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: create embed channel, upload scanned PDF, ask content question, verify knowledges table and DocReader/OCR logs",
+      "Regression: confirm main-platform upload still triggers ProcessCreateKnowledge -> DocReader -> ingestion",
+      "If a config option is added, test both enabled and disabled paths"
+    ],
+    "unknowns": [
+      "Whether embed-channel uploads are intentionally designed as ephemeral session attachments",
+      "Exact code path/function responsible for embed upload handling",
+      "Whether maintainers want an auto-ingest option or documentation-only resolution"
+    ],
+    "why": "Issue describes a user-visible behavior gap (embed-channel uploads stay as session temp attachments and never enter the knowledge/parse/OCR pipeline), but the supplied evidence contains no code anchors, no confirmed root cause, and no maintainer design decision on whether embed uploads should be ingested at all. The expected behavior itself is conditional ('should ingest on demand, e.g. provide an option... or if unsupported, document it'), so the actionable code change is not determined."
+  },
   "d670f8b9eb6f0a067b371f5892a1b2560c051ac6fbc7ba970acf731461c052fe": {
     "confidence": 0.7,
     "contradictions": [
@@ -136550,6 +136759,34 @@
       "Current valid base SHA after base_sha_changed"
     ],
     "why": "The issue gives a concrete arithmetic reproduction and code anchors, but the fix location is explicitly undecided: the reporter states the cache-inclusive vs cache-exclusive convention is a maintainer call that determines which side (Bedrock Converse inflation vs Responses bridge passthrough) the fix belongs on. The supplied duplicate assessment also flags PR #40714 as semantic overlap requiring human comparison, and the pre-task evidence records base_sha_changed. These unresolved facts determine whether code work is actionable."
+  },
+  "dadada0f7533bcc2443fe933d6af531657dd41841da353ed2f307332b65bf43a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/management_endpoints/model_management_endpoints.py: serialize nested datetime.time/date values in model_info before json.dumps",
+      "Add regression test covering PATCH of a model with existing access_windows"
+    ],
+    "risks": [
+      "Fix must not alter stored access_windows semantics or drop timezone info",
+      "Broadening serialization could mask other non-serializable types; keep change scoped to date/time handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: create model with access_windows containing start/end times, then PATCH an unrelated field (e.g. max_parallel_requests) and assert 200 and persisted change",
+      "Unit test update_db_model() with model_info containing datetime.time values and assert JSON-serializable output",
+      "Run targeted proxy management endpoint tests and static checks"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a full traceback pointing to json.dumps(merged_model_info) in update_db_model(), a concrete repro (PATCH a model with saved access_windows), and a comment confirming on current main that nested datetime.time values in model_info.access_windows are not isoformatted before serialization. This is a concrete, testable serialization bug with a clear minimal fix and regression test path."
   },
   "daf42d80e29e33752751252aa061efc33ea626806894b828aee561273221b7b9": {
     "confidence": 0.6,
@@ -144777,6 +145014,40 @@
       "Maintainer preference on fixing vs. waiting for extensible KV cache"
     ],
     "why": "Issue provides strong evidence of a memory accounting discrepancy between MRv1 and MRv2, with a deterministic OOM repro and community A/B isolating CUDA graph capture headroom. However, root cause is not fully confirmed (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete. Maintainer direction is needed to avoid duplicating or conflicting with ongoing work."
+  },
+  "e82ea8d7ee7cfa8f2d43a6cf5c56fa90325f87d4b23be09e49c755c9b4465f30": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims tools/list discovery rejects the per-request header and raises 'MCPAuth.bearer_token requires a usable upstream credential', while the supplied comment reports the same gate on main and v1.105.1 already honors the per-request credential and cannot reproduce the 500",
+      "Issue body states the per-request header is not consulted at discovery time, while the comment states _prepare_mcp_server_headers resolves it before the BYOK fallback and prepare_upstream_client nulls the v2 spec so resolve_mcp_auth returns it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py (prepare_mcp_client / validate_static_credential gate)",
+      "litellm/proxy/_experimental/mcp_server/operations.py (per-request header threading into _get_tools_from_server)"
+    ],
+    "risks": [
+      "Fixing a gate that already accepts the header on main would be a no-op or could regress the stored-credential fallback ordering",
+      "The reported 500 may originate from a different entry surface or server shape (spec_path vs live transport, static_headers, upstream_token_header) than the traced path"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the exact failing surface (direct /{server}/mcp tools/list vs /mcp virtual tool-search vs REST/dashboard preview) on v1.105.0 and v1.105.1 with a BYOK bearer_token server and no stored credential, asserting whether validate_static_credential raises",
+      "Add a regression test that drives prepare_upstream_client/_create_mcp_client with mcp_auth_header in both string and dict forms and asserts prepare_request_auth() yields the per-request Authorization header"
+    ],
+    "unknowns": [
+      "Which exact surface rejects (direct /{server}/mcp, /mcp virtual tool-search, or REST/dashboard preview)",
+      "The server's config JSON (spec_path vs live transport, auth_type, upstream_token_header, static_headers)",
+      "Whether the failure still reproduces on v1.105.1 or a v1.106.0-rc build containing the extracted upstream preparation"
+    ],
+    "why": "The issue gives a detailed root-cause trace and a concrete repro, but the only supplied comment thread directly contradicts it: the same commenter reports that on current main and v1.105.1 the discovery gate already honors the per-request x-mcp-{alias}-authorization header (both string and dict forms), that prepare_upstream_client nulls the v2 spec when a per-request override is present, and that resolve_mcp_auth is already called in _create_mcp_client. The reporter's 500 could not be reproduced, and the commenter explicitly asks for the exact surface, server config JSON, and version confirmation. This unresolved contradiction determines whether any code change is actionable."
   },
   "e8457f0f51619610f3646ff130c79377f2b249de247a4b1b6c09ff02df79b407": {
     "confidence": 0.7,
@@ -156259,6 +156530,38 @@
       "Whether the proposed fix is already implemented in PR #53367 and if it is complete; the PR lacks tests and has CI failures."
     ],
     "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm with a concrete mechanism (model_architecture, distributed_training) and a validation path via numerical regression or controlled experiment."
+  },
+  "f9c4d01f3a78ce65bea97090a85505b5b983efaa2485626849e74d133980a9c7": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment lists best_url as PR #3921 while the PRs array includes #4220 with identical score 46; which PR is the primary overlap is ambiguous"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/application/service/session_attachment_staging.go: handle stopped-but-not-deleted container during staging",
+      "internal/sandbox/session_manager.go: rebind/recreate container when exec fails in sweep window"
+    ],
+    "risks": [
+      "PR #4220 and #3921 may already cover the same root cause, making a new fix duplicative",
+      "Fix may require coordination with idle-sweeper lifecycle semantics and could affect container reuse behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by creating a session-bound Docker sandbox, letting idle sweeper reclaim the container, then calling /api/v1/agent-chat/{session_id} with an attachment and asserting staging succeeds via rebind",
+      "Regression test for dockerFileOpFailed/containerVanished classification when container is stopped but not yet removed"
+    ],
+    "unknowns": [
+      "Whether PR #4220 or #3921 already resolves this exact stopped-but-not-deleted window or only the deleted-container case",
+      "Whether maintainers consider this issue covered by the open PRs or want a separate fix"
+    ],
+    "why": "Issue reports a real, reproducible sandbox attachment staging failure with concrete error signatures and code anchors, and a contributor comment maps it to session_attachment_staging.go/session_manager.go and the idle-sweeper race. However, two open PRs (#4220, #3921) already target the same mechanism and paths, and the duplicate status is 'semantic_overlap_requires_review' with no direct issue linkage; whether the root cause is already covered by an in-flight fix is a materially blocking unknown for deciding if new code work is actionable."
   },
   "f9c4ef1c1d0a79f36c9a367654e5fc1a072b845bb7c8261fb6ce31c9e99038e3": {
     "confidence": 0.85,
