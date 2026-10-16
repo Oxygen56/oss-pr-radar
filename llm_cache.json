@@ -6502,6 +6502,42 @@
     ],
     "why": "The issue describes a concrete TypeError from a missing-argument call-site bug in ep_scatter_from_psum, but the supplied evidence shows an open PR #39399 that directly covers the same code path and issue, plus PR #37211 with a test file. Duplicate/merged-fix coverage is unresolved (duplicateStatus=human_review_required), which materially determines whether independent code work is actionable."
   },
+  "0b37bfe0e2e2675452f967f213a9da1b2e37ac85ba4897016f56f95a3bd8d64e": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Duplicate assessment flags semantic overlap on finish_reason/completion_tokens_details while also reporting direct_code_overlap=false and root_cause_coverage=false for all three PRs"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/streaming_handler.py: propagate received_finish_reason/intermittent_finish_reason into the assembled cached response in both sync and async finalizers",
+      "litellm/litellm_core_utils/llm_response_utils/convert_dict_to_response.py: rebuild Usage via Usage(**response_object['usage']) in convert_to_streaming_response and convert_to_streaming_response_async",
+      "streaming cache regression tests covering length, tool_calls, stop, and reasoning_tokens replay"
+    ],
+    "risks": [
+      "Existing open PRs (#45609, #43345, #46263) may already cover the same root cause, making a new fix duplicative",
+      "Changing cached finish_reason semantics could alter /v1/responses status/incomplete_details behavior for existing consumers",
+      "Usage(**response_object['usage']) may fail if cached usage dicts contain unexpected keys"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's 6-test reproduction against litellm[proxy]==1.104.3 in an isolated venv to confirm 5 failed / 1 passed (RED)",
+      "Apply the two suggested fixes and confirm 6 passed (GREEN)",
+      "Add a regression asserting cached finish_reason equals the client-observed finish_reason for length, tool_calls, and stop",
+      "Add a regression asserting replayed usage retains completion_tokens_details.reasoning_tokens"
+    ],
+    "unknowns": [
+      "Whether any of PRs #45609/#43345/#46263 actually fixes the streaming cache finish_reason/usage-details root cause",
+      "Whether a maintainer has already claimed or is actively fixing this issue",
+      "Whether the repository requires assignment before submitting a fix"
+    ],
+    "why": "Issue provides a detailed, provider-independent root cause with code anchors (CustomStreamWrapper.chunk_creator, _finalize_completed_stream, convert_to_streaming_response*) and a concrete RED/GREEN reproduction test, so the code work is technically actionable. However, the supplied duplicate assessment reports three open PRs with semantic overlap on the exact distinctive tokens (finish_reason, completion_tokens_details) and status 'semantic_overlap_requires_review', with no direct code overlap or issue linkage. Whether an existing PR already covers this root cause is a materially blocking unknown that determines whether new code work is duplicative, so RETRY is required rather than NO_OBJECTION."
+  },
   "0b43e6517ad85abd05efeaeeb923506390fc5fbe5de371ad9d2b0573f9d165c2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -43734,6 +43770,30 @@
       "Root cause not yet identified"
     ],
     "why": "Issue reports a reproducible hybrid sparse attention + Eagle prefix-cache miss for specific prompt lengths, with concrete commands and cache-hit data. However, the deterministic gate is HUMAN_REVIEW, open PR lookup timed out, and related-issue audit failed, so competition and maintainer context are incomplete."
+  },
+  "48648d17bc68e3c9d15ffea78616d399a257b6acffe714e33fd456e7bb7049d1": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "No code change warranted; v1 is in maintenance-only mode and v2 already fixes the behavior"
+    ],
+    "risks": [
+      "Working on v1 fix contradicts maintainer policy of critical-only fixes",
+      "PR #56257 already overlaps the code path, risking duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursued, reproduce with the provided fake-model.ts stand-in on 1.19.1 and confirm tool_choice:none after steps cap"
+    ],
+    "unknowns": [],
+    "why": "The issue is a well-documented v1 (1.19.1) bug with a clear root cause and reproduction, but the maintainer bot explicitly states v1 only receives critical fixes and that v2 (2.0.30) already handles this correctly, recommending upgrade. This is a low-value/covered opportunity for a code contribution."
   },
   "486e030d979599dbf792fce306b258a9dcb962c7d9f3a3d600698b6136935bdd": {
     "confidence": 0.9,
