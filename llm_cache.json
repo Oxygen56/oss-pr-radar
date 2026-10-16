@@ -31180,6 +31180,42 @@
     ],
     "why": "Issue provides a clear, reproducible failure with exact error from ScatterNDUpdate shape inference, affecting two public models on GPU. No competing PR or related issue exists. The root cause is likely in model conversion or OVMS handling of dynamic shapes, making it actionable."
   },
+  "3519caf63c7fc8f35a9ba17c6902a2c3c7aeab7f25c5590b645531e1db9d4978": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/components/features/settings/mcp-settings/mcp-server-form.tsx: mark SSE deprecated, default new remote servers to shttp, show migration notice",
+      "src/i18n/translation.json: add deprecation/migration copy for all locales",
+      "src/components/features/mcp-page/custom-server-editor.tsx: update doc comment",
+      ".agents/skills/verify-openhands/references/feature-map/F17-mcp-servers.md: reflect deprecation and new default"
+    ],
+    "risks": [
+      "Scope creep into backend/Agent Server transport support (tracked separately in software-agent-sdk#6017/#6018)",
+      "Accidentally rewriting persisted SSE configs or changing catalog transport patching",
+      "New literal UI strings bypassing t()/translation.json",
+      "Low priority label may reduce maintainer urgency"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test in __tests__/components/features/settings/mcp-settings/mcp-server-form.validation.test.tsx asserting new remote server defaults to shttp",
+      "Test that SSE option shows deprecation marker/notice and remains selectable",
+      "Test that editing a persisted SSE server preserves type 'sse' and shows migration notice",
+      "Run npm run lint, npm test, npm run build, npm run build:lib, npm run make-i18n, npm run check-translation-completeness"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific deprecation copy or tooltip mechanism beyond existing shared tooltip"
+    ],
+    "why": "Issue identifies a concrete, code-anchored UX/spec-conformance gap: MCPServerType includes 'sse' rendered as an equal dropdown option with no deprecation signal, and add-mode defaults to 'sse'. Triage supplies bounded scope, acceptance criteria, and a validation path (behavioral tests in mcp-server-form.validation.test.tsx, i18n completeness, lint/test/build). No duplicate or open PR coverage found; no assignment or AI-disclosure conflict."
+  },
   "35325f1566bbf0bf04305523674af23ed3286ef75d53cb185aae34f2eb11aebe": {
     "confidence": 0.8,
     "contradictions": [
@@ -82161,6 +82197,34 @@
     ],
     "why": "Issue describes a probabilistic agent behavior where the model fabricates success without tool calls, but the root cause is upstream LLM behavior, not a clear code defect. The suggested fix (detect terminal answer with zero tool calls) is a feature/improvement requiring design confirmation. Existing PR #40000 overlaps in code path but targets a different issue (retaining tool call inputs/results), so it is not a direct competitor. The deterministic gate is HUMAN_REVIEW, and the issue lacks maintainer approval or design confirmation."
   },
+  "84d497d2cf4acc9f4ea62437758c3fd0b1377b54b9a3b359534d610e379d0b11": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate claims high actionability and probe_ready, but the bot states the code is out of repo and unreproducible"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "None actionable in-repo; the 7d aggregation lives in the hosted Console service"
+    ],
+    "risks": [
+      "Any in-repo change would be speculative and cannot be validated against the actual failing service"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Not possible without Console workspace access and Worker logs"
+    ],
+    "unknowns": [
+      "Whether any in-repo code path (e.g., MCP tool wrapper) contributes to the 7d failure",
+      "Console Worker logs identifying the actual error"
+    ],
+    "why": "The failure is in the hosted Console service, whose server code is not in this repository; the bot explicitly states the 7d aggregation cannot be reproduced or tested without a real Console workspace and Worker logs. No in-repo root cause or validation path exists."
+  },
   "84ea95a506d1ec4d4f82ace3f0178202c0480f2e2fcce1bb94f1bc03c8096456": {
     "confidence": 0.8,
     "contradictions": [
@@ -128283,6 +128347,38 @@
       "Exact merge status of PR #36904 and its compatibility with recent branch changes"
     ],
     "why": "The issue provides a precise root cause chain (index_kpool>1 excludes flashmla_kv, no CUDA DSA backend supports bf16-query x fp8-KV), concrete reproduction commands, and a validation path via PR #36904 which has been validated on SM90 and SM121. The evidence includes kernel-level tests, negative controls, and output parity checks, establishing a concrete reference-vs-implementation test."
+  },
+  "d0ce543c2f64154407cb448fdcea224d26b0ce3558303102b33623dd785fcf48": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas: 0 on the PCS create path (defer Grove resource creation until replicas > 0, or pass replicas: 0 through once Grove GREP-0677 lands)",
+      "DGD admission/validation: alternatively reject replicas: 0 at creation with a clear error and document zero as scale-down-only"
+    ],
+    "risks": [
+      "Two reasonable fixes exist (defer creation vs. reject at admission); maintainer may prefer one, but this is normal implementation choice, not a blocker",
+      "Grove GREP-0677 (ai-dynamo/grove#686) may change the intended idle-state modeling, so the chosen fix should not hard-code assumptions about future Grove behavior",
+      "Behavior change to DGD admission could affect external control planes that currently rely on the accepted-but-failing spec"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test in the operator package that renders a DGD with a multinode component at replicas: 0 and asserts the generated PodCliqueSet does not violate Grove's replicas>0 / minAvailable<=replicas constraints",
+      "Reproduce with the issue's YAML against a Grove-enabled namespace and confirm the DGD no longer ends in state=failed with the webhook error"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer deferring Grove resource creation or rejecting replicas: 0 at DGD admission",
+      "Timeline/status of Grove GREP-0677 (ai-dynamo/grove#686) which may make replicas: 0 a first-class idle state"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD YAML with replicas: 0 on a multinode component), the exact Grove admission error, and a specific code anchor (deploy/operator/internal/dynamo/graph.go) where component.Replicas is passed unchecked and minAvailable is hardcoded to 1. The create path is distinct from the already-fixed scale-down path (#11837), so this is not covered work. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection does not apply."
   },
   "d0e1962b0800fe1dfd31e09092b66800fc7fbf50497879ad5d01aa3b47999176": {
     "confidence": 0.6,
