@@ -12823,6 +12823,41 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a suggested one-line fix, but an existing open PR (#7053) by a maintainer overlaps semantically with the same code path and may already address the root cause. The deterministic gate requires HUMAN_REVIEW, and the PR competition assessment indicates semantic overlap requiring manual comparison. Without maintainer confirmation or PR review, starting a new PR risks duplication."
   },
+  "16a2fc1762649b4bcb95683852dc520b83e09b6e6e8dc145102948bb6472451f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims tools/list rejects per-request x-mcp-{alias}-authorization with a 500 misconfigured error, but the follow-up comment reports the same gate accepts the per-request credential on main and v1.105.1 and cannot reproduce the failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py (prepare_mcp_client / validate_static_credential gate)",
+      "litellm/proxy/_experimental/mcp_server/operations.py (per-request header threading into _get_tools_from_server)"
+    ],
+    "risks": [
+      "Fixing a gate that may already accept the per-request header on main could introduce a redundant or behavior-changing credential path",
+      "Overlapping open PRs (#46293 touches operations.py; #46748/#46812 touch adjacent MCP/credential paths) may already cover or conflict with the change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the exact failing surface (direct /{server}/mcp tools/list vs /mcp virtual tool-search vs REST preview) on v1.105.0 and current main with a BYOK bearer_token server and no stored credential, asserting whether the 500 misconfigured error occurs",
+      "Add a regression test that supplies x-mcp-{alias}-authorization with no stored credential and asserts tools/list returns the upstream tool list"
+    ],
+    "unknowns": [
+      "Which exact entry surface (direct /{server}/mcp, /mcp virtual tool-search, or REST/dashboard preview) produces the 500",
+      "The server's config JSON (spec_path vs live transport, auth_type, upstream_token_header, static_headers)",
+      "Confirmed self-hosted version (v1.105.0 vs v1.105.1 vs v1.106.0-rc) where the failure reproduces",
+      "Whether any open PR already fixes this specific discovery-gate path"
+    ],
+    "why": "Issue provides a detailed trace and repro for the tools/list per-request credential gate, but the only follow-up comment (choksi2212) reports an empirical matrix on current main and v1.105.1 showing the per-request header IS honored at discovery time and the gate failure cannot be reproduced, contradicting the issue's root-cause claim. The commenter also asks for the exact surface, server config JSON, and version confirmation, which are unanswered. This unresolved contradiction determines whether any code fix is actionable."
+  },
   "16a68a20c07cbdc4fbb6435a1bdde93fa99e5d43269fa54c2c69de4f70779c92": {
     "confidence": 0.8,
     "contradictions": [],
@@ -12856,6 +12891,39 @@
       "Whether fsdp2 critic support is in scope for the same change"
     ],
     "why": "Issue pinpoints a concrete AttributeError: SeparateRayPPOTrainer._create_critic_class reads critic.model.fsdp_config, but critic.model is HFModelConfig which has no fsdp_config field; the default strategy=fsdp takes this branch, so separation-family trainers cannot build a critic. Code anchors and a CPU-testable validation path are supplied."
+  },
+  "16b39b90279d71a2a988d530cdead555e79d594cf97625d778bca382af48d56c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas: 0 on the PCSG create path (defer Grove resource creation or pass through as idle state)",
+      "Possibly lib/runtime component rendering to keep minAvailable consistent with replicas",
+      "DGD admission validation if the reject-on-create option is chosen"
+    ],
+    "risks": [
+      "Fix direction depends on whether Grove GREP-0677 (ai-dynamo/grove#686) lands; deferring creation vs. passing replicas: 0 through are materially different implementations",
+      "Changing create-path behavior could affect external control planes that rely on holding DGDs at zero",
+      "Related issue #14298 (reconcile errors during scale up from zero) may interact with the chosen fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Apply the issue's minimal DGD YAML with replicas: 0 and multinode nodeCount: 2 into a Grove-enabled namespace; assert no admission webhook rejection and DGD reaches a defined state",
+      "Regression test: scale an existing PCS down to 0 then back up, ensuring #11837 behavior is preserved",
+      "Unit test on graph.go PCSG rendering asserting minAvailable <= replicas for all replica values including 0"
+    ],
+    "unknowns": [
+      "Which of the two expected-behavior options maintainers prefer (defer creation vs. reject at admission) is not stated, though both are actionable",
+      "Whether GREP-0677 will land in a timeframe that makes the pass-through option viable"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD with replicas: 0 on Grove-backed multinode component), the exact Grove admission error, and a specific root cause in deploy/operator/internal/dynamo/graph.go where component.Replicas is passed unchecked and minAvailable is hardcoded to 1 on the create path. Two concrete fix directions are offered, and the scale-down path fix (#11837) confirms the lifecycle inconsistency. No open PR or duplicate issue covers this create path."
   },
   "16bb6e337f59b1f23f9b599882e4b1b354953b6f41ecac53b6ba711dffa577a8": {
     "confidence": 0.55,
@@ -90468,6 +90536,43 @@
     ],
     "why": "The issue identifies a concrete bug in chat template content format handling, with a clear root cause (missing validation of --chat-template-content-format against template capabilities) and a reproducible test case. The recent comment provides detailed analysis and confirms the failure modes, making the contribution actionable."
   },
+  "90dc35ff9c32e54c212f430a9a82b96091742e1affa4a0cb98059bf8e5619353": {
+    "confidence": 0.8,
+    "contradictions": [
+      "The issue is filed against the desktop repo CherryHQ/cherry-studio, but the bot comment states the failure surface is the mobile repo CherryHQ/cherry-studio-app"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/backend/services/desktopConnections/DesktopConnectionRuntime.ts (exclusion filtering and reason codes)",
+      "src/backend/data/services/DesktopConnectionService.ts (import preview reason codes)",
+      "src/frontend/i18n/locales/en-us.json (empty-state messaging)",
+      "src/backend/ai/agent/runtime/pi/piApiAdapters.ts (only if native Ollama support is chosen)"
+    ],
+    "risks": [
+      "The fix is a product-scope decision (explicit unsupported UX vs. native Ollama support) that the maintainer has not resolved",
+      "The issue is an unverified intake report with no reporter build, steps, or device capture",
+      "The failure surface is the separate mobile repository CherryHQ/cherry-studio-app, not the desktop repo where the issue was filed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the desktop export payload containing an enabled Ollama provider and verify it is silently dropped by the mobile import preview",
+      "Add a regression test asserting the import preview surfaces an explicit unsupported-provider reason instead of the generic empty state",
+      "If native support is chosen, add a Pi runtime adapter test for ollama-chat conversation turns"
+    ],
+    "unknowns": [
+      "Whether the maintainer will choose explicit unsupported-provider UX or native Ollama support on mobile",
+      "The reporter's actual configuration and whether the models ever worked on a prior build",
+      "Whether the mobile repository accepts contributions for this scope"
+    ],
+    "why": "The supplied evidence establishes a code-level root cause on the mobile side (EXCLUDED_PROVIDER_IDS filters ollama in DesktopConnectionRuntime.ts, and Pi runtime lacks an ollama-chat adapter), but the issue itself is an unverified intake report with no reporter build, steps, or device capture. The bot comment explicitly states the record is waiting on a maintainer decision about scope and that no coding task is assigned from it. The fix is a product-scope question (explicit unsupported-provider UX vs. native Ollama support), not a concrete, actionable code change."
+  },
   "90f30eb26da6a502f914578d2e1502acf8729d730dfd4d9d12d5c9b305ab3a7d": {
     "confidence": 0.55,
     "contradictions": [
@@ -119842,6 +119947,36 @@
     ],
     "unknowns": [],
     "why": "Issue provides a precise root cause: CronStore.claimDueRuns binds named params as an object under bun:sqlite, causing silent NULL comparison and zero claimed runs. Concrete runtime-independent reproduction and multiple fix options are given; no duplicate PR/issue coverage found."
+  },
+  "c2f2e18666b227a8e210152ed16b45205339fbebfceb2916d5664471ab46eb9f": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "embed upload handler / attachment lifecycle",
+      "knowledge ingestion and OCR trigger path"
+    ],
+    "risks": [
+      "May be intended product behavior rather than a bug",
+      "Fix could require API/behavior changes needing maintainer design approval"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce embed upload of a scanned PDF and assert no knowledges row is created",
+      "After fix, assert ingestion/OCR is triggered and content is retrievable"
+    ],
+    "unknowns": [
+      "No confirmed root cause or code anchor for the embed upload path",
+      "Whether maintainers intend embed uploads to be session-only",
+      "No maintainer design confirmation despite design_confirmation wait reason"
+    ],
+    "why": "Issue describes a plausible user-visible bug in the embed upload path, but the supplied evidence lacks a confirmed root cause and code anchors; the candidate itself flags needs_confirmation and design_confirmation, and the pre-review gate failed with no_code_surface. Without a concrete code path or confirmed design intent, the fix is not yet actionable."
   },
   "c2f63253a0272f955ba3a076af4ca5df25b987746fea5e0e112c05e5c59d06a9": {
     "confidence": 0.9,
