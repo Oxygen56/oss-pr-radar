@@ -22,6 +22,8 @@ from .managed_lifecycle import MANAGED_TABLES, ManagedLedger, migrate_schema, pa
 from .managed_security import stable_fingerprint
 from .util import canonical_json
 
+LIVE_CONTROLLER_STATUS_REPORT = "latest_controller_cycle.json"
+
 _SENSITIVE_KEY = re.compile(r"(?:secret|token|password|api[_-]?key|private[_-]?key|hmac)", re.I)
 _LOCAL_PATH_KEY = re.compile(r"(?:worktree|checkout|absolute[_-]?path|local[_-]?path)", re.I)
 
@@ -344,6 +346,10 @@ def _import_report_manifest(ledger: ManagedLedger, reports_dir: Path | None) -> 
         return {"reports": 0, "duplicates": 0}
     imported = duplicates = 0
     for report in sorted(reports_dir.glob("*.json")):
+        # The heartbeat continues reporting a blocked startup while workers
+        # are stopped.  Its mutable status is not legacy migration history.
+        if report.name == LIVE_CONTROLLER_STATUS_REPORT:
+            continue
         content = report.read_bytes()
         digest = hashlib.sha256(content).hexdigest()
         payload: dict[str, Any] = {

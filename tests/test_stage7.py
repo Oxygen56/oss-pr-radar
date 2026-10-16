@@ -940,6 +940,68 @@ def test_expired_worker_staging_reset_preserves_bound_plists_and_allows_reissue(
     assert renewed["state"] == "ACTIVE"
 
 
+def test_original_uninstall_cli_removes_expired_signed_unloaded_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "staging-uninstall-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    receipt = _consume_signed_staging_fixture(runtime, home, specs)
+    receipt_path = staged_worker_receipt_path(runtime)
+    before = {
+        path: path.read_bytes()
+        for path in [
+            token_path,
+            receipt_path,
+            *[Path(str(item["plistPath"])) for item in receipt["workers"]],
+        ]
+    }
+    later = utc_now() + timedelta(minutes=20)
+
+    class AfterStaging(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return later.astimezone(tz) if tz is not None else later.replace(tzinfo=None)
+
+    monkeypatch.setattr(operational_auth_module, "datetime", AfterStaging)
+    reports = [
+        {"label": spec["Label"], "loaded": False, "actualConfigMatch": True} for spec in specs
+    ]
+    assert not verify_staged_worker_receipt(runtime, specs=specs, worker_reports=reports, home=home)
+    assert verify_staged_worker_receipt(
+        runtime, specs=specs, worker_reports=reports, home=home, require_current=False
+    )
+    assert {path: path.read_bytes() for path in before} == before
+    assert not authorization_path(runtime).exists()
+    calls = []
+
+    def observe(*arguments, check=True):
+        calls.append(arguments)
+        assert arguments[0] == "print" and check is False
+        return subprocess.CompletedProcess([], 113, "", "Could not find service")
+
+    monkeypatch.setattr(workers_module.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(workers_module, "launchctl", observe)
+    monkeypatch.setattr(
+        workers_module,
+        "finalize_operational_authorization",
+        lambda *_args, **_kwargs: pytest.fail("staged uninstall must never activate authorization"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["install_local_publication_workers.py", "--runtime-root", str(runtime), "--uninstall"],
+    )
+    assert workers_module.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is True and result["uninstalled"] is True
+    assert len(result["workers"]) == 4
+    assert all(not path.exists() for path in before)
+    assert not authorization_path(runtime).exists()
+    assert {call[1].split("/")[-1] for call in calls} == set(workers_module.FIXED_WORKER_LABELS)
+    assert all(call[0] == "print" for call in calls)
+
+
 def test_expired_worker_staging_reset_is_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1736,18 +1798,6 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         "oss_pr_radar.runtime_audit.disk_snapshot",
         lambda _root: dict(disk_value),
     )
-    monkeypatch.setattr(
-        operational_auth_module,
-        "read_disk_pressure_gate_health",
-        lambda _root: {
-            "ok": True,
-            "blocked": False,
-            "reason": None,
-            "active": False,
-            "snapshot": dict(disk_value),
-            "restartSafe": disk_value["usedFraction"] <= 0.94,
-        },
-    )
     counts_path = tmp_path / "managed-counts.json"
     automation_path = tmp_path / "automation-snapshot.json"
     counts_path.write_text(json.dumps(counts, sort_keys=True) + "\n", encoding="utf-8")
@@ -1781,7 +1831,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert automation["schema"] == "oss-pr-radar.stage7-automation-snapshot.v3"
     assert automation["generator"] == "stage7-automation-toml-v3"
     assert automation["dailyWarRoom"]["kind"] == "heartbeat"
-    assert automation["heartbeat"]["targetThreadId"] == "019f71c3-4f26-7030-b126-25f8cfbac4c4"
+    assert automation["heartbeat"]["targetThreadId"] == "01a11091-6498-73f2-bffb-1bd114e4347a"
     assert automation["dailyWarRoom"]["targetThreadId"] == ("01a047a5-88da-7113-8355-218215cd037a")
     assert automation["dailyWarRoom"]["targetThreadId"] != automation["heartbeat"]["targetThreadId"]
     assert {
@@ -1836,8 +1886,8 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         == hashlib.sha256(receipt_path.read_bytes()).hexdigest()
     )
     assert receipt_path.stat().st_mtime_ns == receipt_stat.st_mtime_ns
-    disk_value["usedFraction"] = 0.945
-    insufficient_margin = check(
+    disk_value.update(freeBytes=1, usedFraction=0.999, capacityLimitsEnabled=False)
+    low_capacity_preflight = check(
         runtime,
         home=home,
         launchctl_runner=lambda _label: "Could not find service",
@@ -1845,11 +1895,12 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         automation_snapshot={**automation_unsigned, **auth},
         require_workers_loaded=False,
     )
-    assert insufficient_margin["ok"] is False
-    assert insufficient_margin["diskStopThresholdOk"] is True
-    assert insufficient_margin["diskRestartSafe"] is False
+    assert low_capacity_preflight["ok"] is True
+    assert low_capacity_preflight["capacityLimitsEnabled"] is False
+    assert low_capacity_preflight["disk"]["freeBytes"] == 1
+    assert low_capacity_preflight["diskStopThresholdOk"] is None
+    assert low_capacity_preflight["diskRestartSafe"] is None
 
-    disk_value["usedFraction"] = 0.93
     real_collect_snapshot = acceptance_module.collect_snapshot
     active_gate_health = {
         "ok": False,
@@ -1883,14 +1934,14 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
             require_workers_loaded=False,
         )
     assert preflight["ok"] is True
-    assert preflight["diskRestartSafe"] is True
+    assert preflight["diskRestartSafe"] is None
+    assert preflight["capacityLimitsEnabled"] is False
     assert preflight["diskPressureGateClear"] is False
     assert preflight["stagedWorkerReceiptValid"] is True
     assert preflight["runtimeReleasePolicyIdentityMatch"] is True
-    with pytest.raises(RuntimeError, match="diskRestartSafe"):
-        operational_auth_module._preflight_requirements(
-            preflight | {"ok": True, "diskRestartSafe": False}
-        )
+    operational_auth_module._preflight_requirements(
+        preflight | {"diskStopThresholdOk": False, "diskRestartSafe": False}
+    )
     issue_operational_authorization(
         runtime,
         managed_counts_evidence=counts_path,
@@ -1904,34 +1955,13 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     with monkeypatch.context() as context:
         context.setattr(
             operational_auth_module,
-            "read_disk_pressure_gate_health",
-            lambda _root: {
-                "ok": False,
-                "blocked": True,
-                "reason": "DISK_PRESSURE_GATE_UNAVAILABLE",
-                "active": None,
-                "snapshot": None,
-                "restartSafe": None,
-            },
-        )
-        with pytest.raises(RuntimeError, match="activation disk check failed"):
-            finalize_operational_authorization(runtime)
-    assert staged_worker_receipt_path(runtime).read_bytes() == receipt_before_finalize
-    assert json.loads(authorization_path(runtime).read_text())["state"] == "STAGED"
-    disk_value["usedFraction"] = 0.945
-    with pytest.raises(RuntimeError, match="restart-safe disk"):
-        finalize_operational_authorization(runtime)
-    assert staged_worker_receipt_path(runtime).read_bytes() == receipt_before_finalize
-    assert json.loads(authorization_path(runtime).read_text())["state"] == "STAGED"
-    disk_value["usedFraction"] = 0.93
-    with monkeypatch.context() as context:
-        context.setattr(
-            operational_auth_module,
             "_remove_private_and_fsync",
             lambda _path: (_ for _ in ()).throw(OSError("receipt fsync failure")),
         )
         activated = finalize_operational_authorization(runtime)
     assert activated["state"] == "ACTIVE"
+    assert disk_value["freeBytes"] == 1
+    assert disk_value["usedFraction"] == 0.999
     assert staged_worker_receipt_path(runtime).read_bytes() == receipt_before_finalize
     assert json.loads(authorization_path(runtime).read_text())["state"] == "ACTIVE"
     # A retry must finish cleanup after an ACTIVE commit even though the
@@ -2001,20 +2031,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     with pytest.raises(RuntimeError, match="worker binding"):
         verify_operational_authorization(runtime, require_staged_receipt=True)
     activation_plist.write_bytes(activation_bytes)
-    with monkeypatch.context() as context:
-        context.setattr(
-            operational_auth_module,
-            "read_disk_pressure_gate_health",
-            lambda _root: {
-                "ok": False,
-                "blocked": True,
-                "reason": "DISK_STOP_THRESHOLD",
-                "active": True,
-                "snapshot": dict(disk_value),
-                "restartSafe": True,
-            },
-        )
-        finalize_operational_authorization(runtime)
+    finalize_operational_authorization(runtime)
     assert not staged_worker_receipt_path(runtime).exists()
     with monkeypatch.context() as context:
         context.setattr(acceptance_module, "collect_snapshot", collect_with_active_gate)
@@ -2030,9 +2047,10 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
             managed_counts_evidence=counts_path,
             automation_snapshot=automation_path,
         )
-    assert blocked_final["ok"] is False
+    assert blocked_final["ok"] is True
     assert blocked_final["diskPressureGateClear"] is False
-    assert "disk_pressure_gate_active_or_unavailable" in blocked_final["retry"]["reasons"]
+    assert blocked_final["capacityLimitsEnabled"] is False
+    assert "disk_pressure_gate_active_or_unavailable" not in blocked_final["retry"]["reasons"]
     result = check(
         runtime,
         home=home,
@@ -2146,9 +2164,8 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert event_healthy["ok"] is True
     assert event_healthy["eventLaneHealth"]["healthy"] is True
 
-    # The gate observation from collect_snapshot is not authoritative at the
-    # final acceptance point.  Activate a durable episode only when the later
-    # live disk sample runs; strict final acceptance must see that new state.
+    # A stop-level capacity observation during the final check must not
+    # create a new episode or invalidate otherwise valid acceptance evidence.
     from oss_pr_radar.runtime import disk_pressure_gate
 
     stop_disk = {
@@ -2168,7 +2185,9 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
                 snapshot_fn=lambda _path: dict(stop_disk),
                 now=1_000.0,
             )
-            assert decision["gateActive"] is True
+            assert decision["allowed"] is True
+            assert decision["gateActive"] is False
+            assert decision["capacityLimitsEnabled"] is False
         return dict(disk_value)
 
     with monkeypatch.context() as context:
@@ -2180,11 +2199,13 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
             managed_counts_evidence=counts_path,
             automation_snapshot=automation_path,
         )
-    assert changed_during_check["ok"] is False
-    assert changed_during_check["diskRestartSafe"] is True
-    assert changed_during_check["diskPressureGateClear"] is False
-    assert changed_during_check["diskPressureGate"]["active"] is True
-    assert "disk_pressure_gate_active_or_unavailable" in changed_during_check["retry"]["reasons"]
+    assert changed_during_check["ok"] is True
+    assert changed_during_check["diskRestartSafe"] is None
+    assert changed_during_check["diskPressureGateClear"] is True
+    assert changed_during_check["diskPressureGate"]["active"] is False
+    assert (
+        "disk_pressure_gate_active_or_unavailable" not in changed_during_check["retry"]["reasons"]
+    )
     cleared = disk_pressure_gate(
         runtime,
         worker="test",
@@ -2193,7 +2214,8 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         force_recheck=True,
     )
     assert cleared["allowed"] is True
-    assert cleared["recovered"] is True
+    assert cleared["recovered"] is False
+    assert cleared["capacityLimitsEnabled"] is False
 
     # Worker health/lifecycle bookkeeping may append after activation, but
     # the Stage 6 PR projection and all PR state counts remain immutable.
@@ -2248,7 +2270,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     daily_toml.write_text(daily_text, encoding="utf-8")
     heartbeat_toml.write_text(
         heartbeat_text.replace(
-            'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
+            'target_thread_id = "01a11091-6498-73f2-bffb-1bd114e4347a"',
             'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
         ),
         encoding="utf-8",
@@ -2259,7 +2281,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     daily_toml.write_text(
         daily_text.replace(
             'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
-            'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
+            'target_thread_id = "01a11091-6498-73f2-bffb-1bd114e4347a"',
         ),
         encoding="utf-8",
     )
@@ -2571,7 +2593,7 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert contracts["heartbeat"]["releaseCommand"][1].endswith("/scripts/controller_cycle.py")
     assert contracts["heartbeat"]["kind"] == "heartbeat"
     assert contracts["dailyWarRoom"]["kind"] == "heartbeat"
-    assert contracts["heartbeat"]["targetThreadId"] == ("019f71c3-4f26-7030-b126-25f8cfbac4c4")
+    assert contracts["heartbeat"]["targetThreadId"] == ("01a11091-6498-73f2-bffb-1bd114e4347a")
     assert contracts["dailyWarRoom"]["targetThreadId"] == ("01a047a5-88da-7113-8355-218215cd037a")
     assert contracts["dailyWarRoom"]["targetThreadId"] != contracts["heartbeat"]["targetThreadId"]
     assert contracts["dailyWarRoom"]["rrule"] == ("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0")
@@ -2773,11 +2795,12 @@ def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeyp
         "reason": None,
         "active": False,
         "snapshot": {
-            "level": "warning",
-            "freeBytes": 100 * 1024**3,
-            "usedFraction": 0.93,
+            "level": "unrestricted",
+            "freeBytes": 1,
+            "usedFraction": 0.999,
         },
-        "restartSafe": True,
+        "restartSafe": None,
+        "capacityLimitsEnabled": False,
     }
     monkeypatch.setattr(
         "oss_pr_radar.daily_war_room.read_disk_pressure_gate_health",
@@ -2817,8 +2840,8 @@ def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeyp
             **healthy_gate,
             "ok": False,
             "blocked": True,
-            "reason": "DISK_STOP_THRESHOLD",
-            "active": True,
+            "reason": "RUNTIME_STATE_UNAVAILABLE",
+            "active": None,
         },
     )
     blocked = run_daily_cycle(
@@ -2883,7 +2906,7 @@ def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeyp
     assert failed["failed"] == 1
 
 
-def test_daily_cycle_rechecks_disk_gate_before_each_external_message(tmp_path, monkeypatch):
+def test_daily_cycle_rechecks_runtime_state_before_each_external_message(tmp_path, monkeypatch):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "daily-per-message-key" * 4)
     ledger_path = tmp_path / "runtime" / "state" / "radar_ledger.sqlite3"
     ledger_path.parent.mkdir(parents=True)
@@ -2919,14 +2942,15 @@ def test_daily_cycle_rechecks_disk_gate_before_each_external_message(tmp_path, m
         "blocked": False,
         "reason": None,
         "active": False,
-        "restartSafe": True,
+        "restartSafe": None,
+        "capacityLimitsEnabled": False,
     }
     active = {
         **healthy,
         "ok": False,
         "blocked": True,
-        "reason": "DISK_STOP_THRESHOLD",
-        "active": True,
+        "reason": "RUNTIME_STATE_UNAVAILABLE",
+        "active": None,
     }
     observations = iter([healthy, healthy, active])
     monkeypatch.setattr(
@@ -2945,4 +2969,5 @@ def test_daily_cycle_rechecks_disk_gate_before_each_external_message(tmp_path, m
     assert result["sent"] == 1
     assert result["failed"] == 0
     assert len(sent_events) == 1
-    assert result["diskPressureGate"]["active"] is True
+    assert result["diskPressureGate"]["active"] is None
+    assert result["diskPressureGate"]["reason"] == "RUNTIME_STATE_UNAVAILABLE"

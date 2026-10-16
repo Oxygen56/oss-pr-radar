@@ -504,8 +504,20 @@ def activate_staged_workers(
     domain: str,
     runtime_root: Path,
     require_stage_receipt: bool = True,
+    _lock_held: bool = False,
 ) -> dict[str, object]:
     """Load workers only after the current operational authorization verifies."""
+
+    if not _lock_held:
+        with worker_staging_transaction_lock(runtime_root):
+            return activate_staged_workers(
+                specs,
+                home=home,
+                domain=domain,
+                runtime_root=runtime_root,
+                require_stage_receipt=require_stage_receipt,
+                _lock_held=True,
+            )
 
     authorization = require_operational_authorization(
         runtime_root, require_staged_receipt=require_stage_receipt
@@ -531,7 +543,7 @@ def activate_staged_workers(
         # operation, including reproduction-probe.  Promote the staged proof
         # before bootstrap so the first process cannot observe STAGED auth.
         if require_stage_receipt:
-            finalize_operational_authorization(runtime_root)
+            finalize_operational_authorization(runtime_root, _lock_held=True)
         for _spec, snapshot in zip(specs, snapshots, strict=True):
             touched.append(snapshot.service)
             _checked_launchctl("bootstrap", domain, str(snapshot.path))
@@ -545,7 +557,7 @@ def activate_staged_workers(
         rollback_errors = _rollback(snapshots, touched, domain=domain)
         if require_stage_receipt:
             try:
-                revoke_operational_authorization(runtime_root)
+                revoke_operational_authorization(runtime_root, _lock_held=True)
             except Exception as revoke_exc:
                 rollback_errors.append(
                     f"revoke authorization: {type(revoke_exc).__name__}:{revoke_exc}"
@@ -563,9 +575,20 @@ def activate_staged_workers(
 
 
 def ensure_workers(
-    specs: list[dict[str, object]], *, home: Path, domain: str, runtime_root: Path
+    specs: list[dict[str, object]],
+    *,
+    home: Path,
+    domain: str,
+    runtime_root: Path,
+    _lock_held: bool = False,
 ) -> dict[str, object]:
     """Keep correctly loaded workers running, or repair them under authorization."""
+
+    if not _lock_held:
+        with worker_staging_transaction_lock(runtime_root):
+            return ensure_workers(
+                specs, home=home, domain=domain, runtime_root=runtime_root, _lock_held=True
+            )
 
     authorization = require_operational_authorization(runtime_root)
     _validate_specs(specs)
@@ -590,11 +613,21 @@ def ensure_workers(
         for snapshot, spec in zip(snapshots, specs, strict=True)
     ):
         return activate_staged_workers(
-            specs, home=home, domain=domain, runtime_root=runtime_root, require_stage_receipt=False
+            specs,
+            home=home,
+            domain=domain,
+            runtime_root=runtime_root,
+            require_stage_receipt=False,
+            _lock_held=True,
         )
     stage_workers(specs, home=home, domain=domain, allow_unload=True)
     return activate_staged_workers(
-        specs, home=home, domain=domain, runtime_root=runtime_root, require_stage_receipt=False
+        specs,
+        home=home,
+        domain=domain,
+        runtime_root=runtime_root,
+        require_stage_receipt=False,
+        _lock_held=True,
     )
 
 
@@ -719,7 +752,93 @@ def uninstall_workers(
         with exclusive_lock(runtime_root / "state" / SLOW_WORK_LOCK):
             _require_slow_worker_quiescent(runtime_root=runtime_root, domain=domain)
             snapshots = _snapshot_workers(specs, home=home, domain=domain)
-            return _uninstall_snapshots(snapshots, domain=domain)
+            result = _uninstall_snapshots(snapshots, domain=domain)
+            revoke_operational_authorization(runtime_root)
+            return result
+    except RuntimeLockBusy as exc:
+        raise RuntimeError("worker uninstall refused: slow worker lock is busy") from exc
+
+
+def observe_uninstalled_workers(
+    specs: list[dict[str, object]], *, home: Path, domain: str, runtime_root: Path
+) -> dict[str, object]:
+    """Confirm an already removed worker set without changing services or files."""
+
+    _validate_specs(specs)
+    runtime_root = runtime_root.resolve()
+    try:
+        with exclusive_lock(runtime_root / "state" / SLOW_WORK_LOCK):
+            _require_slow_worker_quiescent(runtime_root=runtime_root, domain=domain)
+            for spec in specs:
+                path = home / "Library" / "LaunchAgents" / f"{spec['Label']}.plist"
+                if path.exists() or path.is_symlink():
+                    raise RuntimeError("worker uninstall requires authorization: plist remains")
+            for spec in specs:
+                observation = launchctl("print", f"{domain}/{spec['Label']}", check=False)
+                if (
+                    observation.returncode != 113
+                    or "Could not find service" not in observation.stderr
+                ):
+                    raise RuntimeError(
+                        "worker uninstall requires authorization: service is present or uncertain"
+                    )
+            return {
+                "ok": True,
+                "changed": False,
+                "workers": [{"label": str(spec["Label"]), "installed": False} for spec in specs],
+                "errors": [],
+            }
+    except RuntimeLockBusy as exc:
+        raise RuntimeError("worker uninstall refused: slow worker lock is busy") from exc
+
+
+def uninstall_staged_workers(
+    specs: list[dict[str, object]], *, home: Path, domain: str, runtime_root: Path
+) -> dict[str, object]:
+    """Remove only intact, signed staged configs while all workers are unloaded."""
+
+    _validate_specs(specs)
+    runtime_root = runtime_root.resolve()
+    try:
+        with worker_staging_transaction_lock(runtime_root):
+            with exclusive_lock(runtime_root / "state" / SLOW_WORK_LOCK):
+                if (
+                    authorization_path(runtime_root).exists()
+                    or authorization_path(runtime_root).is_symlink()
+                ):
+                    raise RuntimeError("staged worker uninstall refuses operational authorization")
+                _require_slow_worker_quiescent(runtime_root=runtime_root, domain=domain)
+                snapshots = _snapshot_workers(specs, home=home, domain=domain)
+                if any(snapshot.loaded or not snapshot.exists for snapshot in snapshots):
+                    raise RuntimeError("staged worker uninstall requires complete unloaded configs")
+                reports = [
+                    {
+                        "label": str(spec["Label"]),
+                        "loaded": snapshot.loaded,
+                        "actualConfigMatch": _config_matches(snapshot.path, spec),
+                    }
+                    for spec, snapshot in zip(specs, snapshots, strict=True)
+                ]
+                if not verify_staged_worker_receipt(
+                    runtime_root,
+                    specs=specs,
+                    worker_reports=reports,
+                    home=home,
+                    require_current=False,
+                ):
+                    raise RuntimeError(
+                        "staged worker uninstall receipt does not match current files"
+                    )
+                for spec in specs:
+                    observation = launchctl("print", f"{domain}/{spec['Label']}", check=False)
+                    if (
+                        observation.returncode != 113
+                        or "Could not find service" not in observation.stderr
+                    ):
+                        raise RuntimeError("staged worker uninstall requires absent services")
+                result = _uninstall_snapshots(snapshots, domain=domain)
+                revoke_operational_authorization(runtime_root, _lock_held=True)
+                return result
     except RuntimeLockBusy as exc:
         raise RuntimeError("worker uninstall refused: slow worker lock is busy") from exc
 
@@ -787,8 +906,27 @@ def main() -> int:
             )
             return 0
         if args.uninstall:
-            require_operational_authorization(runtime_root)
-            result = uninstall_workers(specs, home=home, domain=domain, runtime_root=runtime_root)
+            try:
+                require_operational_authorization(runtime_root)
+            except RuntimeError:
+                if (
+                    authorization_path(runtime_root).exists()
+                    or authorization_path(runtime_root).is_symlink()
+                ):
+                    raise
+                receipt_path = staged_worker_receipt_path(runtime_root)
+                if receipt_path.exists() or receipt_path.is_symlink():
+                    result = uninstall_staged_workers(
+                        specs, home=home, domain=domain, runtime_root=runtime_root
+                    )
+                else:
+                    result = observe_uninstalled_workers(
+                        specs, home=home, domain=domain, runtime_root=runtime_root
+                    )
+            else:
+                result = uninstall_workers(
+                    specs, home=home, domain=domain, runtime_root=runtime_root
+                )
         elif args.stage:
             if (
                 authorization_path(runtime_root).exists()

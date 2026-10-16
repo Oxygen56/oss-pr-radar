@@ -194,6 +194,16 @@ def _ordered_runs(items: list[dict], *, field: str = "created_at") -> list[dict]
     return sorted(items, key=lambda item: _run_time(item, field=field), reverse=True)
 
 
+def _native_slot(created: datetime) -> datetime:
+    slot = created.replace(minute=17, second=0, microsecond=0)
+    return slot - timedelta(hours=1) if created < slot else slot
+
+
+def _native_due_slots(current: datetime, window_hours: int) -> list[datetime]:
+    latest = eligible_slot(current, minute=17, grace_minutes=13)
+    return [latest - timedelta(hours=offset) for offset in reversed(range(window_hours))]
+
+
 def _natural_chain_issues(conclusions: dict[str, str]) -> list[str]:
     """Require every business job and the terminal proof job to finish successfully."""
 
@@ -229,7 +239,8 @@ def proven_natural_schedule_run_ids(
     # Health only consumes proof for the rolling coverage window and the
     # four-hour freshness check.  The window is deliberately bounded so a
     # long history of old canary runs cannot trigger one Jobs API request each.
-    cutoff = current - timedelta(hours=max(window_hours, 4))
+    due_slots = _native_due_slots(current, window_hours)
+    cutoff = min(current - timedelta(hours=max(window_hours, 4)), due_slots[0])
     candidates = []
     for item in _ordered_runs(
         [
@@ -249,16 +260,44 @@ def proven_natural_schedule_run_ids(
         if item_time != _UTC_MIN and item_time < cutoff:
             continue
         candidates.append(item)
-    candidates = candidates[: max(6, window_hours)]
-
-    proven: set[int] = set()
+    # Protect each due hour from a cluster of newer runs in another hour.
+    # Also inspect the latest successful invocation for the existing freshness
+    # verdict. During grace, its slot can be newer than the latest due slot.
+    wanted_slots = set(due_slots)
+    if candidates and _run_time(candidates[0]) != _UTC_MIN:
+        wanted_slots.add(_native_slot(_run_time(candidates[0])))
+    groups: dict[object, list[dict]] = {}
     for item in candidates:
-        try:
-            jobs = _run_jobs(repo, int(item["id"]), jobs_cache)
-        except (RuntimeError, TypeError, ValueError):
+        created = _run_time(item)
+        slot = _native_slot(created) if created != _UTC_MIN else None
+        if slot is not None and slot not in wanted_slots:
             continue
-        if jobs is not None and not _natural_chain_issues(_job_conclusions(jobs)):
-            proven.add(int(item["id"]))
+        key = slot if slot is not None else ("unknown", str(item["id"]))
+        groups.setdefault(key, []).append(item)
+
+    # Round-robin gives every hour a first observation before retrying a
+    # canary-only/unavailable candidate in one hour. The budget stays bounded;
+    # exhausting it never supplies proof for an unobserved hour.
+    proven: set[int] = set()
+    observed_groups: set[object] = set()
+    remaining = max(6, window_hours)
+    for depth in range(max((len(items) for items in groups.values()), default=0)):
+        for key, items in groups.items():
+            if key in observed_groups or depth >= len(items):
+                continue
+            item = items[depth]
+            cached = jobs_cache is not None and int(item["id"]) in jobs_cache
+            if not cached:
+                if remaining == 0:
+                    continue
+                remaining -= 1
+            try:
+                jobs = _run_jobs(repo, int(item["id"]), jobs_cache)
+            except (RuntimeError, TypeError, ValueError):
+                continue
+            if jobs is not None and not _natural_chain_issues(_job_conclusions(jobs)):
+                proven.add(int(item["id"]))
+                observed_groups.add(key)
     return proven
 
 
@@ -547,10 +586,31 @@ def health(
     if coverage_assessed and max_gap_minutes is not None and max_gap_minutes > 150:
         coverage_warnings.append("NATURAL_SCHEDULE_GAP_EXCESSIVE")
     coverage_healthy = None if not coverage_assessed else not coverage_warnings
+    due_slots = _native_due_slots(current, window_hours)
+    native_slots = {
+        _native_slot(_run_time(item))
+        for item in full_chain_successful
+        if _run_time(item) != _UTC_MIN
+    }
+    uncovered_native_slots = [slot for slot in due_slots if slot not in native_slots]
+    hourly_healthy = None if not coverage_assessed else not uncovered_native_slots
+    # Preserve the aggregate count/gap diagnostics. This is an additional
+    # strict gate: neither duplicate native runs nor owned fallback can supply
+    # the missing native proof for a different due hour.
+    hourly_issues = (
+        ["NATURAL_HOURLY_SLOT_UNPROVEN"]
+        if hourly_healthy is False and coverage_healthy is not False
+        else []
+    )
     canary_healthy = not canary_issues
     issues = list(
         dict.fromkeys(
-            [*canary_issues, *full_chain_issues, *(coverage_warnings if coverage_assessed else [])]
+            [
+                *canary_issues,
+                *full_chain_issues,
+                *(coverage_warnings if coverage_assessed else []),
+                *hourly_issues,
+            ]
         )
     )
 
@@ -561,7 +621,12 @@ def health(
         watchdog_run_ids=watchdog_run_ids,
         natural_full_chain_run_ids=proven_natural_ids,
     )
-    natural_healthy = canary_healthy and not full_chain_issues and coverage_healthy is not False
+    natural_healthy = (
+        canary_healthy
+        and not full_chain_issues
+        and coverage_healthy is not False
+        and hourly_healthy is not False
+    )
     return {
         "healthy": natural_healthy,
         "issues": issues,
@@ -599,6 +664,20 @@ def health(
             "coverageRatio": round(coverage_ratio, 3),
             "maxGapMinutes": max_gap_minutes,
             "warnings": coverage_warnings,
+        },
+        "naturalHourlySlotCoverage": {
+            "assessed": coverage_assessed,
+            "healthy": hourly_healthy,
+            "windowHours": window_hours,
+            "expectedSlots": len(due_slots),
+            "coveredSlots": len(due_slots) - len(uncovered_native_slots),
+            "unprovenSlots": [
+                slot.isoformat().replace("+00:00", "Z") for slot in uncovered_native_slots
+            ],
+            "sourceEvent": "schedule",
+            "slotMinute": 17,
+            "graceMinutes": 13,
+            "issues": hourly_issues,
         },
         "naturalScheduleFullChain": {
             "latestRunProven": (
@@ -685,7 +764,9 @@ def full_slot_coverage(
         created = _run_time(item)
         if created == _UTC_MIN:
             continue
-        slot = eligible_slot(created, minute=slot_minute, grace_minutes=grace_minutes)
+        slot = created.replace(minute=slot_minute, second=0, microsecond=0)
+        if created < slot:
+            slot -= timedelta(hours=1)
         if slot in expected_set:
             by_slot[slot].append(item)
 

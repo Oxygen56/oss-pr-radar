@@ -4,6 +4,7 @@ import pytest
 
 from oss_pr_radar.followup import collect_followup
 from oss_pr_radar.github_client import GitHubClient, GitHubError
+from oss_pr_radar.util import sha256_text
 
 
 class Client:
@@ -166,6 +167,8 @@ def test_draft_pr_wakes_original_task_once():
 
 
 def test_unanswered_top_level_maintainer_comment_wakes_until_author_replies():
+    body = "Please keep the English estimate close to its previous behavior.\n" * 10
+
     class CommentClient(Client):
         comment_values = [
             {
@@ -174,7 +177,7 @@ def test_unanswered_top_level_maintainer_comment_wakes_until_author_replies():
                 "author_association": "MEMBER",
                 "created_at": "2026-08-04T00:01:00Z",
                 "html_url": "https://github.com/a/b/pull/9#issuecomment-101",
-                "body": "Please keep the English estimate close to its previous behavior.",
+                "body": body,
             }
         ]
 
@@ -194,7 +197,26 @@ def test_unanswered_top_level_maintainer_comment_wakes_until_author_replies():
     comment = item["evidence"]["unansweredMaintainerComments"][0]
     assert comment["actorLogin"] == "maintainer"
     assert comment["eventType"] == "TOP_LEVEL_COMMENT"
+    assert comment["body"] == body
+    assert comment["bodyDigest"] == sha256_text(body)
+    assert len(comment["summary"]) == 400
     assert report["candidate_details"][0]["why"] == "存在未回复的维护者评论"
+
+    client.comment_values[0] = client.comment_values[0] | {
+        "body": body + "Keep the final boundary."
+    }
+    edited, edited_report = collect_followup(
+        client,
+        author="Oxygen56",
+        existing=state,
+        now=datetime(2026, 8, 4, 0, 30, tzinfo=UTC),
+    )
+    assert (
+        edited["items"][0]["evidence"]["unansweredMaintainerComments"][0]["summary"]
+        == comment["summary"]
+    )
+    assert edited_report["candidate_details"]
+    assert edited["items"][0]["taskActionDigest"] != item["taskActionDigest"]
 
     client.comment_values.append(
         {
@@ -555,7 +577,64 @@ def test_failed_check_only_wakes_task_when_evidence_matches_changed_file():
     assert rerun_state["items"][0]["taskActionDigest"] != item["taskActionDigest"]
 
 
-def test_unrelated_test_failure_is_retained_without_notification_or_task_wake():
+def test_reusable_workflow_run_tests_failures_request_diagnosis():
+    names = [
+        "All Other Providers / Run tests",
+        "enterprise-routing / Run tests",
+        "misc / Run tests",
+        "schema-migration",
+    ]
+
+    class CheckClient(Client):
+        def pull_reviews(self, repo, number):
+            return []
+
+        def pull_files(self, repo, number):
+            return [
+                {"filename": "litellm/llms/azure/chat/gpt_transformation.py"},
+                {"filename": "litellm/llms/openai/chat/gpt_transformation.py"},
+                {"filename": "tests/llm_translation/test_optional_params.py"},
+            ]
+
+        def check_runs(self, repo, ref):
+            return [
+                {
+                    "id": check_id,
+                    "name": name,
+                    "status": "completed",
+                    "conclusion": "failure",
+                }
+                for check_id, name in enumerate(names, start=1)
+            ]
+
+        def check_annotations(self, repo, check_run_id):
+            return [
+                {
+                    "path": ".github",
+                    "annotation_level": "failure",
+                    "message": "Process completed with exit code 1.",
+                }
+            ]
+
+        def compare(self, repo, base, head):
+            assert (repo, base, head) == ("a/b", "base", "head")
+            return {"status": "ahead", "merge_base_commit": {"sha": "base"}}
+
+    state, report = collect_followup(
+        CheckClient(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+
+    item = state["items"][0]
+    assert item["ciStatus"] == "FAILED"
+    assert item["taskActions"] == ["当前分支检查失败"]
+    assert item["evidence"]["actionableCheckNames"] == names[:3]
+    assert [check["name"] for check in item["evidence"]["failingChecks"]] == names
+    assert item["evidence"]["baseIntegrationRequired"] is False
+    assert report["candidate_details"][0]["why"] == "当前分支检查失败"
+
+
+@pytest.mark.parametrize("check_name", ["Playwright Shard 47/70", "enterprise-routing / Run tests"])
+def test_unrelated_test_failure_is_retained_without_notification_or_task_wake(check_name):
     class CheckClient(Client):
         def pull_reviews(self, repo, number):
             return []
@@ -564,7 +643,7 @@ def test_unrelated_test_failure_is_retained_without_notification_or_task_wake():
             return [
                 {
                     "id": 12,
-                    "name": "Playwright Shard 47/70",
+                    "name": check_name,
                     "status": "completed",
                     "conclusion": "failure",
                     "details_url": "https://example.test/checks/12",
@@ -704,6 +783,11 @@ def test_unavailable_base_comparison_fails_safe_to_controller_ancestry_check():
 
 def test_unresolved_review_bot_thread_on_changed_file_wakes_original_task():
     class ReviewThreadClient(Client):
+        review_body = '<img alt="security" src="https://example.test/security.svg">\n' * 10 + (
+            "A refresh started before disconnect can recreate the deleted credential. "
+            "Persist only the same existing credential and test this race."
+        )
+
         def pull_reviews(self, repo, number):
             return []
 
@@ -732,7 +816,7 @@ def test_unresolved_review_bot_thread_on_changed_file_wakes_original_task():
                             {
                                 "author": {"login": "review-bot", "__typename": "Bot"},
                                 "authorAssociation": "CONTRIBUTOR",
-                                "body": "Add zero and negative boundary tests.",
+                                "body": self.review_body,
                                 "url": "https://github.com/a/b/pull/9#discussion_r1",
                                 "createdAt": "2026-08-04T00:00:00Z",
                             }
@@ -750,6 +834,11 @@ def test_unresolved_review_bot_thread_on_changed_file_wakes_original_task():
     assert item["taskActions"] == ["存在未解决审查线程"]
     assert item["actions"] == ["CI 检查失败", "存在未解决审查线程"]
     assert item["evidence"]["unresolvedReviewThreads"][0]["reviewer"] == "review-bot"
+    feedback = item["evidence"]["unresolvedReviewThreads"][0]
+    assert feedback["body"] == ReviewThreadClient.review_body
+    assert feedback["bodyDigest"] == sha256_text(ReviewThreadClient.review_body)
+    assert "Persist only the same existing credential" in feedback["body"]
+    assert "Persist only the same existing credential" not in feedback["summary"]
     assert report["candidate_details"][0]["why"] == "存在未解决审查线程"
     assert report["candidate_details"][0]["evidence_digest"] == item["taskActionDigest"]
 
@@ -767,6 +856,147 @@ def test_unresolved_review_bot_thread_on_changed_file_wakes_original_task():
     )
     assert repeated["candidate_details"] == []
     assert new_state["items"][0]["taskActionDigest"] == item["taskActionDigest"]
+
+    edited = ReviewThreadClient()
+    edited.review_body += " Retain the original disconnect regression."
+    edited_state, edited_report = collect_followup(
+        edited,
+        author="Oxygen56",
+        existing=state,
+        now=datetime(2026, 8, 4, 2, tzinfo=UTC),
+    )
+    assert (
+        edited_state["items"][0]["evidence"]["unresolvedReviewThreads"][0]["summary"]
+        == feedback["summary"]
+    )
+    assert edited_report["candidate_details"]
+    assert edited_state["items"][0]["taskActionDigest"] != item["taskActionDigest"]
+
+
+def test_current_head_patch_coverage_retains_full_feedback_without_rerun_wake():
+    class CoverageClient(Client):
+        check_id = 112661567520
+        coverage = "80.00"
+        completed_at = "2026-10-07T06:24:59Z"
+        body = (
+            "## Codecov Report\n"
+            + ("Coverage details follow.\n" * 25)
+            + ("Patch coverage is 80% with 2 lines missing in src/runtime.py.")
+        )
+
+        def pull_request(self, repo, number):
+            return super().pull_request(repo, number) | {"head": {"sha": "a" * 40}}
+
+        def pull_reviews(self, repo, number):
+            return []
+
+        def check_runs(self, repo, ref):
+            return [
+                {
+                    "id": self.check_id,
+                    "head_sha": ref,
+                    "name": "codecov/patch",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "completed_at": self.completed_at,
+                    "details_url": "https://app.codecov.io/gh/a/b/pull/9",
+                    "output": {
+                        "title": f"{self.coverage}% of diff hit (target 84.86%)",
+                        "summary": "View this Pull Request on Codecov",
+                        "text": None,
+                        "annotations_count": 0,
+                        "annotations_url": f"https://api.github.com/repos/a/b/check-runs/{self.check_id}/annotations",
+                    },
+                }
+            ]
+
+        def comments(self, repo, number):
+            return [
+                {
+                    "id": 6032167045,
+                    "user": {"login": "codecov[bot]", "type": "Bot"},
+                    "author_association": "NONE",
+                    "created_at": "2026-10-07T06:14:44Z",
+                    "html_url": "https://github.com/a/b/pull/9#issuecomment-6032167045",
+                    "body": self.body,
+                }
+            ]
+
+    client = CoverageClient()
+    state, report = collect_followup(
+        client, author="Oxygen56", now=datetime(2026, 10, 7, 7, tzinfo=UTC)
+    )
+    item = state["items"][0]
+    assert report["candidate_details"][0]["why"] == "当前分支检查失败"
+    assert item["evidence"]["actionableCheckNames"] == ["codecov/patch"]
+    check = item["evidence"]["failingChecks"][0]
+    assert check["id"] == client.check_id
+    assert check["headSha"] == "a" * 40
+    assert check["output"] == client.check_runs("a/b", "a" * 40)[0]["output"]
+    comment = item["evidence"]["maintainerEvents"][0]
+    assert comment["body"] == client.body
+    assert comment["bodyDigest"] == sha256_text(client.body)
+    assert "src/runtime.py" not in comment["summary"]
+
+    client.check_id += 1
+    client.completed_at = "2026-10-07T07:24:59Z"
+    rerun, repeated = collect_followup(
+        client, author="Oxygen56", existing=state, now=datetime(2026, 10, 7, 8, tzinfo=UTC)
+    )
+    assert rerun["items"][0]["evidence"]["failingChecks"][0]["id"] == client.check_id
+    assert rerun["items"][0]["actionDigest"] == item["actionDigest"]
+    assert rerun["items"][0]["taskActionDigest"] == item["taskActionDigest"]
+    assert repeated["candidate_details"] == []
+
+    client.body += " The missing lines exercise the runtime cache read and write."
+    changed_body, changed_report = collect_followup(
+        client, author="Oxygen56", existing=rerun, now=datetime(2026, 10, 7, 9, tzinfo=UTC)
+    )
+    assert changed_report["candidate_details"]
+    assert changed_body["items"][0]["taskActionDigest"] != item["taskActionDigest"]
+
+    client.coverage = "81.00"
+    changed_coverage, changed_report = collect_followup(
+        client,
+        author="Oxygen56",
+        existing=changed_body,
+        now=datetime(2026, 10, 7, 10, tzinfo=UTC),
+    )
+    assert changed_report["candidate_details"]
+    assert (
+        changed_coverage["items"][0]["taskActionDigest"]
+        != changed_body["items"][0]["taskActionDigest"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("check_name", "check_head"),
+    [("codecov/patch", "foreign-head"), ("codecov/project", "head")],
+)
+def test_foreign_or_project_coverage_does_not_wake_patch_task(check_name, check_head):
+    class CoverageClient(Client):
+        def pull_reviews(self, repo, number):
+            return []
+
+        def check_runs(self, repo, ref):
+            return [
+                {
+                    "id": 112661567520,
+                    "head_sha": check_head,
+                    "name": check_name,
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "output": {"title": "80.00% of diff hit (target 84.86%)"},
+                }
+            ]
+
+    state, report = collect_followup(
+        CoverageClient(), author="Oxygen56", now=datetime(2026, 10, 7, tzinfo=UTC)
+    )
+    assert state["items"][0]["evidence"]["failingChecks"][0]["name"] == check_name
+    assert state["items"][0]["evidence"]["actionableCheckNames"] == []
+    assert state["items"][0]["taskFollowupRequired"] is False
+    assert report["candidate_details"] == []
 
 
 def test_author_reply_or_outdated_thread_does_not_wake_task():

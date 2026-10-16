@@ -148,6 +148,15 @@ receiving their own worktrees.
   layout; legacy root-level names remain readable only when their repository
   identity is unambiguous. This keeps UI ownership stable while preserving
   repository isolation and avoiding lazy partial-clone timeouts.
+- If that source fetch reports an exact missing parent during partial-clone
+  repacking, the bridge verifies the local child and its missing parent without
+  fetching implicitly. It restores that parent and its ancestry from the same
+  canonical origin, then retries the original audited fetch once. This repair
+  does not change source ownership, existing worktrees, task contexts, refs,
+  `FETCH_HEAD`, or shallow boundaries; the ordinary branch refresh still updates
+  its tracking ref and rejects a changed audited target. The signed runtime
+  operation `refresh-source-repository --repo OWNER/REPO` runs this same source
+  preparation and checkout-readiness check without creating or rebinding tasks.
 - Before queue sync, `orphan-list` reconciles asynchronous worktree creations
   whose real task ID appeared after the controller's initial lookup. Only one
   unbound task matching creation start time, canonical prompt, exact GitHub
@@ -245,7 +254,16 @@ receiving their own worktrees.
   pre-commit environments. The controller never interprets or executes
   dependency commands. It then resumes the same task once. A changed result
   digest rearms validation without duplicating the previous wake-up. If the
-  app server returns a durable receipt proving that no target turn started,
+  pinned Corepack download fails with the observed fetch transport error, the
+  same bound result gets at most two automatic prefetch retries, after five
+  and fifteen minutes. Each failed attempt remains recorded. Other failures
+  stay blocked; retries use the same locked command and never bypass checks.
+  For the observed build script that runs `npx license-checker --json` before
+  `obuild`, the bridge additionally prepares `license-checker@25.0.1` in a
+  separate task-private toolchain and exposes its local executable. The
+  manifest and exact build script must still declare that invocation; project
+  manifests and lockfiles are not changed, and the normal build remains required.
+  If the app server returns a durable receipt proving that no target turn started,
   the local collector retires the failed reservation after one minute and
   retries the same serialized work item. It never releases a reservation on an
   ambiguous or materialized turn. A sent follow-up that remains on the same
@@ -262,6 +280,17 @@ receiving their own worktrees.
   digest; the review creates no sidebar task and performs no public action.
   Pending and granted publication requests are rechecked at the privileged
   execution boundary, so a legacy request cannot inherit a task-authored pass.
+  When the user's same-name fork belongs to a different upstream, publication
+  uses the deterministic `<upstream-owner>-<upstream-name>` fork name instead.
+  It verifies that named fork's exact full name and upstream before selecting
+  its remote, and checks those identities again before pushing. The existing
+  unrelated fork is preserved. Push effects bind the actual target repository;
+  normal same-name effects keep their existing request digest. PR creation still
+  uses the authorized upstream and personal `owner:branch` in its fork network.
+  Named fork creation supplies the explicit upstream and disables cloning;
+  GitHub CLI rejects an explicit `--remote` flag in that form. An expired
+  reservation enters the existing signed absence-reconciliation path even
+  before expiry housekeeping runs, then reuses its original row after release.
   Reviewer transport failures persist a fair-rotation cursor and move the next
   cycle to another candidate; no time-based review cooldown is used.
   Broad validation failures must be compared against the same gate on the
@@ -299,6 +328,14 @@ receiving their own worktrees.
   so a short scanner or watchdog publish does not exhaust immediate retries.
 
 ## Quality Review
+
+Validation continuation records each newly executed check's original command,
+absolute cwd, integer exit code and phase (`before_fix`, `after_fix` or `formal`).
+Unmarked failed baseline evidence requires a new correctly recorded run; the
+controller does not relabel old results or infer success from `--baseline`.
+The observed `npm_config_offline=true` execution setting is excluded from
+dependency symptom matching. Actual missing or uncached dependencies in the
+captured check description still block validation through the original path.
 
 Run `local_dispatch_bridge.py --runtime-root <runtime-root> metrics --days 30`. Review:
 
@@ -373,7 +410,33 @@ snapshot, verify the Stage 6 report and detached envelope, run the Stage 6
 rehearsal, prepare the managed ledger without any live-state input, rehearse Git
 preservation restore in an isolated clone, activate the pointer (which revokes
 any old operational authorization), **pause outbound publication and wait for
-the workflow to become idle**, generate and validate managed-counts evidence
+the workflow to become idle**. For a code-only upgrade, refresh the retained
+managed PR records before generating a new rehearsal baseline:
+
+```bash
+python <runtime-root>/current-release/scripts/local_dispatch_bridge.py \
+  --runtime-root <runtime-root> refresh-startup-pr-states
+```
+
+This startup-only operation requires the active immutable release, an effective
+publication pause, all four business workers and their plists uninstalled,
+restart-safe disk space and no pending publication effects. It reads the complete
+managed PR set from GitHub and applies the original PR reconciliation without
+schema initialization, task dispatch, reply preparation or publication. The
+pause and stopped-worker conditions are checked before and after the live reads
+and after synchronization. A failure remains a failure and may leave an already
+synchronized prefix; retry the same original operation after resolving its
+reported cause. Uninstall an expired staged configuration using the original
+worker installer before activating another release; resetting the staging
+records first loses the receipt needed to authenticate that uninstall.
+
+The heartbeat may continue updating `latest_controller_cycle.json` while startup
+is blocked. This live status report remains available, but is excluded from both
+legacy report import and the bound legacy report digest. Database rows, follow-up
+data and historical reports remain bound and must not change during the snapshot
+and rehearsal.
+
+Then create a fresh live snapshot and rehearsal, generate and validate managed-counts evidence
 against the exact Stage 6 projection, issue the short-lived worker-staging
 authorization, stage the four worker plists unloaded, update the two automations,
 generate the automation snapshot from the actual TOML files and staged plist bytes,
@@ -416,7 +479,13 @@ rerun the live PR snapshot plus Stage 6 verification/rehearsal, regenerate
 managed-counts, then repeat staging, preflight, authorization, worker activation,
 and final acceptance. If it contains `automation_snapshot_stale`, regenerate the
 automation snapshot while the same pause is active and repeat preflight through
-final acceptance. Never extend the ten-minute freshness limit or accept a changed
+final acceptance. Workers must first be uninstalled: a successful complete
+uninstall revokes the previous operational and staging authorizations, allowing
+the same release to repeat managed-counts evidence, staging, snapshot capture,
+preflight, authorization, activation, and final acceptance. Worker stop or plist
+removal failures preserve the previous authorization along with the restored
+workers.
+Never extend the ten-minute freshness limit or accept a changed
 PR projection as an append-only bookkeeping update.
 
 The pause helper keeps `radar.yml` enabled. It closes the repository-variable
@@ -436,7 +505,13 @@ idempotent local cleanup.
 `--status` is a runtime-bound read-only check. `--stage` requires the short-lived
 signed stage-only authorization; `--activate`, `--ensure`, and `--uninstall`
 require the active immutable release and full operational authorization before
-any plist write or service operation. The
+any plist write or service mutation. After a complete successful uninstall has
+revoked that authorization, a repeated `--uninstall` can only observe an already
+removed set: all four plists must be absent, every service read must confirm
+absence, and the original slow-worker lock and quiescence checks must pass.
+It changes no service, plist, or authorization record. An existing invalid
+authorization still rejects the command; any remaining worker requires the
+original full authorization. The
 historical `install_local_publication_agent.py` entrypoint is only a
 compatibility forwarder to the three-worker installer; it cannot generate,
 install, or start the old monolithic or fast-only service.

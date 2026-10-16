@@ -97,8 +97,6 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
         and candidate.get("auto_spawn") is True
         and candidate.get("public_submission_allowed") is False
     )
-    if policy.get("ai_disclosure") and not private_disclosure_work:
-        return decision("HOLD", "AI_DISCLOSURE_REQUIRES_USER", "policy")
     if policy.get("status") == "UNKNOWN":
         return decision("HOLD", "POLICY_UNKNOWN", "policy")
     if policy.get("assignment_required") and not evidence.maintainer_approvals:

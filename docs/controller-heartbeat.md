@@ -20,9 +20,18 @@ independent.
   task capacity, state, and metrics.
 - The controller owns live GitHub evidence, the durable ledger, task lifecycle,
   Feishu delivery, and policy-permitted publication.
-- Public GitHub content must never disclose AI, Codex, automation, credentials,
-  or private filesystem paths. A repository that requires AI disclosure may
-  receive a private Codex task, but automatic public publication stays blocked.
+- The user authorizes truthful public AI-assistance disclosure. Include required
+  disclosure in the verified PR body before requesting publication. Never expose
+  credentials or private filesystem paths, or falsely certify human review.
+  Repository bans on AI-assisted or fully automated submissions still apply.
+
+## Capacity policy
+
+Disk capacity is measured and reported, but free-space, usage-percentage and
+restart-reserve limits do not gate automatic work. The previous stop record is
+retired with `limits_removed`, preserving its historical observations rather
+than claiming that space recovered. Actual filesystem and database write errors
+remain errors. Task files, ledgers and releases are not deleted by this change.
 
 ## One command
 

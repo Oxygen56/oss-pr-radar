@@ -24,9 +24,17 @@ SUPERSEDED_SCANNER_DECISION_REVISIONS = frozenset(
         "oss_pr_radar_v50_material_contradictions",
         "oss_pr_radar_v51_bounded_wait_evidence",
         "oss_pr_radar_v52_recheck_pr_validation",
+        "oss_pr_radar_v53_direct_overlap_hold",
     }
 )
 SUPERSEDED_SCANNER_DECISION_CONTRACTS = {
+    "oss_pr_radar_v53_direct_overlap_hold": {
+        "intentVersion": INTENT_VERSION,
+        "decisionContractDigest": (
+            "ce11af8c6477a0c98161549b7be1fe7e37d1f433901d50d665e43aca4108ccf3"
+        ),
+        "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
+    },
     "oss_pr_radar_v47_semantic_evidence_only": {
         "intentVersion": INTENT_VERSION,
         "decisionContractDigest": (

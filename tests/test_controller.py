@@ -35,12 +35,14 @@ def healthy_disk_pressure_gate() -> dict:
         "gateActive": False,
         "statePresent": False,
         "episode": None,
+        "capacityLimitsEnabled": False,
         "snapshot": {
-            "level": "warning",
-            "freeBytes": 100 * 1024**3,
-            "usedFraction": 0.93,
+            "level": "unrestricted",
+            "freeBytes": 1,
+            "usedFraction": 0.999,
+            "capacityLimitsEnabled": False,
         },
-        "restartSafe": True,
+        "restartSafe": None,
     }
 
 
@@ -189,20 +191,58 @@ def test_controller_reingests_an_independently_reviewed_result(tmp_path):
     assert calls.index("resultIngestionAfterReview") < calls.index("publication")
 
 
-def test_controller_stops_immediately_when_disk_guard_is_active(tmp_path):
+def test_controller_continues_past_historical_worker_capacity_cache(tmp_path):
     calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        if stage in {"localAgentStatus", "finalLocalAgentStatus"}:
+            return {
+                "ok": True,
+                "diskPressureGate": healthy_disk_pressure_gate(),
+                "workers": [
+                    {
+                        "ok": True,
+                        "runtimeHealth": {
+                            "disk": {"level": "stop", "freeBytes": 1},
+                            "diskPressureGate": {"ok": False, "blocked": True},
+                            "issues": ["DISK_STOP_THRESHOLD"],
+                        },
+                    }
+                ],
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is True
+    assert "publication" in calls
+    assert result["finalBlockers"] == []
+    compact = compact_controller_result(result)
+    assert compact["warnings"]["diskThresholdStop"] == 0
+
+
+def test_controller_preserves_runtime_state_io_block_with_limits_removed(tmp_path):
+    calls = []
 
     def runner(_root, stage, _argv, _allowed, _timeout):
         calls.append(stage)
         if stage == "localAgentStatus":
             return {
                 "ok": False,
-                "workers": [
-                    {
-                        "ok": False,
-                        "runtimeHealth": {"disk": {"level": "stop"}},
-                    }
-                ],
+                "diskPressureGate": {
+                    "ok": False,
+                    "blocked": True,
+                    "reason": "RUNTIME_STATE_UNAVAILABLE",
+                    "capacityLimitsEnabled": False,
+                },
+                "workers": [],
             }
         return healthy_response(stage)
 
@@ -217,11 +257,9 @@ def test_controller_stops_immediately_when_disk_guard_is_active(tmp_path):
     assert result["ok"] is False
     assert calls == ["localAgentEnsure", "localAgentStatus"]
     assert result["finalBlockers"] == [
-        {"stage": "finalLocalAgentStatus", "queue": "disk_stop", "count": 1}
+        {"stage": "finalLocalAgentStatus", "queue": "runtime_state_unavailable", "count": 1}
     ]
-    compact = compact_controller_result(result)
-    assert compact["warnings"]["diskThresholdStop"] == 1
-    assert compact["finalBlockers"] == result["finalBlockers"]
+    assert compact_controller_result(result)["warnings"]["diskThresholdStop"] == 0
 
 
 @pytest.mark.parametrize(
@@ -231,27 +269,17 @@ def test_controller_stops_immediately_when_disk_guard_is_active(tmp_path):
             {
                 "ok": False,
                 "blocked": True,
-                "reason": "DISK_STOP_THRESHOLD",
-                "active": True,
-                "gateActive": True,
-                "restartSafe": True,
-            },
-            "disk_stop",
-        ),
-        (
-            {
-                "ok": False,
-                "blocked": True,
-                "reason": "DISK_PRESSURE_GATE_UNAVAILABLE",
+                "reason": "RUNTIME_STATE_UNAVAILABLE",
                 "active": None,
                 "gateActive": None,
                 "restartSafe": None,
+                "capacityLimitsEnabled": False,
             },
-            "gate_unavailable",
+            "runtime_state_unavailable",
         ),
     ],
 )
-def test_controller_disk_gate_preflight_stops_before_business_stages(
+def test_controller_unavailable_state_preflight_stops_before_business_stages(
     tmp_path, monkeypatch, gate, queue
 ):
     monkeypatch.setattr(
@@ -277,6 +305,48 @@ def test_controller_disk_gate_preflight_stops_before_business_stages(
     assert result["ok"] is False
     assert result["finalBlockers"] == [{"stage": "diskPressureGate", "queue": queue, "count": 1}]
     assert result["stages"]["diskPressureGate"] == gate
+
+
+def test_controller_reads_historical_capacity_episode_without_blocking(tmp_path, monkeypatch):
+    from oss_pr_radar.runtime import DISK_PRESSURE_GATE_SCHEMA, read_disk_pressure_gate_health
+
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    history = state / "disk-pressure-gate.json"
+    episode = {
+        "schemaVersion": DISK_PRESSURE_GATE_SCHEMA,
+        "active": True,
+        "episode": 7,
+        "stopReason": "DISK_STOP_THRESHOLD",
+        "lastSnapshot": {"level": "stop", "freeBytes": 1, "usedFraction": 0.999},
+    }
+    history.write_text(json.dumps(episode), encoding="utf-8")
+    history.chmod(0o600)
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime.disk_snapshot",
+        lambda _root: {"level": "unrestricted", "freeBytes": 1, "usedFraction": 0.999},
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.read_disk_pressure_gate_health", read_disk_pressure_gate_health
+    )
+    calls = []
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=lambda _root, stage, _argv, _allowed, _timeout: (
+            calls.append(stage) or healthy_response(stage)
+        ),
+        notify=False,
+    )
+
+    assert result["ok"] is True
+    assert "publication" in calls
+    assert result["stages"]["diskPressureGate"]["historicalActive"] is True
+    assert result["stages"]["diskPressureGate"]["capacityLimitsEnabled"] is False
+    assert result["finalBlockers"] == []
+    assert json.loads(history.read_text()) == episode
 
 
 def test_controller_finishes_terminal_publication_lifecycle_in_same_cycle(tmp_path):
@@ -780,7 +850,9 @@ def _write_recent_completed_controller_result(
     )
 
 
-def test_recent_success_is_not_reused_after_disk_gate_becomes_active(tmp_path, monkeypatch):
+def test_recent_success_is_not_reused_after_runtime_state_becomes_unavailable(
+    tmp_path, monkeypatch
+):
     command_digest = _controller_command_digest(
         code_root=DEV_CODE_ROOT,
         allow_unreleased_code=True,
@@ -800,16 +872,17 @@ def test_recent_success_is_not_reused_after_disk_gate_becomes_active(tmp_path, m
             "finalBlockers": [],
         },
     )
-    active = {
+    unavailable = {
         "ok": False,
         "blocked": True,
-        "reason": "DISK_STOP_THRESHOLD",
-        "active": True,
-        "gateActive": True,
-        "restartSafe": True,
+        "reason": "RUNTIME_STATE_UNAVAILABLE",
+        "active": None,
+        "gateActive": None,
+        "restartSafe": None,
+        "capacityLimitsEnabled": False,
     }
     monkeypatch.setattr(
-        "oss_pr_radar.controller.read_disk_pressure_gate_health", lambda _root: dict(active)
+        "oss_pr_radar.controller.read_disk_pressure_gate_health", lambda _root: dict(unavailable)
     )
 
     result = run_locked_controller_cycle(
@@ -821,13 +894,13 @@ def test_recent_success_is_not_reused_after_disk_gate_becomes_active(tmp_path, m
         wait_existing=True,
         report_on_complete=True,
         runner=lambda *_args: (_ for _ in ()).throw(
-            AssertionError("active gate must stop before business stages")
+            AssertionError("unavailable state must stop before business stages")
         ),
     )
 
     assert result["controllerRunId"] != old_run_id
     assert result["finalBlockers"] == [
-        {"stage": "diskPressureGate", "queue": "disk_stop", "count": 1}
+        {"stage": "diskPressureGate", "queue": "runtime_state_unavailable", "count": 1}
     ]
 
 

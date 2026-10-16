@@ -395,6 +395,155 @@ def test_full_slot_coverage_requires_complete_workflow_dispatch_successes():
     assert len(degraded["failedSlots"]) == 1
 
 
+def _early_hourly_natural_runs(now: datetime, *, count: int = 12) -> list[dict]:
+    latest_slot = MODULE.eligible_slot(now)
+    return [
+        {
+            "id": 38195460465 if offset == 0 else offset,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": (
+                latest_slot - timedelta(hours=offset) + timedelta(minutes=4, seconds=25)
+            ).isoformat(),
+            "updated_at": (
+                latest_slot - timedelta(hours=offset) + timedelta(minutes=15, seconds=53)
+            ).isoformat(),
+            "jobs": _chain_jobs(),
+        }
+        for offset in range(count)
+    ]
+
+
+def test_full_slot_coverage_assigns_real_0221_native_to_0217():
+    now = datetime(2026, 10, 12, 3, tzinfo=UTC)
+    runs = _early_hourly_natural_runs(now)
+    # The latest row's ID/timestamps reproduce the observed official run;
+    # the preceding rows are synthetic hourly history for this regression.
+    runs[0]["created_at"] = "2026-10-12T02:21:25Z"
+    runs[0]["updated_at"] = "2026-10-12T02:32:53Z"
+
+    result = MODULE.full_slot_coverage(
+        runs,
+        now=now,
+        watchdog_run_ids=set(),
+        natural_full_chain_run_ids={str(item["id"]) for item in runs},
+    )
+
+    assert result["assessed"] is True
+    assert result["coveredSlots"] == result["expectedSlots"] == 12
+    assert result["missingSlots"] == []
+    assert result["healthy"] is True
+
+
+@pytest.mark.parametrize("event", ["schedule", "workflow_dispatch"])
+@pytest.mark.parametrize(
+    ("offset", "covered"),
+    [
+        (timedelta(), 12),
+        (timedelta(minutes=12, seconds=59, microseconds=999999), 12),
+        (timedelta(minutes=13), 12),
+        (timedelta(minutes=59, seconds=59, microseconds=999999), 12),
+        (timedelta(hours=1), 11),
+    ],
+    ids=["17-exact", "29-59", "30-exact", "next-16-59", "next-17-exact"],
+)
+def test_full_slot_coverage_uses_hour_interval_for_proven_run(event, offset, covered):
+    runs = _early_hourly_natural_runs(NOW)
+    target = runs[5]
+    slot = MODULE.eligible_slot(NOW) - timedelta(hours=5)
+    target["created_at"] = (slot + offset).isoformat()
+    target["event"] = event
+
+    result = MODULE.full_slot_coverage(
+        runs,
+        now=NOW,
+        watchdog_run_ids={str(target["id"])} if event == "workflow_dispatch" else set(),
+        natural_full_chain_run_ids={str(item["id"]) for item in runs},
+    )
+
+    assert result["assessed"] is True
+    assert result["expectedSlots"] == 12
+    assert result["coveredSlots"] == covered
+    assert result["missingSlots"] == (
+        [slot.isoformat().replace("+00:00", "Z")] if covered == 11 else []
+    )
+    assert result["healthy"] is (covered == 12)
+
+
+@pytest.mark.parametrize(
+    ("case", "field"),
+    [
+        ("manual-dispatch", "missingSlots"),
+        ("unproven-native", "missingSlots"),
+        ("canary-only", "missingSlots"),
+        ("active-owned-dispatch", "activeSlots"),
+        ("failed-owned-dispatch", "failedSlots"),
+    ],
+)
+def test_early_full_slot_coverage_preserves_proof_and_terminal_gates(case, field):
+    runs = _early_hourly_natural_runs(NOW)
+    target = runs[5]
+    natural_ids = {str(item["id"]) for item in runs}
+    baseline = MODULE.full_slot_coverage(
+        runs, now=NOW, watchdog_run_ids=set(), natural_full_chain_run_ids=natural_ids
+    )
+    assert baseline["coveredSlots"] == 12
+    assert baseline["healthy"] is True
+
+    natural_ids.remove(str(target["id"]))
+    watchdog_ids = set()
+    if case == "canary-only":
+        target["jobs"] = _chain_jobs(canary_only=True)
+        assert MODULE._natural_full_chain_proven(target) is False
+    elif "dispatch" in case:
+        target["event"] = "workflow_dispatch"
+        if case != "manual-dispatch":
+            watchdog_ids.add(str(target["id"]))
+        if case == "active-owned-dispatch":
+            target.update(status="in_progress", conclusion=None)
+        elif case == "failed-owned-dispatch":
+            target["conclusion"] = "failure"
+
+    result = MODULE.full_slot_coverage(
+        runs,
+        now=NOW,
+        watchdog_run_ids=watchdog_ids,
+        natural_full_chain_run_ids=natural_ids,
+    )
+
+    slot = MODULE.eligible_slot(NOW) - timedelta(hours=5)
+    assert result["coveredSlots"] == 11
+    assert result["healthy"] is False
+    assert result[field] == [slot.isoformat().replace("+00:00", "Z")]
+
+
+@pytest.mark.parametrize(
+    ("now", "latest_due"),
+    [
+        (datetime(2026, 10, 12, 2, 17, tzinfo=UTC), False),
+        (datetime(2026, 10, 12, 2, 29, 59, 999999, tzinfo=UTC), False),
+        (datetime(2026, 10, 12, 2, 30, tzinfo=UTC), True),
+    ],
+    ids=["slot-start", "before-grace", "grace-elapsed"],
+)
+def test_full_slot_coverage_keeps_now_grace_before_requiring_latest_slot(now, latest_due):
+    anchor = datetime(2026, 10, 12, 3, tzinfo=UTC)
+    runs = _early_hourly_natural_runs(anchor, count=13)[1:]
+    result = MODULE.full_slot_coverage(
+        runs,
+        now=now,
+        watchdog_run_ids=set(),
+        natural_full_chain_run_ids={str(item["id"]) for item in runs},
+    )
+
+    assert MODULE.eligible_slot(now).hour == (2 if latest_due else 1)
+    assert result["expectedSlots"] == 12
+    assert result["coveredSlots"] == (11 if latest_due else 12)
+    assert result["missingSlots"] == (["2026-10-12T02:17:00Z"] if latest_due else [])
+    assert result["healthy"] is (not latest_due)
+
+
 def test_manual_dispatches_and_schedule_canaries_never_count_as_watchdog_coverage():
     runs = _hourly_full_runs()
 
@@ -1964,3 +2113,174 @@ def test_unproven_natural_component_does_not_keep_effective_scan_fresh():
 
     assert result["fresh"] is False
     assert result["recentScanJobSuccess"] is False
+
+
+@pytest.mark.parametrize(
+    "paired_slots", [True, False], ids=["duplicates-leave-hours-empty", "one-native-each-hour"]
+)
+def test_natural_hourly_coverage_cannot_borrow_hours_from_duplicate_runs(paired_slots):
+    now = datetime(2026, 10, 16, 12, 45, tzinfo=UTC)
+    rows = [
+        {
+            "id": 1,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": (now - timedelta(hours=13)).isoformat(),
+            "updated_at": (now - timedelta(hours=13)).isoformat(),
+        }
+    ]
+    natural_ids = set()
+    watchdog_ids = set()
+    for index in range(12):
+        hour = 1 + (index // 2) * 2 if paired_slots else index + 1
+        minute = 18 + index % 2
+        at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        run_id = str(100 + index)
+        natural_ids.add(run_id)
+        rows.append(
+            {
+                "id": int(run_id),
+                "event": "schedule",
+                "status": "completed",
+                "conclusion": "success",
+                "created_at": at.isoformat(),
+                "updated_at": (at + timedelta(minutes=1)).isoformat(),
+            }
+        )
+    # Owned fallback completes the other six hours, so mixed coverage and
+    # every existing aggregate count/gap gate pass in the adversarial case.
+    for hour in range(2, 13, 2):
+        run_id = str(200 + hour)
+        watchdog_ids.add(run_id)
+        at = now.replace(hour=hour, minute=20, second=0, microsecond=0)
+        rows.append(
+            {
+                "id": int(run_id),
+                "event": "workflow_dispatch",
+                "status": "completed",
+                "conclusion": "success",
+                "created_at": at.isoformat(),
+                "updated_at": (at + timedelta(minutes=1)).isoformat(),
+            }
+        )
+    result = MODULE.health(
+        rows,
+        now=now,
+        watchdog_run_ids=watchdog_ids,
+        natural_full_chain_run_ids=natural_ids,
+    )
+    natural = result["naturalScheduleCoverage"]
+    assert natural["assessed"] is True
+    assert natural["successfulRuns"] == 12
+    assert natural["maxGapMinutes"] <= 150
+    assert result["fullSlotCoverage"]["coveredSlots"] == 12
+    assert result["fullSlotCoverage"]["healthy"] is True
+    # Aggregate run-count coverage remains a separate diagnostic. The strict
+    # natural verdict must also require every due native hourly slot.
+    assert natural["healthy"] is True
+    assert result["githubNaturalScheduleHealthy"] is (not paired_slots)
+
+
+@pytest.mark.parametrize("crowded", [False, True], ids=["grace-boundary", "canary-crowding"])
+def test_native_due_hour_proof_survives_grace_boundary_and_newer_canaries(monkeypatch, crowded):
+    now = datetime(2026, 10, 16, 12, 20, tzinfo=UTC)
+    rows = []
+    for hour in range(13):
+        at = now.replace(hour=hour, minute=18)
+        rows.append(
+            {
+                "id": 1000 + hour,
+                "event": "schedule",
+                "status": "completed",
+                "conclusion": "success",
+                "created_at": at.isoformat(),
+                "updated_at": at.isoformat(),
+            }
+        )
+    if crowded:
+        for index in range(10):
+            at = now.replace(minute=19, second=index)
+            rows.append(
+                {
+                    "id": 9000 + index,
+                    "event": "schedule",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "created_at": at.isoformat(),
+                    "updated_at": at.isoformat(),
+                }
+            )
+    calls = []
+
+    def jobs(path):
+        calls.append(path)
+        run_id = int(path.split("/runs/", 1)[1].split("/", 1)[0])
+        return {"jobs": _chain_jobs(canary_only=run_id >= 9000)}
+
+    monkeypatch.setattr(MODULE, "github_json", jobs)
+    cache = {}
+    # Production observes the latest component first and shares its Jobs
+    # response with natural proof collection; preserve that existing budget.
+    MODULE.workflow_component_health("a/b", rows, cache)
+    component_calls = len(calls)
+    proven = MODULE.proven_natural_schedule_run_ids("a/b", rows, cache, now=now)
+    assert {1000 + hour for hour in range(12)} <= proven
+    assert len(calls) - component_calls <= 12
+    assert len(calls) == len(cache)
+    result = MODULE.health(rows, now=now, natural_full_chain_run_ids=proven)
+    if not crowded:
+        assert 1012 in proven
+        assert result["naturalScheduleCoverage"]["successfulRuns"] == 12
+    assert result["naturalHourlySlotCoverage"]["assessed"] is True
+    assert result["naturalHourlySlotCoverage"]["coveredSlots"] == 12
+    assert result["naturalHourlySlotCoverage"]["unprovenSlots"] == []
+    assert result["githubNaturalScheduleHealthy"] is (not crowded)
+
+
+def test_not_yet_due_native_cannot_replace_a_missing_due_hour():
+    now = datetime(2026, 10, 16, 12, 20, tzinfo=UTC)
+    rows = [
+        {
+            "id": 1,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": (now - timedelta(hours=13)).isoformat(),
+        }
+    ]
+    natural_ids = set()
+    for hour in [*range(6), *range(7, 12), 12]:
+        at = now.replace(hour=hour, minute=18 if hour == 12 else 21)
+        run_id = 100 + hour
+        natural_ids.add(str(run_id))
+        rows.append(
+            {
+                "id": run_id,
+                "event": "schedule",
+                "status": "completed",
+                "conclusion": "success",
+                "created_at": at.isoformat(),
+                "updated_at": at.isoformat(),
+            }
+        )
+    rows.append(
+        {
+            "id": 206,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": now.replace(hour=6, minute=22).isoformat(),
+        }
+    )
+    result = MODULE.health(
+        rows, now=now, natural_full_chain_run_ids=natural_ids, watchdog_run_ids={"206"}
+    )
+    assert result["naturalScheduleCoverage"]["successfulRuns"] == 12
+    assert result["naturalScheduleCoverage"]["maxGapMinutes"] == 120
+    assert result["naturalScheduleCoverage"]["healthy"] is True
+    assert result["fullSlotCoverage"]["healthy"] is True
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert result["naturalHourlySlotCoverage"]["coveredSlots"] == 11
+    assert result["naturalHourlySlotCoverage"]["unprovenSlots"] == ["2026-10-16T06:17:00Z"]
+    assert "NATURAL_HOURLY_SLOT_UNPROVEN" in result["issues"]

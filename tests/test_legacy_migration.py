@@ -83,6 +83,10 @@ def test_legacy_history_is_sanitized_and_idempotent(tmp_path, monkeypatch):
     (reports / "report.json").write_text(
         json.dumps({"worktreePath": "/Users/oxygen/private", "count": 1}), encoding="utf-8"
     )
+    (reports / "latest_controller_cycle.json").write_text(
+        json.dumps({"ok": False, "blocked": "operational authorization required"}),
+        encoding="utf-8",
+    )
     target = tmp_path / "managed.sqlite3"
     first = import_legacy_history(
         target, production_ledger=production, war_room_db=war_room, reports_dir=reports

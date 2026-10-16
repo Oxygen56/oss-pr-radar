@@ -28,9 +28,8 @@ from .util import sha256_text
 ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 PR_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 PUBLIC_AI_DISCLOSURE_RE = re.compile(
-    r"\b(?:generated|written|created|assisted)\s+by\s+(?:ai|codex|chatgpt|llm)\b|"
-    r"\b(?:ai|codex|chatgpt|llm)[- ]assisted\b|\bai disclosure\b",
-    re.I,
+    r"^\s*(?:[-*]\s+)?AI assistance was used in preparing this contribution\.\s*$",
+    re.I | re.M,
 )
 PUBLIC_TOOL_BRANCH_RE = re.compile(
     r"^(?:codex|chatgpt|claude|gemini|copilot)(?:$|[._/-])|"
@@ -234,8 +233,6 @@ def _publication_payload(evidence: dict[str, Any], issue_url: str) -> dict[str, 
     title = value["title"].strip()
     if not body.strip():
         raise PublicationError("PR body must not be empty")
-    if not public_text_is_safe(title, body):
-        raise PublicationError("public PR text contains an AI-assistance disclosure")
     match = ISSUE_URL.match(issue_url)
     if not match:
         raise PublicationError("invalid issue URL")
@@ -777,6 +774,10 @@ def audit_publication_request(
         return PublicationAudit("DEFER", verdict.reason_code, request_id, live)
     if verdict.status != "ALLOW":
         return PublicationAudit("BLOCK", verdict.reason_code, request_id, live)
+    if evidence.policy.get("ai_disclosure") and not public_body_has_ai_disclosure(
+        Path(publication["bodyPath"]).read_text(encoding="utf-8")
+    ):
+        return PublicationAudit("BLOCK", "REQUIRED_AI_DISCLOSURE_MISSING", request_id, live)
     target_base_value = request.get("targetBase")
     live_target_base = None
     if target_base_value is not None:
@@ -973,8 +974,8 @@ def broker_publication_request(
     return {"ok": True, "granted": True, "permit": permit, "audit": audit.as_dict()}
 
 
-def public_text_is_safe(title: str, body: str) -> bool:
-    return not bool(PUBLIC_AI_DISCLOSURE_RE.search(f"{title}\n{body}"))
+def public_body_has_ai_disclosure(body: str) -> bool:
+    return bool(PUBLIC_AI_DISCLOSURE_RE.search(body))
 
 
 def public_branch_is_safe(branch: str) -> bool:

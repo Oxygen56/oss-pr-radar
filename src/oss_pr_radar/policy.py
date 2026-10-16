@@ -12,7 +12,7 @@ from typing import Any
 from .llm import SEMANTIC_EVIDENCE_BINDING_CONTRACT
 
 POLICY_VERSION = "submit_ready_quality_v1"
-SCANNER_DECISION_REVISION = "oss_pr_radar_v53_direct_overlap_hold"
+SCANNER_DECISION_REVISION = "oss_pr_radar_v54_authorized_ai_disclosure"
 DISPATCH_DECISION_REVISION = "signed_intent_v9_transactional_creation"
 DECISION_CONTRACT_SCHEMA = 9
 DECISION_CONTRACT_MANIFEST = {
@@ -24,6 +24,7 @@ DECISION_CONTRACT_MANIFEST = {
     "northStar": "rolling_submit_ready_rate",
     "externalMergeCountIsKpi": False,
     "semanticReviewMode": "evidence_only_no_authorization_vote",
+    "aiAssistanceDisclosureAuthorized": True,
     "semanticEvidenceBindingContract": SEMANTIC_EVIDENCE_BINDING_CONTRACT,
     "semanticEvidenceIdSource": "actual_payload_wrappers_only",
     "phantomSemanticEvidenceIdsFailClosed": True,

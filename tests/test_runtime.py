@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-import math
 import multiprocessing
 import os
+import sqlite3
 import time
 from pathlib import Path
 
@@ -17,9 +17,256 @@ from oss_pr_radar.runtime import (
     disk_snapshot,
     evaluate_health,
     exclusive_lock,
+    pending_publication_effects,
     record_cycle,
     rotate_log,
 )
+from oss_pr_radar.util import canonical_json, sha256_json, sha256_text
+
+
+def _permission_denial_ledger(tmp_path, mutation=None):
+    path = tmp_path / "publication.sqlite3"
+    commit = "a" * 40
+    snapshot = {
+        "requestId": "request-1",
+        "opportunityKey": "a/b#1",
+        "threadId": "thread-1",
+        "worktreePath": "/worktree",
+        "evidenceDigest": "c" * 64,
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "commitSha": commit,
+        "branch": "fix-boundary",
+        "publicationKind": "PR_CREATE",
+        "publication": {"headOwner": "Oxygen56", "baseBranch": "main"},
+    }
+    push_digest = sha256_json(
+        {
+            "issueUrl": snapshot["issueUrl"],
+            "commitSha": commit,
+            "branch": snapshot["branch"],
+            "remote": "oxygen56/b",
+            "publicationKind": "PR_CREATE",
+            "existingPrUrl": None,
+            "previousCommitSha": None,
+        }
+    )
+    request_digest = sha256_json({"originalCreateRequest": "retained"})
+    effect = {
+        "effect_id": sha256_text(f"permit-1|create_pr|{request_digest}"),
+        "permit_id": "permit-1",
+        "action": "create_pr",
+        "request_digest": request_digest,
+        "status": "FAILED",
+        "created_at": "2020-01-01T00:00:00Z",
+        "updated_at": "2020-01-01T00:02:00Z",
+    }
+    push = {
+        "effect_id": sha256_text(f"permit-1|push|{push_digest}"),
+        "permit_id": "permit-1",
+        "action": "push",
+        "request_digest": push_digest,
+        "status": "SUCCEEDED",
+        "created_at": "2020-01-01T00:00:00Z",
+        "updated_at": "2020-01-01T00:00:20Z",
+    }
+    evidence = {
+        "schemaVersion": "publication-permission-denial-v1",
+        "requestId": "request-1",
+        "permitId": "permit-1",
+        "effectId": effect["effect_id"],
+        "requestDigest": request_digest,
+        "repo": "a/b",
+        "headOwner": "Oxygen56",
+        "branch": snapshot["branch"],
+        "base": "main",
+        "commitSha": commit,
+        "exactHeadPrAbsent": True,
+        "localHeadSha": commit,
+        "forkRepo": "Oxygen56/b",
+        "pushEffectId": push["effect_id"],
+        "pushRequestDigest": push_digest,
+        "remoteSha": commit,
+        "lookup": {
+            "method": "GET",
+            "endpoint": "repos/a/b/pulls",
+            "head": "Oxygen56:fix-boundary",
+            "state": "all",
+            "ok": True,
+            "result": [],
+        },
+        "observedAt": "2020-01-01T00:01:00Z",
+    }
+    result = {
+        "ok": True,
+        "blocked": True,
+        "reason": "PUBLICATION_PERMISSION_DENIED",
+        "creationAttempted": True,
+        "detail": "pull request create failed: GraphQL: Oxygen56 does not have the correct "
+        "permissions to execute `CreatePullRequest` (createPullRequest)",
+        "evidence": evidence,
+    }
+    request = {
+        "request_id": "request-1",
+        "opportunity_key": "a/b#1",
+        "thread_id": "thread-1",
+        "worktree_path": "/worktree",
+        "evidence_digest": "c" * 64,
+        "permit_id": "permit-1",
+        "status": "BLOCKED",
+        "reason": "PUBLICATION_PERMISSION_DENIED",
+        "commit_sha": commit,
+        "branch": snapshot["branch"],
+    }
+    permit = {
+        "permit_id": "permit-1",
+        "request_id": "request-1",
+        "issue_url": snapshot["issueUrl"],
+        "commit_sha": commit,
+        "branch": snapshot["branch"],
+    }
+    rows = {
+        "effect": effect,
+        "push": push,
+        "evidence": evidence,
+        "result": result,
+        "request": request,
+        "permit": permit,
+        "snapshot": snapshot,
+        "event_present": True,
+        "event_matches": True,
+        "push_result": {"ok": True, "remoteSha": commit},
+    }
+    if mutation:
+        mutation(rows)
+    result["evidenceDigest"] = sha256_json(evidence)
+    effect["result_json"] = canonical_json(result)
+    push["result_json"] = canonical_json(rows["push_result"])
+    request["request_json"] = canonical_json(snapshot)
+    event = {
+        "opportunity_key": "a/b#1",
+        "event_type": "PUBLICATION_BLOCKED",
+        "dedupe_key": "request-1:PUBLICATION_PERMISSION_DENIED",
+        "payload_json": canonical_json(
+            {
+                "requestId": "request-1",
+                "reason": "PUBLICATION_PERMISSION_DENIED",
+                "auditEvidence": evidence if rows["event_matches"] else {},
+            }
+        ),
+        "created_at": "2020-01-01T00:02:01Z",
+    }
+    with sqlite3.connect(path) as connection:
+        for table, values in [
+            ("publication_effects", effect),
+            ("publication_permits", permit),
+            ("publication_requests", request),
+            ("events", event),
+        ]:
+            connection.execute(
+                f"CREATE TABLE {table} ({','.join(f'{key} TEXT' for key in values)})"
+            )
+            if table != "events" or rows["event_present"]:
+                connection.execute(
+                    f"INSERT INTO {table} VALUES ({','.join('?' for _ in values)})",
+                    tuple(values.values()),
+                )
+        connection.execute(
+            f"INSERT INTO publication_effects VALUES ({','.join('?' for _ in push)})",
+            tuple(push[key] for key in effect),
+        )
+    return path
+
+
+def test_pending_effects_retains_resolved_denial_history_without_new_age_gate(tmp_path):
+    path = _permission_denial_ledger(tmp_path)
+    before = path.read_bytes()
+    assert pending_publication_effects(path) == 0
+    assert path.read_bytes() == before
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT status FROM publication_effects").fetchall() == [
+            ("FAILED",),
+            ("SUCCEEDED",),
+        ]
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("effect", "status", "RECONCILE_REQUIRED"),
+        ("effect", "action", "push"),
+        ("effect", "effect_id", "wrong-effect"),
+        ("effect", "request_digest", "f" * 64),
+        ("effect", "permit_id", "another-permit"),
+        ("request", "status", "GRANTED"),
+        ("request", "reason", "BLOCKED_REPRODUCTION_REQUIRED"),
+        ("request", "permit_id", "another-permit"),
+        ("snapshot", "requestId", "another-request"),
+        ("snapshot", "publicationKind", "PR_UPDATE"),
+        ("snapshot", "worktreePath", "/other-worktree"),
+        ("snapshot", "threadId", "other-thread"),
+        ("snapshot", "evidenceDigest", "d" * 64),
+        ("result", "creationAttempted", 1),
+        ("result", "blocked", 1),
+        ("result", "detail", "GraphQL: permission denied"),
+        ("evidence", "schemaVersion", "unknown"),
+        ("evidence", "requestId", "another-request"),
+        ("evidence", "permitId", "another-permit"),
+        ("evidence", "effectId", "another-effect"),
+        ("evidence", "requestDigest", "f" * 64),
+        ("evidence", "repo", "other/repo"),
+        ("evidence", "headOwner", "another-owner"),
+        ("evidence", "branch", "another-branch"),
+        ("evidence", "base", "another-base"),
+        ("evidence", "commitSha", "b" * 40),
+        ("evidence", "localHeadSha", "b" * 40),
+        ("evidence", "remoteSha", "b" * 40),
+        ("evidence", "exactHeadPrAbsent", 1),
+        ("evidence", "forkRepo", "another-owner/b"),
+        ("evidence", "pushEffectId", "another-effect"),
+        ("evidence", "pushRequestDigest", "f" * 64),
+        ("evidence", "observedAt", "2019-12-31T23:00:00Z"),
+        ("evidence", "observedAt", "2020-01-01T00:03:00Z"),
+        ("evidence", "observedAt", "2020-01-01T00:01:00"),
+        ("push_result", "remoteSha", "b" * 40),
+        ("push_result", "ok", 1),
+        ("push", "action", "create_pr"),
+        ("push", "request_digest", "f" * 64),
+    ],
+)
+def test_pending_effects_does_not_hide_unproven_or_misbound_denials(
+    tmp_path, section, field, value
+):
+    path = _permission_denial_ledger(tmp_path, lambda rows: rows[section].update({field: value}))
+    assert pending_publication_effects(path) == 1
+
+
+@pytest.mark.parametrize("missing", ["event", "event_proof", "query", "query_ok", "query_result"])
+def test_pending_effects_requires_exact_negative_query_and_block_event(tmp_path, missing):
+    def mutate(rows):
+        if missing == "event":
+            rows["event_present"] = False
+        elif missing == "event_proof":
+            rows["event_matches"] = False
+        elif missing == "query":
+            rows["evidence"]["lookup"]["head"] = "another-owner:fix-boundary"
+        elif missing == "query_ok":
+            rows["evidence"]["lookup"]["ok"] = 1
+        else:
+            rows["evidence"]["lookup"]["result"] = {}
+
+    assert pending_publication_effects(_permission_denial_ledger(tmp_path, mutate)) == 1
+
+
+def test_pending_effects_keeps_unknown_failed_and_orphan_effects(tmp_path):
+    path = tmp_path / "unknown.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE publication_effects (status TEXT)")
+        connection.executemany(
+            "INSERT INTO publication_effects VALUES (?)",
+            [("FAILED",), ("RECONCILE_REQUIRED",), ("ATTEMPTED",), ("SUCCEEDED",)],
+        )
+    assert pending_publication_effects(path) == 3
 
 
 def _iso(epoch: float) -> str:
@@ -65,7 +312,7 @@ def test_health_rejects_stale_success_and_consecutive_failures():
     } <= set(result["issues"])
 
 
-def test_health_covers_queue_effect_disk_log_and_policy_boundaries():
+def test_health_keeps_noncapacity_queue_log_and_policy_boundaries():
     now = time.time()
     state = healthy_state(now) | {
         "queueImportSuccessAt": _iso(now - 901),
@@ -88,12 +335,11 @@ def test_health_covers_queue_effect_disk_log_and_policy_boundaries():
         "RELEASE_VERSION_MISMATCH",
         "POLICY_DIGEST_CHANGED",
         "DIRTY_OR_UNVERIFIED_DEPLOYMENT",
-        "DISK_STOP_THRESHOLD",
         "LOG_LIMIT_EXCEEDED",
     } <= set(result["issues"])
 
 
-def test_disk_warning_is_reported_without_marking_workers_unhealthy():
+def test_low_disk_capacity_is_measured_without_marking_workers_unhealthy():
     now = time.time()
 
     result = evaluate_health(
@@ -106,10 +352,11 @@ def test_disk_warning_is_reported_without_marking_workers_unhealthy():
 
     assert result["healthy"] is True
     assert result["issues"] == []
-    assert result["warnings"] == ["DISK_WARNING_THRESHOLD"]
+    assert result["warnings"] == []
+    assert result["disk"]["freeBytes"] == 50 * 1024 * 1024 * 1024
 
 
-def test_health_keeps_persisted_disk_episode_unhealthy_during_live_warning():
+def test_health_does_not_fail_on_a_historical_disk_capacity_episode():
     now = time.time()
     gate = {
         "ok": False,
@@ -128,8 +375,9 @@ def test_health_keeps_persisted_disk_episode_unhealthy_during_live_warning():
         disk_pressure_gate=gate,
     )
 
-    assert result["healthy"] is False
-    assert "DISK_STOP_THRESHOLD" in result["issues"]
+    assert result["healthy"] is True
+    assert result["issues"] == []
+    assert result["warnings"] == []
     assert result["diskPressureGate"] == gate
 
 
@@ -390,7 +638,9 @@ def test_log_rotation_keeps_bounded_history(tmp_path: Path):
     assert path.with_name("agent.log.2").read_bytes() == b"old"
 
 
-def test_disk_snapshot_uses_free_space_and_capacity_limits(monkeypatch, tmp_path: Path):
+def test_disk_snapshot_reports_actual_bytes_with_capacity_limits_disabled(
+    monkeypatch, tmp_path: Path
+):
     class Usage:
         total = 100
         used = 96
@@ -407,135 +657,47 @@ def test_disk_snapshot_uses_free_space_and_capacity_limits(monkeypatch, tmp_path
         ),
     )
 
-    assert result["level"] == "stop"
+    assert result["level"] == "unrestricted"
+    assert result["capacityLimitsEnabled"] is False
+    assert result["path"] == str(tmp_path)
+    assert result["totalBytes"] == 100
     assert result["freeBytes"] == 4
-    assert result["restartFreeBytes"] == 5 + 8 * 1024**3
-    assert result["restartUsedFraction"] == 0.94
+    assert result["usedFraction"] == 0.96
+    assert not any(
+        name in result
+        for name in (
+            "warningFreeBytes",
+            "stopFreeBytes",
+            "stopUsedFraction",
+            "restartFreeBytes",
+            "restartUsedFraction",
+        )
+    )
 
 
-def test_disk_snapshot_keeps_unrounded_fraction_for_restart_decision(monkeypatch, tmp_path: Path):
+def test_disk_snapshot_keeps_the_actual_unrounded_fraction(monkeypatch, tmp_path: Path):
     class Usage:
         total = 10_000_000
         used = 9_400_004
         free = 599_996
 
-    thresholds = DiskThresholds(
-        warning_free_bytes=0,
-        stop_free_bytes=0,
-        warning_used_fraction=0.90,
-        stop_used_fraction=0.95,
-        restart_free_margin_bytes=0,
-        restart_used_fraction=0.94,
-    )
     monkeypatch.setattr("oss_pr_radar.runtime.shutil.disk_usage", lambda _path: Usage())
 
-    result = disk_snapshot(tmp_path, thresholds)
+    result = disk_snapshot(tmp_path)
 
     assert result["usedFraction"] > 0.94
     assert result["usedFraction"] != 0.94
-    assert disk_restart_safe(result, thresholds) is False
+    assert result["level"] == "unrestricted"
+    assert result["capacityLimitsEnabled"] is False
 
 
 @pytest.mark.parametrize(
-    ("snapshot", "expected"),
+    "snapshot",
     [
-        (
-            {
-                "level": "warning",
-                "freeBytes": 24 * 1024**3,
-                "usedFraction": 0.94,
-            },
-            True,
-        ),
-        (
-            {
-                "level": "warning",
-                "freeBytes": 24 * 1024**3,
-                "usedFraction": 0.940001,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "warning",
-                "freeBytes": 24 * 1024**3 - 1,
-                "usedFraction": 0.93,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "stop",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": 0.5,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "ok",
-                "freeBytes": 100 * 1024**3,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "ok",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": float("nan"),
-            },
-            False,
-        ),
-        (
-            {
-                "level": "ok",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": -math.ulp(1.0),
-            },
-            False,
-        ),
-        (
-            {
-                "level": "stop",
-                "freeBytes": 100 * 1024**3,
-                "usedFraction": math.nextafter(1.0, math.inf),
-            },
-            False,
-        ),
-        (
-            {
-                "level": "ok",
-                "freeBytes": -1,
-                "usedFraction": 0.0,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "ok",
-                "freeBytes": True,
-                "usedFraction": 0.0,
-            },
-            False,
-        ),
-        (
-            {
-                "level": "warning",
-                "freeBytes": 24 * 1024**3,
-                "usedFraction": math.nextafter(0.94, math.inf),
-            },
-            False,
-        ),
-        (
-            {
-                "level": "warning",
-                "freeBytes": 24 * 1024**3,
-                "usedFraction": 0.94,
-                "stopFreeBytes": 1,
-            },
-            False,
-        ),
+        {"level": "stop", "freeBytes": 0, "usedFraction": 1.0},
+        {"level": "warning", "freeBytes": 24 * 1024**3, "usedFraction": 0.940001},
+        {"level": "unrestricted", "freeBytes": 1, "usedFraction": 0.99},
     ],
 )
-def test_disk_restart_safe_requires_real_headroom(snapshot, expected):
-    assert disk_restart_safe(snapshot) is expected
+def test_disk_restart_compatibility_helper_no_longer_imposes_capacity_rules(snapshot):
+    assert disk_restart_safe(snapshot) is True

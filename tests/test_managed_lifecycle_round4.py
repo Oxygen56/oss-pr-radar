@@ -17,7 +17,8 @@ from oss_pr_radar.managed_snapshot import export_snapshot, import_snapshot
 pytestmark = pytest.mark.usefixtures("current_signing_key")
 
 
-def test_expired_reservation_requires_positive_absence_before_retry(tmp_path):
+@pytest.mark.parametrize("expire_first", [True, False])
+def test_expired_reservation_requires_positive_absence_before_retry(tmp_path, expire_first):
     database = tmp_path / "ledger.sqlite3"
     RadarLedger(database)
     ledger = ManagedLedger(database, ensure_schema=True)
@@ -31,7 +32,8 @@ def test_expired_reservation_requires_positive_absence_before_retry(tmp_path):
         lease_seconds=30,
         now="2026-08-19T00:00:00Z",
     )
-    assert ledger.expire_publication_reservations(now="2026-08-19T00:01:00Z") == 1
+    if expire_first:
+        assert ledger.expire_publication_reservations(now="2026-08-19T00:01:00Z") == 1
     assert (
         ledger.reserve_publication_slot(
             reservation_key="publication:crash",
@@ -110,6 +112,12 @@ def test_expired_reservation_requires_positive_absence_before_retry(tmp_path):
         now="2026-08-19T00:01:04Z",
     )
     assert retry["allowed"] is True
+    with ledger._connection() as connection:
+        rows = connection.execute("SELECT * FROM managed_publication_reservations").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["reservation_key"] == "publication:crash"
+    assert rows[0]["request_id"] == "crash"
+    assert rows[0]["created_at"] == "2026-08-19T00:00:00Z"
 
 
 def test_existing_open_pr_origin_survives_followup_receipt_and_restore(tmp_path):

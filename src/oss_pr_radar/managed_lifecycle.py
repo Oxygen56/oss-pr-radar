@@ -1611,6 +1611,7 @@ class ManagedLedger:
         provenance: dict[str, Any],
         observed_at: str | None = None,
         metadata: dict[str, Any] | None = None,
+        preserve_task_binding: bool = False,
     ) -> dict[str, Any]:
         identity = canonical_opportunity_identity(
             opportunity_key=opportunity_key,
@@ -1635,6 +1636,20 @@ class ManagedLedger:
                     issue_number=existing["issue_number"],
                     issue_url=existing["issue_url"],
                 )
+                if (
+                    preserve_task_binding
+                    and connection.execute(
+                        """SELECT 1 FROM managed_tasks WHERE opportunity_key=?
+                       AND state IN ('REPRODUCTION_REQUIRED','IMPLEMENTATION_READY','PORTFOLIO_READY')
+                       AND thread_id IS NOT NULL AND thread_id<>''
+                       AND worktree_path IS NOT NULL AND worktree_path<>'' LIMIT 1""",
+                        (canonical_key,),
+                    ).fetchone()
+                ):
+                    # A new discovery observes this issue; it cannot replace
+                    # the authority or progress of its already bound task.
+                    connection.commit()
+                    return dict(existing)
             connection.execute(
                 """INSERT INTO managed_opportunities
                    (opportunity_key,owner,repo,issue_number,issue_url,state,source,
@@ -3001,6 +3016,8 @@ class ManagedLedger:
             )
             expected_paths = (
                 opportunity_metadata.get("codePaths")
+                or expected_evidence.get("codePaths")
+                or expected_evidence.get("codePathsPlan")
                 or opportunity_provenance.get("codePaths")
                 or []
             )
@@ -3771,6 +3788,14 @@ class ManagedLedger:
                         "pr_key": pr_key,
                         "idempotency_key": idempotency_key,
                     }
+                    if (
+                        event_type == "TASK_RESULT_RECORDED"
+                        and existing_event["opportunity_key"] is None
+                        and existing_result is not None
+                    ):
+                        # record_result emits task-owned events without an issue key.
+                        # The exact result above and separate publication event bind it.
+                        identity.pop("opportunity_key")
                     identity_matches = all(
                         existing_event[field] == value for field, value in identity.items()
                     )
@@ -4196,7 +4221,7 @@ class ManagedLedger:
                 if existing["state"] == "FINALIZED":
                     connection.commit()
                     return dict(existing) | {"allowed": True, "replayed": True}
-                if existing["state"] in {"EXPIRED", "CHECK_ABSENCE_REQUIRED"}:
+                if existing["state"] in {"ACTIVE", "EXPIRED", "CHECK_ABSENCE_REQUIRED"}:
                     connection.execute(
                         "UPDATE managed_publication_reservations SET state='CHECK_ABSENCE_REQUIRED',updated_at=? WHERE reservation_key=?",
                         (observed, existing["reservation_key"]),
@@ -6094,6 +6119,7 @@ def reconcile_managed_pr_states(
     observed_at: str | None = None,
     source: str = "github-authoritative-reconciliation",
     require_all_managed: bool = True,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
     """Reconcile every managed PR from exact read-only API evidence.
 
@@ -6102,7 +6128,7 @@ def reconcile_managed_pr_states(
     state, URL, head SHA and response digest before any row is updated.
     """
 
-    ledger = ManagedLedger(path, ensure_schema=True)
+    ledger = ManagedLedger(path, ensure_schema=ensure_schema)
     normalized: dict[str, dict[str, Any]] = {}
     for observation in observations:
         pr_url = str(observation.get("url") or observation.get("prUrl") or "")

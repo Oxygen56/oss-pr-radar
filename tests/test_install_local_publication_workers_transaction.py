@@ -14,6 +14,11 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.local_publication import slow_advance_once
+from oss_pr_radar.operational_auth import (
+    authorization_path,
+    staged_worker_receipt_path,
+    worker_staging_authorization_path,
+)
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "install_local_publication_workers.py"
 sys.path.insert(0, str(SCRIPT.parent))
@@ -231,7 +236,7 @@ def test_first_activation_promotes_auth_before_bootstrap_and_rolls_back(
                 assert slow_advance_once(runtime, runner=slow_runner)["ok"] is True
         return fake(*arguments, check=check)
 
-    def finalize(_runtime: Path):
+    def finalize(_runtime: Path, **_kwargs: object):
         events.append("finalize")
         authorization["state"] = "ACTIVE"
         return authorization
@@ -245,7 +250,11 @@ def test_first_activation_promotes_auth_before_bootstrap_and_rolls_back(
     )
     monkeypatch.setattr(INSTALL, "finalize_operational_authorization", finalize)
     revoked: list[Path] = []
-    monkeypatch.setattr(INSTALL, "revoke_operational_authorization", revoked.append)
+    monkeypatch.setattr(
+        INSTALL,
+        "revoke_operational_authorization",
+        lambda runtime, **_kwargs: revoked.append(runtime),
+    )
 
     if failure is None:
         result = INSTALL.activate_staged_workers(
@@ -328,6 +337,17 @@ def test_uninstall_bootout_failure_restores_all_three_workers(
     launch_dir = home / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True)
     worker_specs = specs(tmp_path)
+    (tmp_path / "state").mkdir()
+    authorization_before = {
+        path: b"keep authorization"
+        for path in (
+            authorization_path(tmp_path),
+            worker_staging_authorization_path(tmp_path),
+            staged_worker_receipt_path(tmp_path),
+        )
+    }
+    for path, content in authorization_before.items():
+        path.write_bytes(content)
     before: dict[Path, bytes] = {}
     modes: dict[Path, int] = {}
     for index, spec in enumerate(worker_specs):
@@ -353,6 +373,7 @@ def test_uninstall_bootout_failure_restores_all_three_workers(
     assert {path: path.stat().st_mode & 0o777 for path in before} == modes
     assert fake.loaded == set(services)
     assert not list(launch_dir.glob(".*.tmp"))
+    assert {path: path.read_bytes() for path in authorization_before} == authorization_before
 
 
 def test_uninstall_unlink_failure_restores_all_three_workers(
@@ -362,6 +383,17 @@ def test_uninstall_unlink_failure_restores_all_three_workers(
     launch_dir = home / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True)
     worker_specs = specs(tmp_path)
+    (tmp_path / "state").mkdir()
+    authorization_before = {
+        path: b"keep authorization"
+        for path in (
+            authorization_path(tmp_path),
+            worker_staging_authorization_path(tmp_path),
+            staged_worker_receipt_path(tmp_path),
+        )
+    }
+    for path, content in authorization_before.items():
+        path.write_bytes(content)
     before: dict[Path, bytes] = {}
     modes: dict[Path, int] = {}
     for index, spec in enumerate(worker_specs):
@@ -396,6 +428,7 @@ def test_uninstall_unlink_failure_restores_all_three_workers(
     assert {path: path.stat().st_mode & 0o777 for path in before} == modes
     assert fake.loaded == services
     assert not list(launch_dir.glob(".*.tmp"))
+    assert {path: path.read_bytes() for path in authorization_before} == authorization_before
 
 
 @pytest.mark.parametrize(
@@ -492,6 +525,13 @@ def test_uninstall_removes_all_workers_when_slow_worker_is_quiescent(
     worker_specs = specs(tmp_path)
     _write_staged_plists(home, worker_specs)
     (tmp_path / "state").mkdir()
+    authorization_records = (
+        authorization_path(tmp_path),
+        worker_staging_authorization_path(tmp_path),
+        staged_worker_receipt_path(tmp_path),
+    )
+    for path in authorization_records:
+        path.write_bytes(b"existing authorization")
     domain = "gui/4242"
     services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
     fake = FakeLaunchctl(domain, services)
@@ -504,6 +544,7 @@ def test_uninstall_removes_all_workers_when_slow_worker_is_quiescent(
     assert result["ok"] is True
     assert fake.loaded == set()
     assert all(not plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
+    assert all(not path.exists() for path in authorization_records)
 
 
 def test_uninstall_requires_runtime_binding_and_authorization_before_launchctl(
@@ -554,6 +595,9 @@ def test_worker_write_modes_require_authorization_before_any_launchctl_or_plist_
             ),
         )
     else:
+        authorization = authorization_path(tmp_path)
+        authorization.parent.mkdir(parents=True, exist_ok=True)
+        authorization.write_bytes(b"invalid existing authorization")
         monkeypatch.setattr(
             INSTALL,
             "require_operational_authorization",
@@ -573,6 +617,48 @@ def test_worker_write_modes_require_authorization_before_any_launchctl_or_plist_
     assert INSTALL.main() == 1
     assert fake.calls == []
     assert not list((home / "Library" / "LaunchAgents").glob("*.plist"))
+
+
+def test_original_uninstall_cli_observes_already_uninstalled_workers_after_auth_revocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "path": str(tmp_path / "release")},
+    )
+    monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: specs(tmp_path))
+    calls = []
+
+    def observe(*arguments, check=True):
+        calls.append(arguments)
+        assert arguments[0] == "print" and check is False
+        return subprocess.CompletedProcess([], 113, "", "Could not find service")
+
+    monkeypatch.setattr(INSTALL, "launchctl", observe)
+    monkeypatch.setattr(
+        INSTALL,
+        "revoke_operational_authorization",
+        lambda *_args, **_kwargs: pytest.fail("already uninstalled observation must not revoke"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["install_local_publication_workers.py", "--runtime-root", str(tmp_path), "--uninstall"],
+    )
+
+    assert INSTALL.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is True and result["uninstalled"] is True
+    assert result["changed"] is False and len(result["workers"]) == 4
+    assert {call[1].split("/")[-1] for call in calls} == set(INSTALL.FIXED_WORKER_LABELS)
+    assert all(call[0] == "print" for call in calls)
+    assert not list((home / "Library" / "LaunchAgents").glob("*.plist"))
+    assert not authorization_path(tmp_path).exists()
+    assert not worker_staging_authorization_path(tmp_path).exists()
+    assert not staged_worker_receipt_path(tmp_path).exists()
 
 
 def test_authorized_stage_uses_only_the_current_required_worker_specs(
@@ -799,7 +885,7 @@ def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_al
     assert statuses[1]["workerRuntimeHealth"]["lastExitCode"] == 1
 
 
-def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
+def test_worker_status_reports_unrestricted_capacity_without_failing_loaded_workers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
@@ -860,7 +946,8 @@ def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
         INSTALL,
         "disk_snapshot",
         lambda _root: {
-            "level": "warning",
+            "level": "unrestricted",
+            "capacityLimitsEnabled": False,
             "freeBytes": 50 * 1024 * 1024 * 1024,
             "usedFraction": 0.93,
         },
@@ -884,7 +971,7 @@ def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
     assert [status["ok"] for status in statuses] == [True, True, True, True]
     assert statuses[0]["runtimeHealth"]["healthy"] is True
     assert statuses[0]["runtimeHealth"]["issues"] == []
-    assert statuses[0]["runtimeHealth"]["warnings"] == ["DISK_WARNING_THRESHOLD"]
+    assert statuses[0]["runtimeHealth"]["warnings"] == []
 
 
 def test_status_top_level_ok_aggregates_worker_health(
@@ -1379,6 +1466,115 @@ def test_stage_transaction_lock_serializes_two_stagers(tmp_path: Path) -> None:
         assert acquired == []
     thread.join(timeout=2)
     assert acquired == [True]
+
+
+@pytest.mark.parametrize("activation_failure", [False, True])
+def test_run_at_load_ensure_waits_for_complete_activation_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, activation_failure: bool
+) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "state").mkdir(parents=True)
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    domain = "gui/4242"
+    outputs = {
+        f"{domain}/{spec['Label']}": "\n".join(
+            [
+                "arguments = {",
+                *(str(value) for value in spec["ProgramArguments"]),
+                "}",
+                f"working directory = {spec['WorkingDirectory']}",
+            ]
+        )
+        for spec in worker_specs
+    }
+    fake = FakeLaunchctl(
+        domain,
+        set(),
+        failure="kickstart" if activation_failure else None,
+        failure_at=4,
+        print_outputs=outputs,
+    )
+    authorization = {
+        "state": "STAGED",
+        "workerConfigDigest": INSTALL.worker_spec_digest(worker_specs),
+    }
+    first_loaded = threading.Event()
+    continue_activation = threading.Event()
+    ensure_started = threading.Event()
+    ensure_finished = threading.Event()
+    results: dict[str, object] = {}
+
+    def require_authorization(_root: Path, **kwargs: object) -> dict[str, object]:
+        expected = "STAGED" if kwargs.get("require_staged_receipt") else "ACTIVE"
+        if authorization["state"] != expected:
+            raise RuntimeError("operational authorization is not active")
+        return authorization
+
+    def finalize(_root: Path, **_kwargs: object) -> dict[str, object]:
+        authorization["state"] = "ACTIVE"
+        return authorization
+
+    def revoke(_root: Path, **_kwargs: object) -> None:
+        authorization["state"] = "REVOKED"
+
+    def observed_launchctl(*arguments: str, check: bool = True):
+        result = fake(*arguments, check=check)
+        if arguments[0] == "bootstrap" and fake.counts["bootstrap"] == 1:
+            first_loaded.set()
+            assert continue_activation.wait(timeout=5)
+        return result
+
+    def activate() -> None:
+        try:
+            results["activate"] = INSTALL.activate_staged_workers(
+                worker_specs, home=home, domain=domain, runtime_root=runtime
+            )
+        except RuntimeError as exc:
+            results["activateError"] = str(exc)
+
+    def ensure() -> None:
+        ensure_started.set()
+        try:
+            results["ensure"] = INSTALL.ensure_workers(
+                worker_specs, home=home, domain=domain, runtime_root=runtime
+            )
+        except RuntimeError as exc:
+            results["ensureError"] = str(exc)
+        finally:
+            ensure_finished.set()
+
+    monkeypatch.setattr(INSTALL, "launchctl", observed_launchctl)
+    monkeypatch.setattr(INSTALL, "require_operational_authorization", require_authorization)
+    monkeypatch.setattr(INSTALL, "finalize_operational_authorization", finalize)
+    monkeypatch.setattr(INSTALL, "revoke_operational_authorization", revoke)
+    activation_thread = threading.Thread(target=activate)
+    ensure_thread = threading.Thread(target=ensure)
+    activation_thread.start()
+    assert first_loaded.wait(timeout=5)
+    ensure_thread.start()
+    assert ensure_started.wait(timeout=5)
+    try:
+        observed_partial_activation = ensure_finished.wait(timeout=0.1)
+    finally:
+        continue_activation.set()
+        activation_thread.join(timeout=5)
+        ensure_thread.join(timeout=5)
+    assert not activation_thread.is_alive()
+    assert not ensure_thread.is_alive()
+    assert not observed_partial_activation, results
+    assert fake.counts == {"bootstrap": 4, "kickstart": 4}
+    if activation_failure:
+        assert "worker activation rolled back" in results["activateError"]
+        assert results["ensureError"] == "operational authorization is not active"
+        assert fake.loaded == set()
+        assert authorization["state"] == "REVOKED"
+    else:
+        assert results["activate"]["ok"] is True
+        assert results["ensure"]["changed"] is False
+        assert authorization["state"] == "ACTIVE"
+        assert len(fake.loaded) == 4
 
 
 @pytest.mark.parametrize(

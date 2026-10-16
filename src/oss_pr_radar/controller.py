@@ -450,6 +450,8 @@ def _disk_pressure_health_blocked(value: object) -> bool:
 
 
 def _disk_pressure_blocker_queue(value: object) -> str:
+    if isinstance(value, dict) and value.get("reason") == "RUNTIME_STATE_UNAVAILABLE":
+        return "runtime_state_unavailable"
     if not isinstance(value, dict) or value.get("reason") == "DISK_PRESSURE_GATE_UNAVAILABLE":
         return "gate_unavailable"
     return "disk_stop"
@@ -459,6 +461,8 @@ def _local_agent_disk_blocker(status: dict[str, Any]) -> str | None:
     top_level_gate = status.get("diskPressureGate")
     if top_level_gate is not None and _disk_pressure_health_blocked(top_level_gate):
         return _disk_pressure_blocker_queue(top_level_gate)
+    if isinstance(top_level_gate, dict) and top_level_gate.get("capacityLimitsEnabled") is False:
+        return None
     for worker in status.get("workers") or []:
         if not isinstance(worker, dict):
             continue

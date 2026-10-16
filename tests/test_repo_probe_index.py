@@ -61,3 +61,19 @@ def test_indexable_paths_reject_materialized_file_outside_sparse_checkout(
         repo_probe.validate_indexable_checkout_paths(checkout, ["src/frontends/target.py"])
 
     _git(checkout, "diff", "--cached", "--quiet")
+
+
+def test_indexable_paths_preserve_actual_git_rejection_diagnostics(tmp_path: Path) -> None:
+    checkout = _checkout(tmp_path)
+    lock = checkout / ".git" / "index.lock"
+    lock.write_text("another index writer\n", encoding="utf-8")
+
+    with pytest.raises(repo_probe.ProbeUnavailable, match="^CODE_PATH_NOT_INDEXABLE$") as caught:
+        repo_probe.validate_indexable_checkout_paths(checkout, ["src/frontends/target.py"])
+
+    diagnostics = caught.value.diagnostics
+    assert diagnostics is not None
+    assert diagnostics["exitCode"] != 0
+    assert "index.lock" in diagnostics["stderr"]
+    assert lock.read_text(encoding="utf-8") == "another index writer\n"
+    _git(checkout, "diff", "--cached", "--quiet")

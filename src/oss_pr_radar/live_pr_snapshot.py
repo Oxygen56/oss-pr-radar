@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .github_client import GitHubClient
-from .legacy_migration import import_legacy_history
+from .legacy_migration import LIVE_CONTROLLER_STATUS_REPORT, import_legacy_history
 from .managed_lifecycle import import_open_pr_observations, migrate_schema
 from .pr_projection import projection_summary
 from .stage6_rehearsal import (
@@ -41,7 +41,7 @@ def _reports_digest(path: Path) -> dict[str, Any]:
         raise ValueError("legacy reports directory is missing")
     files = []
     for item in sorted(path.iterdir(), key=lambda candidate: candidate.name):
-        if not item.is_file():
+        if not item.is_file() or item.name == LIVE_CONTROLLER_STATUS_REPORT:
             continue
         files.append(
             {

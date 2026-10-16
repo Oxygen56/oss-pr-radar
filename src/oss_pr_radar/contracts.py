@@ -10,7 +10,7 @@ from .util import sha256_json
 SCAN_SCHEMA = "oss-pr-radar.scan.v2"
 CANDIDATE_SCHEMA = "oss-pr-radar.candidate.v3"
 EVIDENCE_SCHEMA = "oss-pr-radar.evidence.v1"
-CONTRACT_REVISION = "trust-core-v10-semantic-retry-fail-closed"
+CONTRACT_REVISION = "trust-core-v11-authorized-ai-disclosure"
 ACTIONABLE_REVIEW_STATUSES = frozenset({"ok"})
 
 CONTRACT_MANIFEST = {
@@ -19,6 +19,7 @@ CONTRACT_MANIFEST = {
     "evidenceSchema": EVIDENCE_SCHEMA,
     "revision": CONTRACT_REVISION,
     "llmPositiveAuthorization": False,
+    "aiAssistanceDisclosureAuthorized": True,
     "tracks": ["agent_ai_infra", "llm_algorithm"],
     "requiredEvidence": [
         "issue",

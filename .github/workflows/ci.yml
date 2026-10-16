@@ -15,17 +15,56 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: Install pinned test tools
         run: python -m pip install pytest==9.1.1 ruff==0.16.1
       - name: Lint
-        run: ruff check src scripts tests
+        run: ruff check .
       - name: Format
         run: ruff format --check src scripts tests
+      - name: Prepare protected host state directory
+        run: |
+          python - <<'PY'
+          import os
+          import stat
+          from pathlib import Path
+
+          home = Path.home()
+          root = home / "Documents" / "github" / ".oss-pr-radar"
+          created = []
+          for path in (home, home / "Documents", root.parent, root):
+              if not path.is_absolute() or path.resolve() != path:
+                  raise RuntimeError("protected host state path is an alias")
+              try:
+                  metadata = path.lstat()
+              except FileNotFoundError:
+                  if path == home:
+                      raise RuntimeError("runner home is missing")
+                  path.mkdir(mode=0o700)
+                  metadata = path.lstat()
+                  created.append(path)
+              if (
+                  not stat.S_ISDIR(metadata.st_mode)
+                  or metadata.st_uid != os.getuid()
+                  or stat.S_IMODE(metadata.st_mode) & 0o022
+              ):
+                  raise RuntimeError("protected host state directory is unsafe")
+              if path in created and stat.S_IMODE(metadata.st_mode) != 0o700:
+                  raise RuntimeError("new protected host state directory is not private")
+          print(f"Protected host state directory prepared: {root}")
+          PY
       - name: Test
-        run: PYTHONPATH=src pytest -q
+        run: python -m pytest -q
+      - name: Native release focused checks
+        run: python -m pytest -q tests/test_legacy_migration.py tests/test_stage6_rehearsal.py tests/test_managed_round8_key_rotation.py
+      - name: Native release workflow checks
+        run: ruby -ryaml -e 'ARGV.each { |path| YAML.load_file(path); puts path }' -- .github/workflows/ci.yml .github/workflows/health.yml .github/workflows/radar.yml
+      - name: Native release code identity
+        run: python scripts/verify_code_identity.py
       - name: Compile
         run: python -m compileall -q src scripts
 
@@ -35,6 +74,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"

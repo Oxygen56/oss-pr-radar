@@ -210,23 +210,40 @@ def _display_fields(
     if not title:
         title = "跟进已有的开源贡献"
     if bucket == "DECISION_REQUIRED":
-        reason = "需要你确认下一步，当前记录不足以安全继续。"
-        next_action = "请确认是否继续，以及需要补充的要求。"
+        evidence = metadata.get("preTaskEvidence")
+        evidence = evidence if isinstance(evidence, dict) else {}
+        policy = evidence.get("policy")
+        policy = policy if isinstance(policy, dict) else {}
+        reason = "候选仍需核对证据和处理范围。"
+        next_action = "系统查证后自动决定继续、暂缓或放弃；具体对外授权事项单独确认。"
+        if evidence.get("assignmentRequired") is True or policy.get("status") in {
+            "needs_assignment",
+            "ai_disclosure_and_assignment",
+        }:
+            reason = "仓库要求先由维护者分配任务或确认方案。"
+            next_action = "核对维护者要求并等待所需许可；已获准的本地查证可继续。"
+        elif policy.get("status") == "ai_disclosure_conflict":
+            reason = "本地查证可继续，公开提交仍需确认 AI 披露措辞。"
+            next_action = "先完成本地复现和修复；仅在公开披露前确认具体措辞。"
     elif bucket == "WAITING_EXTERNAL":
         reason = "正在等待外部检查或维护者反馈。"
         next_action = "等待外部结果；有新反馈后再继续。"
     elif bucket == "PORTFOLIO_READY":
         reason = "已有托管任务、验证结果和外部检查记录。"
-        next_action = "请查看交付物并决定是否继续后续处理。"
+        next_action = "系统按已核实结果继续原流程；具体对外授权事项单独确认。"
     else:
-        reason = "托管任务正在处理，暂时没有需要你决定的事项。"
-        next_action = "等待任务产生下一条可核实记录。"
+        reason = "任务已有记录，尚未收到可核实的最终结果。"
+        next_action = "根据原任务的真实执行结果继续处理。"
+        if result is not None and result["worker_state"] == "patched":
+            if _json(result["validation_json"]).get("passed") is False:
+                reason = "本轮修复已返回，验证尚未通过。"
+                next_action = "按已记录的检查失败补齐验证，再继续审核。"
     if existing_pr:
         reason = "这是已有的开放贡献记录，保留原始来源并等待外部反馈。"
         next_action = "等待维护者反馈；不会自动关闭或删除该记录。"
     if result is not None and result["worker_state"] == "needs_human":
-        reason = "任务已暂停，等待你确认处理方向。"
-        next_action = "请确认处理方向后再继续。"
+        reason = "本轮已返回暂停结果，需核对具体原因。"
+        next_action = "系统先查明暂停原因；可自动处理的继续，仅具体外部授权事项需要确认。"
     if bucket == "PORTFOLIO_READY" and ci is None:
         reason = "任务已有交付记录，但外部检查结果尚未齐全。"
         next_action = "等待外部检查完成。"

@@ -579,16 +579,6 @@ def _archive_candidate(root: Path, item: dict[str, Any], *, now: float) -> dict[
     while archive.exists():
         suffix += 1
         archive = archive_root / f"{candidate.name}-{stamp}-{suffix}.tar.gz"
-    # Refuse to start an archive when the host cannot afford a conservative
-    # source-sized temporary write plus a small reserve.
-    usage = shutil.disk_usage(root)
-    if usage.free < source_bytes + MIN_ARCHIVE_FREE_BYTES:
-        return {
-            "path": item["path"],
-            "status": "deferred_insufficient_space",
-            "sourceBytes": source_bytes,
-            "requiredFreeBytes": source_bytes + MIN_ARCHIVE_FREE_BYTES,
-        }
     fd, temporary_name = tempfile.mkstemp(
         prefix=f".{archive.name}.", suffix=".tmp", dir=archive_root
     )

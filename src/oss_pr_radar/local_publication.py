@@ -1172,6 +1172,34 @@ def advance_once(
     recovery_quarantined = list(context_recovery.get("quarantined") or [])
     public_unavailable = recovery_unavailable[:5]
     public_quarantined = recovery_quarantined[:5]
+    context_sync_before_ingestion: dict[str, Any] = {}
+    context_recovery_after_sync: dict[str, Any] = {}
+    if context_recovery.get("ok") is True and not recovery_errors:
+        # Recovery restores the existing binding but does not refresh its
+        # live audit. Refresh before intake, whose stale-audit rejection
+        # would otherwise return before the later context sync is reached.
+        context_sync_before_ingestion = runner(root, "context-sync")
+        recovery_errors.extend(list(context_sync_before_ingestion.get("errors") or []))
+        if context_sync_before_ingestion.get("ok") is not True and not recovery_errors:
+            recovery_errors.append({"error": "task context sync failed before result ingestion"})
+        if not recovery_errors and context_sync_before_ingestion.get("refreshed"):
+            # A refreshed signed mirror has a new audit digest. Restore it
+            # through the existing verified recovery path before intake asks
+            # for its authority history; the old binding cannot authorize it.
+            context_recovery_after_sync = runner(root, "context-recover")
+            recovery_errors.extend(list(context_recovery_after_sync.get("errors") or []))
+            if context_recovery_after_sync.get("ok") is not True and not recovery_errors:
+                recovery_errors.append(
+                    {"error": "refreshed task context recovery failed before result ingestion"}
+                )
+            recovery_unavailable = _merge_unique_records(
+                recovery_unavailable, list(context_recovery_after_sync.get("unavailable") or [])
+            )
+            recovery_quarantined = _merge_unique_records(
+                recovery_quarantined, list(context_recovery_after_sync.get("quarantined") or [])
+            )
+            public_unavailable = recovery_unavailable[:5]
+            public_quarantined = recovery_quarantined[:5]
     if context_recovery.get("ok") is not True or recovery_errors:
         return {
             "ok": False,
@@ -1187,6 +1215,8 @@ def advance_once(
             "contextsUnavailableCount": len(recovery_unavailable),
             "contextsQuarantined": public_quarantined,
             "contextsQuarantinedCount": len(recovery_quarantined),
+            "contextSyncBeforeIngestion": context_sync_before_ingestion,
+            "contextRecoveryAfterSync": context_recovery_after_sync,
             "errors": recovery_errors
             or [{"error": "task context recovery failed before result ingestion"}],
         }
@@ -1221,6 +1251,8 @@ def advance_once(
             "contextsQuarantined": public_quarantined,
             "contextsQuarantinedCount": len(recovery_quarantined),
             "quarantined": ingestion_quarantined,
+            "contextSyncBeforeIngestion": context_sync_before_ingestion,
+            "contextRecoveryAfterSync": context_recovery_after_sync,
             "errors": ingestion_errors
             or [{"error": "task result ingestion failed before publication"}],
         }
@@ -1496,6 +1528,8 @@ def advance_once(
         "contextsQuarantined": public_quarantined,
         "contextsQuarantinedCount": len(recovery_quarantined),
         "taskContextRecovery": context_recovery,
+        "contextSyncBeforeIngestion": context_sync_before_ingestion,
+        "contextRecoveryAfterSync": context_recovery_after_sync,
         "quarantined": quarantined,
         "errors": errors,
     }

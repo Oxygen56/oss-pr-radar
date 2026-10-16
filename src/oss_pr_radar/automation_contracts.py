@@ -16,7 +16,7 @@ DAILY_WAR_ROOM_KIND = "heartbeat"
 AUTOMATION_STATUS = "ACTIVE"
 HEARTBEAT_RRULE = "FREQ=HOURLY;BYMINUTE=30"
 DAILY_WAR_ROOM_RRULE = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0"
-HEARTBEAT_TARGET_THREAD_ID = "019f71c3-4f26-7030-b126-25f8cfbac4c4"
+HEARTBEAT_TARGET_THREAD_ID = "01a11091-6498-73f2-bffb-1bd114e4347a"
 # Keep the daily heartbeat on its own durable, normally idle thread.  Binding
 # it to a long-running user conversation lets each scheduler tick postpone the
 # next tick indefinitely.
