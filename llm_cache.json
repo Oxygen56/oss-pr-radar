@@ -19003,6 +19003,36 @@
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to re-check the chunk budget before scanning the waiting queue, causing unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR #35645 addresses the same issue, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "212e966df46336e989d83560f53e922816b030ccacf4eca6c1e7848b8cf44f1a": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body says PR #14932 'includes the same change to this condition', while the duplicate assessment marks root_cause_coverage=false and technical_complete=false for that PR"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/sglang/request_handlers/llm/decode_handler.py: drop the `> 0` guard so cached_tokens: 0 is reported when the engine supplies the value"
+    ],
+    "risks": [
+      "Open PR #14932 may already implement this exact condition change, making a separate fix redundant",
+      "Changing usage shape could affect downstream consumers that currently rely on the omission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting prompt_tokens_details == {\"cached_tokens\": 0} on a cold-cache chat completion with stream_options.include_usage",
+      "Add a warm-cache test asserting the actual cached token count",
+      "Add a test asserting prompt_tokens_details is omitted when the engine provides no cached_tokens value"
+    ],
+    "unknowns": [
+      "Whether PR #14932 will land and fully cover this fix, or whether a separate one-line fix is warranted"
+    ],
+    "why": "Issue clearly identifies the root cause (the `cached_tokens > 0` guard in decode_handler.py omitting prompt_tokens_details on cache miss) and provides a concrete reproduction path. However, the supplied duplicate assessment flags open PR #14932 as semantically overlapping and explicitly states it 'includes the same change to this condition as part of a larger rework', with status 'semantic_overlap_requires_review'. Whether that PR already covers the fix is a materially blocking unknown that determines whether independent code work is actionable."
+  },
   "21301dbd9a304f6fdfd008012e1eb9e92bb771bb9bfa92163c923e9d0e33c066": {
     "confidence": 0.85,
     "contradictions": [],
@@ -74331,6 +74361,37 @@
     ],
     "why": "The issue reports a plausible DSpark speculative decoding acceptance collapse after position 0 on DeepSeek-V4-Flash-0731, with detailed environment and ruled-out factors. However, a maintainer suspects the benchmark artifact (random tokens) and a member's data supports that random prompts degrade acceptance, while the reporter's own data shows higher acceptance with probabilistic sampling. The root cause is not yet confirmed; it could be a kernel issue on DGX Spark or a benchmark artifact. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "763fd5aa9d9cb76b0baf70aa442652b4fbe804131b13ffeddfc79ca7b041d0dd": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Comment states #4220 covers the write path, but open_pr_assessment marks root_cause_coverage false for both PRs."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/application/service/session_attachment_staging.go",
+      "internal/sandbox/session_manager.go"
+    ],
+    "risks": [
+      "Existing PR #4220 may already fix the write path, making a new fix duplicative.",
+      "The 'stopped but not yet deleted' window may not be covered by the existing fix, requiring a distinct change."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by letting the Docker sandbox idle-sweep the session container, then re-call /api/v1/agent-chat/{session_id} with a staged attachment and assert the container is rebound and the file staged successfully."
+    ],
+    "unknowns": [
+      "Whether PR #4220 or #3921 already resolves this exact failure signature.",
+      "Whether the maintainers consider this issue covered by the existing open PRs."
+    ],
+    "why": "Issue reports a real sandbox attachment staging failure with a plausible root cause (idle-swept container), but the supplied evidence shows two open PRs (#4220, #3921) with semantic overlap on the same code paths and error signature, and the duplicate status is 'semantic_overlap_requires_review'. The comment claims #4220 covers the write path, but root_cause_coverage is false for both PRs and no direct issue linkage exists, so whether a new contribution is actionable or duplicative is unresolved."
+  },
   "76603e1918225e7ccd05b278ea1e8e78965757e95f7329779e81bfe77a1f1951": {
     "confidence": 0.8,
     "contradictions": [],
@@ -74638,6 +74699,38 @@
       "Exact auto-cancel path in reporter's session (missing /about output, CLI version, launch method)"
     ],
     "why": "Issue is a well-diagnosed bug with clear root cause and maintainer confirmation, but maintainer explicitly requires sign-off on behavior split before landing; no PR competition."
+  },
+  "76d14d830b866724fdb9db1d2e242661b3d0aef27e8100b494cab9f80ba7ee7c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue frames this as a bug, but no code path or root cause is identified; the behavior may be by design"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "embed channel upload handler / attachment lifecycle",
+      "knowledge ingestion and DocReader/OCR trigger path for embed-uploaded files"
+    ],
+    "risks": [
+      "May be intended session-scoped behavior rather than a bug, making a fix a product/design change",
+      "Changing embed upload to auto-ingest could alter security/privacy expectations for anonymous visitors"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce via embed channel upload of a scanned PDF and assert whether a knowledge row and DocReader/OCR invocation occur",
+      "Add a regression test around the embed upload endpoint verifying ingestion behavior once the intended design is confirmed"
+    ],
+    "unknowns": [
+      "Whether embed-channel session-scoped attachments are intentional design",
+      "The specific code path/module responsible for embed upload vs. main-platform ingestion",
+      "Maintainer position on desired behavior (auto-ingest vs. explicit opt-in)"
+    ],
+    "why": "Issue describes a plausible user-visible bug in the embed channel upload path, but the supplied evidence does not establish a code-level root cause or a concrete code surface. The candidate's own actionability evidence marks root_cause_signal=false, codePathsPlan=[], and needs_confirmation/design_confirmation=true, so it is unclear whether the intended behavior is 'embed uploads are session-scoped by design' or a genuine defect. Without a confirmed code anchor or design decision, a code contribution is not yet actionable."
   },
   "76da1f4f86def0421f6e3586a8f41a28ea83c6c39173d34243f99cdf2b9c1f05": {
     "confidence": 0.82,
@@ -77408,6 +77501,35 @@
       "Whether maintainer has already started a fix"
     ],
     "why": "Issue provides detailed reproduction, multiple configurations, and maintainer-requested recording evidence confirming audio stops reaching the session. Root cause is localized to audio routing in AudioRecognition or track subscription, with clear validation path via session recording and DEBUG logs."
+  },
+  "7b3c9dd32ed856f6ae72440306737172fed594f9a9a51bcc15e3044424fd0ae9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Audit/actor log persistence path: truncate or exclude base64 request bodies before writing to varchar(1000) columns",
+      "Logging layer: redact or gate base64 payloads and system prompts behind debug level"
+    ],
+    "risks": [
+      "Truncation strategy may lose useful audit detail; maintainer may prefer schema change over truncation",
+      "Redaction scope must not break legitimate debug diagnostics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: submit a request with a large base64 image/file and assert audit/actor DB insert succeeds without 'value too long' error",
+      "Assert application logs at info level do not contain full base64 payload or system prompt content"
+    ],
+    "unknowns": [
+      "Exact code location of audit/actor log write and logging call sites not supplied",
+      "Whether maintainers prefer truncation vs schema widening vs payload exclusion"
+    ],
+    "why": "Issue provides concrete reproduction steps, expected/actual behavior, and exact error messages showing varchar(1000) overflow when base64 file content is written to audit/actor log fields, plus a secondary logging-hygiene problem (base64 and system prompts logged in full). Root cause is clear and a minimal fix (truncate/redact before persistence and logging) is actionable."
   },
   "7b427924fc44f9c30485b69c35d36eddd49a8b2542d2bb0dbdee7430237d08c2": {
     "confidence": 0.6,
@@ -122667,6 +122789,47 @@
     ],
     "why": "The issue reports a real 400 from Anthropic after a restart interrupts a shell tool call, but the supplied evidence does not establish the root cause. The reporter explicitly did not capture the outgoing request body and notes stored inputs are clean, so the malformed tool_use.input exists only in the serialized request. The maintainer bot attempted reproduction on 2.0.30 with a mock Anthropic API across three setups and could not reproduce; the interrupted call was correctly replayed as a tool_use with object input plus an error tool_result. The bot's requested diagnostics (outgoing request body at the failing index, behavior with plugins disabled, exported messages at the failing index) are unanswered. Without a reproduction or root-cause anchor, the code change is not actionable."
   },
+  "c59881da64fc471415bf6d6c17f5d8750b45078ca45c85e42a385115d35905ed": {
+    "confidence": 0.7,
+    "contradictions": [
+      "algorithm_evidence claims qualified LLM-algorithm mechanisms, but the owner-assigned actionable scope is config/CLI refusal plumbing",
+      "open_pr_assessment flags semantic overlap with PRs #1946/#1947 while the issue's assigned sites include unsloth 8bit and Liger"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/trainer/mlx_optim.py (adafactor relative_step/scale_parameter)",
+      "src/soup_cli/commands/serve.py (refuse structured-output/reasoning-parser/trace-log on vllm/sglang/mii)",
+      "src/soup_cli/utils/unsloth.py (8bit handling)",
+      "src/soup_cli/utils/liger.py (model-type table check)",
+      "src/soup_cli/commands/bench.py (backend label vs engine)"
+    ],
+    "risks": [
+      "Overlap with open PRs #1946 (unsloth quantization) and #1947 (Liger) may make those sub-tasks redundant",
+      "The two algorithm-relevant sites are reserved by other maintainers; picking them up would violate the owner's stated assignment",
+      "Bundling six sites into one contribution conflicts with the owner's one-PR-per-site instruction"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Recording mlx.optimizers stand-in asserting relative_step=False and configured schedule for adafactor",
+      "Recording engine stand-ins asserting serve flags are refused or forwarded on vllm/sglang/mii",
+      "Config-load test refusing quantization: 8bit on backend: unsloth",
+      "Liger stand-in test that unsupported model types return False and do not set use_liger_kernel"
+    ],
+    "unknowns": [
+      "Whether PRs #1946/#1947 already resolve the unsloth and Liger sub-tasks",
+      "Whether the reserved --gate and MLX adafactor sites will be released to this contributor",
+      "Which single site the candidate intends to implement given the one-PR-per-site requirement"
+    ],
+    "why": "Issue #1811 bundles six heterogeneous defects; the owner has explicitly assigned only four sites (serve flags, Liger, unsloth 8bit, bench) to contributor ndablizov, while the two algorithm-relevant sites (--gate on mlx/prm/unlearn/moe_lora_routing and MLX adafactor) remain unassigned and are held by other maintainers. The candidate's algorithm_evidence claims post_training_objective/PEFT/numerics mechanisms, but the concrete actionable scope is config/CLI refusal plumbing (serve flags, bench backend labels, unsloth quantization mapping) rather than a training-objective, kernel, or quantization algorithm change. The MLX adafactor site is the only genuine numerical/optimizer mechanism, and it is explicitly reserved. Additionally, open PRs #1946 and #1947 semantically overlap with the unsloth and Liger sites respectively, so those sub-tasks may already be covered."
+  },
   "c59cd4dbdc685c2589947ab1e731c1d5afafc71289870fec9d837e2acfe8f47a": {
     "confidence": 0.7,
     "contradictions": [
@@ -133136,6 +133299,38 @@
     ],
     "why": "The issue is an open UX design discussion with explicit instructions not to begin implementation until it reaches Ready on the Goose Issues board, and the submission policy requires assignment. The supplied evidence shows no assignee, no maintainer approval, and no reproduction/validation path; the only implementation sketch is from a non-collaborator and leaves open design questions (thinking blocks, density, collapsed-by-default behavior). This is a materially blocking unknown for actionable code work."
   },
+  "d57f7740a9d90d097e0fe5ad6c612e5e099c0dc712543a94c0e23cda48592d98": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims tools/list rejects per-request x-mcp-{alias}-authorization with a 500, but the reporter's own follow-up comment states the gate accepts the per-request credential on main and v1.105.1 and the failure could not be reproduced"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py (prepare_mcp_client / validate_static_credential gate)",
+      "litellm/proxy/_experimental/mcp_server/operations.py (tools/list discovery threading of mcp_auth_header)"
+    ],
+    "risks": [
+      "Fixing an already-working path could introduce a regression in the stored-credential fallback",
+      "The reported failure may stem from a different entry surface or server shape (spec_path vs live transport, static_headers) not covered by the trace"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the exact direct /{server}/mcp tools/list request with x-mcp-{alias}-authorization and no stored credential on the current base SHA; assert whether a 500 'requires a usable upstream credential' occurs",
+      "If reproducible, add a regression test asserting tools/list returns the upstream tool list when only the per-request header is supplied, and that tools/call by name succeeds"
+    ],
+    "unknowns": [
+      "Whether the 500 still reproduces on the current base SHA and which exact entry surface/server shape triggers it",
+      "Whether the semantic-overlap PR #46293 already covers the same discovery-path behavior"
+    ],
+    "why": "The issue provides a detailed root-cause trace and a concrete repro, but the only follow-up comment from the same reporter contradicts the original claim: on current main and v1.105.1 the per-request x-mcp-{alias}-authorization header is already honored at discovery time, and the reporter could not reproduce the 500. This leaves unresolved whether a real code gap exists on the target base, which is materially blocking for deciding whether a fix is actionable."
+  },
   "d5836dbb510222dd0f1b5ddef771f546e84bc652be4cd545974d71332df0dfa0": {
     "confidence": 0.82,
     "contradictions": [],
@@ -140175,6 +140370,40 @@
     ],
     "why": "Issue provides a clear root cause (clampReasoningEffort fallback includes 'max'), a concrete reproduction path, and a well-defined fix direction. The triage comment adds depth by noting the OpenAI-compatible path bypasses the clamp entirely, and the issue is labeled ready-for-agent. Although a related PR (#9478) exists, it is closed with changes requested and does not fully cover the root cause, so the issue remains actionable."
   },
+  "e113eae09814fcc691ea3c36803a79ff603fdd0a9edc27f8d7de4bf41592e8f8": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body asserts a clear root cause and workaround, while open_pr_assessment reports root_cause_coverage=false for the existing PR #44734"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: align tf32_hc_prenorm_gemm call with the {1,m,n} output contract or clamp n_splits",
+      "add a regression test exercising the opt-in fused mHC path under CUDA graph capture"
+    ],
+    "risks": [
+      "PR #44734 may already cover the same fix, making a second implementation redundant",
+      "Changing n_splits semantics could alter numerical behavior of the split-K reduction",
+      "Default-off path may have other latent API drift beyond this call site"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with SGLANG_OPT_FUSE_MHC_POST_PRE=1 on a single card and confirm the DeepGemm assertion at gemm.hpp:930",
+      "After fix, verify graph capture succeeds and outputs match the unfused path within tolerance",
+      "Add a minimal single-call smoke test for the opt-in kernel flag"
+    ],
+    "unknowns": [
+      "Whether PR #44734 fully resolves the issue or leaves an independent gap (e.g., missing regression test) that a separate contribution could fill",
+      "Whether maintainers consider the opt-in path worth a dedicated fix versus removing/repairing the flag"
+    ],
+    "why": "Issue #43743 describes a concrete API-contract mismatch in the default-off mHC fused path (tf32_hc_prenorm_gemm now requires {1,m,n} when num_splits is passed), but open PR #44734 already targets the same code identifiers and path with a fix, and the supplied duplicate assessment is explicitly 'human_review_required' with root-cause coverage and tests both missing. That unresolved coverage question materially determines whether independent code work is actionable."
+  },
   "e124c250e838e0fafa2fdba50433fdaeea8a4f46e96d0f1b540c357121e33058": {
     "confidence": 0.85,
     "contradictions": [
@@ -145195,6 +145424,41 @@
       "Resolution of the ai_disclosure_conflict policy status"
     ],
     "why": "The issue describes a plausible mechanism (draft-group KV blocks registered by content-agnostic BlockPool.cache_full_blocks without drafter coverage), but the reporter explicitly states they have not pinned which step registers unwritten draft blocks, and asks maintainers where drafter coverage can lapse. The root cause is therefore not established, and the proposed fix shape is explicitly deferred to maintainer input. Additionally, the pre-task evidence flags an ai_disclosure_conflict policy status, which is a materially blocking unknown for whether code work is actionable."
+  },
+  "e8604c7e661118dc4a40447e7372b97be1f0dd8a37d23dd467548984b7d6240b": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment marks PR #56027 as semantic_overlap_requires_review with root_cause_coverage=false and technical_complete=false, so it does not clearly cover the flushAttachments root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/ai/src/protocols/openai-chat.ts flushAttachments: emit a text part alongside image_url attachments",
+      "packages/ai/src/provider-error.ts decodeMessage: surface body.error.metadata.raw / provider_name instead of generic 'Provider returned error'"
+    ],
+    "risks": [
+      "Open PR #56027 overlaps on provider-error.ts/openai-chat.ts and metadata.raw; implementation boundary must be compared before submitting to avoid duplicate work",
+      "Changing flushAttachments message shape could affect other OpenAI-compatible providers that currently accept image-only trailing turns",
+      "Real-API confirmation of the exact OpenRouter/Google translation behavior depends on account access"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting the lowered continuation request after a read tool returning image files contains a text part before image_url parts",
+      "Replay the captured request shape (assistant tool_calls with reasoning_details + tool message + trailing user image-only) against a mock and assert 200 after fix",
+      "Unit test decodeMessage with an OpenRouter 400 body containing metadata.raw and assert the upstream Google message is surfaced"
+    ],
+    "unknowns": [
+      "Whether PR #56027 already fixes the flushAttachments image-only turn or only the metadata.raw surfacing",
+      "Whether maintainers prefer the text-part fix in flushAttachments versus a gemini.ts-specific lowering change"
+    ],
+    "why": "Issue provides a deterministic 4/4 reproduction, exact request shape, and two independent confirmations (mock + real OpenRouter with controlled replay matrix) isolating the cause to flushAttachments emitting an image-only trailing user turn combined with encrypted reasoning on the tool-call turn. Concrete code anchors in packages/ai/src/protocols/openai-chat.ts and provider-error.ts give an actionable minimal fix plus a secondary metadata.raw surfacing fix."
   },
   "e86d1f4e74c5fc71d76b479b6e7f95972511f57c323e2f8a0dbd5413dec5e918": {
     "confidence": 0.8,
@@ -151499,6 +151763,40 @@
       "Exact implementation details for each engine's durable unit invocation points"
     ],
     "why": "The issue identifies a real architectural gap: capability hooks that touch external state run outside durable units, causing duplicate side effects on replay. The proposal is technically sound and references concrete code paths and precedents. However, the deterministic gate requires HUMAN_REVIEW, and the issue explicitly requests design confirmation from maintainers. The proposed API change needs maintainer approval before implementation."
+  },
+  "f18d1a428cca8bfdba03017639210c60457f76ca90e65651c1d649deb74ed938": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/turns/user_turn_controller.py: reconcile _user_speaking on mute stop / VAD stop while muted",
+      "src/pipecat/processors/aggregators/llm_response_universal.py: release held post-tool context push when user turn ends without new text",
+      "src/pipecat/turns/user_mute/function_call_user_mute_strategy.py: ensure mute does not leave speaking state stale"
+    ],
+    "risks": [
+      "Fix may alter turn-finalization semantics for other mute strategies (AlwaysUserMuteStrategy)",
+      "Reconciling _user_speaking on mute stop could double-fire turn stop events",
+      "Maintainer may prefer cancel-in-flight-inference approach over state reconciliation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.py against main and assert inferences == 2 and user turn closes",
+      "Add a regression test in pipecat/tests covering resume-during-inference + FunctionCallUserMuteStrategy",
+      "Verify on_user_turn_stop_timeout fires when user stops while muted",
+      "Run targeted unit tests for user_turn_controller and llm_response_universal"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference among the three proposed directions",
+      "Whether the held-push path also needs a fix independent of the mute state fix"
+    ],
+    "why": "Issue provides a concrete, ordered reproduction with expected/actual output, version matrix (1.11.0, 1.12.0, main@f7c191f7), production impact data, and code anchors in user_turn_controller.py and llm_response_universal.py. The failure chain (mute suppresses VADUserStoppedSpeakingFrame -> stale _user_speaking -> held post-tool push -> watchdog/idle cannot recover) is specific and testable. No duplicate or merged fix covers this path; PR #5870 is keyword-only overlap and a draft."
   },
   "f18e47a39f2eae61dfa43e2c78b630c903e1986330a640e14d6bb1dc8c64b702": {
     "confidence": 0.6,
