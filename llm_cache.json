@@ -14614,6 +14614,34 @@
     ],
     "why": "The issue is a startup hang with 'Waiting for core engine proc(s) to start'. Supplied comments offer multiple mutually inconsistent workarounds (NCCL_P2P_DISABLE=1 + --disable-custom-all-reduce, VLLM_USE_FLASHINFER_SAMPLER=0, HF cache mount/download wait), and one reporter says the NCCL workaround did not help. The py-spy trace points at flashinfer sampling during warmup, but no single root cause is established, and the candidate's own evidence marks rootCauseCoverage=false with weak keyword match to the issue."
   },
+  "197dd44116a19c9fe56bd954f9e7b4f7229efd7f5871b670983267c39ecc8162": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "guardrail custom_code execution path (regex_match primitive / timeout enforcement)",
+      "event-loop offloading or timeout isolation for guardrail execution"
+    ],
+    "risks": [
+      "Fix may require moving guardrail execution off the event loop or enforcing a hard timeout, which could change guardrail API behavior.",
+      "Maintainer may have a preferred design for timeout enforcement that differs from the minimal fix."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that runs a custom_code guardrail with a catastrophic-backtracking regex and a short timeout, asserting the guardrail returns near the timeout and an unrelated health endpoint stays responsive.",
+      "Reproduce with the issue's one-worker proxy config and curl commands, measuring attack and health latencies before/after the fix."
+    ],
+    "unknowns": [
+      "No maintainer design preference or assignment requirement is recorded, but neither is required for this bug fix."
+    ],
+    "why": "Issue provides a concrete, reproducible event-loop blocking bug: a custom_code guardrail calling regex_match with a catastrophic-backtracking pattern holds the GIL past the configured timeout, blocking unrelated /health/liveliness requests. Reproduction steps, config, exact input, and measured latencies are supplied, and the code anchor regex_match is identified. This is a real runtime/performance defect on the agent/inference critical path with a clear validation path (failing test then minimal fix)."
+  },
   "19858b24ebd1870830595f4d0373aa79e9a16004cf91378a460c9c844a94971d": {
     "confidence": 0.72,
     "contradictions": [
@@ -24971,6 +24999,41 @@
       "Whether maintainers want a framework-side guard instead of a docs change"
     ],
     "why": "Issue is a docs-only defect in spring-ai-alibaba/website quick-start (inputType(String.class) yields type:string schema, DashScope 400). Root cause is well evidenced, but the fix is a documentation edit, not a code contribution, and an open PR (#282) already targets the same docs page with the same fix, so independent implementation space is unresolved."
+  },
+  "295dd7d99f71bfaa076fbb84edf04a1f2e2474e43586e3dfaa47f78df10eac9e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no budget/chunking guard exists, but contributor comment says merged #43921 already packs per-request and removes the OOM in their repro",
+      "Commenter Lei-010 could not reproduce the OOM on TP4 96GB layout, suggesting layout-dependent behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sglang/srt/layers/attention/dsv4/sparse_prefill_utils.py: add mem_get_info budget check or chunking guard in SparsePrefillWorkspace.get()",
+      "sglang/srt/layers/attention/deepseek_v4_backend.py: bound num_tokens passed to workspace.get() for uniformly long prefill batches"
+    ],
+    "risks": [
+      "Merged PR #43921 may already cover the reported failure, making a new fix redundant",
+      "Open draft PR #44031 touches the same deepseek_v4_backend.py path and may conflict",
+      "Distinguishing the reported allocator OOM from the separate no-traceback SIGKILL failure mode noted by another commenter"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a deep queue of uniformly long-context requests (170k-212k tokens each) on TP2 B300 to confirm OOM persists after #43921",
+      "Add a regression test asserting workspace allocation is capped or chunked when n_compressed + swa_token_ids exceeds available VRAM"
+    ],
+    "unknowns": [
+      "Whether the uniformly-long-batch OOM remains after merged #43921",
+      "Whether open draft PR #44031 already implements the needed guard",
+      "Exact post-#43921 workspace sizing behavior for uniformly long batches"
+    ],
+    "why": "Issue reports a concrete OOM in SparsePrefillWorkspace.get() with traceback and code anchors, but a contributor comment states merged PR #43921 already fixes the mixed-length padding root cause, and explicitly notes uniformly-long batches may still OOM. The remaining root cause (unbounded allocation for uniformly long batches) is not yet confirmed as unfixed, and the open PR #44031 semantically overlaps the same code path. This unresolved duplicate/merged-fix coverage is a materially blocking unknown."
   },
   "295fb033dde03fc750ccf5cd264197a7ab5f778e96769156c11abd18d79295df": {
     "confidence": 0.85,
@@ -86384,6 +86447,34 @@
     ],
     "why": "Issue reports a server-side HTTP 500 during device-auth token exchange, with no code anchors, no reproduction path in the repository, and the reporter themselves suspects an account-specific server-side billing mis-flag. No actionable client-side code change is identified."
   },
+  "8966a9a4bfb6cee0ec7e95ea4edd22560894fe6e94dfcfbb0e1b2b2340d5cf4d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and mechanism_count=4 conflict with actionability_evidence.root_cause_signal=false and reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Requires 8x RTX PRO 6000 SM120 PCIe hardware and a proprietary DeepSeek-V4.1-Flash checkpoint to reproduce; not generally available",
+      "Issue is a field report, not a code change; no module or behavior to modify",
+      "Related PRs are all drafts with no direct code overlap, so no clear implementation target"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [],
+    "unknowns": [
+      "Whether any concrete code change (e.g., SM120 kernel fix, config validation) is intended by this issue",
+      "Whether the referenced external write-up contains an actionable code patch"
+    ],
+    "why": "The candidate is a field-report issue (production config, measured throughput, rejected topologies) on SM120 hardware, not a code contribution. It contains no root-cause signal, no code change proposal, and its 'reproduction evidence' is a docker run command for a proprietary model (DeepSeek-V4.1-Flash) on 8x RTX PRO 6000 PCIe hardware that is not generally available. The algorithm_evidence mechanisms (model_architecture, distributed_training, numerics_quantization, kernel_algorithm) are keyword matches from the issue body, not a concrete training objective, model mechanism, or numerical method to implement. The preTaskEvidence explicitly records reproduction_or_validation_missing and probe_ready=false. The related PRs are all drafts with no direct code overlap. This is operational/field-report content, not actionable algorithm code work."
+  },
   "8973767f066076f152fb689087ee643d6b1ca7eb07c701ed22e17f09a1b6b5f7": {
     "confidence": 0.8,
     "contradictions": [],
@@ -97752,6 +97843,39 @@
     ],
     "why": "This is a field report / operational configuration write-up (docker env vars, throughput tables, topology rejections) on an issue, not a code contribution. For track=llm_algorithm the required concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is absent; the content is installation/CLI/config/ops plumbing plus benchmark anecdotes. No root-cause signal, no code change proposed, and the cited code anchors (usage_processor.py, cli_args.py, serving.py) belong to a vLLM-side discussion about prompt_tokens_details, not to an actionable SGLang fix."
   },
+  "9b71c40789c187762d75039185b7dd580f6e6b952b5ba19383166795488aabb3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "MCP gateway authorize/consent path must revalidate the UI session key before issuing an authorization code",
+      "Token redemption path must reject codes minted from revoked sessions",
+      "Add regression test covering revoked-cookie replay through /authorize and /token"
+    ],
+    "risks": [
+      "Fix must not break legitimate live-session gateway authorization",
+      "Session-key validation should be consistent with the existing BYOK session gate to avoid divergent auth semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: sign in, register DCR client, log out, replay saved token cookie through /authorize and confirm current acceptance",
+      "After fix, assert /authorize returns 401 or redirects to /sso/key/generate before consent for a revoked session key",
+      "Assert /token rejects a code obtained from a revoked session",
+      "Run targeted gateway/MCP auth unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact module/file implementing the gateway authorize session check is not pinned in the supplied evidence, though code paths plan lists candidate locations"
+    ],
+    "why": "Issue provides a concrete, reproducible auth bug: the MCP gateway authorize flow reads the UI cookie user ID but does not revalidate the embedded session key against the DB, while the BYOK session gate does. Steps, curl command, expected 401 behavior, and code anchors are supplied; no duplicate PR/issue coverage found."
+  },
   "9b7304752031c20a7457f0b3d50c9e568d271dca4a88a761faefac5bdfb5c7bb": {
     "confidence": 0.55,
     "contradictions": [
@@ -98801,6 +98925,41 @@
       "Whether PR #23149 will be expanded into a full fix or abandoned"
     ],
     "why": "Issue provides a concrete, self-contained reproduction (synthetic fixtures, no credentials) and pinpoints the root cause: the fileProperties filter in packages/codemod/src/codemods/v5/restructure-file-stream-parts.ts retains Property/ObjectProperty nodes but excludes SpreadElement, so replacing the properties array silently drops spread-provided base64/uint8Array payload. The proposed fix (preserve spreads and evaluation order, or leave ambiguous objects unchanged with a manual-migration report) is actionable and testable. The overlapping PR #23149 is a draft reproduction-only PR with no regression test and no root-cause coverage, so it does not cover the fix; this is normal competition, not a blocker."
+  },
+  "9cb8e53510650d7a3d1ad3891474cefb0b247c1500ec67eec497a9a91b255642": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "rome_apps/assistant/skills/routine-from-chat/SKILL.md non-interactive branch",
+      "packages/core/src/core/mcp-facade.ts proposal tool registration or non-card workflow",
+      "packages/core/src/core/agent-session.ts surface capability gating",
+      "packages/core/src/core/mcp-facade.routine-draft.test.ts regression coverage"
+    ],
+    "risks": [
+      "Skill-only fix may diverge from maintainer preference for a runtime-level non-card proposal workflow",
+      "Loosening the create-action prohibition could weaken permission/argument checks if not scoped",
+      "Originating channel is unknown, so the exact surface descriptor used in the regression test must be chosen carefully"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a non-interactive scheduling regression test asserting the skill can complete scheduling without propose_routine",
+      "Run the existing mcp-facade.routine-draft.test.ts tool-registration suite to confirm interactive-surface behavior is unchanged",
+      "Exercise system:create_routine path under existing permission rules and verify routine persistence/activation"
+    ],
+    "unknowns": [
+      "Which of the two proposed fixes maintainers prefer",
+      "Exact originating messaging channel"
+    ],
+    "why": "Issue provides a concrete, source-anchored contract mismatch: the routine-from-chat skill requires propose_routine and forbids create actions, while the shared facade intentionally omits propose_routine on non-interactive surfaces (agent-session.ts L414-435, L1061-1070; mcp-facade.ts L1297-1310) and existing tests pin that omission. Two concrete fix paths and a regression-test plan are given, so code work is actionable."
   },
   "9cdc7c82808c0da5ea10988e8eb2293543e6766fbc931bf90006731415298930": {
     "confidence": 0.82,
