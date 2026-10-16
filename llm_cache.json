@@ -45707,6 +45707,39 @@
     ],
     "why": "Issue provides detailed, reproducible evidence of a performance cliff caused by default CUDA graph batch size being too low relative to max_running_requests. The root cause is clear: decode steps above the captured batch size fall back to eager execution, causing significant latency degradation. However, the issue explicitly asks for maintainer input on the preferred fix direction, and the open PR and related issue lookups failed, so duplicate work cannot be ruled out. The deterministic gate is HUMAN_REVIEW, so a maintainer decision is required before implementation."
   },
+  "4bbfa509a82f9352406beeac5c0746cddd91970e1c14da56e07251db56fabcd9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/application/service/knowledge_span_tracker.go: allow root span to transition to done on successful retry or defer terminal finalization until isLastRetry",
+      "internal/application/service/knowledge_process.go: use isLastRetry to decide when to finalize the root span",
+      "internal/types/knowledge_process.go: ensure error_code/error_message cleared on successful retry"
+    ],
+    "risks": [
+      "Open PR #4357 already targets the same file with a similar fix; competing implementation may duplicate effort",
+      "Changing terminal-state guard could affect cancellation/skip semantics if not scoped carefully",
+      "Need to confirm maintainer preference between flipping root span to done vs deferring finalization to isLastRetry"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates a failed first attempt followed by a successful retry within the same payload.Attempt and asserts the root span status becomes done with empty error_code/error_message",
+      "Run targeted unit tests for the knowledge span tracker and knowledge process packages",
+      "Verify GET /api/v1/knowledge/{id} returns parse_status completed with no residual error_message after retry success"
+    ],
+    "unknowns": [
+      "Whether PR #4357 already fully resolves the root-cause path or only partially covers it",
+      "Maintainer preference between the two proposed fix strategies"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: FailSpan finalizes the root span as failed on a main-stage failure (knowledge_span_tracker.go:543-552), and FinalizeAttempt's terminal-state guard (796-798) swallows the later done finalization on asynq retry success, leaving root span failed while children are done and parse_status is completed. Reproduction steps, SQL query, logs, and expected behavior are supplied, and the fix is localized to the span tracker/process path."
+  },
   "4bd256e3239132e9b6df990b3e667a7b7261b7420447977316a3d01dac41059a": {
     "confidence": 0.7,
     "contradictions": [
@@ -76668,6 +76701,39 @@
     ],
     "why": "Issue provides a clear root cause (formatter drops encrypted_content from reasoning items), a verified local patch, and a concrete reproduction path. The fix is actionable and aligns with existing code paths."
   },
+  "7a970f6df5abb3ac4fef9b4113305906d6266502cdee9f4cfbe74ee3eaba7241": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body reports a 500 at tools/list discovery, but the follow-up comment states the same path honors the per-request credential on main and v1.105.1 and cannot reproduce the failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py",
+      "litellm/proxy/_experimental/mcp_server/operations.py"
+    ],
+    "risks": [
+      "Fix may be unnecessary if current main already honors the header",
+      "Changing the discovery credential gate could alter BYOK/static-auth behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the direct /{server}/mcp tools/list with a per-request x-mcp-{alias}-authorization header and no stored credential on the exact reported version",
+      "Add a regression test asserting tools/list returns upstream tools when only the per-request header supplies the credential"
+    ],
+    "unknowns": [
+      "Which exact surface and version still reproduces the 500",
+      "Whether the reported failure is already fixed on current main",
+      "Whether open PR #46293 already covers the same discovery credential path"
+    ],
+    "why": "Issue provides a detailed root-cause trace and reproduction, but the only follow-up comment from the same reporter contradicts the original claim: on current main and v1.105.1 the per-request x-mcp-{alias}-authorization header is honored at discovery time and the 500 cannot be reproduced. The exact failing surface/version remains unresolved, so it is not established that a code fix is actionable."
+  },
   "7a99bff92175d93a1da4d32475a2a51fd3296def5076ae5789a317d2b17d47e3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -98299,6 +98365,42 @@
     ],
     "why": "The issue is a detailed audit of the Moonshot provider against the official API spec, with clear root causes for each gap (e.g., unsupported fields sent to models, missing strict schema control, MIME type validation). It provides concrete validation paths via the official OpenAPI document and first-party guides, and the issue tracks sub-issues with merged PRs, demonstrating actionable progress."
   },
+  "9d68de8fdc5b934357ad5bc20251bc8f04b20b5047794015ea48a8fb6bf719ed": {
+    "confidence": 0.72,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while the issue body supplies specific error strings and failing components, which is partial root-cause evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Audit logging path: truncate or exclude base64/file payloads before writing to varchar(1000) fields",
+      "Memory write path: same length guard/redaction for request bodies",
+      "Application logging: avoid full base64 request bodies and system prompts at info level; redact or gate behind debug"
+    ],
+    "risks": [
+      "Truncation strategy may lose audit fidelity if not paired with a hash/summary field",
+      "Redaction changes could break existing log consumers or tests expecting full payloads",
+      "Maintainer may prefer a schema change (e.g., text column) over truncation, altering the fix shape"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that submits a request with a large base64 image/file and asserts audit/memory DB inserts succeed without 'value too long for type character varying(1000)'",
+      "Add a log-capture test asserting base64 payload and system prompt are not emitted at info level",
+      "Run targeted backend unit tests for the audit and memory packages plus static checks"
+    ],
+    "unknowns": [
+      "Exact code locations for the audit and memory write paths are not pinned to files/lines",
+      "Whether maintainers prefer truncation vs schema migration for the varchar(1000) columns"
+    ],
+    "why": "Issue reports a concrete, reproducible failure: audit/memory writes of full request bodies (including base64 file payloads) exceed varchar(1000), causing DB insert errors and audit loss, plus sensitive base64/prompt content leaking into application logs. Reproduction steps and expected/actual behavior are supplied, and the fix surface (truncation/redaction in audit and memory write paths) is identifiable. No duplicate or open PR coverage was found. The candidate's own pre-review flagged no_code_surface and a design-confirmation wait, but the issue itself names the failing components and error strings, so the remaining uncertainty is normal implementation choice rather than a materially blocking unknown."
+  },
   "9d6b38d94e5c9e6556e27f712aa2d76e8e3c28c97781e3f2699182e8c49d238b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -104959,6 +105061,33 @@
       "Exact maintainer preference on the operational trade-off (prewarm vs. raise timeout) is not known, but this does not block actionability as it is a normal decision point"
     ],
     "why": "The issue is an auto-filed workflow failure report with a clear root cause: the sweep timed out by design due to the two-phase timeout contract from merged PR #6509, and the residual issue is an operational trade-off (dependency installs consuming most of the budget). The maintainer bot's analysis confirms this is not a library bug and provides a concrete validation path (reproducing the timeout signature and comparing with the trusted run log)."
+  },
+  "a8fe495f38c4f0f9908e09e489c30c49b2903e2279ae451b28f4ec2b149f272b": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.actionability_evidence lists code_anchors like numba test paths and main, but these are log artifacts, not actionable code locations."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Attempting a code fix would not address the host-level disk exhaustion and could introduce unnecessary CI changes.",
+      "The issue is already tracked in the flaky tracker #42752 and has maintainer attention (cc @mmangkad)."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No code-level reproduction is possible; validation would be operational (verify runner disk space and job success after cleanup)."
+    ],
+    "unknowns": [
+      "Whether maintainers want a code-level pre-flight disk check added to CI workflows, which would be a separate, small CI change rather than a fix for this issue."
+    ],
+    "why": "The issue is a self-hosted CI runner infrastructure/disk-space problem on specific hosts (5090-vast-*), not a code defect in the sglang repository. The root cause is confirmed as a full filesystem on the runner host, and the proposed fixes are operational (drain hosts, free disk, add a pre-flight disk check). No repository code change is required or actionable from a PR perspective; the code_anchors are incidental numba test paths from the failure log, not real code anchors."
   },
   "a90614d6cc4665410f18b7da89fbc6ed4c8756fb54eac1f3728790478ebc93c2": {
     "confidence": 0.8,
