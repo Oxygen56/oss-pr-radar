@@ -96200,6 +96200,37 @@
     ],
     "why": "The issue provides a clear root cause: pinned wolfi-base digest has drifted from apk packages, causing build failures and broken runtime images. It includes reproduction steps, specific error messages, and a suggested fix (bump base image digests). This is actionable for an infrastructure fix."
   },
+  "9a5e261a1099002b9f913d54ba01e458322033293286be9e7f14efae55061eab": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims tools/list rejects per-request header, but recent_comments reports it cannot be reproduced on main/v1.105.1 and the header is honored at discovery"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py",
+      "litellm/proxy/_experimental/mcp_server/operations.py"
+    ],
+    "risks": [
+      "Fixing an already-working path could regress the stored-credential fallback",
+      "Overlapping open PR #46293 touches operations.py"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce tools/list with x-mcp-{alias}-authorization and no stored credential on current main; if it passes, close as already-fixed"
+    ],
+    "unknowns": [
+      "Which exact surface/version still 500s",
+      "Whether the bug persists on current main or v1.106.0-rc"
+    ],
+    "why": "Issue provides a detailed root-cause trace and reproduction, but the only substantive comment thread contradicts it: the reporter's own follow-up cannot reproduce the gate failure on main or v1.105.1 and shows the per-request header is already threaded through discovery. This unresolved contradiction determines whether any code change is actionable."
+  },
   "9a67175af28a510de7cfa61b4afc89916cd610b2743033df5a44840afea5ee10": {
     "confidence": 0.7,
     "contradictions": [],
@@ -112792,6 +112823,37 @@
       "Exact maintainer preference for fix approach (cap vs lazy indexing)"
     ],
     "why": "Issue provides detailed root cause with code anchors, CPU profiles, and a concrete fix direction (cap file count, chunk indexing, use remote-aware APIs). Comment confirms root cause and suggests a minimal fix using existing walkDirs maxFiles parameter. No competing PR or duplicate found."
+  },
+  "b6af59fdfe180b3432259da04e89ba9ef56fa66b579fbf89ef6a7a7c5a301866": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Candidate labels this agent/inference/RAG key-path work, but the issue is purely a frontend theme/contrast fix"
+    ],
+    "evidence_ids": [
+      "candidate",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/routes/launch.tsx: replace raw color utilities with existing semantic theme roles (feedback-error, contrast/contrast-foreground)"
+    ],
+    "risks": [
+      "Duplicates maintainer-owned draft PR #18515 on the same file",
+      "Contrast ratios depend on rendered translucent surfaces, so verification method must be pinned",
+      "Low-priority cosmetic scope with limited review value"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Extend theme-derived contrast test convention from context-window-ring.test.tsx to assert >=4.5:1 for launch error heading and retry label across all five themes",
+      "Run __tests__/routes/launch.test.tsx, npx eslint src/routes/launch.tsx, npm run lint/test/build"
+    ],
+    "unknowns": [
+      "Whether maintainer intends #18515 to land as-is, making any competing PR redundant"
+    ],
+    "why": "Issue is a CSS/theme contrast fix in src/routes/launch.tsx (raw text-red-400 / bg-blue-600 classes), not an algorithm or agent/inference/RAG mechanism. Track is agent_ai_infra but the work is ordinary frontend styling; also an open maintainer-owned PR #18515 already covers the same file and fix, leaving only test-coverage as a marginal gap."
   },
   "b6b2a9e3e8944335e7c3a692284ad785b39f33f7b7a9564f48a57be9254f4b48": {
     "confidence": 0.82,
@@ -148607,6 +148669,40 @@
       "Exact root cause not yet identified; maintainer preference for fix approach unknown."
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, indicating a generation-level bug in the Qwen3.5 architecture on version 0.5.17. The root cause is not yet identified, but the evidence is sufficient to start a bisect and targeted fix. No duplicate or overlapping PR covers this issue."
+  },
+  "ee9f203ad68b153a33b64d080a3903ef563a2f9f8c68dd47a0bc529e2da955fe": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes a behavior change but also asks whether current abort behavior is intentional, leaving the target behavior undecided"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/google/adk/flows/llm_flows/tools/_caller.py: decide whether unhandled tool exceptions should be converted to functionResponse error payloads or re-raised",
+      "src/google/adk/cli/api_server.py: avoid emitting a duplicate non-Event SSE error frame after an error Event has already been streamed"
+    ],
+    "risks": [
+      "Behavior change may be intentional; aligning with adk-go could alter documented error semantics",
+      "Reporter intends to author the CL internally, so an external PR may conflict or be redundant",
+      "Assignment requirement is unmet"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test reproducing tool_error_001: a tool raising RuntimeError during /run_sse, asserting the expected functionResponse/error Event behavior",
+      "Assert only one SSE frame is emitted for the failing turn and that it is a valid ADK Event",
+      "Run targeted unit tests for the tools caller and api_server SSE paths"
+    ],
+    "unknowns": [
+      "Whether maintainers consider run-abort on unhandled tool exceptions intentional",
+      "Whether the reporter's internal CL will cover this, making external work redundant",
+      "No public reproduction or probe confirming the divergence"
+    ],
+    "why": "Issue is a cross-SDK conformance question, not a confirmed bug: it explicitly asks whether aborting on unhandled tool exceptions is intentional, and the reporter states they will take over creating the CL internally. No reproduction evidence, no probe, and assignment is required (policy needs_assignment). The root cause is described via code anchors but the desired behavior is unresolved, so code work is not yet actionable."
   },
   "eea984ef642fbc981c9470ae976734cbf336272c4d2945c4177ded3c295cf813": {
     "confidence": 0.82,
