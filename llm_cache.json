@@ -87040,6 +87040,44 @@
     ],
     "why": "Issue describes a plausible substring-based auth classifier (Smt/QXu) and a resume-time refresh failure, but the reporter explicitly states they could not prove the refresh failure raised the banner, and the banner text is not found in the extension. Root cause is therefore not established, and the pre-task evidence flags no_code_surface and reproduction_or_validation_missing. An open PR #14122 already targets the same token-refresh-on-network-failure behavior, so duplicate coverage is unresolved."
   },
+  "8aaf9f5863d2504cb2dd3d547f1239db15e4179b913088548a475199eb23c358": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/packages/.../mcp tool constructors: remove session: ClientSession | None and _SessionMCPConnection routing",
+      "Remove MCPTool.session property/setter and low-level session init/reconnect/cleanup branches",
+      "Remove MCPTaskOptions, task_options parameter, and related lazy exports/__all__/__init__.pyi entries",
+      "Remove MCPWebsocketTool class, exports, telemetry attributes, and deprecation tests",
+      "Remove MCPTool.sampling_callback, SamplingApprovalCallback, and sampling constructor options/counters",
+      "Update MCPSkillsSource/MCPSkill, Declarative, Foundry Toolbox, security helpers, and samples to use high-level mcp.Client",
+      "Update docs, ADRs, migration notes, and public API snapshots"
+    ],
+    "risks": [
+      "Large multi-package breaking change may conflict with in-flight PR #9237 touching MCP samples",
+      "Removing compatibility surfaces could accidentally drop supported legacy wire/peer behavior if not carefully scoped",
+      "Repository policy status is ai_disclosure_conflict, so public automated submission is blocked; work must remain private or follow disclosure requirements"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add/adjust regression tests asserting removed symbols are absent from runtime exports and type stubs",
+      "Run repository-wide code search for MCPTaskOptions, task_options, MCPWebsocketTool, SamplingApprovalCallback, sampling_callback, and MCPTool.session",
+      "Run full Python formatting, linting, typing, package tests, sample checks, and public-API validation",
+      "Confirm legacy MCP peer negotiation and high-level Client coverage still pass"
+    ],
+    "unknowns": [
+      "Whether PR #9237 will merge first and absorb part of the sample/naming cleanup",
+      "Exact final public API shape maintainers want for MCPSkills connection provider"
+    ],
+    "why": "Issue #9452 is a concrete, maintainer-authored vNext breaking-change checklist for removing deprecated MCP compatibility surfaces (caller-supplied ClientSession, MCPTaskOptions, MCPWebsocketTool, sampling_callback, etc.) in microsoft/agent-framework. It names exact symbols, files, and validation steps, and the only overlapping PR (#9237) is a documentation/lifecycle PR with no direct code overlap, so the work is actionable and not covered."
+  },
   "8ab1baa9834e96953545c832dfbee21851bdcc417148d48de08294e5406359bc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -121353,6 +121391,41 @@
     ],
     "why": "Issue provides a clear regression range, minimal repro, and a detailed root-cause hypothesis (gp-relative relaxation due to unconditional __global_pointer$ definition) with code-level evidence. The fix is actionable: initialize gp in active_erisc-crt0.cc. The issue is a genuine LLM-algorithm-related bug (distributed training fabric handshake) with a concrete validation path via the provided repro script."
   },
+  "c35bd1d98f484188ec7bb51efde6c7090382ea93c04297547462bbe80edbe650": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go request construction for reasoning+tool combinations",
+      "Agent node tool-calling path validation/error surfacing for unsupported model/endpoint/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API support requires request construction, response parsing, streaming, and tool-call continuation changes, not just a URL swap",
+      "Exact effective reasoning effort is unconfirmed, so the minimal fix may be mis-scoped",
+      "Avoid silently disabling user-requested reasoning"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test reproducing gpt-6-luna + tools + reasoning via Chat Completions returning HTTP 400",
+      "Add regression test for tools with explicit reasoning_effort:'none' through Chat Completions",
+      "Add test for Responses API path with tools and reasoning enabled",
+      "Add validation test asserting actionable error for unsupported combinations"
+    ],
+    "unknowns": [
+      "Exact effective reasoning_effort value used in the failing run",
+      "Whether reasoning_effort:'none' actually succeeds in this deployment",
+      "Whether maintainers prefer Responses API migration or validation-only guard"
+    ],
+    "why": "Issue provides a concrete HTTP 400 reproduction with expected/actual pair and names the Go adapter (internal/entity/models/openai.go) that builds Chat Completions requests. Root cause is plausibly endpoint/reasoning incompatibility, but the issue itself notes the exact effective reasoning effort was not captured and the reasoning_effort:'none' workaround is unconfirmed, so the precise fix path (Responses API adaptation vs. validation/guard) is not fully pinned down."
+  },
   "c3615545397d7030d00234d19dfbe432992f6ee9db7917b720965fbb594f8085": {
     "confidence": 0.7,
     "contradictions": [],
@@ -131995,6 +132068,41 @@
       "Whether open PR #11708 already addresses this exact behavior"
     ],
     "why": "Issue provides a concrete reproduction (warm prefix cache, repeat identical streaming request with include_usage+continuous_usage_stats), an expected-vs-actual table, and a specific code anchor (vLLM handlers.py completion_usage attached only inside the finish_reason branch). The reporter explicitly flags that intermediate vLLM RequestOutput timing is unverified, which is normal implementation uncertainty rather than a blocker, and a concrete validation path exists (assert cached_tokens present in first generated-token chunk and preserved thereafter)."
+  },
+  "d3e0bfa94d4c392279ab22cccce84cd8e2c4385d4b322ca9b8245fbeaf899a62": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment marks PR #16542 technical_complete=true but root_cause_coverage=false, while the issue supplies a clear root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "WorkerFactory.create() forwards snapshot_engine to _create_embedding_worker()",
+      "_create_embedding_worker() reuses the restored engine instead of calling setup_vllm_engine() when snapshot_engine is provided",
+      "regression test covering embedding worker restore path"
+    ],
+    "risks": [
+      "PR #16542 may already cover the same fix; compare before implementing",
+      "Avoid broad API behavior changes outside the embedding worker dispatch path",
+      "Snapshot/CUDA restore hardware may be required for full end-to-end validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with snapshot-enabled vLLM embedding worker on H100: capture checkpoint, restore, assert no second setup_vllm_engine() call and no GPU-memory ValueError",
+      "Add unit test that WorkerFactory.create() passes snapshot_engine through to _create_embedding_worker()",
+      "Verify restored embeddings match cold-start embeddings (4096-dimensional) across two restores"
+    ],
+    "unknowns": [
+      "Whether PR #16542 will be merged before a competing fix lands",
+      "Whether maintainers require assignment or design confirmation for this path"
+    ],
+    "why": "Issue #16541 gives a concrete root cause: WorkerFactory.create() does not forward snapshot_engine to _create_embedding_worker(), which unconditionally calls setup_vllm_engine(), causing a second engine init and GPU OOM on restore. Reproduction steps, expected/actual behavior, traceback, and a validated fix path are supplied. Open PR #16542 is a weak competitor with no root-cause coverage, so a better-tested fix remains actionable."
   },
   "d3ebebfb9f01521459b5a3e0b68c4cfcb53dbd12a5658a78f7a79b581870e23b": {
     "confidence": 0.6,
