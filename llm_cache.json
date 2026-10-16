@@ -60437,6 +60437,41 @@
     ],
     "why": "The issue provides a detailed, reproducible bug with a clear root cause hypothesis (TurboQuant KV cache interaction with MTP speculative decoding), concrete reproduction steps, and a validation path via comparing fp8 vs turboquant KV dtypes. The algorithm evidence confirms involvement of model architecture, quantization numerics, and kernel algorithms, satisfying the llm_algorithm track requirements."
   },
+  "615abdb89029e47fe729c5c1fa48b8ae0b79d4c9558b495dd40e5ac824b197cd": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims no matching report, but open PR #23287 has score 70 semantic overlap on the same harness-claude-code paths",
+      "Pre-task evidence marks duplicate status as semantic_overlap_requires_review while the issue body asserts related work was checked and found non-matching"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/harness-claude-code/src/claude-code-harness.ts: expose optional typed onDebug and forward to both SandboxChannel constructors",
+      "packages/harness-claude-code/src/claude-code-harness.test.ts: add debugHooks capture and forwarding regression test"
+    ],
+    "risks": [
+      "PR #23287 or #23469 may already cover the same adapter observability surface, making this a duplicate",
+      "The original production channel-close trigger was never captured, so the fix addresses observability rather than the root disconnect cause",
+      "Debug cause values may leak connection details if logged indiscriminately"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add the proposed debugHooks array and forwarding test to claude-code-harness.test.ts; confirm it fails on unmodified main with [undefined, undefined] vs [onDebug, onDebug]",
+      "Run the existing 'uses a caller-minted bridge token and reuses it when attaching' control alongside the new test",
+      "Compare against PR #23287 and PR #23469 to confirm neither already implements the onDebug forwarding"
+    ],
+    "unknowns": [
+      "Whether PR #23287 or #23469 already implements or supersedes the proposed onDebug forwarding",
+      "Whether the base SHA change invalidates the issue's line references",
+      "Whether maintainers consider this observability gap in scope versus the existing PRs"
+    ],
+    "why": "The issue is a well-argued observability/API gap in the Claude Code harness adapter, but the supplied evidence shows unresolved duplicate coverage: PR #23287 (score 70, maintainer-owned, approved) and PR #23469 both touch the same harness-claude-code paths, and the duplicate status is 'semantic_overlap_requires_review'. The issue itself admits the original production channel-close cause was never captured, and the pre-task evidence flags base_sha_changed, duplicate_changed, and reproduction_or_validation_missing. These are materially blocking unknowns for deciding whether new code work is actionable."
+  },
   "615cb814a1e7a188854b34263a5802040c3808520065673c46ed52394f2937d0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -91420,6 +91455,33 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a parser default mismatch with template and docs, with a minimal reproduction. However, an open PR #50964 directly targets the same code path and semantic overlap, and the deterministic gate is HUMAN_REVIEW. Need maintainer comparison of PR vs issue before starting new work."
+  },
+  "90bddc74aa214b41e9a3983d1998c4eba1c1def5ecb24f6564b0cca78a88388b": {
+    "confidence": 0.82,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and mechanism_count=4 claim algorithm depth, but actionability_evidence.root_cause_signal=false and preTaskEvidence.reproductionPathPlan=false indicate no defect or reproduction to act on",
+      "algorithm_evidence.experiment_signal=true refers to the reporter's throughput measurements, not a controlled reference-vs-implementation validation of a code change"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Treating a hardware/config field report as an actionable code change would produce speculative edits to server_args/serving plumbing with no defect to fix",
+      "The thread's real content (measurement protocol corrections) is documentation/benchmark methodology, not a code path"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [
+      "Whether maintainers intend to convert any part of this report into a tracked code issue (e.g. SM120 prefill CUDA-graph crash, ep_size<=tp_size divide-by-zero) rather than leaving it as a field report"
+    ],
+    "why": "The candidate is a field report / operational configuration write-up for DeepSeek-V4.1-Flash on SM120 hardware, not a code contribution. The supplied evidence shows no root-cause signal (root_cause_signal=false), no reproduction path plan (reproductionPathPlan=false), and the 'code anchors' are generic CLI/serving argument files rather than a defect location. The issue body itself is a production config + throughput report with explicit 'Not established' caveats, and the comment thread is measurement methodology discussion (KV pool sizing, cached_tokens flag semantics, engine labelling) rather than a fixable code defect. Under track=llm_algorithm this is operational/configuration reporting, not a training objective, model mechanism, distributed-training invariant, quantization method, kernel algorithm, or evaluation methodology with a reference-vs-implementation test."
   },
   "90c8028ea8c028d4a6932a109e5496513ab1e02c4cb58b0443f1a5cc8e5ddeed": {
     "confidence": 0.82,
