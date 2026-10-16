@@ -24404,6 +24404,35 @@
     ],
     "why": "The issue reports a JSON parsing error in the Memory MCP server, and a bot comment claims a fix was made by removing console.error statements. However, the fix is not yet merged, and the root cause is not fully confirmed by maintainers. The issue is actionable but requires maintainer review and merge."
   },
+  "28f93a1e93cb46dc939ffd0353c684515d492cb57dcacb8f7d1f31653a31ae3d": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate categorized as agent_ai_infra PR_COMPETITION_OPPORTUNITY while the actual change is a frontend theme-token styling fix"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/components/features/analytics/telemetry-consent-banner.tsx: replace raw text-neutral-400 with a semantic --oh-* text token readable on --oh-color-base-secondary"
+    ],
+    "risks": [
+      "Duplicate/overlapping implementation with open maintainer PR #18508",
+      "Low technical value: cosmetic token swap, no algorithmic or runtime behavior change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add/extend __tests__/themes/color-themes.test.tsx to assert >=4.5:1 contrast for the scope line token against the modal surface in all five themes",
+      "Run existing telemetry-consent-banner.test.tsx and npm run lint / npm run build"
+    ],
+    "unknowns": [
+      "Whether maintainer PR #18508 will be merged as-is, making any competing change redundant"
+    ],
+    "why": "Issue is a single CSS class swap (text-neutral-400 -> semantic theme token) in telemetry-consent-banner.tsx; root cause and validation path are clear, but this is presentation/styling work, not an agent/inference/RAG algorithm contribution. An open maintainer-owned PR #18508 already covers the same file with approval and passing CI, leaving only a missing regression test as a competition gap."
+  },
   "28f9cfb3f978b1ffb0926613f82ac59f5fcf4b8957d023e0f1c7620b034da945": {
     "confidence": 0.8,
     "contradictions": [
@@ -72859,6 +72888,39 @@
       "Maintainer preference on where to add the /watsonx model_id fallback"
     ],
     "why": "The issue gives a clear root cause (Watsonx pass-through body key model_id is never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied open-PR assessment shows PR #41470 already directly covers the same code path (auth_utils.py) with the same distinctive terms (model_id, virtual_key) and is explicitly linked to this issue. Duplicate/coverage status is human_review_required, which is a materially blocking unknown for whether independent code work is actionable."
+  },
+  "745e98756867b5410a4ec34178a6f5d2d7e2914964988902751314c1886add38": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims tools/list rejects the per-request header with a 500 on v1.105.0, while the follow-up comment reports the same gate accepts the per-request credential on main and v1.105.1 and cannot reproduce the failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py (prepare_mcp_client / validate_static_credential gate)",
+      "litellm/proxy/_experimental/mcp_server/operations.py (tools/list header threading)"
+    ],
+    "risks": [
+      "Fixing an already-working path could introduce a redundant or behavior-changing patch",
+      "The reported failure may stem from a different entry surface or server shape than the traced code path"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the exact curl from the issue against a BYOK bearer_token server with no stored credential on current main and v1.105.1, capturing whether prepare_mcp_client raises the misconfigured 500",
+      "Add a regression test asserting tools/list returns the upstream tool list when only x-mcp-{alias}-authorization is supplied"
+    ],
+    "unknowns": [
+      "Which exact surface rejects (direct /{server}/mcp, /mcp virtual tool-search, or REST/dashboard preview)",
+      "The server's config JSON (spec_path vs live transport, auth_type, upstream_token_header, static_headers)",
+      "Confirmed self-hosted version that still reproduces the 500"
+    ],
+    "why": "The issue provides a detailed root-cause trace and reproduction steps, but the only supplied comment thread directly contradicts the reported failure: the same commenter reports that on current main and v1.105.1 the discovery gate already honors the per-request x-mcp-{alias}-authorization header and cannot reproduce the 500. The reporter has not yet answered the follow-up questions (surface, server config, exact version), so it is unresolved whether a real code gap exists on main."
   },
   "7466b9bac8ec7a554b588900db290cf4219a879553a0452096f45e914163f986": {
     "confidence": 0.55,
@@ -125249,6 +125311,38 @@
     ],
     "why": "Issue describes a model-card ownership defect in ThunderAgent proxy registration, but the proposed direction is architectural plumbing (remove public model registration, route via pluggable router) rather than an LLM algorithm mechanism. The algorithm_evidence mechanisms (model_architecture, numerics_quantization) are keyword matches (normalization, overflow) from token-budget prose, not a training objective, quantization method, kernel, or evaluation methodology. Additionally, open PR #14845 already directly covers the issue with tests and CI, making this a covered opportunity."
   },
+  "ca3655612d71bd4df2b2871016e08aad814b533f84961ab5b45a4986d32e48a6": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/models/api/openaiembeddings/client.go: AcceptsImages() should fall back to model spec.input containing image",
+      "internal/models/api/image_input.go: document/derive default image wire key when ImageField is empty but spec declares image",
+      "internal/models/runtime/resolve.go: ensure spec.input is available to the embeddings client capability check",
+      "providers/litellm.go: verify no conflicting ImageField default is needed"
+    ],
+    "risks": [
+      "Choosing the default wire key for non-Jina providers could break providers with non-standard image schemas",
+      "Changing AcceptsImages() may alter behavior for providers that intentionally reject images",
+      "Need to confirm whether spec.input is already plumbed into the client config or requires additional wiring"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test asserting AcceptsImages() is true when spec.input contains image and ImageField is empty",
+      "Regression test that a non-Jina OpenAI-compatible provider with spec.input [text,image] produces image_vector chunks",
+      "Run targeted go test for internal/models/api/openaiembeddings and internal/models/runtime packages"
+    ],
+    "unknowns": [
+      "Whether spec.input is already available in the embeddings client config or must be threaded through resolve.go"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: AcceptsImages() in internal/models/api/openaiembeddings/client.go only checks cfg.Settings.ImageField, ignoring spec.input, and ImageField has no default outside Jina and no UI path. Reproduction is explicit (spec.input [text,image], image_vector_enabled true, 8 parsed images, image_vector count 0 across two parser engines), and the fix is a bounded capability-detection change with a clear fallback key."
+  },
   "ca40a15a26e159bf13e373dd1bbb8b0d6dded7998c4cb3ea3644db164d20d530": {
     "confidence": 0.7,
     "contradictions": [
@@ -158941,6 +159035,36 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports multiple structured-output backend failures with Kimi-K2.6+EAGLE3, but the core bug (xgrammar bitmask desync under speculative decoding) lacks a concrete root-cause analysis or proposed fix. The outlines thread-leak is a separate actionable bug, but the issue is a bug report without implementation details. No maintainer confirmation or design direction exists."
+  },
+  "ff7dd1d29ae77ad3253ca433c92904f888ef893504ddea5b0d9dcbe35818dfd9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deploy/operator/internal/dynamo/graph.go: handle replicas:0 on the create path for Grove-backed components (defer PCS creation or pass through zero once Grove supports it)",
+      "Possibly DGD admission validation to reject replicas:0 with a clear error if zero-on-create is not supported"
+    ],
+    "risks": [
+      "Two valid fix directions (support zero vs. reject at admission) may require maintainer design preference",
+      "Grove GREP-0677 semantics for zero replicas in PCS template are still evolving",
+      "Changing admission behavior could affect existing scale-down workflows"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Apply the provided DGD YAML with replicas:0 on a Grove-enabled namespace and confirm the current admission failure",
+      "After fix, verify the DGD either creates successfully at zero or is rejected at DGD admission with a clear error",
+      "Regression test for scale-down-to-zero path (#11837) to ensure it still works"
+    ],
+    "unknowns": [
+      "Which of the two expected-behavior options maintainers prefer (support zero vs. reject at admission)"
+    ],
+    "why": "Issue provides a concrete reproduction (DGD with replicas:0 on Grove-backed multinode component), exact admission webhook error, and a specific code anchor in deploy/operator/internal/dynamo/graph.go where component.Replicas is passed unchecked and minAvailable is hardcoded to 1. This is an actionable operator bug with a clear validation path (apply the YAML, observe webhook rejection, then verify fix)."
   },
   "ff96a113bae9bfad3d62142f9a88b24fee8a4eb645a50a6ea08b836f733534c2": {
     "confidence": 0.9,
