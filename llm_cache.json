@@ -30254,6 +30254,40 @@
     ],
     "why": "The issue presents a clear, well-evidenced root cause: quack-kernels 0.6.5 removed quack.activation.sub_packed_f32x2, while the vendored MSA revision 087c161 still calls it, causing an AttributeError during MSA sparse-attention kernel compilation. However, the issue itself states the fix is already merged in MSA #12 and proposed in vLLM #56545, and the supplied duplicate assessment flags PR #55838 with semantic overlap requiring review. This unresolved coverage question materially determines whether new code work is actionable."
   },
+  "325f0ff87bb8aaabe736e002a8f625da589752ab4c5461d07e2b0d0ad7845ae3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims resolution picked a non-working executable from the start, but the debug capture shows a fresh service resolves pwsh.EXE correctly and works",
+      "Reporter initially attributed failure to a cached path that stopped existing, then corrected that nothing on the machine changed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "shell resolution/caching in packages/core/src/shell/select.ts",
+      "error surfacing in the shell tool spawn path"
+    ],
+    "risks": [
+      "Fixing an unconfirmed cache-poisoning trigger may not address the actual failure",
+      "Windows-specific behavior cannot be validated in the Linux test environment"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture OPENCODE_LOG_LEVEL=DEBUG output of the poisoned service state to identify the cached resolved shell path",
+      "Add a regression test that a cached shell path which no longer exists triggers re-resolution and a warning naming the resolved path"
+    ],
+    "unknowns": [
+      "The exact cached shell path in the poisoned state",
+      "The trigger that invalidates the cached resolution during the service lifetime",
+      "Whether the failure is reproducible at all on a fresh service"
+    ],
+    "why": "The issue reports a Windows-only shell spawn failure, but the reporter's own follow-up debug capture shows a fresh service resolves pwsh correctly and works; the failure is bound to an unknown cache-poisoning trigger that has not been reproduced or captured. No confirmed root cause, no failing reproduction, and the exact resolved value in the broken state is unconfirmed."
+  },
   "325f131f3c84adc2c54f96e438acacd899b2e085209bcede9292b03c3d2e0a4a": {
     "confidence": 0.6,
     "contradictions": [
@@ -96068,6 +96102,38 @@
     "unknowns": [],
     "why": "Issue documents a concrete, reproducible UI state inconsistency: two independent archive notions (sandbox_status-derived indicator vs browser-local archived store) disagree, with named code anchors and a triage-confirmed interim direction (treat MISSING/non-resumable runtime as archived everywhere, unify behind a single predicate, keep ERROR distinct). Acceptance criteria and a regression-test requirement are explicit, giving a clear reference-vs-implementation validation path."
   },
+  "98cd7612a9dd318703ecda0a6e8e7263ed53b9a5f9809faae0eacd4321874b63": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment marks PR #16542 technical_complete=true but root_cause_coverage=false, while preTaskEvidence duplicate status is weak_pr_competition_possible"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "WorkerFactory.create() forwarding snapshot_engine to _create_embedding_worker()",
+      "embedding worker startup reusing the restored engine instead of calling setup_vllm_engine()"
+    ],
+    "risks": [
+      "Open PR #16542 may already cover the same fix; must compare before implementing",
+      "Pre-review flags base_sha_changed, duplicate_changed, no_code_surface",
+      "Avoid broadening API behavior beyond forwarding the snapshot engine"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with snapshot-enabled vLLM embedding worker on Qwen/Qwen3-Embedding-8B, capture checkpoint, restore, and assert no second engine init and no GPU-memory ValueError",
+      "Regression test asserting restored embeddings match cold-start embeddings (4096-dim) across two independent restores"
+    ],
+    "unknowns": [
+      "Whether PR #16542 already implements the exact forwarding fix described in the issue"
+    ],
+    "why": "Issue provides a concrete root cause (WorkerFactory.create() not forwarding snapshot_engine to _create_embedding_worker(), which unconditionally calls setup_vllm_engine()), an ordered reproduction with expected/actual behavior, a code anchor (`snapshot_engine`), and a validated fix path. Track is agent_ai_infra, so the algorithm-track restriction does not apply. The open PR #16542 is a weak competitor with no root-cause coverage and no direct code overlap, leaving room for a better-evidenced fix."
+  },
   "98d126a953a23b43254b8c3b7b47d9fe86accd79ff330a7674a9ecafbc5ac192": {
     "confidence": 0.8,
     "contradictions": [
@@ -117660,6 +117726,40 @@
     ],
     "why": "Issue #5035 is a follow-up tracking issue whose main items (1 and 2) are already fixed on main per the maintainer comment, and the remaining work (five routing-step settings writers plus legacy agent migration) is already covered by open PR #5305 ('keep JSONC comments through every routing-step settings writer', 8 files, 3 test files, CI green, references the issue). The candidate's own open_pr_assessment rates #5305 as technically complete with no material competition gaps, so a new contribution would duplicate existing coverage rather than add root-cause, test, or key-path value."
   },
+  "bd06783d03cacf51721e4484427e35082724f941efef3b7104d9042833a8383c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no open PR touches credential handling, but open PR #5107 has the same title and overlapping paths in vertex.go and vertex_auth_key_test.go"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-proxy/provider/vertex.go: replace unchecked parsedKey.(*rsa.PrivateKey) with comma-ok assertion returning an error",
+      "plugins/wasm-go/extensions/ai-proxy/provider/vertex_auth_key_test.go: add regression test feeding an ECDSA P-256 PKCS#8 key through createJWT"
+    ],
+    "risks": [
+      "PR #5107 already implements the same fix on the same files, so new work may be redundant",
+      "Repository requires assignment before implementation, which is not satisfied",
+      "Error message wording and HTTP 500 vs other status may need maintainer design confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add TestCreateJWTNonRSAKeyDoesNotPanic generating an in-process ECDSA P-256 PKCS#8 key and asserting createJWT returns an error and no token",
+      "Confirm the test panics on the pre-fix revision and passes after the fix",
+      "Run the full ./provider/ suite to confirm RSA keys still produce a JWT unchanged"
+    ],
+    "unknowns": [
+      "Whether PR #5107 fully covers the root cause or will be merged, making this issue redundant",
+      "Whether a maintainer will assign the issue to satisfy the needs_assignment policy"
+    ],
+    "why": "The issue provides a clear root cause (unchecked type assertion at vertex.go:1538) and a concrete validation path, but two supplied facts materially block actionability: the repository policy requires assignment (needs_assignment, assignmentRequired=true, no assignees) and an open PR #5107 with the same title and overlapping paths already implements the identical fix, so duplicate coverage is unresolved."
+  },
   "bd09a3b5f27947b1432cc3777c4a993b6abd6d342fd2291fd898e6b030992012": {
     "confidence": 0.8,
     "contradictions": [
@@ -123310,6 +123410,41 @@
     ],
     "wait_reason": null,
     "why": "Issue clearly identifies a user-visible bug in /api/v1/retrieval metadata filtering, with a concrete root cause (in-memory vs push-down filter path) and a minimal repro. Existing PR #18219 overlaps semantically but does not reference this issue and may not fully address the reported behavior; a new PR that explicitly fixes the retrieval path with a regression test would be materially better."
+  },
+  "c65bcc685d7e3eca8a292490302eda2f704231db4b5ecf711cfc8d6c3f222697": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter's workaround succeeded but explicitly states it is not a demonstrated upstream fix and does not isolate size/count vs. individual schema"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Connector/Composio tool-definition loading path (e.g., where all toolkit schemas are injected per session)",
+      "Possibly a connector enable/disable or selective tool-discovery surface"
+    ],
+    "risks": [
+      "Root cause may be provider-side input-size limit rather than a Cline code defect",
+      "Fix could be a product/UX decision (disable switch) rather than a code bug fix",
+      "Large tool payloads may be intentional behavior since 0.0.34"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with 14 beta connectors installed and a short prompt; capture before-model tool-definition count and JSON size",
+      "After excluding the 1,666 connector tool names via disabledTools, confirm the short prompt succeeds and capture the new tool count",
+      "Bisect by excluding subsets of connector tools to distinguish total size/count from a single rejected schema"
+    ],
+    "unknowns": [
+      "Which code path injects all connector tool definitions per session",
+      "Whether the failure is caused by total payload size or a specific invalid schema",
+      "Whether maintainers consider this a bug or intended behavior"
+    ],
+    "why": "Issue reports a real symptom (1,705 tool definitions / ~4M chars causing invalid-input failures) with a verified workaround via disabledTools, but the reporter explicitly states it does not distinguish excessive size/count from an individual rejected schema, and no code anchor or root-cause location is established. Track is agent_ai_infra, not llm_algorithm, so no algorithm-specific evidence is required, but the missing root cause and missing code surface make the concrete code change non-actionable."
   },
   "c65f94eef7ff1fabeddbf992a0ac74f1026efac3e7bb38e29115eadbf07fb76c": {
     "confidence": 0.6,
@@ -129131,6 +129266,42 @@
     ],
     "why": "Issue pinpoints the missing respawn path in _watch_backend_health_sweeps/_demote with concrete code anchors, ordered reproduction steps, and log evidence; expected behavior (bounded-backoff respawn, no restart on intentional stop) is well specified and testable."
   },
+  "cee1f7794c9b923e16d178fe1c60567deef7a8069ab33065268c189b32c90cd4": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while the issue body supplies a concrete traceback and code anchor",
+      "open_pr_assessment lists PR #37932 as semantic_overlap_requires_review with overlapping paths but direct_code_overlap=false and references_issue=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler_components/weight_updater.py",
+      "python/sglang/srt/model_executor/model_runner_components/weight_updater.py"
+    ],
+    "risks": [
+      "Open maintainer-owned PR #37932 may already fix the same ordering/root cause, making a new PR duplicative",
+      "Potential duplicate issue #44745 shares stack/failure signatures and may cover the same defect",
+      "Fixing the assert without addressing the underlying idle-state race could mask the bug"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py against a server with --enable-memory-saver and confirm the scheduler AssertionError at weight_updater.py:339",
+      "Add a regression test that pauses in retract mode while a fresh json_schema grammar is compiling, then calls release_memory_occupation and asserts the scheduler stays alive"
+    ],
+    "unknowns": [
+      "Whether PR #37932 actually fixes this specific grammar-compile/retract race or only adjacent memory-release ordering",
+      "Whether issue #44745 is the same defect or a distinct abort-mode variant",
+      "Whether maintainers consider this issue already assigned or covered before new code work"
+    ],
+    "why": "Issue provides a strong reproduction (traceback, ordered steps, executable repro) and a plausible code anchor (weight_updater.py release_memory_occupation assert), but the supplied evidence explicitly reports root_cause_signal=false and the duplicate assessment flags an open maintainer-owned PR #37932 with overlapping paths/semantics and no direct issue link, plus a potential duplicate issue #44745. Whether the root cause is already covered by #37932 materially determines whether new code work is actionable."
+  },
   "cf1b6bbab27cb94a1283c3a40b0241053000476267768ea3766820b4543d32b6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -131864,6 +132035,44 @@
       "Exact root cause (sampling vs logits vs model code) not yet identified; maintainer preference for fix approach unknown."
     ],
     "why": "Issue provides a clear regression: 0.5.17 breaks generation for Qwen3.5-arch model, while 0.5.6.dev works. Detailed repro steps and isolation (with/without DFLASH, parser, tools) confirm a generation-level bug independent of speculative decoding. Code anchors point to qwen3 model files. Actionable fix path: add failing test and debug logits/sampling path."
+  },
+  "d378d605ef2956266c69ca2cd4532422320b89ecb773045c5237a9915868a775": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body offers a detailed three-step cause hypothesis",
+      "open_pr_assessment lists three semantically overlapping open PRs but none references this issue, so coverage is uncertain"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/tokenizer_manager.py (pause_generation abort path / abort_request)",
+      "python/sglang/srt/managers/scheduler.py (pause_generation mode handling, _engine_paused)",
+      "python/sglang/srt/managers/scheduler_components/weight_updater.py (is_fully_idle assert / release ordering)"
+    ],
+    "risks": [
+      "Fixing the assert alone could mask a real race where a disconnected request is still in running_batch",
+      "Changing pause_generation abort semantics may alter API behavior beyond the bug",
+      "Overlap with open PRs #44129/#37932/#42380 could make a new fix redundant or conflicting"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py against a server with --enable-memory-saver and confirm the scheduler assert reproduces at 0-1 ms delay",
+      "Add a regression test that disconnects a streamed /generate, immediately calls pause_generation(mode=\"abort\") then release_memory_occupation, and asserts the server stays alive",
+      "Verify the fix does not regress the non-disconnect and no-in-flight cases (0/50 and 0/10 in the issue table)"
+    ],
+    "unknowns": [
+      "Whether any of PRs #44129/#37932/#42380 already fixes this exact abort-mode disconnect race",
+      "Whether issue #44744 is the same defect or a distinct retract-mode variant",
+      "Whether maintainers have a preferred design for pause_generation abort vs scheduler-side pause"
+    ],
+    "why": "Issue provides a strong reproduction (stdlib repro.py, deterministic 3/3 failure, timing window table) and a plausible three-step root-cause hypothesis around pause_generation(mode=\"abort\") not reaching the scheduler and release_memory_occupation's is_fully_idle assert. However, the supplied evidence does not establish that the root cause is confirmed, and there is unresolved overlap: three open PRs (#44129, #37932, #42380) touch the same scheduler/pause/release paths, and a near-duplicate issue #44744 shares stack/failure signatures. Whether existing work already covers this exact abort-mode disconnect race is a materially blocking unknown for deciding if new code work is actionable."
   },
   "d37aef2adcfe012c5d376e9e12959ccb78846572dfc0c63c5457cf905342dbf1": {
     "confidence": 0.55,
@@ -146307,6 +146516,27 @@
     ],
     "why": "The issue documents repeatable golden-reference mismatches in Muon checkpoint-resume tests, but explicitly states the root cause is not established and no affected gradient coordinates are identified. The evidence is aggregate loss/zero-count drift across hardware variants, not a concrete training-objective, kernel, or numerical mechanism with a reference-vs-implementation test."
   },
+  "e962c51ea711b66595d5b564dc9d3027377b1112c6e12138a065b44b48f6c597": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Duplicates existing reports #49692/#49139/#43199 and closed PR #49689",
+      "Fix already present in v2 mistral-chat.ts and upstream @ai-sdk/mistral >=4.0.30"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [],
+    "why": "The issue is a well-diagnosed v1 bug, but the maintainer bot response establishes that v1 only receives critical fixes, a working workaround exists, and the same problem was already reported multiple times (#49692, #49139, #43199) with a closed bump PR (#49689). v2 already treats tool-call id as optional and collects streamed tool calls by index, so the proposed fix is effectively covered upstream. This is a low-value, already-covered opportunity."
+  },
   "e966d4dc53e15da9f05b1d77e6eedc0b52a630de928200ebea73a5cc9b52aaba": {
     "confidence": 0.55,
     "contradictions": [
@@ -158884,6 +159114,43 @@
     ],
     "why": "The issue identifies a concrete LLM algorithm mechanism: align-mode prefix caching in hybrid Mamba/attention models fails under load due to budget fragmentation, with a clear root cause in the chunk-carving logic. The discussion provides a reproducible pattern (quiet vs busy load) and a proposed fix direction (boundary-aware budget carving). This is a valuable, actionable contribution with a clear validation path."
   },
+  "fc8042cce0e2f93ae6e4c01464a4c3188ae4ed6f4682f092c17f9d1b51d21a3d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Commenter reports per-request header honored at discovery on main and v1.105.1, while reporter states BYOK is_byok servers still reject it on v1.105.0 and v1.106.0-rc.4.",
+      "Open PR assessment marks semantic overlap requiring review but no PR directly references the issue."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py (prepare_mcp_client/validate_static_credential gate)",
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py (_resolve_byok_mcp_auth_header / _get_tools_from_server)",
+      "litellm/proxy/_experimental/mcp_server/operations.py (per-request header threading)"
+    ],
+    "risks": [
+      "Contradictory empirical evidence may mean the bug is already fixed or only reproduces on a specific surface/version, making a new fix redundant.",
+      "Open PRs #46293 and #44245 overlap on tools_list/x_mcp paths and may already cover the root cause.",
+      "Changing the discovery credential gate could alter auth behavior for non-BYOK static-auth servers."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on v1.106.0-rc.4 with a BYOK server (is_byok: true, auth_type bearer_token, no stored credential) and a per-request x-mcp-{alias}-authorization header; assert tools/list returns upstream tools rather than empty list.",
+      "Add regression test covering both direct /{server}/mcp and aggregate /mcp virtual tool-search paths with per-request header and no stored credential.",
+      "Verify tools/call succeeds after discovery using the same per-request token."
+    ],
+    "unknowns": [
+      "Whether the bug still reproduces on current main after #44232 and related changes.",
+      "Whether PR #46293 or #44245 already fixes the BYOK discovery gate.",
+      "Exact surface/version where the 500 gate failure is reproducible."
+    ],
+    "why": "Issue reports a concrete BYOK/static-auth MCP tools/list credential-gate bug with repro steps and code anchors, but the supplied evidence contains a direct contradiction: a commenter's empirical matrix on main and v1.105.1 shows the per-request header is honored at discovery, while the reporter claims it still fails on v1.106.0-rc.4 for is_byok servers. The open PR assessment also flags semantic overlap with PR #46293 and #44245 (tools_list/x_mcp paths) requiring manual comparison, and no PR directly references this issue. These unresolved contradictions and duplicate-coverage uncertainty materially affect whether a new code contribution is actionable."
+  },
   "fc80669976f3106de3801abb0100beab48a741a6abf2e52079d4e83bd217c5a7": {
     "confidence": 0.85,
     "contradictions": [],
@@ -160485,6 +160752,42 @@
       "Resolution of the repository AI disclosure policy conflict"
     ],
     "why": "The issue is a concrete, well-evidenced CUTLASS C3x stride bug with a reproduction and a proposed fix, but the supplied evidence shows the remaining implementation coverage is already claimed by open PRs (#55537, #56248, #56480, #56659) covering all six callers, and the issue itself states it stays open until those merge. The duplicate/coverage status is 'semantic_overlap_requires_review' and no PR directly references the issue, so whether any code work remains actionable is unresolved."
+  },
+  "ff3d018f593aad67435ec8323718da7df50cdbee3f17dd6c23fe6562569e5430": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal=false while the issue body states a specific root cause and code location"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/acp/provider.rs: route out-of-turn Text/Thought/tool-call updates instead of warning/dropping",
+      "crates/goose-provider-types/src/base.rs: new Provider hook alongside set_session_title_callback",
+      "crates/goose/src/acp/server.rs: notifier alongside spawn_session_name_update_notifier emitting agent_message_chunk",
+      "Agent::update_provider: persist late assistant message and emit on session update channel"
+    ],
+    "risks": [
+      "New Provider trait hook is a public API surface change across provider implementations",
+      "Late-turn persistence could interleave incorrectly with an in-flight prompt or duplicate content",
+      "Desktop notifier changes may need coordinated client-side handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that delivers a session/update notification after AcpUpdate::Complete and asserts the text is persisted/emitted rather than dropped",
+      "Regression test that in-turn chunks still flow through the existing prompt_response_tx path and the #11178 grace window is unaffected",
+      "Targeted unit tests for the new Provider hook and the acp server notifier"
+    ],
+    "unknowns": [
+      "Whether a maintainer will assign the issue, as repository policy requires assignment before contribution",
+      "Which of the several proposed mechanisms (Provider hook vs. alternative) maintainers want",
+      "Whether the #11178 grace-window fix already covers any part of this case"
+    ],
+    "why": "Issue gives a clear root cause (AcpProvider::stream drops receiver after AcpUpdate::Complete, so out-of-turn session/update chunks fail tx.send and are discarded) and a concrete reproduction, but the repository policy requires assignment (policy.status=needs_assignment, assignmentRequired=true) and the issue has no assignees, which is a materially blocking unknown for whether code work is actionable. Additionally, the proposed fix spans a new Provider trait hook, Agent::update_provider persistence, and a Desktop notifier — a design surface the issue itself leaves open ('Whatever the mechanism'), so the exact change is not yet pinned down."
   },
   "ff421a54889fe3daa5a04d105d2cb1a5bf224e2fed2348a54428ccc7d2494d5c": {
     "confidence": 0.8,
