@@ -26844,6 +26844,36 @@
     ],
     "why": "Issue identifies two concrete, separable defects in src/soup_cli/utils/relora.py: (A) _prune_and_reset prunes lora_A/lora_B without merging B@A into the base weight, contradicting the module docstring's ReLoRA conformance claim; (B) strict threshold comparison (abs(t) > threshold) can zero both factors under ties, producing a dead zero-gradient branch. Maintainer confirmed both claims with measured evidence (base weight delta 0, effective-map MSE 142.12 vs 8.77e-13 control; nonzero A/B = 0 with grad-norm 0.0)."
   },
+  "2bca48024234461c3287ba59607c96f418b5ecd63325d6c3c822a590bd298eb6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request cancel scope / avoid shared TaskGroup teardown cancelling concurrent upstream fetches",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools cancellation is scoped to the owning request"
+    ],
+    "risks": [
+      "Fix may alter MCP session lifecycle semantics for stateless requests",
+      "Maintainer may prefer a different isolation strategy (per-request session manager vs. shared)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two overlapping tools/list requests to POST /mcp against two HTTP streamable MCP servers and assert neither is cancelled",
+      "Run targeted unit tests for the mcp_server_manager module and static checks"
+    ],
+    "unknowns": [
+      "Whether #24522's closure left any partial fix in main that changes the required patch shape"
+    ],
+    "why": "Issue provides a concrete concurrency bug with traceback, ordered reproduction steps, and a specific mechanism (shared StreamableHTTPSessionManager TaskGroup cancel-scope teardown cancelling in-flight list_tools fetches). Code anchors point to mcp_server_manager.py and experimental_mcp_client/client.py. No open PR or duplicate coverage found. Track is agent_ai_infra, so the llm_algorithm rejection rule does not apply."
+  },
   "2bd27863d39fa51332d0dac529218d24971ac99bb7012d10abf057dd4fb06ae0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -57402,6 +57432,39 @@
       "Whether the vision/audio test item is still unclaimed after the 2026-10-04 deadline passed"
     ],
     "why": "Issue #797 documents three concrete mechanisms (TRL config defaults, peft k-bit preparation, unsloth hardcoding) that override training.gradient_checkpointing, with file/line anchors and a CPU reproduction. Maintainer comments confirm #1045 shipped only the k-bit text-path half and explicitly enumerate remaining open items (TRL/HF args threading, trainers that never read the field, unsloth mapping, vision/audio test), so the remaining work is concrete and actionable."
+  },
+  "5bef54d5903e90f20db7bde21993df512b92f5fe0edba6c43db72dcd73f14d39": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/infrastructure/chunker/strategy.go: DeriveParentChildConfigs accepts explicit child overlap instead of childSize/5",
+      "SplitterConfig / chunking config plumbing to expose child_chunk_overlap",
+      "frontend/src/views/knowledge/settings/KBChunkingSettings.vue: hide/disable top-level Chunk Size and relabel or add Child Overlap control when parent-child is enabled"
+    ],
+    "risks": [
+      "Changing default child overlap from 20% to 0 could alter retrieval behavior for existing users; keep backward-compatible default unless explicitly configured",
+      "Frontend relabeling may conflict with maintainer UX preferences",
+      "Overlap with draft PR #4377 could cause duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test on DeriveParentChildConfigs asserting child.ChunkOverlap equals configured value and 0 when explicitly set",
+      "Regression test that parent.ChunkOverlap still derives from base.ChunkOverlap",
+      "Frontend test verifying Chunk Size is hidden/disabled and overlap control is relabeled when localEnableParentChild is true"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a new child_chunk_overlap field vs. reusing existing overlap semantics",
+      "Whether PR #4377 will be completed or abandoned"
+    ],
+    "why": "Issue provides concrete code anchors (DeriveParentChildConfigs in internal/infrastructure/chunker/strategy.go) and an explicit expected/actual pair: child overlap hardcoded to childSize/5 and frontend Chunk Overlap silently bound to parent overlap. This is a reproducible, user-visible configuration bug with a clear minimal fix path (add child_chunk_overlap config, wire frontend semantics). Existing PR #4377 is a draft with weak keyword overlap and no root-cause coverage, so competition space remains."
   },
   "5bf1526df6a0b901a9d6e0f08aaef05bab8c2aec1d06e57e38fbad9045976163": {
     "confidence": 0.8,
@@ -93544,6 +93607,34 @@
     ],
     "why": "Issue pinpoints two concrete read sites (agents_config.load_agent_soul and FileAgentStore.get_soul) using plain utf-8, explains why str.strip() fails to remove U+FEFF, and cites existing repo precedent (skills/frontmatter.py, parser.py, validation.py) for BOM handling. Reproduction is executable and validation path is clear."
   },
+  "9413c5c720b708d844a24287ef4c55a349375698c8729fb3be8ed83f42c4bea2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose-provider-types/src/formats/openai_responses.rs: accept integer, whole-valued decimal, and fractional numeric created_at in full response and stream metadata"
+    ],
+    "risks": [
+      "Changing created_at type may ripple into downstream consumers expecting i64",
+      "Fractional-second handling must not truncate per expected behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add parser fixture tests deserializing full response with created_at=1741476542.0 and 1741476542.25",
+      "Add SSE stream test with response.created created_at=1741476542.25 followed by output_text.delta to assert 'hello' is delivered"
+    ],
+    "unknowns": [
+      "Whether the issue has reached Ready status on the Goose Issues board",
+      "Whether an assignee has been granted, given assignmentRequired=true"
+    ],
+    "why": "Issue provides a clear root cause (i64 deserialization of created_at in openai_responses.rs) and a concrete synthetic reproduction, but the issue body explicitly states 'Do not begin implementation until the issue reaches Ready on the Goose Issues board', and the pre-task evidence shows assignmentRequired=true with no assignees. This is a repository-imposed gating requirement that determines whether code work is actionable."
+  },
   "9428d5a1471415da0ecf458473a4667f6dec4f46e33299e11f8555aaf74e0369": {
     "confidence": 0.7,
     "contradictions": [],
@@ -100942,6 +101033,44 @@
       "Exact current component/route state on the pinned base SHA (ecc4916) versus 2.0.23 bundle described in comments"
     ],
     "why": "Issue describes a concrete, reproducible UI gap: mobile web view omits the subagent status indicator that desktop shows next to the session title, and the main view gives no running/stuck signal. Code anchors (session.child.backToParent, subagents timeline category, parentID) and an API-verified backend (GET /api/session?parentID returns children) give a plausible front-end-only fix path with a clear expected-vs-actual pair."
+  },
+  "9fa4dd61768f095dbc2038c6108775d3c4f08e03749e81246a6a4590924d6e2b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "electron/main.mjs: stop hardcoding nativeTheme.themeSource = \"dark\"; derive it from the active color theme's `appearance`",
+      "src/utils/desktop-shell.ts and electron/preload-main.cjs: extend the existing desktopShell IPC bridge to carry the active appearance to the main process",
+      "Theme registry / color-theme selection path: emit appearance changes on theme switch so the main process updates without restart",
+      "Windows/Linux menu bar: ensure default application menu surfaces follow the light/dark appearance while keeping labels legible"
+    ],
+    "risks": [
+      "Native areas Windows draws from the OS may not be themeable, so scope must stay limited to application-controlled chrome",
+      "Menu bar theming on Windows/Linux may require additional Electron menu/background handling beyond nativeTheme alone",
+      "Changing nativeTheme.themeSource could affect the intentionally dark loading splash or other native surfaces",
+      "No maintainer pre-approval or design confirmation recorded, though the triage comment already specifies the authoritative mechanism and non-goals"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce from source on Windows: npm run desktop, switch to Light+, confirm title bar and File/Edit/View/Window/Help menu bar become light without restart",
+      "Switch back to a dark palette and confirm chrome returns to dark without restart",
+      "Relaunch the app with a light palette active and confirm chrome persists as light",
+      "Verify menu labels and window control glyphs remain legible in both appearances",
+      "Regression: npm run dev in a browser is unchanged, and macOS hiddenInset traffic-light/drag behavior is unchanged"
+    ],
+    "unknowns": [
+      "Whether Electron's default application menu on Windows/Linux can be fully restyled via nativeTheme alone or needs explicit menu background handling",
+      "Exact IPC surface currently exposed by desktopShell for appearance propagation"
+    ],
+    "why": "Issue is a concrete, user-visible Windows desktop theming bug. Triage evidence pins the root cause: electron/main.mjs forces nativeTheme.themeSource = \"dark\" at ready, and Windows/Linux keep the native frame plus Electron's default menu, so native chrome never follows the Canvas color theme. The fix path is concrete: propagate the per-palette `appearance` value through the existing desktopShell preload/IPC bridge and set nativeTheme.themeSource accordingly, keeping openhands-color-theme as the single source of truth. Acceptance criteria define observable, testable behavior including restart persistence and legibility."
   },
   "9fb4580cf3cddc5bbbf0958a6148ce65efe5d899674cab03fb99b58f29137d2b": {
     "confidence": 0.85,

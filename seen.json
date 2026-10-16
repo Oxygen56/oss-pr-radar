@@ -34629,19 +34629,12 @@
     "url": "https://github.com/BerriAI/litellm/issues/41730"
   },
   "BerriAI/litellm#41732": {
-    "analyzed": "2026-10-16T03:33:36Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": "off_topic",
-    "first_deferred_at": "2026-10-16T03:33:36Z",
-    "issue_updated": "2026-09-18T01:44:37Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T03:33:36Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "off_topic",
     "title": "[Bug]: UI /key/generate no \"send_invite_email\": true",
-    "url": "https://github.com/BerriAI/litellm/issues/41732"
+    "issue_updated": "2026-09-19T08:01:45Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "BerriAI/litellm#41735": {
     "analyzed": "2026-09-18T02:39:42Z",
@@ -39713,68 +39706,68 @@
     "title": "[Feature]: Clarify the STT normalization contract and accept consistency improvements"
   },
   "BerriAI/litellm#46229": {
-    "analyzed": "2026-10-16T03:33:36Z",
-    "base_sha": "e74e4e569331c1d99757ae6118685d8826c6f7c6",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "evidence_digest": "9c9ab2706c3f3c4c6850c9d825d1ab2c8bec8517dd5627303a00033186ef2223",
-    "issue_updated": "2026-10-13T16:21:30Z",
-    "notification_digest": "bf85f02b78b571ab7455c52a3c0ef25a0b61613f8627a9b9a7f3fc6bbe60f122",
-    "notification_scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
     "notified": false,
+    "status": "queued_outbox",
+    "score": 11,
+    "title": "[Bug]: Concurrent requests to the proxy /mcp endpoint cancel each other in flight (recurrence of #24522)",
+    "url": "https://github.com/BerriAI/litellm/issues/46229",
+    "issue_updated": "2026-10-13T16:21:30Z",
+    "notification_digest": "5f1dc07804e7c0039b7eb115dbcd3b96013b1abb2199d565f98917ee96b7781f",
+    "notification_scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "pre_task_evidence": {
-      "aiDisclosureConflict": false,
-      "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "assignmentRequired": false,
+      "schema": "pre_task_evidence_v1",
+      "issue": {
+        "state": "open",
+        "assignees": []
+      },
+      "issueDigest": "42b019130c44c13248ebc98356d5b0b3e0fd5d76524385d90b2fa9370f41f1cf",
+      "baseSha": "b6ca57b36dbbf03d2b078d984e361fdbe903f875",
+      "defaultBranch": "main",
       "baseLookupStatus": "ok",
-      "baseSha": "e74e4e569331c1d99757ae6118685d8826c6f7c6",
+      "policy": {
+        "status": "legal_confirmation"
+      },
+      "assignmentRequired": false,
+      "aiDisclosureConflict": false,
       "codePathsPlan": [
         "litellm/types/mcp_server/mcp_server_manager.py",
         "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py"
       ],
-      "defaultBranch": "main",
-      "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+      "reproductionPathPlan": true,
+      "validationPathPlan": true,
+      "probeRequired": true,
+      "matureRepository": true,
       "duplicate": {
-        "prs": [],
         "status": "none",
+        "prs": [],
         "summary": "未发现相关 open PR"
       },
-      "duplicateDigest": "28a3bb38f5cdb345d3caf4fb83167265745af501b1cb9362fcce3ffee2995fc8",
       "duplicateStatus": "none",
-      "issue": {
-        "assignees": [],
-        "state": "open"
-      },
-      "issueDigest": "42b019130c44c13248ebc98356d5b0b3e0fd5d76524385d90b2fa9370f41f1cf",
-      "matureRepository": true,
-      "policy": {
-        "status": "legal_confirmation"
-      },
-      "probeRequired": true,
-      "reproductionPathPlan": true,
-      "schema": "pre_task_evidence_v1",
-      "validationPathPlan": true
+      "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+      "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "duplicateDigest": "28a3bb38f5cdb345d3caf4fb83167265745af501b1cb9362fcce3ffee2995fc8"
     },
     "pre_task_gate": {
+      "schema": "pre_task_evidence_v1",
       "allowed": true,
-      "baseSha": "e74e4e569331c1d99757ae6118685d8826c6f7c6",
-      "classification": null,
-      "evidenceDigest": "9c9ab2706c3f3c4c6850c9d825d1ab2c8bec8517dd5627303a00033186ef2223",
-      "expected": {
-        "assigneeDigest": "",
-        "baseSha": "",
-        "designDigest": "",
-        "duplicateDigest": "",
-        "issueDigest": ""
-      },
       "reason": "PRE_TASK_EVIDENCE_PASSED",
       "reasons": [],
-      "schema": "pre_task_evidence_v1"
+      "classification": null,
+      "baseSha": "b6ca57b36dbbf03d2b078d984e361fdbe903f875",
+      "evidenceDigest": "47a6d990648aa0c3b5ceb1c869c138cf81844b887ec034848b9a508925b6da97",
+      "expected": {
+        "baseSha": "",
+        "issueDigest": "",
+        "designDigest": "",
+        "assigneeDigest": "",
+        "duplicateDigest": ""
+      }
     },
+    "base_sha": "b6ca57b36dbbf03d2b078d984e361fdbe903f875",
+    "evidence_digest": "47a6d990648aa0c3b5ceb1c869c138cf81844b887ec034848b9a508925b6da97",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": 11,
-    "status": "queued_outbox",
-    "title": "[Bug]: Concurrent requests to the proxy /mcp endpoint cancel each other in flight (recurrence of #24522)",
-    "url": "https://github.com/BerriAI/litellm/issues/46229"
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "BerriAI/litellm#46233": {
     "analyzed": "2026-10-14T12:34:13Z",
@@ -46346,12 +46339,12 @@
     "title": "SM120: varlen GQA/MQA backward produces wrong dK/dV with unpadded KV (fixed by open #2771)"
   },
   "Dao-AILab/flash-attention#2999": {
-    "analyzed": "2026-10-16T05:35:31Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-16T05:22:19Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T22:26:21Z",
     "status": "skip_prefilter",
-    "title": "FA4: zero invalid V tile rows before PV, as FA2 does?"
+    "title": "FA4: zero invalid V tile rows before PV, as FA2 does?",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "Dao-AILab/flash-attention#949": {
     "analyzed": "2026-10-03T17:16:23Z",
@@ -59799,19 +59792,12 @@
     "title": "2 Issues: Lisa's cry not working on DualShock4's speaker? Possible bug on Lisa being in the garage after you get flashlight from starting the game?"
   },
   "LoreanXavier/pt-pc#87": {
-    "analyzed": "2026-10-16T03:33:36Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "first_deferred_at": "2026-10-16T03:33:36Z",
-    "issue_updated": "2026-10-16T03:19:38Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T03:33:36Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "usage_or_documentation_question",
     "title": "Performance degradation with the 1.0.4-1.0.5 update",
-    "url": "https://github.com/LoreanXavier/pt-pc/issues/87"
+    "issue_updated": "2026-10-16T03:19:38Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "Loulen/prompt-driven-orchestrator#450": {
     "analyzed": "2026-08-11T15:20:38Z",
@@ -60832,12 +60818,19 @@
     "title": "定时关机缺陷"
   },
   "MaaEnd/MaaEnd#5776": {
-    "analyzed": "2026-09-16T04:31:44Z",
-    "decision_contract_digest": "ce11af8c6477a0c98161549b7be1fe7e37d1f433901d50d665e43aca4108ccf3",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": "off_topic",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "购买稳定物资卡住",
+    "url": "https://github.com/MaaEnd/MaaEnd/issues/5776",
     "issue_updated": "2026-09-15T14:01:05Z",
-    "scanner_version": "oss_pr_radar_v53_direct_overlap_hold",
-    "status": "off_topic",
-    "title": "购买稳定物资卡住"
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "MaaEnd/MaaEnd#5788": {
     "analyzed": "2026-09-17T15:23:36Z",
@@ -89750,69 +89743,16 @@
     "title": "[Feature]: Selective team conversation sharing with on-demand context sync"
   },
   "OpenHands/OpenHands#18495": {
-    "analyzed": "2026-10-16T00:35:49Z",
-    "base_sha": "aa593c72103862d4f1851988ecacd30f514368dc",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "evidence_digest": "eebfd21a583e2950d3762cb4d3c531eb1e689104f37d4efeb84088ff555ebda3",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_open_pr_strong",
+    "title": "[Bug]: MCP server-type selector still offers deprecated SSE transport with no deprecation signal (2026-07-28 spec deprecates HTTP+SSE)",
+    "pr": "https://github.com/OpenHands/OpenHands/pull/18498",
+    "pr_assessment": "已有活跃且直接关联 issue 的 PR #18498；CI 状态只作诊断，不能据此自动创建竞争 PR",
     "issue_updated": "2026-10-15T23:58:32Z",
     "notification_digest": "d1ca1ac96ad41b1c59d1002a2d1bb88e60a379a5961a4489d1839bf3f2890a15",
     "notification_scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "notified": false,
-    "pre_task_evidence": {
-      "aiDisclosureConflict": false,
-      "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "assignmentRequired": false,
-      "baseLookupStatus": "ok",
-      "baseSha": "aa593c72103862d4f1851988ecacd30f514368dc",
-      "codePathsPlan": [
-        "src/components/features/settings/mcp-settings/mcp-server-form.tsx",
-        "src/components/features/mcp-page/custom-server-editor.tsx",
-        "__tests__/components/features/settings/mcp-settings/mcp-server-form.validation.test.tsx"
-      ],
-      "defaultBranch": "main",
-      "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
-      "duplicate": {
-        "prs": [],
-        "status": "none",
-        "summary": "未发现相关 open PR"
-      },
-      "duplicateDigest": "28a3bb38f5cdb345d3caf4fb83167265745af501b1cb9362fcce3ffee2995fc8",
-      "duplicateStatus": "none",
-      "issue": {
-        "assignees": [],
-        "state": "open"
-      },
-      "issueDigest": "a7c647592aa94bf4e9ab2b28be4c64560f30942000771a684b6565af7618017f",
-      "matureRepository": true,
-      "policy": {
-        "status": "normal"
-      },
-      "probeRequired": true,
-      "reproductionPathPlan": true,
-      "schema": "pre_task_evidence_v1",
-      "validationPathPlan": true
-    },
-    "pre_task_gate": {
-      "allowed": true,
-      "baseSha": "aa593c72103862d4f1851988ecacd30f514368dc",
-      "classification": null,
-      "evidenceDigest": "eebfd21a583e2950d3762cb4d3c531eb1e689104f37d4efeb84088ff555ebda3",
-      "expected": {
-        "assigneeDigest": "",
-        "baseSha": "",
-        "designDigest": "",
-        "duplicateDigest": "",
-        "issueDigest": ""
-      },
-      "reason": "PRE_TASK_EVIDENCE_PASSED",
-      "reasons": [],
-      "schema": "pre_task_evidence_v1"
-    },
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": 11,
-    "status": "queued_outbox",
-    "title": "[Bug]: MCP server-type selector still offers deprecated SSE transport with no deprecation signal (2026-07-28 spec deprecates HTTP+SSE)",
-    "url": "https://github.com/OpenHands/OpenHands/issues/18495"
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "OpenHands/OpenHands#18496": {
     "analyzed": "2026-10-16T01:29:04Z",
@@ -103107,10 +103047,17 @@
     "title": "ci(desktop): skip the build matrix when the desktop version is already fully published"
   },
   "QwenLM/qwen-code#11954": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "status": "bot_or_stale_refresh",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": "bot_or_stale_refresh",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Fleet Shepherd Dashboard",
-    "issue_updated": "2026-10-16T21:21:41Z",
+    "url": "https://github.com/QwenLM/qwen-code/issues/11954",
+    "issue_updated": "2026-10-16T22:35:40Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -107972,12 +107919,12 @@
     "url": "https://github.com/QwenLM/qwen-code/issues/13747"
   },
   "QwenLM/qwen-code#13749": {
-    "analyzed": "2026-10-09T15:18:43Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-09T09:44:11Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:52:13Z",
     "status": "skip_prefilter",
-    "title": "feat(mods): add a Claude Code-style Mod runtime with staged compatibility"
+    "title": "feat(mods): add a Claude Code-style Mod runtime with staged compatibility",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "QwenLM/qwen-code#13753": {
     "analyzed": "2026-10-10T17:52:44Z",
@@ -124613,19 +124560,132 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "Tencent/WeKnora#4371": {
-    "analyzed": "2026-10-16T03:33:36Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "first_deferred_at": "2026-10-16T03:33:36Z",
-    "issue_updated": "2026-10-16T03:29:15Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T03:33:36Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "notified": false,
+    "status": "queued_outbox",
+    "score": 11,
     "title": "[Bug]: 父子分块模式下子块重叠硬编码为 20% 且无法配置，前端「分块重叠」语义错位",
-    "url": "https://github.com/Tencent/WeKnora/issues/4371"
+    "url": "https://github.com/Tencent/WeKnora/issues/4371",
+    "issue_updated": "2026-10-16T03:29:15Z",
+    "notification_digest": "71783cc16ffcb505f8cce38b92662c97d2a24b8c1be01dc8739a32026765e07d",
+    "notification_scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "pre_task_evidence": {
+      "schema": "pre_task_evidence_v1",
+      "issue": {
+        "state": "open",
+        "assignees": []
+      },
+      "issueDigest": "5501bc4da07ca494261919557925bdafda7197c3bc671bc2760d29a2c59df286",
+      "baseSha": "f5cfa0ff5fa87c45f59d4176f4ac8bb922bd5dd8",
+      "defaultBranch": "main",
+      "baseLookupStatus": "ok",
+      "policy": {
+        "status": "normal"
+      },
+      "assignmentRequired": false,
+      "aiDisclosureConflict": false,
+      "codePathsPlan": [
+        "internal/infrastructure/chunker/strategy.go"
+      ],
+      "reproductionPathPlan": true,
+      "validationPathPlan": true,
+      "probeRequired": true,
+      "matureRepository": true,
+      "duplicate": {
+        "status": "weak_pr_competition_possible",
+        "best_score": 37,
+        "best_url": "https://github.com/Tencent/WeKnora/pull/4377",
+        "summary": "已有直接关联但证据不完整的 PR #4377：仍是 draft; 与 issue 关键词匹配弱; 改动面偏大；只有能补足根因、测试或关键路径覆盖时才值得竞争",
+        "prs": [
+          {
+            "number": 4377,
+            "url": "https://github.com/Tencent/WeKnora/pull/4377",
+            "title": "fix: configure parent-child child overlap",
+            "score": 37,
+            "references_issue": true,
+            "reference_relation": "COVERAGE",
+            "issue_body_link": false,
+            "issue_body_link_relation": "",
+            "semantic_overlap": false,
+            "direct_code_overlap": false,
+            "semantic_overlap_count": 0,
+            "semantic_distinctive_overlap": [],
+            "overlapping_paths": [
+              "internal/infrastructure/chunker/strategy.go"
+            ],
+            "test_files": 4,
+            "changed_files": 30,
+            "additions": 307,
+            "deletions": 38,
+            "age_days": 0,
+            "is_draft": true,
+            "state": "OPEN",
+            "rule_closed": false,
+            "maintainer_owned": false,
+            "author_association": "NONE",
+            "technical_complete": true,
+            "root_cause_coverage": false,
+            "material_competition_gaps": [
+              "仍是 draft"
+            ],
+            "ignored_nontechnical_failed_checks": [],
+            "technical_failed_checks": [],
+            "ci_competition_weight": 0,
+            "strengths": [
+              "明确关联 issue",
+              "包含测试文件 4 个",
+              "已有成功 CI/check",
+              "近期仍活跃"
+            ],
+            "gaps": [
+              "仍是 draft",
+              "与 issue 关键词匹配弱",
+              "改动面偏大"
+            ]
+          }
+        ],
+        "components": {
+          "rootCauseCoverage": false,
+          "independentEvidence": {
+            "codeChange": true,
+            "tests": true,
+            "maintainerRecognition": false,
+            "keyPathCoverage": false
+          },
+          "ciIsDiagnosticOnly": true
+        },
+        "gaps": [
+          "与 issue 关键词匹配弱",
+          "仍是 draft",
+          "改动面偏大",
+          "缺少根因覆盖证据"
+        ]
+      },
+      "duplicateStatus": "weak_pr_competition_possible",
+      "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+      "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "duplicateDigest": "8e797c29f1bd54850deed525a55f1ef4d6792a99df44f8f8beaacd77f4dff9ab"
+    },
+    "pre_task_gate": {
+      "schema": "pre_task_evidence_v1",
+      "allowed": true,
+      "reason": "PRE_TASK_EVIDENCE_PASSED",
+      "reasons": [],
+      "classification": null,
+      "baseSha": "f5cfa0ff5fa87c45f59d4176f4ac8bb922bd5dd8",
+      "evidenceDigest": "566fd895219529cbf96e24a06f159ff907119dbfd24fff93a0f1020bd27f1cc7",
+      "expected": {
+        "baseSha": "",
+        "issueDigest": "",
+        "designDigest": "",
+        "assigneeDigest": "",
+        "duplicateDigest": ""
+      }
+    },
+    "base_sha": "f5cfa0ff5fa87c45f59d4176f4ac8bb922bd5dd8",
+    "evidence_digest": "566fd895219529cbf96e24a06f159ff907119dbfd24fff93a0f1020bd27f1cc7",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "Tencent/WeKnora#4372": {
     "analyzed": "2026-10-16T03:33:36Z",
@@ -134902,12 +134962,12 @@
     "title": "Expose goose context token so user can select it manually if auto set tokens size limit is invalid"
   },
   "aaif-goose/goose#12884": {
-    "analyzed": "2026-10-15T03:35:01Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-15T02:20:16Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:45:33Z",
     "status": "skip_prefilter",
-    "title": "write/edit tools strip XML-like tokens (</>) from tool-call arguments"
+    "title": "write/edit tools strip XML-like tokens (</>) from tool-call arguments",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "aaif-goose/goose#12885": {
     "analyzed": "2026-10-14T09:45:32Z",
@@ -142859,19 +142919,12 @@
     "title": "[Feature Request] Add BrowserUseTools toolkit (run browser tasks on Browser Use Cloud)"
   },
   "agno-agi/agno#11107": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:03:05Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "someone_active",
     "title": "[feat] Add TopxAI as an OpenAI-compatible model provider",
-    "url": "https://github.com/agno-agi/agno/issues/11107"
+    "issue_updated": "2026-10-16T02:03:05Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "agno-agi/agno#11108": {
     "analyzed": "2026-10-16T05:35:31Z",
@@ -198834,17 +198887,10 @@
     "url": "https://github.com/anomalyco/opencode/issues/49787"
   },
   "anomalyco/opencode#49790": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "requeued_at": "2026-10-16T21:20:16Z",
-    "first_deferred_at": "2026-10-15T23:34:53Z",
-    "defer_count": 3,
-    "deferred_from_status": "off_topic",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "off_topic",
     "title": "TUI crash: PluginProvider is missing",
-    "url": "https://github.com/anomalyco/opencode/issues/49790",
-    "issue_updated": "2026-09-18T14:33:32Z",
+    "issue_updated": "2026-09-23T10:31:48Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -198917,14 +198963,9 @@
     "title": "[FEATURE]: MCP remove command"
   },
   "anomalyco/opencode#49817": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "requeued_at": "2026-10-16T21:20:16Z",
-    "first_deferred_at": "2026-10-15T23:34:53Z",
-    "defer_count": 3,
-    "deferred_from_status": "off_topic",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "rejected",
+    "reason": "not_open_or_pull_request",
     "title": "[Bug]: Re-opening moved/renamed project fails with PlatformError: NotFound: FileSystem.realPath (stale project.worktree in opencode.db)",
     "url": "https://github.com/anomalyco/opencode/issues/49817",
     "issue_updated": "2026-09-30T10:48:33Z",
@@ -199275,10 +199316,17 @@
     "url": "https://github.com/anomalyco/opencode/issues/50155"
   },
   "anomalyco/opencode#50168": {
-    "analyzed": "2026-10-16T14:36:24Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": "no_bug_or_maintainer_actionability",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Desktop zoom resets to 100% after restarting the app",
-    "issue_updated": "2026-10-15T16:30:00Z",
+    "url": "https://github.com/anomalyco/opencode/issues/50168",
+    "issue_updated": "2026-10-16T21:31:43Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -218775,14 +218823,14 @@
     "title": "OpenTunnel remote URL never attaches on macOS v2.0.30 despite completed tunnel profile"
   },
   "anomalyco/opencode#55873": {
-    "analyzed": "2026-10-16T21:20:16Z",
+    "analyzed": "2026-10-16T22:35:42Z",
     "requeued_at": "2026-10-16T21:20:16Z",
     "first_deferred_at": "2026-10-15T22:29:33Z",
     "defer_count": 3,
     "deferred_from_status": "semantic_review_retry",
     "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "status": "deferred_expired",
+    "reason": "recheck_freshness_expired",
     "title": "cli: pair --remote fails with OpenTunnel 503 \"storage unavailable\"",
     "url": "https://github.com/anomalyco/opencode/issues/55873",
     "issue_updated": "2026-10-15T21:57:49Z",
@@ -218808,16 +218856,9 @@
     "title": "server: restart that interrupts a tool call fails the next Anthropic request with \"tool_use.input: Input should be an object\""
   },
   "anomalyco/opencode#55887": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "requeued_at": "2026-10-16T21:20:16Z",
-    "first_deferred_at": "2026-10-16T00:35:49Z",
-    "defer_count": 3,
-    "deferred_from_status": "inspection_budget_deferred",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "incomplete_issue_template",
     "title": "Open project dialog: expanding a preloaded folder throws \"Path already exists\"",
-    "url": "https://github.com/anomalyco/opencode/issues/55887",
     "issue_updated": "2026-10-15T23:40:00Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
@@ -218847,10 +218888,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anomalyco/opencode#55897": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "requeued_at": "2026-10-16T21:20:16Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-10-16T00:35:49Z",
-    "defer_count": 2,
+    "defer_count": 3,
     "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
@@ -218886,10 +218927,10 @@
     "title": "app: model picker tooltip always shows \"No reasoning\" for V2 catalog models"
   },
   "anomalyco/opencode#55907": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "requeued_at": "2026-10-16T21:20:16Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-10-16T01:29:04Z",
-    "defer_count": 1,
+    "defer_count": 2,
     "deferred_from_status": "semantic_review_retry",
     "score": null,
     "status": "inspection_budget_deferred",
@@ -218901,10 +218942,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anomalyco/opencode#55908": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "requeued_at": "2026-10-16T21:20:16Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-10-16T01:29:04Z",
-    "defer_count": 2,
+    "defer_count": 3,
     "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
@@ -218932,10 +218973,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anomalyco/opencode#55911": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "requeued_at": "2026-10-16T21:20:16Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-10-16T01:29:04Z",
-    "defer_count": 2,
+    "defer_count": 3,
     "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
@@ -218955,19 +218996,19 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anomalyco/opencode#55913": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T01:51:06Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "defer_count": 2,
+    "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Rendering Bug: RTL Line Wrapping overlaps with `Context` numbers",
-    "url": "https://github.com/anomalyco/opencode/issues/55913"
+    "url": "https://github.com/anomalyco/opencode/issues/55913",
+    "issue_updated": "2026-10-16T01:51:06Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anomalyco/opencode#55914": {
     "analyzed": "2026-10-16T02:37:34Z",
@@ -218978,49 +219019,42 @@
     "title": "[BUG] Web UI: New session button does nothing when no session/project is open (2.0.30); shortcut hardcoded to browser-reserved Ctrl+T"
   },
   "anomalyco/opencode#55918": {
-    "analyzed": "2026-10-16T03:33:36Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 2,
-    "deferred_from_status": "inspection_budget_deferred",
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:57:56Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T03:33:36Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Windows CLI: WSL2 镜像网络预留范围内的 45278 导致服务启动失败，端口查询无占用记录",
-    "url": "https://github.com/anomalyco/opencode/issues/55918"
+    "issue_updated": "2026-10-16T02:57:56Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anomalyco/opencode#55920": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:32:11Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "defer_count": 2,
+    "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "desktop(browser): website logins lost after closing and reopening tabs in 2.0.30",
-    "url": "https://github.com/anomalyco/opencode/issues/55920"
+    "url": "https://github.com/anomalyco/opencode/issues/55920",
+    "issue_updated": "2026-10-16T02:32:11Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anomalyco/opencode#55921": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:29:42Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "defer_count": 2,
+    "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Agent steps limit does not stop opencode run on 1.19.1: tools still sent with tool_choice auto after the cap (2.0.30 stops)",
-    "url": "https://github.com/anomalyco/opencode/issues/55921"
+    "url": "https://github.com/anomalyco/opencode/issues/55921",
+    "issue_updated": "2026-10-16T02:29:42Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anomalyco/opencode#55924": {
     "analyzed": "2026-10-16T03:33:36Z",
@@ -224767,19 +224801,12 @@
     "url": "https://github.com/anthropics/claude-code-action/issues/1600"
   },
   "anthropics/claude-code-action#1696": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:34:32Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "someone_active",
     "title": "AGENTS.md is not in SENSITIVE_PATHS — the documented @AGENTS.md import loads the PR head's instructions despite the CLAUDE.md restore",
-    "url": "https://github.com/anthropics/claude-code-action/issues/1696"
+    "issue_updated": "2026-10-16T02:34:32Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anthropics/claude-code-action#1720": {
     "analyzed": "2026-10-01T07:08:44Z",
@@ -262180,12 +262207,19 @@
     "title": "[FEATURE] Add memory backend async parity and restart-persistence contracts"
   },
   "crewAIInc/crewAI#8138": {
-    "analyzed": "2026-10-15T20:37:31Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-15T01:08:28Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": "someone_active",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[FEATURE] Add paginated read-only SQLite Flow state history",
+    "url": "https://github.com/crewAIInc/crewAI/issues/8138",
+    "issue_updated": "2026-10-16T21:46:01Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "status": "someone_active",
-    "title": "[FEATURE] Add paginated read-only SQLite Flow state history"
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "crewAIInc/crewAI#8139": {
     "analyzed": "2026-10-15T20:37:31Z",
@@ -267392,12 +267426,12 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "deepseek-ai/DeepSeek-V3#1713": {
-    "analyzed": "2026-10-15T17:39:24Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-15T17:16:58Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
     "status": "algorithm_mechanism_evidence_low",
-    "title": "[BUG] function_calling 在消息历史含 tool_calls 时返回历史工具名,导致客户端解析崩溃"
+    "title": "[BUG] function_calling 在消息历史含 tool_calls 时返回历史工具名,导致客户端解析崩溃",
+    "issue_updated": "2026-10-16T21:41:46Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "deepseek-ai/FlashMLA#124": {
     "analyzed": "2026-10-02T08:55:44Z",
@@ -268344,12 +268378,19 @@
     "title": "RecursiveDocumentSplitter split_idx_start is off by the trailing separator with split_unit=\"word\" and split_overlap > 0"
   },
   "deepset-ai/haystack#12759": {
-    "analyzed": "2026-09-15T14:42:27Z",
-    "decision_contract_digest": "ce11af8c6477a0c98161549b7be1fe7e37d1f433901d50d665e43aca4108ccf3",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": "off_topic",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "AnswerJoiner follow-up: _concatenate still claims a sort it does not do; __init__ still says 'documents' (defects #1 and #3 from #12724)",
+    "url": "https://github.com/deepset-ai/haystack/issues/12759",
     "issue_updated": "2026-09-15T14:30:56Z",
-    "scanner_version": "oss_pr_radar_v53_direct_overlap_hold",
-    "status": "off_topic",
-    "title": "AnswerJoiner follow-up: _concatenate still claims a sort it does not do; __init__ still says 'documents' (defects #1 and #3 from #12724)"
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "deepset-ai/haystack#12763": {
     "analyzed": "2026-09-16T04:31:44Z",
@@ -268527,12 +268568,12 @@
     "title": "AutoMergingRetriever raises ValueError when a matched document has no parent (for example the root document)"
   },
   "deepset-ai/haystack#13032": {
-    "analyzed": "2026-10-15T21:33:22Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-15T21:28:58Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:42:02Z",
+    "status": "skip_prefilter",
+    "title": "JsonSchemaValidator rejects valid arrays and skips constraints on empty arrays",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "status": "someone_active",
-    "title": "JsonSchemaValidator rejects valid arrays and skips constraints on empty arrays"
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "deepset-ai/haystack#13040": {
     "analyzed": "2026-10-02T05:53:36Z",
@@ -280888,19 +280929,12 @@
     "title": "bug: speech:transcribe:local crashes with \"Cannot read properties of undefined (reading 'enabled')\""
   },
   "getpaseo/paseo#7095": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:34:49Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "probe_contract_incomplete",
     "title": "OpenCode: a parent agent shows finished while the agents it started with paseo_create_agent are still running",
-    "url": "https://github.com/getpaseo/paseo/issues/7095"
+    "issue_updated": "2026-10-16T02:34:49Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "getployz/ployz2#501": {
     "analyzed": "2026-08-22T17:43:17Z",
@@ -282300,8 +282334,8 @@
     "title": "[FEATURE]  Integrating Foundgine as a Semantic Execution Layer for AI Agents"
   },
   "google/adk-java#1513": {
-    "analyzed": "2026-10-16T20:33:50Z",
-    "issue_updated": "2026-10-16T20:06:25Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:58:48Z",
     "status": "skip_prefilter",
     "title": "MCP toolset: in-model built-ins (e.g. google_search) can be shadowed by a server tool; a server tool named set_model_response aborts the run",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
@@ -323004,19 +323038,19 @@
     "title": "AsyncPostgresSaver enforces an instance-level asyncio.Lock during asynchronous execution"
   },
   "langchain-ai/langgraph#7345": {
-    "analyzed": "2026-09-18T15:39:58Z",
-    "decision_contract_digest": "ce11af8c6477a0c98161549b7be1fe7e37d1f433901d50d665e43aca4108ccf3",
-    "defer_count": 1,
-    "deferred_from_status": "someone_active",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-09-17T15:23:36Z",
-    "issue_updated": "2026-09-17T10:22:24Z",
-    "reason": "recheck_freshness_expired",
-    "requeued_at": "2026-09-17T15:23:36Z",
-    "scanner_version": "oss_pr_radar_v53_direct_overlap_hold",
+    "defer_count": 2,
+    "deferred_from_status": "someone_active",
     "score": null,
-    "status": "deferred_expired",
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Feature request: Configurable PostgreSQL schema for langgraph-checkpoint-postgres (parity with LangGraphJS)",
-    "url": "https://github.com/langchain-ai/langgraph/issues/7345"
+    "url": "https://github.com/langchain-ai/langgraph/issues/7345",
+    "issue_updated": "2026-10-16T21:45:52Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "langchain-ai/langgraph#7417": {
     "analyzed": "2026-10-16T12:33:12Z",
@@ -338728,20 +338762,34 @@
     "title": "Workflow remote file metadata falls back to URL guesses when HEAD is unsupported"
   },
   "langgenius/dify#42320": {
-    "analyzed": "2026-09-15T17:38:29Z",
-    "decision_contract_digest": "ce11af8c6477a0c98161549b7be1fe7e37d1f433901d50d665e43aca4108ccf3",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": "off_topic",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "bug(api): completion-conversations end-time filter uses strict `<` instead of `<=`, silently dropping boundary conversations",
+    "url": "https://github.com/langgenius/dify/issues/42320",
     "issue_updated": "2026-09-15T17:06:43Z",
-    "scanner_version": "oss_pr_radar_v53_direct_overlap_hold",
-    "status": "off_topic",
-    "title": "bug(api): completion-conversations end-time filter uses strict `<` instead of `<=`, silently dropping boundary conversations"
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "langgenius/dify#42322": {
-    "analyzed": "2026-09-15T23:38:37Z",
-    "decision_contract_digest": "ce11af8c6477a0c98161549b7be1fe7e37d1f433901d50d665e43aca4108ccf3",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": "off_topic",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Annotation hit-history pager never ends for limit=0: has_more is computed from a page size the query does not use",
+    "url": "https://github.com/langgenius/dify/issues/42322",
     "issue_updated": "2026-09-15T23:10:01Z",
-    "scanner_version": "oss_pr_radar_v53_direct_overlap_hold",
-    "status": "off_topic",
-    "title": "Annotation hit-history pager never ends for limit=0: has_more is computed from a page size the query does not use"
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "langgenius/dify#42326": {
     "analyzed": "2026-09-16T14:36:25Z",
@@ -350835,8 +350883,8 @@
     "title": "[BUG] @mastra/voice-google: .listen() (STT) fails on Node ≥ 22 — stale @google-cloud/speech@^6 pins gaxios 6.x which breaks ADC token fetch"
   },
   "mastra-ai/mastra#19228": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "issue_updated": "2026-10-16T21:00:40Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T22:13:14Z",
     "status": "skip_prefilter",
     "title": "Parsing error while using models through Bedrock Mantle endpoint",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
@@ -364873,19 +364921,12 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "mastra-ai/mastra#27230": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:23:46Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "[voice-google-gemini-live] Expose input/output audio transcription config",
-    "url": "https://github.com/mastra-ai/mastra/issues/27230"
+    "issue_updated": "2026-10-16T02:23:46Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "mastra-ai/mastra#27231": {
     "analyzed": "2026-10-16T18:37:00Z",
@@ -365026,17 +365067,10 @@
     "url": "https://github.com/mastra-ai/mastra/issues/27246"
   },
   "mastra-ai/mastra#27247": {
-    "analyzed": "2026-10-16T18:37:00Z",
-    "requeued_at": "2026-10-16T18:37:00Z",
-    "first_deferred_at": "2026-10-16T18:37:00Z",
-    "defer_count": 1,
-    "deferred_from_status": "probe_contract_incomplete",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "bot_or_stale_refresh",
     "title": "[BUG] Slack channels: bot messages' header/section/context blocks never reach the agent, only the text fallback",
-    "url": "https://github.com/mastra-ai/mastra/issues/27247",
-    "issue_updated": "2026-10-16T18:05:14Z",
+    "issue_updated": "2026-10-16T21:34:27Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -397889,19 +397923,14 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "morluto/rea#4340": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:36:48Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "rejected",
+    "reason": "not_open_or_pull_request",
     "title": "[Bug] Set up REA ERROR, use command: npx rea-agents@latest setup --client qwen_code",
-    "url": "https://github.com/morluto/rea/issues/4340"
+    "url": "https://github.com/morluto/rea/issues/4340",
+    "issue_updated": "2026-10-16T02:36:48Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "morluto/rea#4403": {
     "analyzed": "2026-10-16T06:36:24Z",
@@ -412793,19 +412822,12 @@
     "title": "[Bug]: Skill loader ignores configured workspace path and hardcodes fallback to ~/.openclaw/workspace"
   },
   "openclaw/openclaw#90299": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": "bot_or_stale_refresh",
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:34:36Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "someone_active",
     "title": "[Bug]: Agent Teams subagent completion can report \"lost active execution context\" while still delivering child output",
-    "url": "https://github.com/openclaw/openclaw/issues/90299"
+    "issue_updated": "2026-10-16T02:39:59Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "openclaw/openclaw#90361": {
     "analyzed": "2026-08-20T17:49:40Z",
@@ -412832,19 +412854,12 @@
     "title": "[Bug]: Deleted provider session overrides persist in sessions.json — silent financial damage risk"
   },
   "openclaw/openclaw#90587": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": "skip_prefilter",
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:34:51Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "incomplete_issue_template",
     "title": "[Bug]: Openclaw returns \"run error: codex app-server exited\" for RISC-V64 System",
-    "url": "https://github.com/openclaw/openclaw/issues/90587"
+    "issue_updated": "2026-10-16T02:38:12Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "openclaw/openclaw#90801": {
     "analyzed": "2026-08-05T19:20:19Z",
@@ -420930,19 +420945,12 @@
     "url": "https://github.com/promptfoo/promptfoo/issues/11707"
   },
   "promptfoo/promptfoo#11767": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:10:55Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "someone_active",
     "title": "Unauthenticated local routes proxy to Promptfoo Cloud with the operator's credentials",
-    "url": "https://github.com/promptfoo/promptfoo/issues/11767"
+    "issue_updated": "2026-10-16T02:10:55Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "promptfoo/promptfoo#11768": {
     "analyzed": "2026-10-15T23:34:53Z",
@@ -421700,12 +421708,12 @@
     "title": "OpenAI embedding token counting rejects literal special-token spellings"
   },
   "pydantic/pydantic-ai#10012": {
-    "analyzed": "2026-10-13T21:39:12Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-13T19:07:18Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:38:58Z",
     "status": "skip_prefilter",
-    "title": "Add a shared serialized RunContext for durable workers"
+    "title": "Add a shared serialized RunContext for durable workers",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#10015": {
     "analyzed": "2026-10-08T19:58:19Z",
@@ -422066,12 +422074,12 @@
     "title": "Agent workflow task failure: CI Review"
   },
   "pydantic/pydantic-ai#10161": {
-    "analyzed": "2026-10-13T05:37:07Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-13T05:20:46Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:39:11Z",
     "status": "skip_prefilter",
-    "title": "Realtime (OpenAI): a way to delete a finished turn's tool-call items from the server conversation"
+    "title": "Realtime (OpenAI): a way to delete a finished turn's tool-call items from the server conversation",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#10162": {
     "analyzed": "2026-10-13T05:37:07Z",
@@ -422353,12 +422361,12 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#10284": {
-    "analyzed": "2026-10-16T05:35:31Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-16T05:35:04Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:55:39Z",
     "status": "skip_prefilter",
-    "title": "Anthropic streaming drops zero-argument `mcp_tool_use` on replay, leaving an orphaned `mcp_tool_result`"
+    "title": "Anthropic streaming drops zero-argument `mcp_tool_use` on replay, leaving an orphaned `mcp_tool_result`",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#10287": {
     "analyzed": "2026-10-15T03:35:01Z",
@@ -426172,12 +426180,12 @@
     "title": "Persist realtime provider resumption handles across processes"
   },
   "pydantic/pydantic-ai#7303": {
-    "analyzed": "2026-10-13T18:43:12Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-13T18:31:03Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T22:17:24Z",
     "status": "skip_prefilter",
-    "title": "Re-resolve dynamic instructions during a realtime session"
+    "title": "Re-resolve dynamic instructions during a realtime session",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#7304": {
     "analyzed": "2026-08-27T16:33:59Z",
@@ -430551,12 +430559,12 @@
     "title": "`KnownOpenRouterProviders` suggests 11 providers OpenRouter no longer serves"
   },
   "pydantic/pydantic-ai#8898": {
-    "analyzed": "2026-10-14T19:37:59Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-14T18:39:46Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T22:06:21Z",
     "status": "skip_prefilter",
-    "title": "Harness monorepo migration: release blockers and gaps found in review"
+    "title": "Harness monorepo migration: release blockers and gaps found in review",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#8911": {
     "analyzed": "2026-10-13T21:39:12Z",
@@ -431070,12 +431078,12 @@
     "title": "Emit input speech events on Gemini 3.x Live from `voice_activity` messages"
   },
   "pydantic/pydantic-ai#9037": {
-    "analyzed": "2026-10-13T21:39:12Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-13T18:53:12Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:49:37Z",
     "status": "skip_prefilter",
-    "title": "Surface GPT-Live backend reasoning summaries as `ThinkingPart`s"
+    "title": "Surface GPT-Live backend reasoning summaries as `ThinkingPart`s",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#9038": {
     "analyzed": "2026-10-13T21:39:12Z",
@@ -431102,12 +431110,12 @@
     "title": "Reopen pydantic-ai-harness#637: the `KeenableSearch` capability for keyless web research"
   },
   "pydantic/pydantic-ai#9085": {
-    "analyzed": "2026-10-04T05:35:03Z",
-    "decision_contract_digest": "ce11af8c6477a0c98161549b7be1fe7e37d1f433901d50d665e43aca4108ccf3",
-    "issue_updated": "2026-10-04T05:23:11Z",
-    "scanner_version": "oss_pr_radar_v53_direct_overlap_hold",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:59:32Z",
     "status": "skip_prefilter",
-    "title": "Typed capability hook for tool calls rejected before execution"
+    "title": "Typed capability hook for tool calls rejected before execution",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#9087": {
     "analyzed": "2026-10-13T21:39:12Z",
@@ -431126,12 +431134,12 @@
     "title": "Decision Literal branches can confuse bool and int values"
   },
   "pydantic/pydantic-ai#9095": {
-    "analyzed": "2026-10-13T21:39:12Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "issue_updated": "2026-10-13T18:53:39Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:59:33Z",
     "status": "skip_prefilter",
-    "title": "Declare `cache_write_1h_tokens` and preserve it in `RunUsage` subtraction"
+    "title": "Declare `cache_write_1h_tokens` and preserve it in `RunUsage` subtraction",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#9097": {
     "analyzed": "2026-10-13T21:39:12Z",
@@ -433652,12 +433660,12 @@
     "title": "Agent workflow workflow failure: Pydantic AI Attention Triage"
   },
   "pydantic/pydantic-ai#9896": {
-    "analyzed": "2026-10-06T13:59:56Z",
-    "decision_contract_digest": "ce11af8c6477a0c98161549b7be1fe7e37d1f433901d50d665e43aca4108ccf3",
-    "issue_updated": "2026-10-06T13:51:59Z",
-    "scanner_version": "oss_pr_radar_v53_direct_overlap_hold",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:49:15Z",
     "status": "skip_prefilter",
-    "title": "Support declarative fallback models in `AgentSpec`"
+    "title": "Support declarative fallback models in `AgentSpec`",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#9897": {
     "analyzed": "2026-10-06T13:45:01Z",
@@ -433732,12 +433740,12 @@
     "title": "Where should a static analysis capability be listed in third-party capabilities?"
   },
   "pydantic/pydantic-ai#9945": {
-    "analyzed": "2026-10-07T05:56:11Z",
-    "decision_contract_digest": "ce11af8c6477a0c98161549b7be1fe7e37d1f433901d50d665e43aca4108ccf3",
-    "issue_updated": "2026-10-07T05:13:41Z",
-    "scanner_version": "oss_pr_radar_v53_direct_overlap_hold",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:41:52Z",
     "status": "skip_prefilter",
-    "title": "Proposal: Make sessions the lifecycle boundary for multi-run agents, persistent connections, and stateful steering"
+    "title": "Proposal: Make sessions the lifecycle boundary for multi-run agents, persistent connections, and stateful steering",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#9946": {
     "analyzed": "2026-10-08T06:10:16Z",
@@ -434678,17 +434686,10 @@
     "title": "Document Fault Tolerant setup (TorchFT) timeouts"
   },
   "pytorch/torchtitan#2936": {
-    "analyzed": "2026-10-16T20:33:50Z",
-    "requeued_at": "2026-10-16T20:33:50Z",
-    "first_deferred_at": "2026-10-16T20:33:50Z",
-    "defer_count": 1,
-    "deferred_from_status": "bot_or_stale_refresh",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "bot_or_stale_refresh",
     "title": "TODO Debt Report",
-    "url": "https://github.com/pytorch/torchtitan/issues/2936",
-    "issue_updated": "2026-10-16T20:31:31Z",
+    "issue_updated": "2026-10-16T22:19:19Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -443733,8 +443734,8 @@
     "title": "[Roadmap] Extended Adapter support for Multimodal LLM"
   },
   "sgl-project/sglang#26340": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "issue_updated": "2026-10-16T21:08:12Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T22:07:27Z",
     "status": "skip_prefilter",
     "title": "CUDA Coredump Tracker",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
@@ -451163,10 +451164,17 @@
     "url": "https://github.com/sgl-project/sglang/issues/36663"
   },
   "sgl-project/sglang#36669": {
-    "analyzed": "2026-10-16T20:33:50Z",
-    "issue_updated": "2026-10-16T19:48:54Z",
-    "status": "skip_prefilter",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": "skip_prefilter",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Bug] GLM-5.3-Flash thinking output degenerates into repeated '!' under multi-tool agentic prompts",
+    "url": "https://github.com/sgl-project/sglang/issues/36669",
+    "issue_updated": "2026-10-16T21:33:25Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -489213,19 +489221,12 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "vercel/ai#23435": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:34:38Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "docs: TopxAI provider page names the retired jev-1.13.0",
-    "url": "https://github.com/vercel/ai/issues/23435"
+    "issue_updated": "2026-10-16T02:34:38Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "vercel/ai#23436": {
     "analyzed": "2026-10-16T04:34:26Z",
@@ -494821,19 +494822,12 @@
     "title": "[Bug]: Qwen3.5 does not work with pipeline parallelism"
   },
   "vllm-project/vllm#36651": {
-    "analyzed": "2026-10-16T02:37:34Z",
-    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b",
-    "defer_count": 1,
-    "deferred_from_status": "reactivated_stale_without_recent_maintainer_confirmation",
-    "first_deferred_at": "2026-10-16T02:37:34Z",
-    "issue_updated": "2026-10-16T02:32:19Z",
-    "reason": "inspection_budget_deferred",
-    "requeued_at": "2026-10-16T02:37:34Z",
-    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
-    "score": null,
-    "status": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "reactivated_stale_without_recent_maintainer_confirmation",
     "title": "cumem allocator: double-free and stale error codes during sleep/wake cycles",
-    "url": "https://github.com/vllm-project/vllm/issues/36651"
+    "issue_updated": "2026-10-16T02:32:19Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "vllm-project/vllm#36654": {
     "analyzed": "2026-09-01T01:29:23Z",
@@ -530473,8 +530467,8 @@
     "url": "https://github.com/vllm-project/vllm/issues/60897"
   },
   "vllm-project/vllm#60904": {
-    "analyzed": "2026-10-16T17:32:32Z",
-    "issue_updated": "2026-10-16T17:17:45Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:44:05Z",
     "status": "skip_prefilter",
     "title": "[RFC]: A standard for Specialized (MonoKernels) Decodes in vllm/models",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
@@ -541165,10 +541159,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "OpenHands/OpenHands#18550": {
-    "analyzed": "2026-10-16T10:35:01Z",
-    "status": "wrong_repository_or_downstream_bug",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "bot_or_stale_refresh",
     "title": "[Bug]: In Arabic (RTL), checked settings switches draw their thumb outside the track",
-    "issue_updated": "2026-10-16T10:26:22Z",
+    "issue_updated": "2026-10-16T21:33:54Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -541257,14 +541251,14 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "OpenHands/OpenHands#18547": {
-    "analyzed": "2026-10-16T10:35:01Z",
+    "analyzed": "2026-10-16T22:35:42Z",
     "notified": false,
     "status": "queued_outbox",
     "score": 11,
     "title": "[Bug]: Windows desktop title bar and menu bar remain dark with Light+ theme",
     "url": "https://github.com/OpenHands/OpenHands/issues/18547",
     "issue_updated": "2026-10-16T10:13:57Z",
-    "notification_digest": "9d94dddc523169dfc713a89fc592a3aff7b32fcecd0df96c321c06e687e83254",
+    "notification_digest": "2d7572f8fadeec5d5056b1d7262e50b2d2689a862c47754d658e30bcac9d2c79",
     "notification_scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "pre_task_evidence": {
       "schema": "pre_task_evidence_v1",
@@ -541273,7 +541267,7 @@
         "assignees": []
       },
       "issueDigest": "f20db27f2840989a9ecef5c92b3194d5e62b38a2ec2aa8628852a89ef3656f33",
-      "baseSha": "ccdb08783cf83ffe4d72d8c41298c700fe7fda94",
+      "baseSha": "0774201613f4f008b19655fdf3338d06e7739ec3",
       "defaultBranch": "main",
       "baseLookupStatus": "ok",
       "policy": {
@@ -541304,8 +541298,8 @@
       "reason": "PRE_TASK_EVIDENCE_PASSED",
       "reasons": [],
       "classification": null,
-      "baseSha": "ccdb08783cf83ffe4d72d8c41298c700fe7fda94",
-      "evidenceDigest": "8ec38938f244562095800e060fb4db4c9943903ece5218ccd9704038b98f79f1",
+      "baseSha": "0774201613f4f008b19655fdf3338d06e7739ec3",
+      "evidenceDigest": "9fb65ec6eb2ff46dd6cad0f371de1473c5407e6b48c5422149979c4b3dd2333e",
       "expected": {
         "baseSha": "",
         "issueDigest": "",
@@ -541314,8 +541308,8 @@
         "duplicateDigest": ""
       }
     },
-    "base_sha": "ccdb08783cf83ffe4d72d8c41298c700fe7fda94",
-    "evidence_digest": "8ec38938f244562095800e060fb4db4c9943903ece5218ccd9704038b98f79f1",
+    "base_sha": "0774201613f4f008b19655fdf3338d06e7739ec3",
+    "evidence_digest": "9fb65ec6eb2ff46dd6cad0f371de1473c5407e6b48c5422149979c4b3dd2333e",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -542800,10 +542794,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "allenai/open-instruct#1993": {
-    "analyzed": "2026-10-16T20:33:50Z",
+    "analyzed": "2026-10-16T22:35:42Z",
     "status": "no_bug_or_maintainer_actionability",
     "title": "H079: validate full-SFT quality with row-preserving atomic thinking tokens",
-    "issue_updated": "2026-10-16T20:24:38Z",
+    "issue_updated": "2026-10-16T21:41:53Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -543914,23 +543908,16 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "modelcontextprotocol/typescript-sdk#3041": {
-    "analyzed": "2026-10-16T15:33:27Z",
-    "requeued_at": "2026-10-16T15:33:27Z",
-    "first_deferred_at": "2026-10-16T15:33:27Z",
-    "defer_count": 1,
-    "deferred_from_status": "rfc_or_roadmap_without_maintainer_split",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "someone_active",
     "title": "checkResourceAllowed rejects a protected resource that differs from the server URL only by a trailing slash (one direction only)",
-    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/3041",
-    "issue_updated": "2026-10-16T15:08:47Z",
+    "issue_updated": "2026-10-16T21:33:34Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "pydantic/pydantic-ai#8981": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "issue_updated": "2026-10-16T20:43:41Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T22:22:24Z",
     "status": "skip_prefilter",
     "title": "Audit: surprising defaults and leftovers across harness capabilities",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
@@ -544468,10 +544455,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "allenai/open-instruct#1994": {
-    "analyzed": "2026-10-16T17:32:32Z",
+    "analyzed": "2026-10-16T22:35:42Z",
     "status": "no_bug_or_maintainer_actionability",
     "title": "h078-big-batch-tpu-sft: run log for H078 (4x-batch SFT recipe on 8x8x8 as a drop-in for A0')",
-    "issue_updated": "2026-10-16T16:54:45Z",
+    "issue_updated": "2026-10-16T22:32:04Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -545749,10 +545736,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "allenai/open-instruct#1995": {
-    "analyzed": "2026-10-16T20:33:50Z",
+    "analyzed": "2026-10-16T22:35:42Z",
     "status": "no_bug_or_maintainer_actionability",
     "title": "H081: atomic thinking tokens with both router auxiliary losses disabled",
-    "issue_updated": "2026-10-16T19:42:02Z",
+    "issue_updated": "2026-10-16T21:41:52Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -545831,10 +545818,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "deepset-ai/haystack#13299": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "issue_updated": "2026-10-16T20:49:54Z",
-    "status": "skip_prefilter",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "bot_or_stale_refresh",
     "title": "PythonCodeSplitter misaligns chunks and line numbers after a form feed (str.splitlines vs ast line numbers)",
+    "issue_updated": "2026-10-16T21:51:31Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -546362,10 +546349,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "allenai/open-instruct#2000": {
-    "analyzed": "2026-10-16T17:32:32Z",
+    "analyzed": "2026-10-16T22:35:42Z",
     "status": "no_bug_or_maintainer_actionability",
     "title": "H071 minicpm-recipe-vs-base: our SFT data vs theirs on MiniCPM5-2B-Midtrain",
-    "issue_updated": "2026-10-16T16:57:43Z",
+    "issue_updated": "2026-10-16T22:07:38Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -546378,10 +546365,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "allenai/open-instruct#1998": {
-    "analyzed": "2026-10-16T17:32:32Z",
+    "analyzed": "2026-10-16T22:35:42Z",
     "status": "no_bug_or_maintainer_actionability",
     "title": "H081 reanchor-14t-read: pre-registered rule for re-anchoring SFT on the decayed 14T",
-    "issue_updated": "2026-10-16T16:57:39Z",
+    "issue_updated": "2026-10-16T21:54:42Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -546536,17 +546523,17 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anomalyco/opencode#56212": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "requeued_at": "2026-10-16T21:20:16Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-10-16T18:37:00Z",
-    "defer_count": 3,
+    "defer_count": 4,
     "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
     "reason": "inspection_budget_deferred",
     "title": "agent: model switch does not refresh injected `Your Model` identity (stale self-identity)",
     "url": "https://github.com/anomalyco/opencode/issues/56212",
-    "issue_updated": "2026-10-16T21:08:34Z",
+    "issue_updated": "2026-10-16T22:08:06Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -547274,17 +547261,17 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "mastra-ai/mastra#27325": {
-    "analyzed": "2026-10-16T19:37:48Z",
-    "requeued_at": "2026-10-16T19:37:48Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-10-16T19:37:48Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
+    "defer_count": 2,
+    "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
     "reason": "inspection_budget_deferred",
     "title": "Classifier evaluation spans don't record their entity",
     "url": "https://github.com/mastra-ai/mastra/issues/27325",
-    "issue_updated": "2026-10-16T19:12:49Z",
+    "issue_updated": "2026-10-16T21:32:19Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -547789,18 +547776,18 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "vllm-project/vllm#62085": {
-    "analyzed": "2026-10-16T20:33:50Z",
+    "analyzed": "2026-10-16T22:35:42Z",
     "status": "repository_not_accepting_code_contributions",
     "title": "[Bug]: Stop sequences match inside reasoning, so responses come back empty (breaks Claude Code auto mode)",
-    "issue_updated": "2026-10-16T20:21:52Z",
+    "issue_updated": "2026-10-16T22:00:25Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "QwenLM/qwen-code#14408": {
-    "analyzed": "2026-10-16T21:20:16Z",
+    "analyzed": "2026-10-16T22:35:42Z",
     "status": "security_disclosure_required",
-    "title": "Deferred review finding from PR #14317: operator-recovery entry discards the bound previous-credential-keys ring",
-    "issue_updated": "2026-10-16T20:40:09Z",
+    "title": "Deferred review findings from PR #14317: operator-recovery discards the bound key ring (R1-6); no way to detect a silently mis-bound ring (R1-7)",
+    "issue_updated": "2026-10-16T22:14:49Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -547845,10 +547832,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "sgl-project/sglang#44789": {
-    "analyzed": "2026-10-16T20:33:50Z",
-    "status": "probe_contract_incomplete",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "someone_active",
     "title": "[Bug] MiMo-V2.6: MiMoV2Processor hard-codes CLIP mean/std, checkpoint preprocessor_config specifies ImageNet",
-    "issue_updated": "2026-10-16T20:22:28Z",
+    "issue_updated": "2026-10-16T21:36:06Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -547956,17 +547943,17 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "anomalyco/opencode#56247": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "requeued_at": "2026-10-16T21:20:16Z",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
     "first_deferred_at": "2026-10-16T21:20:16Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
+    "defer_count": 2,
+    "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
     "reason": "inspection_budget_deferred",
     "title": "server: permission evaluations and asks are no longer logged in v2",
     "url": "https://github.com/anomalyco/opencode/issues/56247",
-    "issue_updated": "2026-10-16T21:16:08Z",
+    "issue_updated": "2026-10-16T21:22:29Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -548101,10 +548088,10 @@
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
   "sgl-project/sglang#44794": {
-    "analyzed": "2026-10-16T21:20:16Z",
-    "status": "hardware_unavailable",
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "someone_active",
     "title": "[Bug] [AMD] select_experts casts the fp32 MoE correction bias to bf16 before #37133's fp32 aiter path, so GLM-5.x still routes with a bf16 bias",
-    "issue_updated": "2026-10-16T20:46:23Z",
+    "issue_updated": "2026-10-16T21:43:07Z",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   },
@@ -548153,6 +548140,701 @@
     "status": "resolved_upstream",
     "title": "osqueryd: Program terminated with signal SIGSEGV, Segmentation fault.",
     "issue_updated": "2026-10-16T21:14:36Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "pydantic/pydantic-ai#10518": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T22:34:33Z",
+    "status": "skip_prefilter",
+    "title": "Anthropic replay turns a non-empty `search_tools` result into \"No matching tools found\" when all its `tool_reference`s are filtered out",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "pydantic/pydantic-ai#9096": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:59:35Z",
+    "status": "skip_prefilter",
+    "title": "Profile setting for provider tool-call ID format constraints",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "pydantic/pydantic-ai#9086": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:58:40Z",
+    "status": "skip_prefilter",
+    "title": "Streamed provider-details hook skips chunks without choices",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "pydantic/pydantic-ai#10510": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:55:31Z",
+    "status": "skip_prefilter",
+    "title": "Agent workflow task failure: CI Review",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "ai-dynamo/dynamo#16695": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:36:53Z",
+    "status": "skip_prefilter",
+    "title": "[Cherry-Pick Request] [release/1.6.0]: build(vllm): bump xpu-vllm components to 0.30.0 and nixl_ref to 1.4.1",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "ai-dynamo/dynamo#16694": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T21:36:51Z",
+    "status": "skip_prefilter",
+    "title": "[Cherry-Pick Request] [release/1.6.0]: chore(xpu): upgrade SGLang XPU to v0.5.19 on oneAPI 2026.0",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "huggingface/transformers#49683": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "issue_updated": "2026-10-16T22:11:19Z",
+    "status": "skip_prefilter",
+    "title": "[serge] integration failure triage - 2026-10-16",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "simpel/okazi#144": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Approval card booking count is not bound to the approved action in customer.archive",
+    "issue_updated": "2026-10-16T22:35:29Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "gerchowl/flock#1715": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "test harness: release-profile runs can't reap or recognise the binary under test (is_test_flock_binary hard-codes target/debug/flk)",
+    "issue_updated": "2026-10-16T22:35:04Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "decision-crafters/presenter#21": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "archived_or_fork",
+    "title": "ollama-cloud: structured output fails (0 tool calls) — force tool_required=True",
+    "issue_updated": "2026-10-16T22:34:26Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "decision-crafters/presenter#26": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "archived_or_fork",
+    "title": "YouTube description leaks local source path; last chapter says 'Get the Code' when deck closes on Sources",
+    "issue_updated": "2026-10-16T22:34:26Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "Goloom-App/goloom#146": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:3",
+    "title": "[P2] fix(ai-chat): bind post mutations to the active team",
+    "issue_updated": "2026-10-16T22:34:03Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "kagura-ai/memory-cloud#2010": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:12",
+    "title": "fix(mcp): supersede suggestion detection is gated behind knn_seed_enabled",
+    "issue_updated": "2026-10-16T22:33:49Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "donadiosolutions/lcm#1524": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:3",
+    "title": "lcm mcp still exits at startup after daemon restart despite publication convergence",
+    "issue_updated": "2026-10-16T22:33:38Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "takushio2525/tako#2230": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:1",
+    "title": "[修正] persist.log の誤りの理由に serde の文言のまま設定ファイルの値が載る（migrate の記録・settings・projects add の警告）",
+    "issue_updated": "2026-10-16T22:33:27Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "en-gen/hackbench#983": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:1",
+    "title": "Map view: sprite $E3 on map $107 draws wrong (verify what $E3 spawns from SMWDisX)",
+    "issue_updated": "2026-10-16T22:33:26Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "nathanpond/Epistrel#325": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "A profile's per-purpose model routing is stored and shown but no turn uses it",
+    "issue_updated": "2026-10-16T22:33:22Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "en-gen/hackbench#985": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:1",
+    "title": "Map view: sprite $CA on map $011 (likely a torpedo launcher) draws wrong; the $C9+ sprite names are uncited",
+    "issue_updated": "2026-10-16T22:33:20Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "lingkaix/openkit#123": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "[gateway] Classify confirmed required-compaction failures consistently",
+    "issue_updated": "2026-10-16T22:32:48Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "Sanne/incus-spawn#1468": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:44",
+    "title": "Empty list items in a tool definition crash loading and validation (placeholders, domains)",
+    "issue_updated": "2026-10-16T22:32:21Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "Mason-Levyy/myfitnesspal-mcp#30": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:26",
+    "title": "fitness_delete_food can't remove one of two identical diary entries",
+    "issue_updated": "2026-10-16T22:32:01Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "BerriAI/litellm#47010": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Bug]: provider - litellm_tag Read never reads `model_max_budget` back, so per-model budget changes made outside Terraform go unnoticed",
+    "url": "https://github.com/BerriAI/litellm/issues/47010",
+    "issue_updated": "2026-10-16T22:32:41Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "BerriAI/litellm#47007": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Bug]: provider: litellm_unified_access_group can't clear `description`, and destroying an already-deleted group fails on 404",
+    "url": "https://github.com/BerriAI/litellm/issues/47007",
+    "issue_updated": "2026-10-16T22:28:33Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "BerriAI/litellm#47005": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Bug]: /tag/new writes the tag before tagging its models, so a failed create leaves the tag behind and every retry fails \"Tag … already exists\"",
+    "url": "https://github.com/BerriAI/litellm/issues/47005",
+    "issue_updated": "2026-10-16T22:26:06Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "BerriAI/litellm#47003": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Bug]: litellm_team_member / litellm_team_member_add never read the proxy: removed members stay in state, and destroying one fails with 400 \"User not found in team\"",
+    "url": "https://github.com/BerriAI/litellm/issues/47003",
+    "issue_updated": "2026-10-16T22:20:22Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "anomalyco/opencode#56258": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "config: plugin option tuples ['name', {options}] are rejected at normalization despite being the documented plugin options form",
+    "url": "https://github.com/anomalyco/opencode/issues/56258",
+    "issue_updated": "2026-10-16T22:13:20Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "anomalyco/opencode#56255": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Running service never picks up `opencode.jsonc` edits on Linux (config-directory watcher unsupported)",
+    "url": "https://github.com/anomalyco/opencode/issues/56255",
+    "issue_updated": "2026-10-16T21:44:22Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "anomalyco/opencode#56249": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "subagent: sessionID continuation forks running lanes — zero-context sidecar spawns, no parentage in payload",
+    "url": "https://github.com/anomalyco/opencode/issues/56249",
+    "issue_updated": "2026-10-16T21:53:30Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "anomalyco/opencode#56263": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Desktop: allow trusted custom URL protocols (e.g. `obsidian://`) for chat links",
+    "url": "https://github.com/anomalyco/opencode/issues/56263",
+    "issue_updated": "2026-10-16T22:32:15Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "anomalyco/opencode#56251": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "The question tool rejects calls that send header without question",
+    "url": "https://github.com/anomalyco/opencode/issues/56251",
+    "issue_updated": "2026-10-16T21:38:36Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "anomalyco/opencode#56250": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Step-capped agents fail with an assistant prefill 400",
+    "url": "https://github.com/anomalyco/opencode/issues/56250",
+    "issue_updated": "2026-10-16T21:40:17Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "anomalyco/opencode#56261": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[FEATURE]: agent listens to agents.md more than developer instructions",
+    "url": "https://github.com/anomalyco/opencode/issues/56261",
+    "issue_updated": "2026-10-16T22:26:48Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "pydantic/pydantic-ai#10521": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Dynamic system prompts (`@agent.system_prompt(dynamic=True)`) rewrite history in place and bust the prompt cache",
+    "url": "https://github.com/pydantic/pydantic-ai/issues/10521",
+    "issue_updated": "2026-10-16T22:17:15Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "pydantic/pydantic-ai#10520": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "V3: make `on_change='append'` the default for instruction blocks with an id",
+    "url": "https://github.com/pydantic/pydantic-ai/issues/10520",
+    "issue_updated": "2026-10-16T22:17:14Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "vllm-project/vllm#62096": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Feature]: Default to NextTokenPrediction Read strategy for text generation models for /v1/systemone and /v1/decisions",
+    "url": "https://github.com/vllm-project/vllm/issues/62096",
+    "issue_updated": "2026-10-16T22:09:25Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "aaif-goose/goose#12965": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "docs: example for sending goose otel traces to a hosted backend (e.g. langwatch)",
+    "url": "https://github.com/aaif-goose/goose/issues/12965",
+    "issue_updated": "2026-10-16T21:41:00Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "vllm-project/vllm#62094": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Bug]: Adaptive verification fails at startup with the default attention backend on FA2 GPUs",
+    "url": "https://github.com/vllm-project/vllm/issues/62094",
+    "issue_updated": "2026-10-16T21:32:26Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "crewAIInc/crewAI#8235": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[FEATURE] TopK search tool for crewai-tools",
+    "url": "https://github.com/crewAIInc/crewAI/issues/8235",
+    "issue_updated": "2026-10-16T21:33:39Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "pydantic/pydantic-ai#10505": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Mark request-scoped `SystemPromptPart`s as not visible in later requests' OTel spans",
+    "url": "https://github.com/pydantic/pydantic-ai/issues/10505",
+    "issue_updated": "2026-10-16T21:20:35Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "getpaseo/paseo#7163": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "bug: changing thinking, then mode, while a Claude agent works kills its turn and leaves it 'running'",
+    "url": "https://github.com/getpaseo/paseo/issues/7163",
+    "issue_updated": "2026-10-16T22:33:55Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "deepseek-ai/DeepSeek-V3#1716": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "someone_active",
+    "title": "[BUG] Don't receive code on my yandex mail",
+    "issue_updated": "2026-10-16T22:30:05Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "allenai/open-instruct#2005": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "no_bug_or_maintainer_actionability",
+    "title": "H080 IF-stage quality audit: run log",
+    "issue_updated": "2026-10-16T21:37:18Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "pydantic/pydantic-ai#10525": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "off_topic",
+    "title": "Non-object tool arguments crash under Python optimization",
+    "issue_updated": "2026-10-16T22:31:10Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "OpenHands/OpenHands#18573": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "desktop_peripheral_issue",
+    "title": "[Bug]: White line appears above the chat input when resizing it",
+    "issue_updated": "2026-10-16T22:29:31Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "ai-dynamo/dynamo#16696": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "incomplete_issue_template",
+    "title": "[BUG]: Multinode worker metrics fail on non-leader",
+    "issue_updated": "2026-10-16T21:30:08Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "ai-dynamo/dynamo#16692": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "incomplete_issue_template",
+    "title": "[BUG]: Dynamo worker metrics missing \"dynamo_namespace\" label",
+    "issue_updated": "2026-10-16T21:26:39Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "QwenLM/qwen-code#14410": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "rfc_or_roadmap_without_maintainer_split",
+    "title": "Agent tool (subagents): parallel batch launches silently produce no result, no error, no notification — single agent works (0.25.2)",
+    "issue_updated": "2026-10-16T22:32:36Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "BerriAI/litellm#46999": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "off_topic",
+    "title": "[Bug]: /tag/update 500s \"BudgetNewRequest() got multiple values for keyword argument 'budget_id'\" on any tag that has a budget",
+    "issue_updated": "2026-10-16T22:15:45Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "BerriAI/litellm#47011": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "probe_contract_incomplete",
+    "title": "[Bug]: /key/generate and /user/new answer a bare 500 \"Internal Server Error.\" for the Enterprise-only `get_spend_routes` permission; the licence message only reaches the log",
+    "issue_updated": "2026-10-16T22:34:38Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "ai-dynamo/dynamo#16697": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "off_topic",
+    "title": "vLLM pure-TP MoE self-benchmarks skip required real-KV warm-up",
+    "issue_updated": "2026-10-16T22:07:13Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "ai-dynamo/dynamo#16693": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "off_topic",
+    "title": "fix(operator): align the HX topology family with the GBuild type name",
+    "issue_updated": "2026-10-16T21:27:28Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "mastra-ai/mastra#27346": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "probe_contract_incomplete",
+    "title": "[BUG] Classifier throws when a decision model refuses a question (`refusal` answer)",
+    "issue_updated": "2026-10-16T21:56:42Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "MoonshotAI/kimi-code#4261": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "rfc_or_roadmap_without_maintainer_split",
+    "title": "Feature request: Automatic model routing and quota-aware provider fallback",
+    "issue_updated": "2026-10-16T21:42:47Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "sgl-project/sglang#44810": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "off_topic",
+    "title": "[Bug] DeepSeek-V4 BF16 checkpoint is routed to the MXFP4 expert path and fails in fused MoE",
+    "issue_updated": "2026-10-16T22:35:16Z",
+    "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
+    "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
+  },
+  "aaif-goose/goose#12966": {
+    "analyzed": "2026-10-16T22:35:42Z",
+    "status": "semantic_review_retry",
+    "reason": "semantic_review_retry",
+    "requeued_at": "2026-10-16T22:35:42Z",
+    "title": "Responses decoding rejects decimal-form created_at timestamps",
+    "url": "https://github.com/aaif-goose/goose/issues/12966",
+    "issue_updated": "2026-10-16T21:45:17Z",
+    "llm_error_category": "ok",
+    "first_deferred_at": "2026-10-16T22:35:42Z",
+    "pre_task_evidence": {
+      "schema": "pre_task_evidence_v1",
+      "issue": {
+        "state": "open",
+        "assignees": []
+      },
+      "issueDigest": "59916700bf14affb48f6990ebb7aefb57ce8f8f1409acd39c6ceb998707592ff",
+      "baseSha": "59e588dfd941ae129f2938deb7acf9f80b6edd02",
+      "defaultBranch": "main",
+      "baseLookupStatus": "ok",
+      "policy": {
+        "status": "needs_assignment"
+      },
+      "assignmentRequired": true,
+      "aiDisclosureConflict": false,
+      "codePathsPlan": [
+        "crates/goose-provider-types/src/formats/openai_responses.rs",
+        "services/ask-ai-bot/utils/ai/tools/github.ts"
+      ],
+      "reproductionPathPlan": false,
+      "validationPathPlan": true,
+      "probeRequired": true,
+      "matureRepository": true,
+      "duplicate": {
+        "status": "none",
+        "best_score": -2,
+        "best_url": "https://github.com/aaif-goose/goose/pull/12876",
+        "keywordOverlapOnly": true,
+        "summary": "仅发现未直接关联、无代码路径或强机制重合的 PR #12876；保留为搜索上下文，不阻止实现",
+        "prs": [
+          {
+            "number": 12876,
+            "url": "https://github.com/aaif-goose/goose/pull/12876",
+            "title": "chore(GDK): release v0.1.0-alpha.13",
+            "score": -2,
+            "references_issue": false,
+            "reference_relation": "REFERENCE",
+            "issue_body_link": false,
+            "issue_body_link_relation": "",
+            "semantic_overlap": false,
+            "direct_code_overlap": false,
+            "semantic_overlap_count": 3,
+            "semantic_distinctive_overlap": [
+              "created_at"
+            ],
+            "overlapping_paths": [],
+            "test_files": 0,
+            "changed_files": 16,
+            "additions": 79,
+            "deletions": 29,
+            "age_days": 0,
+            "is_draft": false,
+            "state": "OPEN",
+            "rule_closed": false,
+            "maintainer_owned": false,
+            "author_association": "CONTRIBUTOR",
+            "technical_complete": false,
+            "root_cause_coverage": false,
+            "material_competition_gaps": [
+              "缺少回归测试"
+            ],
+            "ignored_nontechnical_failed_checks": [],
+            "technical_failed_checks": [],
+            "ci_competition_weight": 0,
+            "strengths": [
+              "已有成功 CI/check",
+              "近期仍活跃",
+              "标题/正文与 issue 关键词匹配"
+            ],
+            "gaps": [
+              "未明确 closing/reference 目标 issue",
+              "缺少测试文件"
+            ]
+          }
+        ]
+      },
+      "duplicateStatus": "none",
+      "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+      "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "duplicateDigest": "3ec21d198d7690c5593dc0a7ad88f5b514d9133dc9a4127eceaf6f04edc98873"
+    },
+    "pre_task_gate": {
+      "schema": "pre_task_evidence_v1",
+      "allowed": false,
+      "reason": "assignment_required",
+      "reasons": [
+        "assignment_required",
+        "reproduction_or_validation_missing",
+        "semantic_retry"
+      ],
+      "classification": "blocked_pre_task",
+      "baseSha": "59e588dfd941ae129f2938deb7acf9f80b6edd02",
+      "evidenceDigest": "6c4b305cc6d21fe52d4eb299d23b93d43149084106b3f3229038b1f1cddd0e11",
+      "expected": {
+        "baseSha": "",
+        "issueDigest": "",
+        "designDigest": "",
+        "assigneeDigest": "",
+        "duplicateDigest": ""
+      }
+    },
+    "base_sha": "59e588dfd941ae129f2938deb7acf9f80b6edd02",
+    "evidence_digest": "6c4b305cc6d21fe52d4eb299d23b93d43149084106b3f3229038b1f1cddd0e11",
     "scanner_version": "oss_pr_radar_v54_authorized_ai_disclosure",
     "decision_contract_digest": "8f3ad8813129433c3a709314cebf423ce26ef8d5280a4a15bbc30dc60678b00b"
   }
