@@ -5531,6 +5531,42 @@
     ],
     "why": "Issue reports a reproducible degenerate output (identical token and logprob at every decode position) on DeepSeek-V4-Flash with SM120, isolated across TP and DP+EP, and confirmed independent of environment via clean-venv reproduction. The evidence includes concrete code paths (attention.py, cache_utils.py, flashinfer_sparse.py) and a clear numerical signature, supporting a reference-vs-implementation test. The track is llm_algorithm with mechanisms like model_architecture, numerics_quantization, and kernel_algorithm, and the issue is actionable for root-cause investigation."
   },
+  "0992d61afb4278d13a2a0b52bfe1d687adac56536da5a0c30d840901203e582b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports PR #43884 as 'technical_complete: false' and 'root_cause_coverage: false' while its title and the issue comments indicate it implements the requested preflight/fallback fix"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/speculative/eagle_utils.py: preflight/warm-up of speculative sampling ops and non-fatal handling of JIT failure",
+      "flashinfer cache handling for partial builds under cached_ops/sampling/"
+    ],
+    "risks": [
+      "PR #43884 may already cover the same root cause and scope, making a new contribution duplicative",
+      "PR #43591 addresses the env-level toolchain pin, potentially resolving the crash without code changes",
+      "Overlap between the two open PRs is unresolved"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on unpinned pip cu13 env: greedy request succeeds, temperature 0.7 request triggers JIT failure and SIGKILL",
+      "After fix: startup preflight surfaces the failure before serving; request errors clearly instead of killing the process tree",
+      "Verify poisoned-cache clearing allows clean retry after a failed build"
+    ],
+    "unknowns": [
+      "Whether PR #43884 or #43591 already fully resolves the issue and will be merged",
+      "Whether maintainers consider the blast-radius fix covered by existing PRs",
+      "Final scope/design preference for the fix"
+    ],
+    "why": "Issue #43412 has a clear root-cause chain (flashinfer JIT of top_k_renorm_probs in eagle_sample fails due to bundled cccl vs pip cu13 toolkit mismatch, and the RuntimeError kills the process tree) and a concrete reproducer. However, the supplied evidence shows PR #43884 already implements exactly the requested blast-radius fix (startup preflight, poisoned-cache clearing, flag-gated triton fallback) and PR #43591 addresses the toolchain pin; the duplicate status is 'semantic_overlap_requires_review' with unresolved coverage. This materially determines whether new code work is actionable."
+  },
   "09b1183f338193d6abf266936fc23c8899c54cb1609b4dedc3150a279a4c41e5": {
     "confidence": 0.8,
     "contradictions": [],
@@ -22029,6 +22065,39 @@
       "Status of PR #33458's failing CI and whether it will be updated."
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but an existing PR #33458 directly addresses it with failing CI, and a maintainer has not yet approved or assigned. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "256e62d8e872870ae6dae250fcf5a7b9bfb772548eab8e474615197530266e12": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment reports PRs #13885/#13886 with semantic overlap and tests for this exact fix, while the candidate is still classified as a PR_COMPETITION_OPPORTUNITY with no maintainer resolution"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/nonInteractiveCli.ts: stop gating emitResult on memory task promises",
+      "packages/cli/src/nonInteractive/session.ts: drain retained memory promises in waitForAllPendingWork with bounded timeout"
+    ],
+    "risks": [
+      "Deleting the await without a shutdown drain truncates memory writes on one-shot qwen -p and stream-json EOF",
+      "Duplicate/competing PRs #13885 and #13886 may already cover the root cause"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Deferred memory promise must not delay emitResult (emit-order assertion)",
+      "Shutdown drains pending memory promises before exit and gives up after the bound"
+    ],
+    "unknowns": [
+      "Whether PR #13885 or #13886 already implements the accepted fix and is on track to merge",
+      "Whether maintainers have a stated design preference between moving the await after emitResult vs. retaining promises for shutdown drain"
+    ],
+    "why": "Issue root cause is well-evidenced (blocking await at nonInteractiveCli.ts:3222 gating emitResult) and triage confirms it, but two open PRs (#13885, #13886) already target exactly this fix with overlapping paths and tests, and the duplicate assessment is explicitly 'semantic_overlap_requires_review' with no maintainer resolution. Whether a new contribution is actionable depends on comparing those implementations, which is a materially blocking unknown."
   },
   "25771700a415f45dbb088fa871a97f7921d4493619891cf82afdac39fedda694": {
     "confidence": 0.6,
@@ -49331,6 +49400,39 @@
       "Whether PR #16666 already covers or conflicts with the cloud-side fix"
     ],
     "why": "Issue gives a plausible root cause (updateConversationRepository writes only to local storage after the direct agent-server port) and a concrete repro, but two supplied facts materially block actionability: (1) the maintainer bot explicitly requires a running-app capture (screenshot/video) of the failure, which is still a TODO placeholder, and (2) it asks whether the cloud App-API even accepts selected_repository/selected_branch/git_provider in PATCH /api/v1/app-conversations/{id}, i.e. whether the fix belongs in this repo at all. Additionally PR #16666 touches the same function/path with semantic overlap and unresolved coverage, so duplicate/ownership is not settled."
+  },
+  "50aeb75e56bdac40410977d7a61563900a27a1ee7583c54a9b3b220a604c1d51": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/harness-claude-code/src/claude-code-harness.ts: add optional typed onDebug setting and forward to both SandboxChannel constructors",
+      "packages/harness-claude-code/src/claude-code-harness.test.ts: capture onDebug in FakeSandboxChannel and add forwarding regression test"
+    ],
+    "risks": [
+      "Debug cause values may contain connection details; avoid indiscriminate logging",
+      "Maintainer may prefer a session-level transport-health API over raw onDebug forwarding",
+      "Overlapping open PRs in the same package could conflict on the test file"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add debugHooks capture in FakeSandboxChannel and reset in beforeEach",
+      "Run the supplied 'forwards channel debug events for fresh and attached sessions' test on unmodified main to confirm red (expected [undefined, undefined])",
+      "Re-run after the minimal forwarding change to confirm green alongside the existing bridge-token control test"
+    ],
+    "unknowns": [
+      "What originally closed the production channel (explicitly unconfirmed by reporter)",
+      "Whether maintainers prefer onDebug forwarding vs a health getter API"
+    ],
+    "why": "Issue precisely anchors the gap: SandboxChannel already emits onDebug and exposes isClosed(), but createClaudeCode keeps the channel private and forwards neither callback nor health getter through either constructor. A concrete red/green adapter regression using existing mocks is supplied, and the proposed minimal change (optional typed onDebug forwarded to both constructors) is well-scoped. Overlapping open PRs (#23287, #23469) touch the same package but neither covers this observability gap, so they are not a duplicate fix."
   },
   "50afe7c0b6424b7971df3a266a510a7bb4598ca0352eb1a347abd0136a98c2df": {
     "confidence": 0.8,
