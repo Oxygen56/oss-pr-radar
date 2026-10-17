@@ -16832,6 +16832,38 @@
     ],
     "why": "Issue provides a clear root cause (missing bounds guard for logical_expert_id when shared-experts fusion is disabled) and a concrete reproduction command with traceback. The fix is actionable: add a guard or route shared-expert weights correctly. Existing PRs overlap semantically but do not directly address this issue, so the contribution remains valuable."
   },
+  "1cb520a0da20015c273476f39250fdc465af8c79a0979e16ead04d518d187991": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes code-side disk guard, but collaborator states root cause was undersized hosts already removed, making code fix largely unnecessary"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "CI workflow free-disk pre-check before Install dependencies (optional, infra-only)",
+      "Runner deregistration on low disk (optional, infra-only)"
+    ],
+    "risks": [
+      "Code-side disk guard may be redundant now that oversized hosts were removed",
+      "Changes touch CI infra owned by maintainers, not application code",
+      "No reproducible code-level failure to fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Verify affected hosts are removed from the 1-gpu-5090 pool and jobs install successfully",
+      "If a pre-check is added, simulate a full disk and confirm fail-fast with clear message"
+    ],
+    "unknowns": [
+      "Whether maintainers still want a defensive free-disk pre-check in CI workflows"
+    ],
+    "why": "The issue is an infrastructure/runner disk-capacity problem on self-hosted vast.ai 5090 hosts, not a code defect. The collaborator confirms the bad hosts had only 512GB disk and have already been removed, with remaining hosts having sufficient disk. The proposed code-side mitigations (free-disk pre-check, runner self-deregistration) are CI-infra plumbing, not an algorithm or runtime code contribution, and the primary remediation is operational and already done."
+  },
   "1cb6cb60744ca6624683d8981e21489b35c5019198e94d35cfe562b7e64dabbb": {
     "confidence": 0.85,
     "contradictions": [],
