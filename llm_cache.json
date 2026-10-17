@@ -33105,6 +33105,39 @@
     ],
     "why": "Issue #1326 documents a concrete, reproducible mechanism: apply_block_expansion_if_configured freezes everything but the appended blocks, then get_peft_model re-freezes non-adapter params (including the new zero-init o_proj/down_proj) and attaches adapters to all layers; measured per-layer LoRA gradient norms show exactly zero gradient on the new blocks and non-zero on originals. The owner has ruled route 1 (refuse lora.r>0 + expand_layers + positive freeze_trainable_layers at config load), scoped the work to config/schema.py plus docs and CPU tests, and confirmed no open PR covers it. This is a concrete training-mechanism invariant with a reference-vs-implementation validation path (named_parameters after real setup(), gradient norms, save/reload logits diff)."
   },
+  "36bfc189b7f1b673a308773bf03e70b66432fc6d585d6aa70800166c18465102": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/openai/protocol.py: accept/alias thinking or map reasoning_content for assistant messages",
+      "python/sglang/srt/entrypoints/openai/serving_chat.py: map reasoning_content to thinking on the Jinja path when gpt-oss reasoning parser is active",
+      "python/sglang/srt/parser/jinja_template_utils.py: preserve thinking content parts if content-part route is chosen"
+    ],
+    "risks": [
+      "Open PR #42646 touches the same protocol.py/serving_chat.py paths but is a different feature (return_indexer_topk); must confirm no conflict",
+      "Behavior change scope: mapping should be gated to gpt-oss reasoning parser to avoid altering other models' template rendering",
+      "Edge case of preamble content plus CoT in a tool-call turn needs explicit handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that replays an assistant tool-call turn with reasoning_content and asserts prompt_tokens equals the template's CoT-in-thinking count (291 vs 268)",
+      "Assert the rendered prompt contains the analysis channel segment `<|channel|>analysis<|message|>` before the tool call",
+      "Cover the edge case where a tool-call turn has non-empty content plus CoT to avoid the template's 'Cannot pass both content and thinking' error"
+    ],
+    "unknowns": [
+      "Maintainer preference between per-parser special case and declared replay-field mechanism is unresolved but not blocking"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: ChatCompletionMessageGenericParam declares reasoning_content but not thinking, and the Jinja path forwards messages unchanged, so gpt-oss's template (which reads `thinking`) drops replayed CoT. A contributor comment confirms the mismatch on current main and proposes two concrete fix shapes. Reproduction includes executable server command, script, and expected 291 vs actual 268 token counts, giving a reference-vs-implementation test."
+  },
   "36ccd055a96db4f3c333ed6b3324d810083ea8c01c3d13309563fda93ac094d3": {
     "confidence": 0.8,
     "contradictions": [],
@@ -40391,6 +40424,42 @@
       "Whether a deterministic reproduction can be constructed without a live agentic client"
     ],
     "why": "Issue reports a real GLM-5.3-Flash degeneration regression with a build A/B delta, but the reporter explicitly could not construct a synthetic reproduction; only real long agentic sessions trigger it. A maintainer comment attributes it to tool-call/vLLM frontend, and an open PR #56635 claims a parser fix, but root-cause coverage is marked false and the fix is unverified. The candidate's own evidence flags a potential duplicate issue #56770 sharing stack/failure signatures and a policy/disclosure conflict, leaving materially blocking unknowns about whether code work is actionable and non-duplicative."
+  },
+  "4261d6a9413306f53bfa2ff56a0533021b5669bf3d23c5a0b58a40c0a1d665f7": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body states #22549 no longer reproduces and later approvals work, while the pending-at-pause approval still fails; scope boundary is clear but root cause is not"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "harness-claude-code resume path: carry out or error on approvals answered after resume",
+      "tool-approval continuation handling in continueStream after createSession({resumeFrom})"
+    ],
+    "risks": [
+      "Root cause not localized; fix may touch resume/attach timing rather than approval dispatch",
+      "Possible overlap with open PR #23500 (re-emit tool call before approval after host-input pause) though not confirmed as covering this case",
+      "Behavior change to approval semantics could affect hosts relying on current interruption messaging"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce per issue steps: allow-reads turn, leave first approval pending, stop, snapshot, resume, approve; assert the approved Bash call executes and yields a tool-result",
+      "Regression test that a resumed pending approval either runs or surfaces a host-visible error, never silently drops",
+      "Check createSession({resumeFrom}) latency against startupTimeoutMs attach behavior"
+    ],
+    "unknowns": [
+      "Which code path in harness-claude-code handles approvals answered after resume",
+      "Whether open PR #23500 already addresses this exact pending-approval-after-resume case",
+      "Whether the 122s createSession latency is a separate defect or part of the same root cause"
+    ],
+    "why": "The issue gives a concrete reproduction and a clear symptom (approval answered after resume is not executed, model told it was interrupted), but the supplied evidence contains no root-cause signal and no code anchors beyond incidental strings (`startupTimeoutMs`, `continueFrom`, `a.txt`). The pre-review explicitly failed on no_code_surface and reproduction_or_validation_missing, and probe_ready is false. Without a located code path in the harness resume/approval flow, the fix is not yet actionable."
   },
   "427f59b94b3d01bdf8aee3559d5b172f22dd82401fa237bf68eee92a19474360": {
     "confidence": 0.8,
@@ -68057,6 +68126,35 @@
     ],
     "why": "Issue clearly identifies a detached promise causing silent title loss on serverless runtimes, with a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and existing PRs (e.g., #16218) overlap semantically, requiring maintainer comparison before creating a new task."
   },
+  "6babef158733f8aba9a93b66331dc2c4a8b0da0a1f388e51fb56c9352cf96ac4": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue body reports a backend JSON parse failure as a platform bug, but the follow-up comment attributes it to the user's own STDIO config and confirms resolution"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Optionally improve deploy-check error messaging when the repo has no publishable package (empty JSON body) instead of surfacing 'unexpected end of JSON input'"
+    ],
+    "risks": [
+      "Issue is self-resolved by reporter; no confirmed maintainer interest in the UX improvement",
+      "No code anchors or root-cause evidence in modelscope codebase supplied"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with a repo lacking pyproject/package: confirm deploy check returns empty body; verify improved error message after any change"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the empty-body error messaging worth a code change"
+    ],
+    "why": "The reporter's own follow-up comment resolves the issue: the failure was caused by their STDIO server config lacking a package-manager command (npx/uvx), and it was fixed by publishing to PyPI and setting command to uvx. This is a user configuration/usage problem, not a code defect in modelscope. The remaining suggestion (better error messaging for empty JSON body) is a minor UX improvement, not a concrete algorithm or infra code contribution."
+  },
   "6bb3d7358f61176d8a225c19320235a712b9e243a8d80e2f4644ee11f87c1109": {
     "confidence": 0.85,
     "contradictions": [],
@@ -92113,6 +92211,38 @@
     ],
     "why": "The supplied evidence establishes a code-level root cause on the mobile side (EXCLUDED_PROVIDER_IDS filters ollama in DesktopConnectionRuntime.ts, and Pi runtime lacks an ollama-chat adapter), but the issue itself is an unverified intake report with no reporter build, steps, or device capture. The bot comment explicitly states the record is waiting on a maintainer decision about scope and that no coding task is assigned from it. The fix is a product-scope question (explicit unsupported-provider UX vs. native Ollama support), not a concrete, actionable code change."
   },
+  "90e49201dfe932341c9c0ed2675c375de3bfacaae0ad791192281a882609d2e7": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/components/features/automations/detail/detail-header.tsx: add phone breakpoint wrapping/stacking and min-w-0 title constraint",
+      "src/routes/automation-detail.tsx: verify padding does not force overflow at 390px"
+    ],
+    "risks": [
+      "RTL layout may need logical properties rather than left/right assumptions",
+      "Over-constraining title could clip the full name, violating acceptance criteria",
+      "Desktop single-row layout must be preserved"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Render detail header at 390x844 with 21-char name in LTR and RTL; assert each control bounding rect within [0,390]",
+      "Assert document.scrollWidth equals viewport width (no horizontal overflow)",
+      "Pointer click toggles switch and opens actions menu; keyboard Space toggles switch",
+      "Regression: short name QA and desktop 1440x900 keep single-row layout with all controls in viewport"
+    ],
+    "unknowns": [
+      "No fresh live-app reproduction at current main, though header blob is identical to audited revision"
+    ],
+    "why": "Issue provides concrete reproduction (390x844, name QA_Inert_Event_Detail, LTR and RTL), measured geometry showing the switch offscreen, and code anchors (detail-header.tsx lines 91-126 single non-wrapping row; automation-detail.tsx 24px padding). Root cause is a layout defect with a clear fix direction (wrap/stack at phone width, min-w-0 title). Adjacent PR #16167 covers dashboard cards/list rows, not this detail header, so no duplicate coverage."
+  },
   "90e952beb24f1f8e89559b2f6c2297f60db54cf6d8d097436947c91996e16bec": {
     "confidence": 0.7,
     "contradictions": [
@@ -92242,6 +92372,31 @@
       "Whether a suitable OAuth client_id exists for the bundled github MCP server device flow"
     ],
     "why": "Issue provides a concrete, reproducible root cause: GitHub's authorization-server discovery endpoint returns 404, so Cline aborts before reaching its already-implemented device-code grant. Endpoint checks and a minimal device-flow fallback client are supplied, giving a clear reference-vs-implementation validation path. No open PR or duplicate covers this fix; the two merged PRs are unrelated (promotion notice, webview crash) and only share the token '404s'."
+  },
+  "91264da37d9b317f0e12dbf49505df2ab5e725d5c54a9fd1c89432d88da0c643": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue expects LSP to start per docs, but maintainer bot states v2 does not run language servers and the linked docs are v1"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Implementing LSP startup would duplicate the tracked v2 LSP/formatter work in #38528 and conflict with maintainer design direction",
+      "The report conflates v1 documentation with v2 behavior, so a 'fix' would be premature"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [
+      "Status of the tracked v2 LSP implementation in #38528"
+    ],
+    "why": "The issue reports that LSP servers never start in v2.0.32, but the maintainer bot's comment establishes this is expected v2 behavior: the lsp config is accepted but LSP is not yet implemented in v2, and the linked docs describe v1. This is a known limitation tracked by #38528 and duplicated by #50916, not an actionable bug with a code root cause."
   },
   "9141f268499426293a8c1e9b3e03ca4523a11f7d4477ed4e173a9267ffdc9206": {
     "confidence": 0.85,
@@ -104567,6 +104722,37 @@
     ],
     "why": "Issue #7488 provides a concrete root cause (GoogleEmbedder.embedBatch passes a bare string array as contents, which gemini-embedding-2 collapses into one multipart item) and a live reproduction showing 1 vs 2 embeddings. However, the supplied evidence contains a materially blocking unknown: PR #7489 is CLOSED and references this issue with reference_relation COVERAGE, but duplicate status is human_review_required and root_cause_coverage is false. Whether that closed PR already covers the fix determines whether new code work is actionable."
   },
+  "a4c37755b23539f6dd5937b2ea411fc5febf0a686e37d138f762099624a2ebc5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body references workflow run #917 while comments reference later runs #918-#921, indicating recurring failures without a resolved diagnosis"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until the failing workflow job and error are identified; possibly pyproject.toml dependency floor or type/lint fixes"
+    ],
+    "risks": [
+      "Fixing the wrong dependency or masking a real MCP SDK breaking change",
+      "Bumping version floors without confirming the actual failing check"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run `uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto` to reproduce, then isolate the failing job from workflow logs"
+    ],
+    "unknowns": [
+      "Which workflow job (static analysis vs tests) actually failed",
+      "The specific error output from the failing run",
+      "Whether the failure is a dependency upgrade issue or a genuine code regression"
+    ],
+    "why": "The issue is an auto-generated upgrade-check failure report with no identified failing job, no root cause, and no concrete code anchor. It only lists generic possible causes (ty, ruff, MCP SDK) and generic reproduction steps. No specific failure log or error is supplied, so the actual code change is undetermined."
+  },
   "a4dce4399322ce56b8fa8b71eda5fe290043b04de39c5042c67824689ee486fe": {
     "confidence": 0.82,
     "contradictions": [],
@@ -107919,6 +108105,42 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a clear root cause and a concrete fix location, but an open PR (#13179) by a collaborator overlaps the same code path and semantics, requiring manual comparison before new work starts."
+  },
+  "ab5baa1b05283a35cd18882f81b9461d6acf431310749b783453a383cf3e2c41": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Commenter proposes request-context activation while issue frames it as a simple port of VS Code gating; these are not identical semantics"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/safety/rules.ts: apply path conditionals during rule selection",
+      "sdk/packages/core/src/extensions/config/user-instruction-service.ts: pass optional evaluation context into rule rendering",
+      "shared pure conditional evaluator reused by apps/vscode rule-conditionals.ts and sdk/core"
+    ],
+    "risks": [
+      "Activation semantics (request file refs vs full workspace enumeration) may diverge from maintainer intent",
+      "Porting evaluator could silently change fail-open/fail-closed edge cases",
+      "B2 sticky-cwd scope is broader and may need separate handling"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Parity tests for omitted/empty/invalid/whitespace paths patterns against VS Code evaluator",
+      "Core prompt test: matching rule included, unrelated rule excluded, disabled rule still excluded",
+      "CLI/runtime regression with consecutive requests having different file references and nested cwd"
+    ],
+    "unknowns": [
+      "No reproduced CLI session or executed failing test confirming the bug",
+      "Maintainer decision on request-context vs discovery-time filtering",
+      "Whether B2 and B3 should be split into separate issues"
+    ],
+    "why": "Issue B3 has concrete code anchors and a reference implementation (VS Code evaluatePathsConditional with picomatch), and a commenter proposes a plausible request-context design. However, the commenter explicitly states this is source inspection only, with no reproduced CLI session or executed test result, and the pre-task evidence marks reproduction_or_validation_missing and probe_ready=false. The exact activation semantics (which candidate paths trigger a rule) are still an open design question, so actionability is not yet established."
   },
   "ab5dd67ef1ce40a078db778eb4e323e0d29842cd1d9f54178ba2e19a3ad93475": {
     "confidence": 0.7,
@@ -130579,6 +130801,38 @@
     ],
     "why": "Issue identifies a concrete bug: fast mode silently excludes scripts/ via hardcoded FAST_SKIP_DIRS in discover.c, with reproduction and root cause confirmed by a contributor. Maintainer acknowledged and routed as high-priority bug. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks explicit maintainer approval or design confirmation for the fix approach. The proposed change is actionable but needs maintainer direction on whether to remove scripts/ from the skip list, make it configurable, or add warnings."
   },
+  "cf4bee37cac1f8e166cebfaf428c7062c629770a43fb5596b09adfc0c4283d16": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/api/agent-server-adapter.ts: preserve or explicitly reject plugin.parameters in buildConfiguredConversationSettings",
+      "src/components/features/launch/plugin-launch-modal.tsx: surface unsupported Local parameter configuration before creation if backend cannot consume it",
+      "src/api/conversation-service/agent-server-conversation-service.api.ts: ensure outbound plugin payload reflects supported contract"
+    ],
+    "risks": [
+      "SDK PluginSource schema may not support parameters, requiring a UI limitation message rather than forwarding",
+      "Avoid expanding API behavior beyond supported backend contract",
+      "Distinguish from Unicode encoding issue #16735 and related PRs"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test on buildConfiguredConversationSettings asserting string/number/boolean parameters are either forwarded or explicitly rejected",
+      "Regression test that plugin launches without parameters still succeed",
+      "Reproduce via /launch?plugins=<base64 JSON> with parameters and inspect POST /api/conversations payload"
+    ],
+    "unknowns": [
+      "Whether the SDK/backend contract can accept parameters at all, which determines forward-vs-warn fix direction"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: buildConfiguredConversationSettings projects outbound plugins to only source/ref/repo_path, dropping plugin.parameters that the launch modal accepts and passes through. Reproduction steps, expected/actual behavior, and a focused payload-builder validation are supplied; no duplicate or merged fix covers this path."
+  },
   "cf5bbccc2b7bba60eb24bb7ffc685a1a75ae194a4b9a4d2f84fbaf8cbba8a6ab": {
     "confidence": 0.55,
     "contradictions": [
@@ -142845,6 +143099,36 @@
     ],
     "why": "Issue clearly identifies a version mismatch between Rust openai-protocol crate and Python protocol.py causing router rejection of custom tool types. However, existing PR #31184 is open but lacks tests and has CI failures, and maintainer approval is absent. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
   },
+  "e251bd097ae9604f762e63760b6b903206146b586b70a22bdfd1e76b7dd86477": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request upstream fetches from shared TaskGroup teardown",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools cancellation is scoped to the owning request"
+    ],
+    "risks": [
+      "Fix may alter session manager lifecycle semantics and affect stateless request handling",
+      "Maintainer may prefer a different teardown/ownership design"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two overlapping tools/list requests to POST /mcp with two HTTP streamable upstreams and assert neither is cancelled",
+      "Run targeted mcp_server_manager unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether #24522's prior fix left residual shared-state assumptions that constrain the correct fix"
+    ],
+    "why": "Issue provides a concrete concurrency bug with traceback showing cancel-scope teardown in StreamableHTTPSessionManager._handle_stateless_request cancelling in-flight list_tools fetches, ordered repro steps, and a clear expected behavior; no open PR or duplicate covers it."
+  },
   "e26225a35ee422548802f11c13cd1ef160af3a421e1d00098fa7c21320982803": {
     "confidence": 0.9,
     "contradictions": [
@@ -148187,6 +148471,42 @@
     ],
     "unknowns": [],
     "why": "Issue provides a self-contained, no-live-inference reproducer with expected/actual pair, traceback, ordered steps, and executable command. Root cause is concretely traced through Tool.__call__ sanitizing AgentAudio to a raw tensor (losing samplerate), output conversion defaulting to 16000 Hz, and _run_stream's generic conversion returning AgentText. Code anchors point to specific lines in tools.py, agents.py, and agent_types.py. No open PR or duplicate issue covers this."
+  },
+  "ea1ce03407dd4c05207b1cbe061faf5430c820a4876d88454642f66c5deaacd3": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "anthropic/serving.py: stop splicing prior thinking into assistant content for gpt-oss; route it to the template's thinking field",
+      "serving_chat.py: avoid masking the original template error in the flat-tools retry",
+      "anthropic/serving.py: map template rejections to 4xx instead of 500"
+    ],
+    "risks": [
+      "Overlapping work with open PRs #40965/#40968 on _convert_assistant_thinking_blocks may cause conflicts",
+      "Status-code change overlaps #36746 and could duplicate that fix",
+      "Behavior change for other models relying on the splice path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the two-turn /v1/messages request with a thinking block against gpt-oss-20b and assert HTTP 200",
+      "Regression: same request without the thinking block still returns 200",
+      "Regression: streaming variant returns 200 and emits events",
+      "With-tools variant with tool_use/tool_result round returns 200 and preserves the original template error if it fails",
+      "Assert template rejection surfaces as 4xx, not 500"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the #40968 approach for the thinking-field routing",
+      "Whether the 500-vs-400 mapping should be handled here or left to #36746"
+    ],
+    "why": "Issue provides a concrete, reproducible /v1/messages HTTP 500 with gpt-oss when history contains a thinking block, pinpoints the splice in _convert_assistant_thinking_blocks, the template rejection of <|channel|> tags, the masking flat-tools retry in _apply_jinja_template, and the 500 mapping in _handle_non_streaming/_handle_streaming. Controls (no thinking block -> 200, streaming -> 500) and a vLLM comparison establish a clear reference-vs-implementation test. No open PR directly covers this code path; #36746 only overlaps the status-code half and #42557 is unrelated."
   },
   "ea1eba67af7eb7bbc75d98db3951af66785d474aa89adec8bff8f2d66830e4c6": {
     "confidence": 0.8,
