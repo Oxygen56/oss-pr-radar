@@ -26972,6 +26972,41 @@
     ],
     "why": "Issue clearly identifies a stale tenant_embd_id causing empty api_key in queued tasks, with a concrete repro and suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and the related issue audit timed out, leaving unknowns about maintainer design preferences and potential duplicate work."
   },
+  "2bd89870e9a8c145142d91ad7085b841acdb0bbb7986023b7688d30aa63448a8": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/kv_router/scheduler.rs: adjust overlap credit / load weighting so resident prefix overlap can outweigh transient decode load",
+      "lib/llm/src/kv_router/embedded.rs: align cost formula and non_max_overlap_selections observer gating",
+      "Add regression test for multi-turn session placement under short-output decode load"
+    ],
+    "risks": [
+      "Changing default weights may regress heavier/skewed load where the load term legitimately matters",
+      "Floating-point/random variation in move counts requires fixed seeds and tolerances",
+      "non_max_overlap_selections counter semantics may be misread; observer gating differs between prefill and decode routers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with two mocker workers on CPU (16 sessions x 12 turns, 8 in flight) and count resumed-turn worker moves at default weights vs --router-prefill-load-scale 4",
+      "Unit test the scheduler cost formula: worker with high overlap vs worker with transient decode load, assert cache-holding worker is selected when overlap dominates",
+      "Numerical regression on recomputed prefill tokens comparing kv default vs session affinity on the synchronized and staggered schedules"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the default weighting intended behavior or a bug requiring a default change vs documentation/session-affinity recommendation"
+    ],
+    "why": "Issue provides a concrete, reproducible routing-cost mechanism: overlap credit only offsets the prefill term (max(0, raw_prefill - credit)), so transient decode load can outweigh resident prefix overlap and move sessions off the cache-holding worker. Evidence includes per-request formula logs, move counts, and a CPU/mocker reproduction path, giving a clear reference-vs-implementation validation."
+  },
   "2be5a6ee11743c2e5ad55740484456adaa0dd04eaf11ddbc5549586a1f39acbb": {
     "confidence": 0.85,
     "contradictions": [],
@@ -59153,6 +59188,38 @@
     ],
     "why": "The issue is a duplicate of #50806 with the underlying cause tracked in #50627 (free-tier check rejects requests whose tool list omits standard tools, e.g. shell deny or small allowlist). The bot comment supplies concrete duplicate coverage and workarounds, so this candidate is a covered opportunity rather than a new actionable code contribution."
   },
+  "5ee2289ae99e4a78e38d7ec371868b199e632496cd0e85040497dd2000779c1b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter sees consistent 400 on image+txt, but maintainer bot reproduced 200 for image+txt via both direct API and OpenChamber proxy",
+      "Reporter attributes failure to opencode prompt handling; bot evidence points to client/proxy sending a non-object body"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "No confirmed opencode-side change; likely OpenChamber client/proxy serialization, not this repo"
+    ],
+    "risks": [
+      "Fixing the wrong layer (opencode) when the defect is in OpenChamber",
+      "Over-broadening prompt API validation behavior"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a minimal object body containing files array of data URIs against opencode 2.0.30",
+      "Capture the actual request body reaching opencode via devtools or debug logs to confirm whether it is a non-object payload"
+    ],
+    "unknowns": [
+      "Actual request body that reaches opencode in the failing setup",
+      "Whether failure reproduces with OpenChamber's embedded opencode vs shared service",
+      "File sizes/types that trigger failure"
+    ],
+    "why": "The issue reports a 400 'Expected object' on POST /api/session/:id/prompt with image+txt attachments, but the maintainer bot could not reproduce it with the same request shape (image only, txt only, image+txt all returned 200), and the bare 'Expected object' error indicates the whole body was not a JSON object, pointing at the OpenChamber client/proxy rather than opencode's prompt handling. No root cause in opencode code is established."
+  },
   "5ee2313d68c93b824b3c942cbf47040e642a9521c45b28d2cb850ee1ac4055a3": {
     "confidence": 0.85,
     "contradictions": [
@@ -83615,6 +83682,39 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue provides a clear root cause (namespaced agent IDs not resolved by kiro-cli) and a concrete repro, but the fix requires a cross-component design decision between bridges.py and kiro-cli contract. Maintainer comment explicitly routes to needs-investigation for design choice, so implementation should wait for maintainer direction."
+  },
+  "84bca2fcb6fc2e85a79c40afbd23ad2243703461337d3732675f919786989eaf": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue proposes clamping n_splits to 1 as a workaround, while PR #44734 adapts calls to the {1,m,n} output contract; these are different fixes for the same root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/layernorm/mhc.py: reallocate the gemm_out_mul/gemm_out_sqrsum buffers as {1, m, n} or clamp n_splits to 1 in the large-batch path of mhc_fused_post_pre",
+      "Align the call with the sglang.srt.layers.deep_gemm_wrapper.entrypoint.tf32_hc_prenorm_gemm contract"
+    ],
+    "risks": [
+      "Changing the output buffer shape may alter split-K reduction behavior or numerics",
+      "The opt-in path is default-off and lightly exercised, so other API drift may be hidden",
+      "Overlap with open PR #44734 could duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that runs mhc_fused_post_pre with SGLANG_OPT_FUSE_MHC_POST_PRE=1 under CUDA graph capture on a single card and asserts no DeepGemm assertion",
+      "Compare fused vs unfused outputs for numerical equivalence on a decode-shaped input"
+    ],
+    "unknowns": [
+      "Whether open PR #44734 already fully covers the fix and whether maintainers consider it the canonical solution",
+      "Whether the {1,m,n} reallocation or the n_splits clamp is the maintainer-preferred approach"
+    ],
+    "why": "The issue gives a concrete root cause (the caller passes an {n_splits, m, n} output to tf32_hc_prenorm_gemm, but the current DeepGemm contract requires {1, m, n} when num_splits is set) and a bisection confirming num_splits=1 passes. However, open PR #44734 already targets the same code path and the same identifiers, and its coverage status is unresolved (human_review_required), so it is unclear whether independent implementation space remains."
   },
   "84d222e459f8beb2d88a2cd008898afbdcc18960c047b70e1382dc5c25c9333e": {
     "confidence": 0.7,
@@ -161815,6 +161915,40 @@
       "Whether SM110 hardware is available for independent validation"
     ],
     "why": "Issue reports an SM110 illegal memory access in Qwen GDN prefill warmup, but the supplied evidence is contradictory about coverage: PR #53835 (merged) is said to add 11.0f to FUSED_GDN_DECODE_ARCHS, yet the maintainer comment says the traceback still points at the prefill warmup path and asks for retest on main/nightly. Open draft PR #56618 already targets the same file with a fail-closed fallback and includes a test, so the remaining actionable gap is unresolved."
+  },
+  "ffb9900945c86ad54e92a11eeea58603da0df3e317c6559b96cbc86398338503": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "WorkspaceStorageGuard.verifiedBirthTime: gate the creation==modified refusal on a real birth-time capability probe instead of inferring unavailability per root",
+      "WorkspaceCreationRoots.prepare: drop the setLastModifiedTime(...,1) workaround once the guard no longer needs it",
+      "WorkspaceStorageGuardTest: keep mtime-tolerance and root-replacement cases, add a same-tick marker registration case"
+    ],
+    "risks": [
+      "Birth-time support is a filesystem property, not a process property; a single per-process probe could relax the check for a root on a different mount, weakening forged-root detection",
+      "Probe must fail closed and stay off the injected IdentityReader path to avoid cost and test breakage",
+      "Removing the 1 ms workaround must not break verification of roots created by older versions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that registers a root whose marker write lands in the same coarse-clock tick as mkdir and asserts registration succeeds",
+      "Run WorkspaceStorageGuardTest alone and within the full packages/managed-agent-server suite to confirm the flake is gone",
+      "Add a negative test on a filesystem without birth time confirming a forged root with mtime set to recorded birth time is still refused",
+      "Run mvn -o clean verify on JDK 21 Linux to validate the targeted package"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the per-device probe versus the narrower lazy stat -c %W second-opinion approach; both are reasonable and not blocking"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: verifiedBirthTime refuses a root when creationTime equals lastModifiedTime, and register() re-reads identity after publishMarker advances mtime, so a same-tick mkdir+marker write triggers the refusal. Stack trace, line anchors, probe table, and independent byte-level corroboration from a collaborator confirm the mechanism and the production path via WorkspaceCreationStore."
   },
   "ffc3881db3464a6fc5db1dc74ebe6a37b6dbac727d087667ffec5fba47096915": {
     "confidence": 0.55,
