@@ -5414,6 +5414,38 @@
     ],
     "why": "Issue provides a clear user-visible load imbalance with a concrete reproduction and root cause analysis in comments. However, existing PR #12890 overlaps semantically and may already address the root cause, requiring maintainer comparison before new work. No maintainer approval or design confirmation exists."
   },
+  "097947ced419363008cc66a0d3019b9cff71ce4bbcf3d433a25e4a62158a96e2": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue records 3+3 throw-site split; triage comment corrects to 2+4 on main",
+      "Issue frames Item 1 remedy as cross-module refactor; triage notes module already discriminates by typed code, making it cheaper"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/hosted-never-started-reconcile.ts (optional typed-code classifier)",
+      "packages/cli/src/serve/hosted-workspace-tool-turn.ts (optional per-probe settlement)"
+    ],
+    "risks": [
+      "Item 1 has no trigger path at head — speculative future-proofing",
+      "Item 2 remedy restructures the PR's central concurrency mechanism for crash-conditional harm already covered by reconcileNeverStartedChildRuns backstop",
+      "Throw-site inventory in the issue is stale vs current main (2+4 not 3+3)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No failing test exists; any work would be new pinning tests for already-passing behavior, not a reproduction of a defect"
+    ],
+    "unknowns": [
+      "Whether maintainers consider either deferral worth pursuing at all"
+    ],
+    "why": "This is a deferral-tracker issue recording two non-defect findings from merged PR #14303: (1) a hypothetical string-literal coupling with no trigger path at head, and (2) a bounded, crash-conditional ordering trade-off whose remedy restructures the PR's central concurrency mechanism. Both are explicitly classified as deferrals, not defects, and the issue itself states nothing is actionable until the PR lands (it has since merged). No reproduction, no failing behavior, and the 'fixes' are optional refactors of already-shipped code."
+  },
   "09825a63c7595dbc0ab01b0f35ce09e3128060df67572bc7681e652c013b6039": {
     "confidence": 0.7,
     "contradictions": [],
@@ -111571,6 +111603,40 @@
       "Whether PR #15767 will be revised to add tests, which would reduce the remaining gap"
     ],
     "why": "Issue provides a concrete root cause (lagged broadcast receiver replays buffered pre-resync events after list_and_watch reconciles from list_state), a specific reproduction (16-slot channel, 16 workers flapping Removed/Added, worker 17 joins, expect Added(17) next), and a concrete validation path (unit test in kube.rs on current-thread runtime). Code anchors and a reference implementation (mem.rs resubscribe under lock) are supplied. The open PR #15767 covers the same path but lacks tests and root-cause coverage, leaving a genuine gap for a test-backed fix."
+  },
+  "b20e27c3ecc91cfe02215ac7a1d36ad5518a5d1909bf888e339fbbd07a853bcc": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Remove session: ClientSession parameter and _SessionMCPConnection from MCPTool/MCPStdioTool/MCPStreamableHTTPTool",
+      "Remove MCPTaskOptions, task_options, MCPWebsocketTool, SamplingApprovalCallback, sampling_callback and related exports/stubs",
+      "Migrate MCPSkillsSource/MCPSkill and Foundry Toolbox off ClientSession and MCPTool.session",
+      "Update docs, samples, changelog, and public API snapshots"
+    ],
+    "risks": [
+      "Broad breaking change across Core, Hosting MCP, Declarative, Foundry, security, observability, and skills packages",
+      "Accidentally removing supported legacy MCP wire compatibility rather than only deprecated Python APIs",
+      "Scope creep into the separate MCP Tasks design tracked in #9215"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Repository-wide code search for removed symbols to confirm absence in runtime exports, stubs, docs, and tests",
+      "Run Python formatting, linting, typing, package tests, sample checks, and public-API validation",
+      "Regression test that high-level mcp.Client connections (framework-owned and caller-owned) still route operations correctly",
+      "Confirm legacy MCP peer negotiation and wire compatibility tests still pass"
+    ],
+    "unknowns": [
+      "Whether #9237 already completed the FastMCP/fastmcp_app.py to MCPServer/mcpserver_app.py naming cleanup"
+    ],
+    "why": "Issue is a concrete, maintainer-authored vNext API-removal checklist with explicit symbols, parameters, exports, and acceptance criteria; the merged PR #9237 is a related but non-overlapping documentation/lifecycle change, so the cleanup work remains actionable."
   },
   "b22ac7eaeda0fe4bafe6feae4dd4cffbffaa3bc25c4d3b5c2f58b3351dff5bbe": {
     "confidence": 0.85,
