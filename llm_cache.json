@@ -31852,6 +31852,40 @@
     ],
     "why": "Issue identifies two concrete, independently verified defects in src/soup_cli/utils/relora.py: (A) _prune_and_reset never merges B@A into the frozen base before pruning, so the learned adapter contribution is discarded (base weight delta = 0, effective-map MSE 142.12 vs 8.77e-13 for a merge-then-reset control); (B) magnitude_prune_tensor uses a strict `abs(t) > threshold` mask, so tied magnitudes wipe every entry even when prune_ratio < 1, zeroing both lora_A and lora_B and producing zero gradient norm on both factors. Owner confirmed both halves with a real peft LoRA model and a kernel-level reproduction. This is a genuine algorithm-conformance and numerical-correctness problem with a clear reference-vs-implementation test path."
   },
+  "349eb176504c94341667e8dad15788858839bbf6f9342467dd1ae643db4881cf": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Wrap mesh_routes with apply_control_plane_auth in src/server.rs so /ha/* requires Admin control-plane identity",
+      "Ensure data-plane inference routes remain unaffected by the auth change",
+      "Add regression test asserting User gets 403 and Admin gets 200 on /ha/* routes"
+    ],
+    "risks": [
+      "Broadening control-plane auth to /ha/* could break deployments relying on data-plane key for HA reads",
+      "Need to confirm maintainer preference on whether read-only /ha/* endpoints should require Admin or a lesser role",
+      "Mesh shutdown/leave semantics must not be altered beyond authorization"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with two mesh routers plus mock worker: User key gets 200 on /ha/status, /ha/rate-limit, /ha/config, /ha/shutdown and Admin gets 401",
+      "After fix, assert User gets 403 on all /ha/* routes and Admin gets 200",
+      "Assert POST /v1/completions with data-plane key still returns 200 and both mesh nodes stay connected",
+      "Run targeted Rust unit/integration tests for auth middleware and route groups"
+    ],
+    "unknowns": [
+      "Whether maintainers want read-only /ha/* endpoints gated at Admin or a separate read role"
+    ],
+    "why": "Issue provides a concrete, reproducible control-plane authorization bypass: mesh /ha/* routes are wrapped only with the data-plane auth_middleware and never with apply_control_plane_auth, so a data-plane User key can read and mutate HA state while the real Admin key is rejected. Root cause is anchored to src/server.rs mesh_routes wiring and src/auth/config.rs role model, with a control experiment showing the fix restores intended behavior."
+  },
   "34bb800971bbab733ff321d7b7e92dae085a3bf01d65015c28d93fc4befa4bc2": {
     "confidence": 0.7,
     "contradictions": [],
@@ -108058,6 +108092,39 @@
       "Whether the CPU backend path needs additional changes beyond the GPU-verified fix"
     ],
     "why": "Issue pinpoints the root cause with code anchors: append_logprobs_for_next_position in vllm/logprobs.py assigns topk_ranks = range(1, num_logprobs+1) assuming sorted top-k columns, while logprob_token_ids columns are in request order (Sampler.gather_specific_token_logprobs on V1, _fill_logprob_token_ids_kernel on V2, and Rust PositionLogprobs::from_decoded_row). Logprob values are correct; only rank is wrong, and the sampled token's real rank is overwritten by its list position. This is a concrete numerical/algorithmic correctness defect in the logprob ranking mechanism with a reproducible reference-vs-implementation test (compare logprob_token_ids ranks against logprobs=-1 for the same tokens)."
+  },
+  "aa741a3eb4ef1cd3c9562bb71a4bfb941aa944335ac9484f7f8d305e5743b75d": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/turns/user_turn_controller.py: reconcile _user_speaking on mute stop / VAD stop so the turn can close",
+      "src/pipecat/processors/aggregators/llm_response_universal.py: pay held post-tool context push when the user turn ends without new text",
+      "src/pipecat/turns/user_mute/function_call_user_mute_strategy.py: ensure VAD stop is not permanently suppressed"
+    ],
+    "risks": [
+      "Behavior change to mute/VAD state handling could affect other mute strategies",
+      "Over-broad fix may alter interruption semantics for in-flight inference",
+      "Draft PR #5870 touches turn-stop strategy area but has no code-path overlap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's repro.py as a regression test asserting inferences==2 and user turn closed",
+      "Assert on_user_turn_stop_timeout fires when user stops while muted",
+      "Control run without FunctionCallUserMuteStrategy still recovers post-tool inference",
+      "Run targeted unit tests for turns/aggregators packages"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer one of the three suggested fix directions (mute-state reconciliation vs inference cancellation vs held-push payout)"
+    ],
+    "why": "Issue provides a runnable minimal repro, expected/actual output, ordered steps, and precise code anchors (user_turn_controller.py L399/L426, llm_response_universal.py L1267/L2143) tying the permanent-silence bug to stale _user_speaking state under FunctionCallUserMuteStrategy plus a held post-tool context push. This is a concrete state-machine/aggregator defect with a clear validation path, not plumbing."
   },
   "aa807a846ae766af80addfd956d9e867d8f2523a76832cd963b319b737fe8e30": {
     "confidence": 0.7,
