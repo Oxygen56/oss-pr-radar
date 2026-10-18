@@ -85884,6 +85884,44 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue clearly describes a bug where CodeGraph configuration ignores user-selected agents, with concrete repro steps and code pointers. However, the repository requires linked issues to have status:approved before PRs are accepted, and this issue lacks maintainer approval. The gate decision is HUMAN_REVIEW, and there is no maintainer confirmation or design approval. The suggested fix is actionable but requires maintainer sign-off."
   },
+  "86e3785cae7b06f528f5fdf52b5769d99ec798b11601029c269a31c629a38625": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue body says public issue #41474 and unmerged fix PRs #41481/#41502/#43476 described the same root cause, while open_pr_assessment and related_issue_assessment report none found"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons with exact rid equality for ordinary aborts",
+      "python/sglang/srt/managers/tokenizer_manager.py: keep delayed disconnect cleanup scoped to the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: preserve or namespace server-side request IDs if needed for isolation",
+      "Keep any intentional bulk-abort path separate and explicitly authorized"
+    ],
+    "risks": [
+      "Changing prefix matching to exact equality may break any internal caller that relies on prefix-based bulk abort",
+      "PD/router deployments may have additional abort paths that also need exact-identity handling",
+      "Security-sensitive change may need maintainer design review on whether server-namespaced rids are preferred"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid '<prefix>-victim' and an attacker request with rid '<prefix>', disconnects the attacker, and asserts the victim reaches normal length finish rather than FINISH_ABORT",
+      "Add a negative control where the attacker rid is not a prefix of the victim rid and assert no abort occurs",
+      "Add a unit test on Scheduler.abort_request asserting exact-equality matching does not abort a request whose rid merely starts with the aborted rid",
+      "Run targeted scheduler/tokenizer_manager unit tests and the PoC script against an isolated server"
+    ],
+    "unknowns": [
+      "Whether the referenced prior fix PRs #41481/#41502/#43476 are still open, merged, or abandoned",
+      "Whether maintainers prefer exact-equality matching versus server-namespaced rids"
+    ],
+    "why": "Issue gives a concrete root cause: client-supplied rid is preserved in GenerateReqInput, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid), so a short rid aborts unrelated requests. Code anchors in io_struct.py, tokenizer_manager.py, and scheduler.py are cited, and an exact-equality control is reported to stop the abort in 5/5 single-worker and 5/5 PD trials."
+  },
   "86ea08fd2d38be56b60e7a69d5530e2b7d5e195258e5ac3dda4189392afc5e4f": {
     "confidence": 0.8,
     "contradictions": [],
