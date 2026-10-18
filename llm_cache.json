@@ -69660,6 +69660,41 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a well-defined root cause and a suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and there is an open PR (#7104) with semantic overlap that needs maintainer comparison before starting new work."
   },
+  "6d293acfcd457c9732f2330cd4115f79e71163755b4026a31a6d2d8b7f6796db": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims built-in opencode theme uses transparent base and breaks labels, while the bot states current v2 built-in themes set an opaque focused color and legacy transparent themes get an automatic selected-text color"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Theme token resolution for text.action.primary.$focused when background.base has alpha=0",
+      "Selected/focused label rendering in dialogs and question prompts"
+    ],
+    "risks": [
+      "Fixing a non-reproducing or already-fixed behavior",
+      "Overriding intentional terminal-transparency support in built-in themes",
+      "Duplicate coverage with #27968, #7739, #10334, #7246, #4666, or #51555"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Obtain the reporter's theme JSON and reproduce invisible selected labels in a dialog or question prompt",
+      "Add a regression test asserting focused label color is opaque when background.base is alpha-0",
+      "Verify current v2 built-in themes and legacy-theme fallback already produce opaque selected text"
+    ],
+    "unknowns": [
+      "Which theme (built-in or custom) and exact background.base/text.action.primary values trigger the bug",
+      "Whether the behavior reproduces on current dev at base SHA 501b15a",
+      "Whether an existing related issue already covers this exact case"
+    ],
+    "why": "The issue body has had all inline code stripped, so the token names, values, built-in theme name, and example config are blank. The maintainer bot explicitly asked for the theme name, background.base/text.action.primary values, version/OS/terminal, and reproduction steps. The bot also notes that current v2 built-in themes already use an opaque focused color and older transparent themes get an automatic selected-text color, so the reported behavior may not reproduce. The candidate's own actionability evidence shows zero public reproduction signals and no reproduction evidence."
+  },
   "6d2c8872ba327a37172ec8e7e6ecd132995a5b9256e538a42ec2eae8782f7c70": {
     "confidence": 0.8,
     "contradictions": [],
@@ -91780,6 +91815,41 @@
       "Whether the deferred scrubbing tradeoff (#8653) should be revisited for LD_LIBRARY_PATH specifically"
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP children, breaking external Python interpreters. Reporter supplies a minimal repro command, /proc environ evidence, and a working workaround; code anchors point at mcp-client.ts and sanitize-child-env.ts. Triage bot disputes the AppImage attribution but the reporter's follow-up provides live /proc evidence with a mount prefix matching the Qwen AppImage and a binary-level format string, plus a second leak channel. The underlying request (scrub PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH from MCP child env) is a concrete, testable change in a known module."
+  },
+  "8ee575f1a0b72c9481d942148bd0e843aac25768ccfbbb74eabc93c4addaa957": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asserts built-in system theme uses $background.base for $focused, but maintainer bot says built-in themes use opaque colors and only custom themes are affected"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "theme token resolution for text.action.primary.$focused",
+      "possibly only documentation or user-theme guidance if built-in themes are unaffected"
+    ],
+    "risks": [
+      "Fixing a non-existent built-in bug could change intended theme semantics",
+      "Duplicate with #56864 may cause redundant work",
+      "Custom-theme-only issue may not warrant a code change"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reporter's exact theme JSON and environment; confirm whether any built-in theme (system/opencode) resolves $focused to an alpha-0 value",
+      "Add a regression test asserting focused action text is opaque when background.base is transparent"
+    ],
+    "unknowns": [
+      "Reporter's opencode version, OS, terminal",
+      "Actual theme JSON in use",
+      "Whether any built-in theme is genuinely affected",
+      "Resolution status of duplicate #56864"
+    ],
+    "why": "The issue claims a built-in theme bug, but the maintainer bot's comment reports that no built-in theme sets text.action.primary.$focused to $background.base, so the bug likely only affects a custom theme. The report also lacks version, OS, terminal, theme JSON, and a screenshot, and it duplicates #56864. The root cause and reproduction are therefore unresolved."
   },
   "8ee583e476efc6ff0b38bfa826f04855d4d8066abd796a58f42a7e64a80aa2cd": {
     "confidence": 0.8,
@@ -137135,6 +137205,40 @@
     ],
     "why": "Issue provides a concrete traceback and executable reproduction showing that @torch.library.custom_op in physicsnemo/nn/functional/derivatives/mesh_green_gauss_gradient/_warp_impl.py fails schema inference because stringified annotations from __future__ import annotations are not resolved. Root cause is explicit and a targeted fix (explicit schema argument or resolved annotations) is actionable. The overlapping PR #1818 is a draft, unlinked, and does not cover the root cause, so it is not a blocking duplicate."
   },
+  "d71947f11e373ebf8dc4f9ad82835b411aae7787e48ae479a8acb36ae809fbdb": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/tts_service.py: flush the stream resampler at end of synthesis/context (or on TTSStoppedFrame) and emit the tail audio",
+      "Ensure flush interacts correctly with clear_after_secs so held audio is not discarded mid-utterance",
+      "Add regression test asserting exact output sample count for a non-matching source rate"
+    ],
+    "risks": [
+      "Flush placement (per call vs per context vs on TTSStoppedFrame) is a design choice the maintainer may want to weigh in on",
+      "Flushing per call could interact badly with clear_after_secs and shared resampler state across syntheses",
+      "Behavior change may affect latency or frame boundaries for downstream transports"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.py to confirm the ~16-33 ms loss and the 101 ms loss with 250 ms chunk gaps before the fix",
+      "After the fix, assert resample()+flush() totals equal expected samples for 0.5/1.0/2.0/4.0 s sentences",
+      "Add a streaming regression test with chunk gaps > clear_after_secs verifying no mid-utterance gap",
+      "Run targeted unit tests for TTSService and affected services (bland, deepgram, google, piper, pocket_tts, rime, xai)"
+    ],
+    "unknowns": [
+      "Maintainer preference on flush placement is not stated, but this is normal implementation uncertainty rather than a blocker"
+    ],
+    "why": "Issue provides a concrete, runnable reproduction with measured sample loss, identifies the exact code path (TTSService._stream_audio_frames_from_iterator using a stream resampler that is never flushed), and names the affected services. The fix is a localized behavior change with a clear validation path (compare resample()+flush() totals against expected sample counts, plus a streaming regression test). No duplicate or merged-fix coverage is reported, and no assignment or AI-use prohibition applies."
+  },
   "d733ccb894edee2950cf9971c95b762860a522eb5db2f0942853955cf7fea7b0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -149770,6 +149874,34 @@
       "Whether maintainers prefer explicit error or auto-unmerge for item 1, but items 2 and 3 are actionable without that decision"
     ],
     "why": "Issue provides concrete, reproducible bugs in PEFT hotswap with clear root causes and code references. Track=llm_algorithm is satisfied as it involves parameter-efficient fine-tuning mechanisms (LoRA adapter merging, scaling, config consistency) with a concrete validation path via numerical regression tests. Evidence shows root cause signal and code anchors, and recent comment confirms items 2 and 3 remain unfixed on main."
+  },
+  "ea45dbac30fe4cbe94abfe06fadfefd7c6cffc12a8ef4e2b6c071dcaadccdc51": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims flow hangs on current build, but bot comment shows correct URL on latest dev and stable 2.0.32"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "No new code work warranted; URL construction already corrected upstream"
+    ],
+    "risks": [
+      "Reporter may be on an older beta build; no actionable defect remains on current code"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Verify on current dev that device login returns https://opencode.ai/console/device?user_code=... with a single /console segment"
+    ],
+    "unknowns": [
+      "Whether reporter's exact beta build predates the #44029 fix"
+    ],
+    "why": "The issue is a CLI/device-OAuth URL construction bug (duplicated /console segment), not an algorithm or model-mechanism contribution. The bot comment reports it is already fixed on latest dev (86c7f7c) and in stable 2.0.32 via #44029, so the opportunity is covered and low value."
   },
   "ea4c983757ffd430092d3f49c06ebe6d6ccad388b513876d396a7cdfe62def9a": {
     "confidence": 0.85,
