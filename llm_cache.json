@@ -69578,6 +69578,39 @@
     ],
     "why": "Issue describes a plausible failure mode in downloadAssetsFromMessages/downloadFromUrl, but the supplied evidence lacks a concrete reproduction (no failing test, no probe, reproductionPathPlan=false) and the candidate itself flags reproduction_or_validation_missing. The issue also proposes three alternative fixes without a settled design, and the bot comment explicitly asks contributors to wait for maintainer triage before opening a PR."
   },
+  "6d67f5c435ab728700dfd08f5a58f0ab2b0e16e9dddaa48e5069e7245c74ff93": {
+    "confidence": 0.55,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/nonInteractiveCli.ts: stop gating emitResult on memory task promises",
+      "packages/cli/src/nonInteractive/session.ts: extend waitForAllPendingWork to drain retained memory promises with bounded timeout"
+    ],
+    "risks": [
+      "Naive removal of await truncates memory writes at one-shot exit / stream-json EOF",
+      "Existing PRs #13885/#13886 may already cover the root cause; duplicate work",
+      "Behavior change to terminal result timing across headless consumers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Deferred memory promise must not delay emitResult (emit-order assertion)",
+      "Shutdown drains pending memory promises before exit and gives up after the bound",
+      "Regression: one-shot qwen -p and stream-json EOF do not truncate memory writes"
+    ],
+    "unknowns": [
+      "Whether PR #13886 or #13885 already resolves the root cause and would make a new fix redundant",
+      "Maintainer preference on drain-at-shutdown vs opt-in gating design"
+    ],
+    "why": "The issue establishes a clear, source-verified root cause (blocking await on already-running memory promises before emitResult in nonInteractiveCli.ts) and a concrete validation path (emit-order assertion plus shutdown drain test). However, two open PRs (#13885, #13886) already target the same code path and semantics, and the duplicate status is 'semantic_overlap_requires_review' — unresolved coverage that materially determines whether new code work is actionable."
+  },
   "6d684423a61e1da520c4c5b946f4649d701424b7a35d7693791705c44c1b7d00": {
     "confidence": 0.82,
     "contradictions": [],
@@ -119376,6 +119409,44 @@
     ],
     "why": "Issue is a Harmony parser streaming error (openai_harmony.HarmonyError: could not decode header) in vllm/parser/harmony.py. Comment evidence shows the root cause is already fixed on main by merged PR #59254, which wraps the unguarded self._harmony_parser.process(token_id) call in process_chunk with try/except HarmonyError, covering both streaming (parse_delta) and non-streaming (parse) paths. Multiple earlier PRs (#52055, #47350, #43408, #56216) target the same guard and are now redundant. This is parser/API plumbing, not an LLM algorithm contribution, and the opportunity is already covered."
   },
+  "bd4f27266af6fb6796687541cefd816ff109b6c2621e01f35a3ea7c550e64f76": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Open PR #44942 title references #44932 and #44931 but the assessment marks references_issue=false and root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "anthropic/serving.py: pass prior thinking via the template's thinking field instead of splicing channel markers into content",
+      "serving_chat.py: avoid masking the original template error in the flat-tools retry",
+      "anthropic/serving.py: map template rejections to 4xx rather than 500"
+    ],
+    "risks": [
+      "PR #44942 may already cover the same root cause, making a new contribution duplicative",
+      "Overlap with #40968/#40965 on _convert_assistant_thinking_blocks could cause merge conflicts",
+      "Behavior change to thinking-history handling could affect other models/templates"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test replaying the issue's two-turn /v1/messages request with a thinking block and assert HTTP 200",
+      "Add a with-tools variant asserting 200 and that the channel-tag TemplateError is not masked by the flat-tools retry error",
+      "Add a streaming variant asserting no 500 before the first event",
+      "Add a negative test that a genuine template rejection returns 4xx"
+    ],
+    "unknowns": [
+      "Whether PR #44942 already fixes this exact 500 path or only the adjacent #44931 chat-path drop",
+      "Whether maintainers have assigned this issue or accepted a competing approach from #40968",
+      "Whether the reporter/commenter coordination has already claimed the work"
+    ],
+    "why": "The issue gives a strong, code-anchored root cause (thinking-block splice into content rejected by the gpt-oss template, masked by the flat-tools retry, surfaced as 500) plus a concrete curl reproduction and controls. However, open PR #44942 explicitly targets this issue (#44932) and #44931 with overlapping paths and tests, and a commenter is already coordinating with the author of #40968 on the same function. Whether code work is still actionable depends on unresolved duplicate/coverage status, which is a materially blocking unknown."
+  },
   "bd5a73de009425adbcd42771b7624589266513c2a0f2ec130e58a7729635a813": {
     "confidence": 0.7,
     "contradictions": [
@@ -128317,6 +128388,42 @@
       "Whether PR #8487's draft implementation fully addresses both handle classes and the cross-process-group case"
     ],
     "why": "Issue provides a concrete, code-anchored root cause: AllGatherHandle/NoGatherHandle wait() is not idempotent, so a second wait after release sets AVAILABLE over freed (0-element) storage, causing the empty-weight matmul. Reproduction is described at handle level on 2 GPUs with two independent configurations and controls, and the expected fix (idempotent wait, re-check INFLIGHT) is well-defined. This is a distributed-training invariant with a concrete validation path, satisfying the llm_algorithm track."
+  },
+  "ca75b8eee1c994277c7ece7aaa86d5d31edcedca352e7ee27971f6f659cb5fae": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: request construction to select Responses API when reasoning+tools enabled, or allow explicit reasoning_effort=none",
+      "response parsing and streaming for Responses API tool-call continuation",
+      "pre-execution validation with actionable error for unsupported endpoint/model/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API adaptation touches request construction, response parsing, streaming, and tool-call continuation, expanding scope beyond a minimal fix",
+      "Exact effective reasoning effort not captured, so reproduction may need configuration clarification",
+      "Maintainer may prefer validation-only fix over full Responses API support"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test reproducing HTTP 400 for gpt-6-luna with tools and reasoning enabled via Chat Completions",
+      "Regression test: tools + reasoning enabled routed through Responses API",
+      "Regression test: tools + explicit reasoning_effort=none via Chat Completions",
+      "Validation test: unsupported combination returns actionable error before execution"
+    ],
+    "unknowns": [
+      "Exact effective reasoning_effort value in the failing deployment",
+      "Whether reasoning_effort=none actually succeeds in this deployment",
+      "Maintainer preference between Responses API support and validation-only fix"
+    ],
+    "why": "Issue provides a concrete HTTP 400 reproduction with expected/actual pair and names the Go adapter (internal/entity/models/openai.go) that builds Chat Completions requests. Root cause is partially established: the adapter hardcodes Chat Completions and does not support Responses API or explicit reasoning_effort=none for tool calling. The exact effective reasoning configuration was not captured, and success with reasoning_effort=none is unconfirmed, but the failure mode and code anchor are actionable."
   },
   "ca8ebce1c3c5c5f36fe209a32ed9c99e1f759add400a7a88d59d6ebe18f3c626": {
     "confidence": 0.8,
