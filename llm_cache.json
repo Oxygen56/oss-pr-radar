@@ -51130,6 +51130,38 @@
     ],
     "why": "Issue describes a concrete race between worker discovery removal and TCP response callback establishment, with ordered reproduction steps, executable commands, expected/actual behavior, and log evidence showing response publish failure after callback cancellation. Track is agent_ai_infra, not llm_algorithm, so algorithm-specific requirements do not apply. No open PR or duplicate issue covers the fix."
   },
+  "526c960c7d118489a3d6018c734b345aa003e4c5793cf201a87409f1729ab5b2": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels track as agent_ai_infra but issue is desktop file-watcher/UI refresh",
+      "open_pr_assessment reports no related PRs while bot comment cites #55540 as a proposed fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "No new code work warranted; covered by #55540 workspace directory subscription"
+    ],
+    "risks": [
+      "Duplicate effort if a new fix is attempted alongside #55540",
+      "Track mismatch: this is UI/watcher plumbing, not agent_ai_infra algorithm work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Verify #55540 adds workspace directory subscription and emits filesystem.changed on create/modify/delete",
+      "Confirm file tree re-lists on filesystem.changed event"
+    ],
+    "unknowns": [
+      "Whether #55540 is still open and mergeable",
+      "Whether #52941 remains the canonical tracking issue"
+    ],
+    "why": "The issue is a Windows desktop file-tree live-refresh bug, not an algorithm/agent-infra contribution. The bot comment identifies it as a duplicate of #52941 with an existing proposed fix (#55540) that adds a workspace directory subscription publishing filesystem.changed. Root cause is already established and covered by an open PR, so this is a low-value/covered opportunity."
+  },
   "527da83e36c8aae7249cfdb73e872454f176323d9a0e95242b1eea1bae5efdb5": {
     "confidence": 0.8,
     "contradictions": [],
@@ -74535,6 +74567,42 @@
       "Whether a maintainer has already scoped the design for this v2 behavior"
     ],
     "why": "Issue #2964 describes a real behavioral gap: the auto-opened subscriptions/listen stream is one-shot and never reopened after server restart or stream drop, with no application notification. The issue includes a detailed reproduction script and code anchors (autoOpenedSubscription.closed, ClientOptions.listChanged, onChanged, transport.onclose). However, the supplied pre-task evidence explicitly flags reproduction_or_validation_missing and assignment_required, and the issue is unassigned with no maintainer confirmation. The core design question — whether to auto-reopen with backoff or surface the closure through existing channels — is unresolved and materially determines the implementation shape, so the code work is not yet actionable without maintainer direction."
+  },
+  "75192589ea59abd067d5aec7251acdd7bfc6a958c4fc4e9dda8ae4331c8a1d98": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue suggests bumping to >=1.0.0, but a comment clarifies removal occurred in 1.2.0, so >=1.0.0 alone would not guarantee the new API"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "examples/open_deep_research/scripts/mdconvert.py: replace static get_transcript with 1.x instance fetch and SRTFormatter",
+      "examples/open_deep_research/scripts/requirements.txt: bump youtube_transcript_api to >=1.0.0",
+      "YouTubeConverter.convert: narrow bare except so unexpected failures are visible while expected absence cases stay quiet"
+    ],
+    "risks": [
+      "End-to-end live transcript retrieval was not verified due to IpBlocked; only the AttributeError path is confirmed",
+      "Exception propagation contract (propagate vs diagnostic) may need maintainer alignment",
+      "Version detail: static methods deprecated in 1.0.0 and removed in 1.2.0, so requirement bump should target >=1.2.0 or the fix must handle both"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test loading mdconvert.py with youtube-transcript-api 1.2.4 and asserting the removed static call raises AttributeError",
+      "Add a test with a synthetic transcript asserting '### Transcript' appears in converted output",
+      "Add tests asserting unexpected AttributeError/RuntimeError/IpBlocked/formatter failures propagate rather than silently returning metadata-only output",
+      "Keep disabled/no-matching-transcript cases as passing controls"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer exception propagation or an explicit diagnostic contract",
+      "Whether a full end-to-end transcript path works through the converter (unverified due to IP block)"
+    ],
+    "why": "Issue provides a concrete, network-independent root cause: YouTubeTranscriptApi.get_transcript was removed in youtube-transcript-api 1.x, and the call at mdconvert.py line 314 is swallowed by a bare except, so transcripts are silently dropped. A minimal reproduction, expected/actual pair, and a concrete fix path (instance fetch + SRTFormatter, bump requirement, narrow exception handling) are supplied. No duplicate PR or issue coverage found."
   },
   "751e8cbb54e776a98c4ba8cf8bee419dd02688630856315289804c864103d05d": {
     "confidence": 0.55,
@@ -104453,6 +104521,44 @@
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, identifying a specific model architecture and version range. The root cause is not yet pinpointed but the evidence is sufficient to start a focused investigation and build a regression test."
   },
+  "a43941fd5a4656ec0f450e23fcca0224cc7efb854c39349ecfab7533019a2c7c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asserts flat `mcp` shape is silently ignored; maintainer bot reports `debug config` migrates flat entry to `mcp.servers.roam`",
+      "Issue attributes empty list to config shape; bot reproduces empty first result with both flat and `mcp.servers` shapes, indicating a startup race",
+      "Comment claims PR #55231 fixes this issue, but that PR targets V2-only shape decode failures, not flat-key dropping"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP config normalization in packages/schema/src/mcp.ts",
+      "MCP list/startup ordering in packages/core/src/tool/mcp.ts"
+    ],
+    "risks": [
+      "Fixing the wrong layer (config normalization) while the real defect is a startup race",
+      "Overlapping with open PR #55231 touching the same normalization code",
+      "Windows-specific persistent zero-server behavior (#50710) may be the actual cause"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with flat `mcp.roam` config, restart service, run `opencode mcp list` repeatedly to distinguish race from config-shape drop",
+      "Run `opencode debug config` to confirm whether flat entry is migrated to `mcp.servers.roam`",
+      "Add regression test asserting flat V1 shape normalizes into `mcp.servers`"
+    ],
+    "unknowns": [
+      "Whether the reporter's environment (Windows desktop) exhibits persistent zero-server behavior (#50710) rather than the transient race",
+      "Actual `opencode debug config` output from the reporter confirming whether `roam` lands under `mcp.servers`",
+      "Whether the flat-shape drop is reproducible at all on the reporter's platform"
+    ],
+    "why": "The issue claims V2 silently ignores flat `mcp.<name>` entries, but the maintainer bot could not reproduce it: `opencode debug config` shows the flat entry migrated to `mcp.servers.roam`, and the empty `mcp list` appears to be a startup race affecting both config shapes. The claimed root cause (config shape) is contradicted by supplied evidence, and the linked PR #55231 addresses a different normalization path (V2-only shapes failing V1 decode), not the reported symptom."
+  },
   "a45d57facf5da7bb03da38f8de29a0b35702a472f2711a239e36dd796be5a588": {
     "confidence": 0.55,
     "contradictions": [
@@ -112477,6 +112583,39 @@
       "Whether maintainers consider the field-dropping behavior intentional for this payload size"
     ],
     "why": "Issue provides a strong, reproducible user-visible bug: smart_crusher drops non-null top-level fields (tags, subtasks) from small MCP tool_result JSON while preserving null fields, with a curl repro and transforms_applied=[router:smart_crusher:0.58], ccr_hashes=[]. However, the supplied evidence does not establish the internal root cause (no code anchor beyond the smart_crusher module name, no identified field-selection logic), and an open PR (#3227) has semantic overlap on smart_crusher/tool_result with 15 changed files and 2318 additions, so duplicate/coverage status is unresolved. These are materially blocking unknowns for deciding whether a new code contribution is actionable."
+  },
+  "b2e52a163aa114157d62512829b718f50969227ccaacd762da16108e754dc9d8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/api/agent-server-adapter.ts: buildConfiguredConversationSettings plugin projection",
+      "src/components/features/launch/plugin-launch-modal.tsx: surface unsupported-parameter limitation or block creation",
+      "src/api/conversation-service/agent-server-conversation-service.api.ts: pass-through behavior"
+    ],
+    "risks": [
+      "Product decision between honoring parameters vs surfacing limitation affects scope and owning repo",
+      "Adding a parameters contract may require software-agent-sdk changes and compatibility.minimumAgentServer bump",
+      "Avoid expanding API behavior beyond the issue's acceptance criteria"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test buildConfiguredConversationSettings with plugin parameters asserting either parameters are forwarded or a clear unsupported signal is produced",
+      "Regression test that plugin launches without parameters still succeed",
+      "UI test that Start Conversation is blocked or warned when Local backend and parameters are present"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer honoring parameters via SDK contract or surfacing the limitation on Local"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: buildConfiguredConversationSettings in src/api/agent-server-adapter.ts projects plugins to only source/ref/repo_path, dropping edited parameters, with ordered reproduction steps and expected/actual pair. The bot comment confirms the Local Agent Server contract lacks a parameters field, so the fix is either surfacing the limitation or adding contract support. This is a user-visible bug with a clear validation path (payload-builder test plus UI/request check)."
   },
   "b2e6841f11a295c061d4c63efdef59e7315e2d69895946e2165e348b7b3ebaab": {
     "confidence": 0.85,
@@ -140729,6 +140868,39 @@
       "Whether the issue is reproducible on other hardware or configurations"
     ],
     "why": "The issue reports an OOM during vLLM serving of a Qwen3.8-Flash-Next FP8 model with tensor parallelism and expert parallelism. The error is a CUDA OOM, but the root cause is not clearly identified; it could be a memory allocation bug, a configuration issue, or a kernel problem. The issue includes a reproduction command and environment details, and there is a related PR (#54129) that touches overlapping code paths, but the root cause is not confirmed."
+  },
+  "de9b264ca13723ba6bba3488ae94aecd3cab1a9ec9a603ffa2a15dbd2f1dddf9": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/turns/user_turn_controller.py: reconcile _user_speaking on VAD stop / UserMuteStoppedFrame so the turn can close",
+      "src/pipecat/processors/aggregators/llm_response_universal.py: ensure held post-tool context push is paid when the turn ends without new text",
+      "src/pipecat/turns/user_mute/function_call_user_mute_strategy.py: avoid suppressing VAD stop state updates"
+    ],
+    "risks": [
+      "Changing mute semantics could alter interruption behavior for other mute strategies",
+      "Reconciling speaking state on unmute may race with in-flight VAD frames",
+      "Scope creep into broader turn-controller redesign"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's repro.py as a regression test asserting inferences == 2 and the user turn closes",
+      "Assert on_user_turn_stop_timeout fires when the user stops while muted",
+      "Control run without FunctionCallUserMuteStrategy to confirm the held-push path also recovers",
+      "Run targeted unit tests for turns and aggregators modules"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the mute-state fix vs. canceling in-flight inference vs. paying the held push (three proposed directions, all reasonable)"
+    ],
+    "why": "Issue provides a runnable minimal repro, expected-vs-actual output, ordered steps, and code anchors pinpointing stale _user_speaking state across the mute window in user_turn_controller.py and llm_response_universal.py; the failure is a concrete state-machine bug in the agent runtime path, not plumbing."
   },
   "deaad001fec01ad04819657e28e040e84e322518ecaad7a2e6ee5604dcc95fc4": {
     "confidence": 0.9,
