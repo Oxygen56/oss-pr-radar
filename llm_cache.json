@@ -68755,6 +68755,43 @@
     ],
     "why": "Issue provides detailed production evidence of Anthropic prompt cache busts with deterministic correlation to tool-calls, root cause traced to serialization changes between API calls, and reproducible SQL queries from local database. Existing PR #40796 only adds warnings, leaving the core fix open. The evidence supports a concrete fix in the session/message serialization path."
   },
+  "6c882b18a501f40fd40529114fac06568807bdb4ea1d713ce5f7e09378c465f3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue states a keyword scan of open PRs/issues finds no report or fix for this defect, but the supplied open_pr_assessment lists PR #5142 titled 'fix(ai-cache): reject request bodies with a duplicated top-level messages member' with semantic overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-cache: guard onHttpRequestBody with jsonbody.DuplicateTopLevelMember(\"messages\"), skipped for cacheKeyStrategy disabled",
+      "plugins/wasm-go/extensions/ai-cache: add require/replace wiring for the local pkg/jsonbody module",
+      "plugins/wasm-go/extensions/ai-cache: regression test for duplicate-member 400 and unchanged single-member/disabled behavior"
+    ],
+    "risks": [
+      "Open PR #5142 appears to implement the same fix; a new implementation may duplicate or conflict with it",
+      "Behavior change rejects previously accepted requests with 400",
+      "Dependency wiring for the local jsonbody module could affect the plugin build"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the plugin test host: send {\"messages\":[benign],\"messages\":[malicious]} and assert 400 with `duplicate \"messages\" member in request body` and no Redis/cache callout",
+      "Regression: single `messages` member still derives the key, performs lookup, and stores on a miss",
+      "Regression: cacheKeyStrategy disabled forwards the body untouched",
+      "Regression: non-JSON body skips the check and existing validation decides",
+      "Run the existing ai-cache test suite"
+    ],
+    "unknowns": [
+      "Whether PR #5142 fully covers the root cause and acceptance criteria, making separate code work redundant",
+      "Whether the repository's assignment requirement (policy needs_assignment, assignment_required) is satisfied for this issue"
+    ],
+    "why": "The issue gives a concrete root cause (gjson reads the first duplicate top-level `messages` member while upstream parsers keep the last, so ai-cache derives the key from one conversation and stores the answer for another) and a concrete fix path (call jsonbody.DuplicateTopLevelMember at the top of onHttpRequestBody, skip for `disabled`, return the #5124 400/ActionPause shape). However, the supplied evidence shows an open PR #5142 with the same title and semantic overlap that appears to implement exactly this fix, and the duplicate status is 'semantic_overlap_requires_review'. Whether code work is actionable depends on comparing #5142's implementation boundary, which is a materially blocking unknown."
+  },
   "6c8f10a04ab386a229a4c98323ae8fe36422aabb093efa84860c263e52f34c58": {
     "confidence": 0.7,
     "contradictions": [
@@ -106076,6 +106113,46 @@
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' is not enforced, leading to prose-only responses with finish_reason='tool_calls' and empty tool_calls. The root cause is partially known (Defect 2 linked to #53255) and the issue provides a clear reproduction path (loop script, payload variations) and code anchors. The track is llm_algorithm because it involves the tool-calling mechanism and structured output enforcement, which is a core algorithm behavior. The evidence includes multiple open PRs with semantic overlap, but none fully cover the root cause, so the contribution is actionable."
   },
+  "a6ab2af80d9d49f9aeae04c6f30f60c9392ffdde671104da0d3cd40e66d4a9b6": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims a keyword scan finds no open PR fixing this defect, but open PRs #5138 and #5136 both target the duplicated top-level messages guard"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-search: call jsonbody.DuplicateTopLevelMember(body, \"messages\") in onHttpRequestBody after enablement check and before query extraction",
+      "plugins/wasm-go/extensions/ai-search: return 400 with jsonbody.DuplicateMemberMessage(\"messages\") and ActionPause",
+      "plugins/wasm-go/extensions/ai-search: add require/replace for local plugins/wasm-go/pkg/jsonbody module",
+      "plugins/wasm-go/extensions/ai-search: regression test for duplicate and single messages bodies"
+    ],
+    "risks": [
+      "PR #5138 and PR #5136 already implement the same guard; new work may be redundant",
+      "Issue is unassigned while repository policy requires assignment",
+      "Adding a require/replace for the local jsonbody module may conflict with existing module wiring",
+      "Behavior change rejects previously accepted ambiguous requests"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Plugin test host in go mode: duplicate top-level messages body must yield 400 with `duplicate \"messages\" member in request body` and no engine call",
+      "Compiled-Wasm mode: same duplicate-body assertion",
+      "Single messages body: query extraction, engine calls, and prompt rewrite unchanged",
+      "defaultEnable: false without web_search_options: body forwarded untouched",
+      "Malformed JSON body: helper error skipped, existing validation decides"
+    ],
+    "unknowns": [
+      "Whether PR #5138 or #5136 already fully covers the ai-search path and will be merged",
+      "Whether a maintainer will assign the issue to an implementer",
+      "Whether the local jsonbody module require/replace is acceptable to maintainers"
+    ],
+    "why": "The issue gives a clear root cause (gjson reads the first duplicate `messages`, upstream parsers keep the last, so ai-search augments the wrong occurrence) and a concrete validation path (plugin test host in go and compiled-Wasm mode, 400 response, no engine call). However, two open PRs (#5138 and #5136) already implement exactly this fix for ai-search/ai, and the issue itself is a proposal with no assignee while the repository policy is needs_assignment. Duplicate coverage and unmet assignment requirement are materially blocking unknowns."
+  },
   "a6bf409a137cb880f848366e5f83914ee47698c43a84322787f82a0d14b6bb6d": {
     "confidence": 0.85,
     "contradictions": [
@@ -112801,6 +112878,39 @@
       "Whether the repository's AI-disclosure policy permits the intended contribution"
     ],
     "why": "The issue reports a concrete, reproducible greedy-equivalence failure (DFlash2 vs target-only diverging at token 30, K=1, eager, no prefix cache) with a clear reference-vs-implementation validation path, which fits the llm_algorithm track. However, supplied evidence contains materially conflicting root-cause attributions: commenters point to a GDN spec-verify gate-row misalignment fixed by #51812, to BF16 numerical-path differences, and to unrelated kernel defects (#54945/#54948, #54076/#53798, #55122), while the duplicate assessment flags PR #52555 (custom all-reduce max-size override) as semantic overlap and related issues #57016/#57017/#56443/#57014 share only generic stack signatures (clang/gcc/collect_env.py). The pre-task evidence also records an unresolved ai_disclosure_conflict policy status and base_sha_changed, and the duplicate/merged-fix coverage is explicitly 'requires review'. These unresolved facts determine whether code work is actionable and which module to change, so the evidence is too contradictory to proceed."
+  },
+  "b3286cb47f008178493d13399e5b4686ef5a06fbf7fb9f00947136d8896560ed": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels it NEW_CLEAN_CANDIDATE/ALLOW_TO_WORK, but the bot comment marks it a duplicate of #53221 with a known workaround"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code expected; covered by #53221/#56583 and the documented isolated-data-dir workaround"
+    ],
+    "risks": [
+      "Duplicate of #53221/#56583; work would be redundant",
+      "v1 is in maintenance-only mode, so a v1 schema-detection change is unlikely to be merged",
+      "Changing v1 startup behavior could conflict with the v2 migration design (#53746)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursued, reproduce by running v1.19.3 against a v2-migrated opencode.db and assert a clear forward-compatibility error instead of the misleading message"
+    ],
+    "unknowns": [
+      "Whether #53221 is still open and unresolved",
+      "Whether maintainers would accept any v1-side schema-version guard"
+    ],
+    "why": "The issue is a version/schema mismatch: a v1 binary opens a v2-migrated database and fails on the missing legacy `session` table. The bot comment identifies it as a duplicate of #53221 (and related #56583, #53746), and notes v1 only receives critical fixes, so a v1 forward-compatibility change is unlikely to be accepted. The actionable path is a workaround (isolated data dir via XDG_DATA_HOME), not a code contribution."
   },
   "b32d9a12db59913ec23f1d0bca4e2901cd693bf3820c4dc200eed06f45da89e8": {
     "confidence": 0.55,
@@ -155826,6 +155936,43 @@
       "How the ai_disclosure_conflict policy affects contribution eligibility"
     ],
     "why": "The issue reports a performance flake (decode-throughput collapse) attributed to #56512, but the only supplied maintainer comment states #56512 should only affect deepseek v4.1f, directly contradicting the claimed causal link to a Qwen4Exp PLE CPU-offload path. The reproduction also requires a private/uncached model checkpoint, a local unmerged overlay in kv_cache_utils.py, and a full ~14-minute sweep sequence; the isolated 7-run repro of the sick cell was clean, so the root cause is not established. Additionally, the pre-task evidence flags an ai_disclosure_conflict policy and a potential duplicate (#54928) sharing stack/failure signatures, both materially blocking unknowns."
+  },
+  "f4dcd2ce48a7e2b3a5e1ed5abbbf36688089d8885359b4ba8b72fc4a32a90cd2": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims 'A keyword scan of all open pull requests and issues finds no report or fix for this defect', but open PR #5140 titled 'fix(ai-history): reject request bodies with a duplicated top-level messages member' directly overlaps"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-history: add DuplicateTopLevelMember guard at start of onHttpRequestBody",
+      "plugins/wasm-go/extensions/ai-history: wire require/replace for local jsonbody module",
+      "plugins/wasm-go/extensions/ai-history: add regression test for duplicate messages rejection"
+    ],
+    "risks": [
+      "PR #5140 appears to already implement this exact fix for ai-history, risking duplicate work",
+      "PRs #5138 and #5142 cover sibling plugins with the same pattern, suggesting a broader coordinated change",
+      "Behavior change rejects previously-forwarded requests, needs maintainer sign-off on policy scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing test: body with two top-level messages members returns 400 with 'duplicate \"messages\" member in request body' and no Redis lookup",
+      "Regression test: single messages member preserves question extraction, Redis lookup, and history merge",
+      "Test: malformed JSON skips the guard and falls through to existing validation",
+      "Run existing ai-history plugin test suite in go mode and compiled-Wasm mode"
+    ],
+    "unknowns": [
+      "Whether PR #5140 already fully covers the ai-history root cause and should supersede this issue",
+      "Whether maintainer assignment is obtainable given policy status needs_assignment",
+      "Whether the three sibling PRs are intended as one coordinated change requiring a single design decision"
+    ],
+    "why": "The issue describes a concrete gjson-first vs encoding/json-last ambiguity in ai-history and proposes reusing the jsonbody helper from #5124, but the supplied evidence shows three open PRs (#5140, #5138, #5142) with near-identical titles already implementing this exact guard, and the issue itself is unassigned while the repo policy requires assignment. Duplicate coverage and unmet assignment are materially blocking unknowns."
   },
   "f4eada76f8a88392f30fae8814f9bcca3563b2a9a283277d0c49261b4ffb7abc": {
     "confidence": 0.85,
