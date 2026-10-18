@@ -31254,6 +31254,48 @@
     "wait_reason": null,
     "why": "Issue identifies a concrete bug in @ai-sdk/google's schema conversion: $ref/$defs are silently dropped, producing invalid API requests. Root cause is clearly localized to convert-json-schema-to-openapi-schema.ts with a reproducible example and expected behavior. No competing PR addresses this specific issue."
   },
+  "33963bc0044a319a115bed17c9b323051a095d15f91ed91e5a05161b028104bf": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue acceptance criteria require a specific message before/at launch but do not state whether the conversation is created; maintainer bot flags this as an open decision"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/hooks/mutation/use-create-conversation.ts preflight gate",
+      "src/hooks/mutation/resolve-conversation-launch.ts launch path",
+      "src/utils/acp-error-codes.ts failure-class mapping",
+      "home launcher / agent settings readiness surfacing"
+    ],
+    "risks": [
+      "Blocking vs warning on definitive failure changes observable acceptance criteria",
+      "Too-old CLI has no version floor source of truth; scope unresolved",
+      "Surfacing at picker vs submit changes probe frequency and UX",
+      "No user report or live reproduction; priority:low"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Extend __tests__/hooks/mutation/use-create-conversation.test.tsx with unauthenticated ACP profile on local backend",
+      "Extend __tests__/hooks/query/use-acp-model-discovery.test.tsx for ACPAuthRequired error gating",
+      "Add cloud-backend and non-ACP no-probe regression tests",
+      "Happy-path test asserting unchanged create-conversation payload"
+    ],
+    "unknowns": [
+      "Whether definitive unauthenticated failure blocks creation or only warns",
+      "Whether too-old CLI is in scope and where the version floor originates",
+      "Whether readiness is surfaced only at submit or also in the picker",
+      "No reproduction or validation path established (probe_ready false, reproduction_or_validation_missing)"
+    ],
+    "why": "The issue is well-evidenced code inspection with concrete anchors, but the pre-task gate already failed on reproduction_or_validation_missing and probe_ready is false. The maintainer bot explicitly withholds ready-for-dev because three acceptance-criteria decisions remain open (block vs warn on definitive failure, whether too-old CLI is in scope, and where readiness is surfaced). A commenter proposes a v1 shape, but that is a non-maintainer product opinion, not a resolved design. The launch-path behavior is therefore not yet determined enough to be actionable."
+  },
   "3397506fcd8237b0fd2246d0a0a91a6c32d8957e84337ca763753e9c263e7dd8": {
     "confidence": 0.85,
     "contradictions": [
@@ -128819,6 +128861,39 @@
     ],
     "why": "Issue reports a concrete, reproducible behavioral bug in litellm's heuristic_v2 complexity router (reasoning_override_min_score=0 fails to promote despite 2+ exact DEFAULT_REASONING_KEYWORDS matches), with expected/actual pairs and three delivery paths. However, the supplied evidence does not establish a root cause: actionability_evidence.root_cause_signal is false, and the code anchors are only keyword strings, not a located defect. Additionally, open PR #41797 ('add a bundled Nadir classifier plugin') has semantic overlap on complexity_router/heuristic_v2 and is unresolved (semantic_overlap_requires_review), so duplicate/coverage status is materially unknown. These missing facts determine whether a code fix is actionable."
   },
+  "cac8dead0575606e3bcdafd4bc831ac2f1ed60951d7b73446e4b168c0e208fcb": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/turns/user_turn_controller.py: reconcile _user_speaking on mute/unmute and allow turn finalization or watchdog recovery",
+      "src/pipecat/processors/aggregators/llm_response_universal.py: stop suppressing VADUserStoppedSpeakingFrame/transcription during function-call mute, or pay held post-tool context push when turn ends",
+      "src/pipecat/turns/user_mute/function_call_user_mute_strategy.py: mute state transitions consistent with speaking state"
+    ],
+    "risks": [
+      "Behavior change to mute semantics could affect other mute strategies (AlwaysUserMuteStrategy)",
+      "Cancelling in-flight inference on resumed speech may alter turn-taking latency expectations",
+      "Multiple plausible fix directions; maintainer may prefer one, but this is normal review uncertainty"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's repro.py as a regression test asserting inferences == 2 and user turn closed",
+      "Assert on_user_turn_stop_timeout fires when user stops while muted",
+      "Control run without FunctionCallUserMuteStrategy to confirm watchdog recovery path",
+      "Run targeted unit tests for turns and aggregators packages plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the mute-state reconciliation fix vs. cancelling in-flight inference vs. paying held context push"
+    ],
+    "why": "Issue provides a runnable minimal repro, expected-vs-actual output, ordered steps, and precise code anchors (user_turn_controller.py L399/L426, llm_response_universal.py L1267/L2143) tracing the stale _user_speaking state through the mute path. The only open PR (#5870) is a draft with no code-path or semantic overlap, so it does not cover this bug."
+  },
   "cacb001b6a8a9e17fab1375fed9b50521c3e94e676a02be6dff0ea680531de42": {
     "confidence": 0.85,
     "contradictions": [],
@@ -137416,6 +137491,44 @@
       "No maintainer confirmation on preferred implementation details, but this does not block actionability."
     ],
     "why": "The issue provides a clear root cause: the stdio client never closes the server's stdin, causing every dispose to wait the full ShutdownTimeout and force-kill the server. The suggested fix is concrete and minimal, with a clear validation path via timing the dispose."
+  },
+  "d8329280a5bed62044ce95f1cc0497eab4d653418cab4edaabc783012633ed9f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body presents a concrete root cause and possible fixes, but actionability_evidence reports root_cause_signal=false and probe_ready=false",
+      "Issue body includes ordered reproduction steps, yet preTaskEvidence sets reproductionPathPlan=false and the gate failed on reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/harness/src/agent/internal/run-prompt.ts: pause for built-in approval without waiting on host tool echo",
+      "packages/harness/src/agent/harness-agent.ts: host tool echo / approval ordering state machine",
+      "harness-claude-code bridge: MCP handler resolution independent of Claude Code execution order"
+    ],
+    "risks": [
+      "PR #23500 may already fix the same pause/approval ordering, making this duplicate work",
+      "Changing pause ordering could regress the two-host-tool-approval deadlock in #19302",
+      "Behavior change in approval/echo sequencing may affect other providers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test where one assistant message emits an approval-gated Bash call followed by a host tool call, asserting the turn pauses for approval instead of hanging",
+      "Run targeted harness and harness-claude-code unit tests plus typecheck"
+    ],
+    "unknowns": [
+      "Whether open PR #23500 already resolves this exact deadlock",
+      "Whether #23499 is the same defect or a distinct approval/echo failure",
+      "Whether a minimal failing reproduction exists beyond the described configuration"
+    ],
+    "why": "The issue gives a detailed deadlock narrative and code anchors (runPrompt, hostToolCallIdsAwaitingEcho, deferredPauseFinishStep), but the supplied evidence marks root_cause_signal=false and reproductionPathPlan=false, and the pre-review gate failed with reproduction_or_validation_missing. Open PR #23500 ('re-emit tool call before approval request after a host-input pause') semantically overlaps the same pause/approval path, and related issue #23499 describes a closely related approval/echo failure; whether #23500 already covers this root cause is unresolved and determines whether new code work is actionable."
   },
   "d834c27f52d2574a68fa792171b3b916c5a722ed298149ba06173f1f713f7c67": {
     "confidence": 0.72,
