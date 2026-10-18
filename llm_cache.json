@@ -37107,6 +37107,41 @@
     ],
     "why": "Issue provides a concrete, reproducible bug with a clear root-cause hypothesis (head_dim mismatch in Mistral3) and a validation path via backend comparison and numerical regression. The evidence includes ordered repro steps, environment details, and code anchors, satisfying the llm_algorithm track requirements."
   },
+  "3cb5e4cf8dce02f0852dacc15971d33942b72a4b7ebb6d6cb5fcacd6c05d16b8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MooncakeKVManager.start_prefill_thread(): reject/validate registrations before materializing nested buffers",
+      "KVArgsRegisterInfo.from_zmq()/unpack_int_lists(): bound nested-buffer count and frame size",
+      "decode_kv_args_table: add size cap and expiry for unverified registrations",
+      "Optional: bind registration to configured Decode identity or credential"
+    ],
+    "risks": [
+      "Tightening registration validation could break legitimate Decode-Prefill handshake if identity binding is too strict",
+      "Nested-buffer limits must accommodate real workloads",
+      "Cross-host test requires isolated network and cgroup setup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_oom.py against a memory-limited Prefill cgroup and confirm registrations are rejected without OOM",
+      "Regression test asserting unpack_int_lists rejects oversized nested-buffer declarations",
+      "Unit test that decode_kv_args_table enforces size/expiry limits",
+      "Latency check: baseline vs attack-run completion times stay within control bounds"
+    ],
+    "unknowns": [
+      "No maintainer design preference on auth vs. resource-limit approach",
+      "Whether existing PRs touch the same Mooncake registration path (none found with direct overlap)"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: unauthenticated ZMQ PULL registrations in MooncakeKVManager.start_prefill_thread() are parsed via KVArgsRegisterInfo.from_zmq()/unpack_int_lists() and retained in decode_kv_args_table with no sender auth, nested-buffer limit, table cap, or expiry. Reproduction is executable (repro_oom.py plus cgroup setup) and validation is concrete (OOM counters, health timeouts, completion latency)."
+  },
   "3cb9f94e9278a49e434b8f7255879ab8b9bf441198f8d2b30418d951b787df56": {
     "confidence": 0.85,
     "contradictions": [
@@ -42346,6 +42381,44 @@
       "Whether PR #15767 will be revised to include the missing regression test, which would reduce the remaining contribution gap"
     ],
     "why": "Issue provides a concrete root cause (lagged broadcast receiver replays pre-resync buffered events after list_and_watch reconciles from list_state), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a deterministic unit-test reproduction on a current-thread runtime with a 16-slot channel, and an expected-vs-actual event pair. The proposed fix (resubscribe under the list_state read lock, matching mem.rs) is concrete and testable. Existing PR #15767 covers the same path but lacks regression tests, leaving a clear gap for a test-backed contribution."
+  },
+  "458965ca8f70d10fba734447db37b5f4885ba51088ec3db0fa8f881380a6e502": {
+    "confidence": 0.7,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while issue body provides detailed code-path root-cause analysis"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "google/adk/cli/utils/graph_serialization.py: serialize BaseToolset with children from get_tools()",
+      "google/adk/cli/agent_graph.py: draw toolset->tool edges and distinct node ids",
+      "google/adk/cli/dev_server.py / front-end highlight matching for nested tool calls",
+      "fallback to single node when get_tools() fails or server unreachable"
+    ],
+    "risks": [
+      "get_tools() is async and does network I/O while serializer is synchronous; caching/fallback design needed",
+      "Front-end highlight matching logic not inspected, so fix scope may be larger than backend",
+      "Changing node naming may break existing graph consumers or tests"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test asserting serialize_agent emits a toolset parent with child tool nodes for an McpToolset with two tools",
+      "Add a graph test asserting agent->toolset and toolset->tool edges and distinct ids for two McpToolset instances",
+      "Add a highlight test that a call to an MCP tool name highlights the toolset and child tool nodes",
+      "Add a fallback test where get_tools() raises and serialization still returns the single opaque node"
+    ],
+    "unknowns": [
+      "No assignee despite repository assignment_required policy",
+      "Front-end highlight matching implementation unverified",
+      "Whether maintainers have a preferred serialization schema for nested toolsets"
+    ],
+    "why": "Issue gives a detailed reproduction and plausible code anchors (graph_serialization.py, agent_graph.py, dev_server.py), but the repository policy requires assignment (needs_assignment) and the candidate has no assignee, which is a materially blocking unknown for actionability. Root cause is also only partially established: the reporter did not read the front-end highlight matching code, so the highlight-mismatch mechanism is inferred rather than confirmed."
   },
   "458e31310acf193a5a7cf37514eacec66ef8dd48965cf6ea4975706b83176f22": {
     "confidence": 0.72,
@@ -57383,6 +57456,43 @@
       "Whether minor issues are in scope for this issue"
     ],
     "why": "Issue reports two concrete reliability bugs in factory pipeline with detailed evidence and repro sketch, but root causes are partially inferred (e.g., provider stream error, race condition) and require maintainer design confirmation on signal delivery semantics and resource_id contract. No open PR competition; maintainer has labeled for triage but not confirmed approach."
+  },
+  "5aece216b41f62cb8cf60d01d89faa4e3e0294bf340ceea95245eb2790a24644": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter observed the command spawning before any decision, but the maintainer bot and the reporter's own fresh-process control test saw the command blocked until reply",
+      "Reporter attributes the 404s to a server-side fail-open gate, while the bot attributes them to a client auto-accepting the request and the stale prompt replying afterward"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "permission request lifecycle (create/answer/drop) in the shell tool path",
+      "reply endpoint handling of already-resolved permission requests",
+      "permission lifecycle logging (created/answered/dropped, answering client)"
+    ],
+    "risks": [
+      "Fixing a symptom (404 on stale replies) without confirming the fail-open cause",
+      "Changing permission semantics could weaken or alter existing deny/policy behavior",
+      "The real cause may be client-side auto-accept, outside the server code paths listed"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a single client, auto-accept disabled, and confirm the shell command blocks until reply",
+      "Add a regression test that an ask rule prevents process spawn until a decision is accepted",
+      "Add a test that a reply to an already-resolved request returns a clear non-404 outcome or is idempotent"
+    ],
+    "unknowns": [
+      "Whether any connected client has auto-accept permissions enabled",
+      "DEBUG-level server logs covering the full permission lifecycle for a failing attempt",
+      "Whether the failure reproduces with a single client and auto-accept disabled"
+    ],
+    "why": "The issue reports an ask-effect permission gate that fails open, but the maintainer bot could not reproduce it on 2.0.32 and proposed a plausible alternative explanation: a client-side auto-accept setting answering the request before the user's stale prompt replies, which would produce the observed 404s. The reporter's control test on a fresh process also showed the gate holding. The root cause is therefore unresolved and contradictory, so a concrete fix cannot yet be targeted."
   },
   "5af2d58892cf19d8581f628171171d0c4fa9db61fed171e0818dc9f882571887": {
     "confidence": 0.8,
@@ -130414,6 +130524,40 @@
     ],
     "why": "Issue reports a critical CUDA illegal memory access in GDN kernel with multiple reproductions, but root cause is unclear and may involve multiple components (FlashInfer, Triton, custom allreduce). Open PR and related issue lookups failed, so duplicate work cannot be excluded. Maintainer input is needed to prioritize and confirm scope."
   },
+  "ccc7c2bf3f7107d9a3fb43dd2bd128adb3b64237df456ee1034c4d7b9929672a": {
+    "confidence": 0.55,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Desktop synthesis request construction: move instruction to trailing user-role row",
+      "Final-synthesis reply handling: strip tool-call markup and fall back to tool-round-cap message",
+      "Streaming vs non-streaming tool-markup consistency (engine follow-up)"
+    ],
+    "risks": [
+      "Behavior change to synthesis prompt placement may affect other models",
+      "Engine streaming/non-streaming alignment could alter API-visible output",
+      "Scope creep between Desktop fix and engine follow-up"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay captured synthesis request with instruction in system row vs trailing user row; assert no raw <tool_call> markup in streamed output",
+      "Regression test asserting streaming and non-streaming paths agree on tool-markup handling when tools omitted",
+      "End-to-end repro: dinner-party menu then shopping-list turn exhausting 3-tool budget"
+    ],
+    "unknowns": [
+      "Repository requires assignment (needs_assignment) and issue has no assignee; whether assignment can be obtained is unresolved",
+      "Whether maintainers prefer the Desktop-only fix or the engine-level streaming/non-streaming alignment first"
+    ],
+    "why": "Issue gives a concrete repro and a plausible root cause (synthesis instruction placed in leading system row; streaming path forwards raw tool markup), plus a replay table showing 5/5 vs 0/5. However the repository policy is needs_assignment and the issue has no assignees, which is a materially blocking unknown for actionability under the stated rules."
+  },
   "ccec65772ff0eb7e0c6027d719e0b750f2c078d5122b3788ad5e06ddcc97d5fa": {
     "confidence": 0.55,
     "contradictions": [
@@ -152819,6 +152963,41 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "The issue clearly identifies a fail-open Helm ownership check in hgctl that can lead to unsafe cluster mutation, with a concrete reproduction and maintainer approval. However, the repository requires assignment and the candidate's own submission policy mandates maintainer approval before implementation, so work cannot start without an explicit assignment."
+  },
+  "eec150bbe132e411d0db7a94327395cab286d289404cb0ede62b72ef9abb2e1b": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.algorithm_evidence claims qualified algorithm mechanisms (parameter_efficient_finetuning, model_architecture) but the issue is a vector-store filter/plumbing bug with no algorithmic content"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/langchain.py: normalize compound filters into a Chroma $and where clause before calling _collection.get()",
+      "mem0/memory/main.py: guard delete_all against empty list results instead of raising IndexError"
+    ],
+    "risks": [
+      "Fix may overlap with open PR #7647 (flat-list change) and PR #60 (maintainer-owned reproduction), risking duplicate work",
+      "Only scalar-equality normalization is validated; arbitrary metadata operators and other stores remain untested",
+      "Swallowing backend errors as empty lists may mask other failures if not addressed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with real Chroma + langchain_chroma: insert two targets and three controls, call get_all with two- and three-key filters, assert exactly two targets returned",
+      "Assert sync delete_all removes only targets and writes two SQLite DELETE rows; assert async delete_all does not report success when nothing was deleted",
+      "Regression test that single-key filters still work and native Chroma adapter behavior is unchanged"
+    ],
+    "unknowns": [
+      "Whether maintainers consider this covered by PR #7647 or PR #60",
+      "Whether the issue will be labeled accepted before a PR is appropriate"
+    ],
+    "why": "The issue is a vector-store adapter bug: Langchain.list forwards compound filters raw to Chroma, which rejects them, and the error is swallowed as an empty list. This is ordinary provider/API plumbing, not an LLM algorithm contribution (no training objective, model mechanism, quantization, kernel, or evaluation methodology). The algorithm_evidence matched only generic terms like 'adapter' and 'normalization', which are false positives here. Root cause is already identified in the issue and a commenter has offered a fix, so this is a low-value/covered opportunity for the llm_algorithm track."
   },
   "eed949e226dec7addfe8f6b0476d9690be813b26c61239e0e44a43faadc09390": {
     "confidence": 0.7,
