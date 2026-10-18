@@ -106989,6 +106989,45 @@
     ],
     "why": "Issue reports q4_0 KV cache causing degenerate output on small models, but root cause is not confirmed; maintainer suggests it may be model unsuitability and points to a PR for per-model overrides. No concrete code path or algorithm change is proposed."
   },
+  "a754551ed7e5f7c6212743acb29c53502ed6210975bbc567838b23a144b6ad27": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while issue body supplies detailed code-anchored root-cause hypothesis",
+      "preTaskEvidence.reproductionPathPlan=false but issue body contains ordered reproduction steps and minimal repro code"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "google/adk/cli/utils/graph_serialization.py: emit toolset parent node with children from get_tools(), respecting tool_filter/tool_name_prefix, with fallback on failure",
+      "google/adk/cli/agent_graph.py: draw agent->toolset and toolset->tool edges",
+      "dev_server/front-end highlight matching: map MCP tool-call names to child nodes and highlight parent path",
+      "distinct node ids per toolset instance instead of class name"
+    ],
+    "risks": [
+      "get_tools() is async and does network I/O inside a synchronous serializer; caching/fallback design needed",
+      "Front-end highlight matching logic unverified; fix may be incomplete without it",
+      "Changing serialized graph schema could break existing UI consumers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test serialize_agent on an Agent with a fake BaseToolset returning two tools; assert parent node plus children names",
+      "Unit test build_graph edges include agent->toolset and toolset->tool",
+      "Regression test that get_tools() failure falls back to single opaque node without raising",
+      "Test two McpToolset instances produce distinct node ids"
+    ],
+    "unknowns": [
+      "Repository requires assignment; issue has no assignee",
+      "Front-end highlight-matching implementation not inspected, so highlight root cause is unconfirmed",
+      "Whether maintainers accept a schema change adding children/toolset node type"
+    ],
+    "why": "Issue gives a detailed, code-anchored hypothesis (serialize_agent emits class-name node for toolsets, no children field, no tool->tool edges) and a workaround, but the reporter explicitly did not read the front-end highlight-matching code, so the highlight half of the root cause is unverified. Repository policy requires assignment (needs_assignment) and the issue has no assignee, which is a materially blocking unknown for actionability."
+  },
   "a7625442c4ae428427553ebfd14b3059865c2b84cb9ffddfaddca016f0108de3": {
     "confidence": 0.8,
     "contradictions": [],
