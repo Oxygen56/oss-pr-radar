@@ -29665,6 +29665,45 @@
     ],
     "why": "Issue #1464 is a resource-cleanup bug report (temp dirs, tracker rows, reader threads, Docker containers, temp config files) in a CLI/training-wrapper repository. Despite the llm_algorithm track label, the work is ordinary lifecycle/plumbing cleanup with no training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. Two of seven sites are already merged (#1640, #1753), and the remaining sites are claimed by a returning contributor per the owner's comments, so the opportunity is low-value and largely covered."
   },
+  "30f5bd7ed001929921fe9fa772593ef018696f99a2a6076f552a70f5bd681c39": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims regression tests exist on a local branch, but actionability_evidence reports reproduction_evidence empty and probe_ready=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "crates/goose-provider-types/src/http_status.rs: add map_http_error_to_provider_error_with_headers and shared apply_retry_after helper",
+      "crates/goose-providers/src/databricks.rs: pass headers on streaming error path (2 sites)",
+      "crates/goose-providers/src/google.rs: pass headers in fetch_supported_models",
+      "crates/goose-providers/src/snowflake.rs: pass headers on streaming error path",
+      "crates/goose/src/providers/gcpvertexai.rs: pass headers on non-streaming error path"
+    ],
+    "risks": [
+      "Repository requires assignment before contribution; no assignee present",
+      "Header availability at each call site is asserted but not verified in supplied evidence",
+      "Behavior change to backoff timing across four providers could affect retry semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add unit test asserting retry_delay is Some(30s) when 429 response carries Retry-After: 30 through the new with_headers helper",
+      "Regression test per provider path verifying RateLimitExceeded.retry_delay is populated",
+      "Run targeted package tests for goose-provider-types and goose-providers"
+    ],
+    "unknowns": [
+      "Whether maintainers will assign the issue to the contributor",
+      "Whether headers are actually accessible at each of the four call sites before body consumption",
+      "Whether an existing helper or PR already covers this path"
+    ],
+    "why": "Issue describes a plausible root cause (map_http_error_to_provider_error drops Retry-After headers on four provider paths) with named code anchors, but the supplied actionability evidence shows no reproduction evidence, probe_ready=false, and the repository policy requires assignment (needs_assignment) with no assignee present. The issue's own reproduction is a unit-level sketch, not a verified failing test, and the author states the fix is only on a local branch."
+  },
   "30fc78275f52ed9ae08cc32fdc9fa7e37bd0c0a22ebd4b32db882efbc2c6c16f": {
     "confidence": 0.8,
     "contradictions": [
@@ -39879,6 +39918,41 @@
     ],
     "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >= 4, with strong evidence of a mixed-batch indexing bug in the V1 engine. However, the deterministic gate is HUMAN_REVIEW, and the repository requires AI disclosure which conflicts with automated action. Additionally, potential overlap with issue #50427 and related issues needs maintainer triage."
   },
+  "415a22249016f548b982eb8552ecca49af8136f0d9911921be0bb3df9b50a647": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "MooncakeKVManager.start_prefill_thread: validate/authenticate sender and bound nested-buffer parsing before materialization",
+      "KVArgsRegisterInfo.from_zmq: enforce nested-buffer count/size limits",
+      "decode_kv_args_table: add table size cap and expiry for registrations",
+      "bootstrap /route: require credential or bind restriction for rank disclosure"
+    ],
+    "risks": [
+      "Auth/credential design may need maintainer preference on mechanism (token vs mTLS vs bind restriction)",
+      "Overly strict limits could break legitimate large registrations",
+      "Cross-host binding to 0.0.0.0 is a deployment choice; fix must not silently break valid PD topologies"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: feed a crafted registration with 100,000 nested buffers and assert rejection before list materialization",
+      "Unit test: send many unique session IDs and assert decode_kv_args_table stays bounded and entries expire",
+      "Integration test: run repro_oom.py against a memory-limited Prefill cgroup and assert no OOM and completions remain healthy",
+      "Regression: normal Decode registration still succeeds and completions pass"
+    ],
+    "unknowns": [
+      "No maintainer design preference on auth mechanism or acceptable registration limits",
+      "No confirmation whether /route is intended to be publicly reachable in supported deployments"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: MooncakeKVManager.start_prefill_thread parses unauthenticated ZMQ registration frames, and KVArgsRegisterInfo.from_zmq materializes unbounded nested buffers into decode_kv_args_table with no sender auth, size limit, or expiry. Reproduction is executable (repro_oom.py plus cgroup setup) and validation path is concrete (reject before materialization, bounded table, regression test)."
+  },
   "415d6dfd9ae2964cc77eccd9abb7b62ad99fe2dde9645d0fb78cda2a77be158e": {
     "confidence": 0.8,
     "contradictions": [
@@ -47343,6 +47417,42 @@
       "Whether PR #7007 fully covers the root cause or has gaps that need additional work."
     ],
     "why": "Issue provides a clear root cause (lost stream trailer blocks DataStreamAudioReceiver forever), a concrete reproduction path, and a proposed fix with code anchors. An open PR (#7007) already implements the proposed solution with tests, but it is not linked to the issue and requires review. The contribution is actionable and valuable."
+  },
+  "4d58d50341b8f8444a4a3618d8a1b89864b75c9886084f282dc357d89f81eb3e": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body asserts a clear root cause and ownership pattern, but actionability_evidence sets root_cause_signal=false and needs_confirmation=true",
+      "open_pr_assessment lists PR #9510 as technically_complete with tests yet root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "RedisContextProvider: track ownership of self-created AsyncSearchIndex and close it in __aexit__/aclose",
+      "Mirror RedisHistoryProvider _owns_client ownership semantics so injected indexes are not closed"
+    ],
+    "risks": [
+      "Open PR #9510 may already cover this fix, making independent work redundant",
+      "Closing an injected index would break caller ownership expectations",
+      "AsyncSearchIndex close API may differ across redis versions"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a unit test constructing RedisContextProvider(redis_url=...) with a mocked AsyncSearchIndex and assert aclose/__aexit__ closes the owned index",
+      "Add a test asserting an injected index is NOT closed on exit",
+      "Run targeted python redis package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #9510 already fully resolves the leak and will merge",
+      "Whether AsyncSearchIndex exposes a close/aclose method to call",
+      "Whether maintainers require design confirmation before a competing fix"
+    ],
+    "why": "The issue describes a plausible resource leak: RedisContextProvider builds its own AsyncSearchIndex from redis_url but has an empty __aexit__ and no aclose, unlike RedisHistoryProvider's _owns_client/aclose pattern. However, the supplied evidence marks root_cause_signal=false and reproduction_or_validation_missing, and the only reproduction is a prose snippet with no failing test or probe. An open PR #9510 already targets the same fix with tests, so duplicate/coverage status is unresolved."
   },
   "4d6d3d938173b1f2b96c929c1b96fba3cd7d83c70e1e069edb6ae2fb779350c0": {
     "confidence": 0.7,
@@ -74896,6 +75006,42 @@
       "Whether maintainers prefer wiring the flags into non-SFT trainers or rejecting them at config load (both are accepted by the issue's acceptance criteria)."
     ],
     "why": "Issue pins a concrete, code-anchored defect: use_flash_attn/use_liger are consumed only by SFT's _setup_transformers (sft.py:1293, 882, 1351-1356) yet validated for every task at commands/train.py:1192-1214 and auto-enabled task-agnostically by autopilot/decisions.py:344-346, so DPO/GRPO/pretrain configs are refused or silently run eager attention. Reproduction is explicit (build_soup_config on cc 12.0 emits both flags for dpo/grpo/pretrain; validators exit 1 without the packages) and acceptance criteria give a reference-vs-implementation test (stub get_attn_implementation returning 'sdpa', assert kwarg reaches from_pretrained, or reject at config load)."
+  },
+  "754abad36c78b8a14ce97dcb878051ed89743ff510b622473c3c5bafdb82e883": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons with exact rid equality for ordinary aborts",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup aborts only the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: optionally namespace or validate client-supplied rid to prevent collisions",
+      "Keep any intentional bulk-abort (abort_all) path separate and explicitly authorized"
+    ],
+    "risks": [
+      "Changing prefix to exact equality may break internal callers that rely on prefix-based bulk abort; audit all abort_request call sites",
+      "PD/router paths may pass transformed or namespaced rids, so exact matching must be verified across prefill and decode workers",
+      "Server-namespaced rid changes could alter API-visible request IDs and break clients that expect their supplied rid to be echoed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid '<prefix>-victim' and a streaming attacker with rid '<prefix>', closes the attacker stream, and asserts the victim reaches its normal length finish rather than FINISH_ABORT",
+      "Add a negative control with a non-prefix attacker rid asserting no victim abort",
+      "Add a unit test on Scheduler.abort_request asserting exact-equality semantics for chunked, waiting, grammar, PD prefill, PD decode, and running request states",
+      "Run the targeted scheduler/tokenizer_manager unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether any internal caller intentionally depends on prefix-based abort semantics",
+      "Whether the referenced prior fix PRs (#41481/#41502/#43476) were closed for design reasons that would constrain the implementation"
+    ],
+    "why": "Issue provides a concrete root cause: client-controlled rid is preserved in GenerateReqInput, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid), so a short attacker rid aborts unrelated requests. Code anchors, a standalone PoC, and a controlled 5/5 vs 0/5 trial matrix with an exact-equality control establish both reproduction and a validation path."
   },
   "75558a0439227e49aee0ebbc679ba79b5d349172a5b5df70b0f92dda2ada7561": {
     "confidence": 0.85,
@@ -105754,6 +105900,39 @@
       "Open PR status unknown due to timeout; related issue audit failed; maintainer design preference not confirmed"
     ],
     "why": "The issue reports a user-visible bug with a plausible root cause (Gemini 3.5 API changes) and a concrete repro, but the fix requires design confirmation from maintainers (whether to map reasoning_effort to thinking_summaries or add Interactions API support). The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookup failed, so duplicates cannot be excluded."
+  },
+  "a5e92b230e2fb55e188681d40e199160a788385442dbd2ed5bf1d73e3f1f84d1": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/turns/user_turn_controller.py: reconcile _user_speaking on mute stop / VAD stop while muted, and allow turn finalization or watchdog recovery",
+      "src/pipecat/processors/aggregators/llm_response_universal.py: pay held post-tool context push when the user turn ends without new text",
+      "src/pipecat/turns/user_mute/function_call_user_mute_strategy.py: ensure mute does not permanently swallow speaking-state transitions"
+    ],
+    "risks": [
+      "Changing mute/VAD state reconciliation could alter interruption semantics for other mute strategies",
+      "Cancelling in-flight inference on resumed speech may regress legitimate barge-in behavior",
+      "Overlapping draft PR #5870 touches turn-stop strategy area but has no code-path or semantic overlap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Port the issue's repro.py into a regression test asserting llm.inferences == 2 and user turn closed after the tool result",
+      "Add a variant without FunctionCallUserMuteStrategy asserting the held post-tool push is paid when the turn ends with no new transcript",
+      "Run targeted unit tests for turns/ and processors/aggregators/ plus static checks"
+    ],
+    "unknowns": [
+      "No maintainer confirmation of preferred fix direction among the three proposed options",
+      "Whether the held-push and stale-speaking-state issues should be fixed in one PR or split"
+    ],
+    "why": "Issue provides a self-contained runnable repro, expected-vs-actual output, and a step-by-step causal chain anchored to specific lines in user_turn_controller.py and llm_response_universal.py: mute suppresses VADUserStoppedSpeakingFrame/TranscriptionFrame, leaving _user_speaking stale, so the turn never closes and the held post-tool inference never fires. This is a concrete state-machine bug in the agent runtime path, not plumbing."
   },
   "a5ff941ef131443bbedf03bffecb6be5f7e75a5cb87a0c2d8e137d3a8fd982e0": {
     "confidence": 0.8,
