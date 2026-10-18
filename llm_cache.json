@@ -107538,6 +107538,46 @@
     ],
     "why": "The issue provides a concrete, reproducible bug with clear root causes: CUDA graph capture hangs for hybrid GDN models, dtype mismatch in AWQ path, and MTP memory allocation failure. It includes executable reproduction commands and specific code anchors, enabling a reference-vs-implementation test. The track is llm_algorithm with mechanisms in model_architecture and numerics_quantization, and the validation path is concrete."
   },
+  "a9751cd3ffe2e56e5ad72bc5fdec770a22341c6bee264f40874a00df132b4eb3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states root cause not established (first differing projection does not alone explain drift) while candidate labels it a verifiable algorithm mechanism with root-cause localization",
+      "Open PR #44045 overlaps on bf16/qwen3 batch-invariant matmul but is not linked to the issue; coverage of this specific root cause is unconfirmed"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Batch-invariant or deterministic scoring path for BF16/FP8 LM head and projection GEMMs",
+      "Documented supported configuration for decision scoring thresholds",
+      "Regression test comparing scores across batch shapes with fixed token IDs"
+    ],
+    "risks": [
+      "Root cause may be upstream cuBLAS/GEMM kernel selection, not SGLang code",
+      "PR #44045 may already address the bf16 matmul batch-invariance mechanism",
+      "BF16 logit grid quantization near 0.5 makes tie-breaking inherently unstable; fix may be documentation rather than code",
+      "Hardware-specific (H20) kernel behavior may not reproduce elsewhere"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Replay fixed 47-token input via /v1/score at batch sizes 1, 8, 12, 16, 24, 32 with cache flush and assert P(positive) stability within tolerance",
+      "Run standalone repro_bf16_projection.py to confirm M=47 vs M=752 divergence and verify fix removes it",
+      "Compare FP8 vs BF16 weights and BF16 vs FP32 LM head to isolate head-rounding vs hidden-state drift"
+    ],
+    "unknowns": [
+      "Whether PR #44045 actually fixes the reported batch-shape score drift",
+      "Whether the divergence originates in SGLang code, cuBLAS, or is an accepted numerical limitation",
+      "Whether deterministic inference covers GatedDeltaNet layers in this model (per comment referencing #43413)"
+    ],
+    "why": "Issue provides a strong reproduction and localization (BF16 projection shape-dependent rounding, FP8 vs BF16 head controls), but the root cause is explicitly not established: the report states the first differing projection does not alone explain final drift, and it is unclear whether the fix belongs in SGLang, cuBLAS/upstream GEMM, or is a documented numerical limitation. Open PR #44045 (batch-invariant bf16 matmul tuning for gfx950) has semantic overlap on bf16/qwen3 and may already cover the mechanism, but it is not linked to the issue and overlap is unconfirmed. These unresolved coverage and ownership questions materially determine whether code work is actionable."
+  },
   "a9811db8b18fd1af6013ed14d26a86f7945daef79a71f121dbe00bc02774ff46": {
     "confidence": 0.85,
     "contradictions": [
