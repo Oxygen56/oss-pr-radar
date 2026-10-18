@@ -12254,6 +12254,46 @@
     ],
     "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps, but the supplied evidence shows an open PR #42740 that directly overlaps the same code path (sgl-model-gateway/src/routers/header_utils.rs) and distinctive identifier x-override-priority, with duplicate status human_review_required. Whether independent implementation space exists is unresolved, which materially determines actionability."
   },
+  "156012b1cbd5d5cd1109260ce88c3d4ea583a85328dc7628668a53deae0627ba": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal=false while issue body supplies detailed source-level root-cause analysis",
+      "candidate.actionability_evidence.probe_ready=false but preTaskEvidence.validationPathPlan=true"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "google/adk/cli/utils/graph_serialization.py: serialize BaseToolset as parent node with children from get_tools(), honoring tool_filter/tool_name_prefix, with fallback on failure",
+      "google/adk/cli/agent_graph.py: add toolset→tool edges and distinct per-instance node ids",
+      "google/adk/cli/dev_server.py / front-end highlight matching: map MCP tool-call names to child nodes and highlight parent path"
+    ],
+    "risks": [
+      "get_tools() is async and does network I/O while the serializer is synchronous; naive await/blocking could hang the graph endpoint",
+      "Changing serialized graph schema may break the front-end consumer",
+      "Multiple McpToolset instances currently merge by class name; new id scheme must stay stable for highlight matching"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test on serialize_agent with a fake toolset exposing two tools; assert parent node plus two child entries",
+      "Add a graph-build test asserting agent→toolset and toolset→tool edges and unique ids for two McpToolset instances",
+      "Add a highlight-matching test where a function-call event named 'add' highlights agent→McpToolset→add",
+      "Add a fallback test where get_tools() raises and serialization still returns the single opaque node without erroring"
+    ],
+    "unknowns": [
+      "Repository requires assignment and issue has no assignee; whether a contributor may proceed is unresolved",
+      "No probe/validation artifact exists yet (probeRequired=true, probe_ready=false)",
+      "Front-end highlight-matching code was not read, so the exact matching contract is unverified"
+    ],
+    "why": "Issue gives a detailed, plausible root-cause sketch (serialize_agent emits toolset class name with no children; build_graph draws only agent→tool edges; highlight matching by call name cannot match 'McpToolset'), plus a concrete repro and code anchors. However the pre-task evidence marks assignmentRequired=true with no assignees, and reproductionPathPlan=false / probeRequired=true with probe_ready=false, so the repository's assignment gate and the missing probe/validation artifact are materially blocking unknowns for actionability."
+  },
   "156834cfe31ebb72dd859620b01172d5c3d8c3bf582c4666a1dc865913e85ac8": {
     "confidence": 0.8,
     "contradictions": [],
@@ -31890,6 +31930,41 @@
       "Whether the first relora_steps interval after initialization actually hits the all-zero lora_B tie in practice"
     ],
     "why": "Issue identifies two concrete, independently verified defects in src/soup_cli/utils/relora.py: (A) _prune_and_reset never merges B@A into the frozen base before pruning, so the learned adapter contribution is discarded (base weight delta = 0, effective-map MSE 142.12 vs 8.77e-13 for a merge-then-reset control); (B) magnitude_prune_tensor uses a strict `abs(t) > threshold` mask, so tied magnitudes wipe every entry even when prune_ratio < 1, zeroing both lora_A and lora_B and producing zero gradient norm on both factors. Owner confirmed both halves with a real peft LoRA model and a kernel-level reproduction. This is a genuine algorithm-conformance and numerical-correctness problem with a clear reference-vs-implementation test path."
+  },
+  "3494a7d6202d76735a5029c270f56ab78785292a33abecc5bc09353c6da0493d": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons with exact rid equality across chunked/waiting/grammar/PD/running paths",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup aborts only the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: consider server-namespaced rid handling for additional isolation"
+    ],
+    "risks": [
+      "Changing prefix to exact equality may break intentional bulk-abort or chunked-request semantics that rely on prefix matching",
+      "PD prefill/decode paths may have separate abort propagation that needs consistent handling",
+      "Server-namespaced rid changes could alter API-visible request ID behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid 'X-victim' and an attacker request with rid 'X', disconnects the attacker, and asserts the victim reaches normal length finish rather than FINISH_ABORT",
+      "Unit-test Scheduler.abort_request with prefix-related rids to assert only exact-match requests are aborted",
+      "Re-run the issue's PoC script against a patched single-worker server and confirm victim_finish_reason is not 'abort'",
+      "Run targeted scheduler/tokenizer_manager unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether any internal caller intentionally relies on prefix-based abort semantics",
+      "Whether the referenced prior fix PRs (#41481/#41502/#43476) were closed for design reasons that constrain the acceptable fix"
+    ],
+    "why": "Issue gives a concrete root cause: client-supplied rid is preserved in GenerateReqInput._normalize_single_inputs, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid) instead of exact equality, enabling cross-request aborts. Code anchors, a runnable PoC, and a controlled 5/5 vs 0/5 test matrix with an exact-equality control establish both reproduction and validation path."
   },
   "349eb176504c94341667e8dad15788858839bbf6f9342467dd1ae643db4881cf": {
     "confidence": 0.82,
@@ -123373,6 +123448,43 @@
     ],
     "unknowns": [],
     "why": "Issue provides a precise root cause: CronStore.claimDueRuns binds named params as an object under bun:sqlite, causing silent NULL comparison and zero claimed runs. Concrete runtime-independent reproduction and multiple fix options are given; no duplicate PR/issue coverage found."
+  },
+  "c2e82070184fcad3270a3fb307a2823d077d4441e6965ca937fe7008d461a995": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Open PR #56452 is marked technically_complete with tests while root_cause_coverage is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/sdk/src/opencode.ts",
+      "packages/ai/src/providers/opencode.ts",
+      "packages/core/src/plugin/provider/opencode.ts",
+      "MCP dialog toggle state handling and config persistence"
+    ],
+    "risks": [
+      "Duplicating PR #56452 which already covers the feature",
+      "Expanding config schema/API behavior beyond maintainer preference",
+      "No reproduction evidence to confirm the exact failure mode"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that toggling a failed/pending MCP server in /mcps disables it",
+      "Regression test that the disabled flag persists to the defining config file across reload/restart"
+    ],
+    "unknowns": [
+      "Whether PR #56452 already fully resolves the issue",
+      "Exact code path for the /mcps toggle and config write",
+      "Maintainer design preference for persistence target"
+    ],
+    "why": "The issue describes a UI/state-persistence gap in the /mcps dialog (space only disconnects connected servers; toggle is runtime-only), but supplied evidence has no reproduction steps, no root-cause code anchor beyond opencode.json, and an open PR #56452 already implements the requested behavior with tests. Actionability is materially blocked by unresolved duplicate coverage and missing reproduction evidence."
   },
   "c2f2e18666b227a8e210152ed16b45205339fbebfceb2916d5664471ab46eb9f": {
     "confidence": 0.6,
