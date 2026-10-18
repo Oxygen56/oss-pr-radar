@@ -126144,6 +126144,41 @@
     ],
     "why": "The issue provides a detailed root cause analysis with three specific failure modes, a concrete proposed change with code hooks and gists, and validation via 30/30 restore tests. The evidence includes code anchors and a clear validation path, making it actionable despite lacking a public repro."
   },
+  "c717faf3de185eabcb037262bce90101ca5d4530196ccbf685c49f63e9f4861c": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Track labeled llm_algorithm but evidence describes vector-store adapter plumbing, not an algorithm mechanism",
+      "algorithm_evidence qualified=true conflicts with operational_only=false given the bug is integration-level"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/langchain.py: build proper $and conjunction for compound equality filters instead of forwarding raw dict",
+      "mem0/memory/main.py: stop treating backend listing failure as empty scope; make async delete_all not report success when nothing deleted"
+    ],
+    "risks": [
+      "Eight-line equality control is explicitly not a complete production fix; broader operators/backends out of scope",
+      "Overlap with open PR #7647 (flat-list change) and maintainer-owned PR #60 reproduction kit; duplicate work risk",
+      "CLA/legal confirmation still required before any submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with real Chroma + langchain_chroma: two-ID and three-ID compound filters, assert get_all returns exactly the two targets",
+      "Assert sync delete_all removes targets and writes two SQLite DELETE rows; assert async delete_all does not return success when targets remain",
+      "Regression: single-user listing and native Chroma adapter still pass"
+    ],
+    "unknowns": [
+      "Whether maintainer-owned PR #60 already covers the root-cause fix",
+      "Whether PR #7647's flat-list change interacts with the compound-filter fix"
+    ],
+    "why": "The issue is a vector-store adapter bug (LangChain Chroma forwarding compound filters raw, swallowing validation errors as empty lists, causing false-empty get_all and false-success delete_all). Despite the llm_algorithm track label, this is ordinary provider-integration/API plumbing, not a training objective, model mechanism, distributed invariant, quantization method, kernel, or evaluation methodology. The algorithm_evidence 'mechanisms' (parameter_efficient_finetuning, model_architecture) are keyword matches on 'adapter'/'normalization' and do not reflect actual algorithmic content."
+  },
   "c71f3556450680afc77d1ba1b29a127016a742e96710de4c5bbc9c521b43f6a2": {
     "confidence": 0.85,
     "contradictions": [],
