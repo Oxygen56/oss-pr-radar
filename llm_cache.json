@@ -50789,6 +50789,47 @@
     ],
     "why": "The issue describes a concrete panic in ParseIP for malformed header IP values, but the supplied evidence shows no reproduction evidence, no code surface plan, and the repository requires assignment and AI disclosure confirmation before implementation. These are materially blocking unknowns for actionable code work."
   },
+  "520876df6c11f49afb7846afe12cfa3b685237ce8dd42cd9d8d1f7c9a3fa4270": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Open PR #44942 title references #44932 but reference_relation is empty and references_issue is false",
+      "Candidate gate_decision is HUMAN_REVIEW while duplicate status is semantic_overlap_requires_review"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "anthropic/serving.py _convert_assistant_thinking_blocks: pass prior thinking via template's thinking field instead of splicing channel markers",
+      "serving_chat.py spec_owns_reasoning_history / wrap_reasoning_history: field-name-aware replay (thinking vs reasoning_content)",
+      "serving_chat.py _apply_jinja_template: preserve original template error instead of masking with flat-tools retry error",
+      "anthropic/serving.py _handle_non_streaming/_handle_streaming: map template rejection to 4xx"
+    ],
+    "risks": [
+      "PR #44942 already covers this issue and #44931; new work may duplicate it",
+      "PR #40968 touches the same function and its approach may conflict",
+      "Fix shape (field-declaration vs gpt-oss special-case) awaits maintainer signal",
+      "Broadening API behavior change if 500-to-4xx mapping is included"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing regression test replaying the issue's two-turn /v1/messages request with a thinking block against gpt-oss template; assert 200",
+      "Add with-tools variant asserting 200 and that the channel-tag TemplateError is not masked by the flat-tools retry error",
+      "Add streaming variant asserting 200 and no pre-event 500",
+      "Add test asserting template rejection maps to 4xx not 500"
+    ],
+    "unknowns": [
+      "Whether PR #44942 will merge and fully resolve this issue",
+      "Maintainer preference on field-declaration approach vs gpt-oss special-casing",
+      "Whether he-yufeng or the reporter will take the gpt-oss thinking half"
+    ],
+    "why": "Issue has a strong, well-evidenced root cause (splice of <|channel|> markers into content for gpt-oss because supports_native_reasoning_history() is false) and a concrete reproduction. However, open PR #44942 explicitly targets this issue (#44932) plus #44931 with 9 semantic overlaps and 2 test files, and contributor he-yufeng has an open PR #40968 touching the same function and is awaiting maintainer signal on the fix shape. Duplicate/merged-fix coverage is unresolved, which is a materially blocking unknown for actionability."
+  },
   "521388a01a8e883b561378b1fdb17b14448d6ecde1e6e3bb2719fa01c2b976a9": {
     "confidence": 0.85,
     "contradictions": [
@@ -129869,6 +129910,43 @@
     ],
     "why": "Issue reports a critical CUDA illegal memory access in GDN kernel with multiple reproductions, but root cause is unclear and may involve multiple components (FlashInfer, Triton, custom allreduce). Open PR and related issue lookups failed, so duplicate work cannot be excluded. Maintainer input is needed to prioritize and confirm scope."
   },
+  "ccec65772ff0eb7e0c6027d719e0b750f2c078d5122b3788ad5e06ddcc97d5fa": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body attributes spin to cwd=home + orphaned service; comment A/B shows idle serve at 0% CPU and ties spin to an attached session instead"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/commands/handlers/serve.ts (service lifecycle / idle loop)",
+      "packages/app/e2e/utils/serve.ts (session-attached service behavior)",
+      "watcher subscribe/restart cycle around ~/.claude/skills",
+      "session DB / compaction path if implicated"
+    ],
+    "risks": [
+      "Root cause unknown; fix may target the wrong subsystem (watcher vs session loop vs DB)",
+      "No profiler available on reporter host, so the spin site is unconfirmed",
+      "Large 4.7GB session DB with high freelist may confound CPU observations"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a long-lived `serve --service` plus an attached session and measure per-thread CPU over time",
+      "Add a regression test asserting idle service CPU stays near zero with no active requests",
+      "Verify watcher subscribe/started/stopped cycle does not repeat every ~60s"
+    ],
+    "unknowns": [
+      "Which code path actually spins (no stack sample)",
+      "Whether the ~60s watcher restart loop or the session/LLM runtime loop is the CPU source",
+      "Whether the 4.7GB DB freelist contributes to the spin"
+    ],
+    "why": "The issue documents a real 100% CPU busy-loop in `opencode serve --service`, with a controlled A/B showing the spin correlates with an attached/active session rather than cwd alone. However, no stack sample or profiler data could be captured, and the reporter explicitly states no root cause was identified. The candidate's own actionability evidence sets root_cause_signal=false. Without a root cause or a narrowed code path, the fix is speculative."
+  },
   "cd1d83a438a7b3187410b06d82a99755c390b9b6dd38ece2d07aea8e9d0320d1": {
     "confidence": 0.85,
     "contradictions": [
@@ -136896,6 +136974,43 @@
       "Whether target-only fails is unknown"
     ],
     "why": "Issue reports incoherent output at high context for Gemma 4 31B, but root cause is unconfirmed. Maintainer requested controlled ablation experiments to isolate whether target-only or MTP path fails. Existing PR #40391 is open but stale and lacks strong semantic overlap. Actionability is blocked pending user-provided reproduction data and maintainer analysis."
+  },
+  "d7a9a0d14cc2fa687863adee328f1e61a2badbe59abe4bdd28cf6590d70221ac": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims no open PR touches ai-context-limit or ai-prompt-decorator, but PR #5136 is an open fix rejecting duplicated top-level messages with 2 test files and 7 changed files"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-context-limit: guard onHttpRequestBody before gjson messages read",
+      "plugins/wasm-go/extensions/ai-prompt-decorator: guard before gjson/sjson messages rewrite",
+      "go.mod require/replace wiring for plugins/wasm-go/pkg/jsonbody in both plugins",
+      "regression tests for duplicated vs single messages member"
+    ],
+    "risks": [
+      "PR #5136 may already cover the same root cause, making this work duplicative",
+      "Behavior change to request rejection could affect clients sending duplicate members",
+      "Dependency wiring changes to plugin go.mod files"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing test: body with two top-level messages members returns 400 with duplicate \"messages\" member in request body in both plugins",
+      "Regression: single messages member still enforces max_context_tokens and still applies prepend/append/replace",
+      "Malformed JSON body skips the guard and falls through to existing validation",
+      "Run existing ai-context-limit and ai-prompt-decorator test suites in go and compiled-Wasm modes"
+    ],
+    "unknowns": [
+      "Whether PR #5136 already implements this exact guard for both plugins",
+      "Whether the repository assignment requirement has been satisfied for this issue"
+    ],
+    "why": "The issue gives a concrete root cause (gjson reads first duplicate top-level member, upstream parsers keep last) and a clear fix path reusing jsonbody.DuplicateTopLevelMember, but two supplied facts block actionability: the repository policy requires assignment (needs_assignment, assignmentRequired=true, no assignees) and open PR #5136 already implements the same duplicate-messages rejection with tests, so duplicate coverage is unresolved."
   },
   "d7b236e2c7c110c05b7b7e62a16816b9b08a637e66a3b9ee8a956187ec65b2ba": {
     "confidence": 0.85,
