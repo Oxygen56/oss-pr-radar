@@ -13374,6 +13374,39 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a wake_up crash in init_fp8_kv_scales; comments confirm it is a duplicate of #41564, fixed by #41602 and released in 0.27.0. The separate v0.25.1 startup failure is a distinct issue but lacks a dedicated report and reproduction. Existing PR #52132 has semantic overlap but is not directly linked and may be redundant."
   },
+  "1785318be69407d9e2856e7aa4088665d47a44c2bd6eba2f67bf5d404c84b573": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp/translate.ts: map SessionEvent.Renamed to a session_info_update notification with title and updatedAt",
+      "packages/cli/src/acp/service.ts: wire the rename event subscription into the ACP session update stream",
+      "packages/cli/src/acp/replay.ts: emit one session_info_update with the loaded session's current title at replay start"
+    ],
+    "risks": [
+      "session_info_update is optional in ACP; maintainers may prefer a different notification shape or timing",
+      "Event subscription lifecycle in the ACP adapter could leak or double-send if not scoped per session",
+      "Title regeneration could cause notification storms if not debounced"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Scripted ACP client: initialize, session/new, session/prompt, then assert a session_info_update with the generated title arrives without polling session/list",
+      "Regression test for session/load replay asserting an initial session_info_update carries the stored title",
+      "Test that title-generation failure leaves the timestamped fallback and no spurious title push"
+    ],
+    "unknowns": [
+      "Whether maintainers want the load-replay title announcement included in the same change"
+    ],
+    "why": "Issue gives a concrete, reproducible gap: core publishes SessionEvent.Renamed but the ACP adapter in packages/cli/src/acp/ never forwards it as session_info_update, and session/load replay omits the current title. Code anchors and a scripted ACP client reproduction are supplied, and the bot comment confirms the current dev code matches the report. Prior PRs (#21111, #45536) are closed unmerged and #52485 is a merged but distinct compaction-marker change, so no open duplicate covers this."
+  },
   "178753ea90e7d89e71bddcc9687a8a5dd4191ca0c91f54d7721b07c008cdea37": {
     "confidence": 0.8,
     "contradictions": [],
@@ -38364,6 +38397,40 @@
       "Whether maintainers prefer Option A or Option B; no maintainer response yet"
     ],
     "why": "Issue provides a precise root cause (has_custom branch bypasses chunk_token_num, bare chars leak into split pattern), a concrete reproduction with expected/actual outputs, and a clear minimal fix (Option A). The bug is user-visible and severe (429k chunks vs 1.4k)."
+  },
+  "3ead6289916ff150161b6570262df231a5c4607aa88e4cb428e67a93beca8db2": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons with exact rid equality for ordinary aborts",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup aborts only the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: consider server-namespaced rid isolation if maintainers prefer defense in depth"
+    ],
+    "risks": [
+      "Prefix matching may be intentionally used for chunked or PD sub-request cleanup; exact equality could break legitimate multi-part abort flows if not audited",
+      "Bulk abort semantics (abort_all) must remain separate and explicitly authorized",
+      "PD/router path may require coordinated changes across prefill and decode workers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid 'prefix-victim' and an attacker request with rid 'prefix', disconnects the attacker, and asserts the victim reaches normal length finish rather than FINISH_ABORT",
+      "Add a negative control with a non-prefix attacker rid asserting no victim abort",
+      "Add an exact-equality unit test on Scheduler.abort_request verifying only the matching rid is finished",
+      "Run the issue's PoC script against a patched single-worker server and confirm 0/5 victim aborts"
+    ],
+    "unknowns": [
+      "Whether the eight prefix comparisons serve any legitimate chunked/PD sub-request cleanup purpose that exact equality would break"
+    ],
+    "why": "Issue provides a concrete root cause: client-controlled rid is preserved in GenerateReqInput, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid), enabling cross-request aborts. Code anchors, a runnable PoC, and a controlled test matrix (prefix vs non-prefix, exact-equality control, single-worker and 1P1D) establish a reference-vs-implementation validation path."
   },
   "3eb2737b230ff397cb19904303c05cf280cf93334bf2213f877f8feca4047343": {
     "confidence": 0.85,
@@ -156120,6 +156187,38 @@
       "Whether PR #12183 already implements a reason-carrying channel that would make this issue redundant"
     ],
     "why": "Issue is a concrete, independently verified follow-up: the update-check catch in github.ts drops the Git error to a no-op debugLogger and returns a bare ExtensionUpdateState.ERROR, the dispatch callback in extensionManager.ts has no payload slot, and the UI status type has no reason field, so credential/auth failures are indistinguishable from ref-not-found. A collaborator re-derived all seven cited findings at main HEAD, confirming line numbers and behavior. This is a multi-file product change with a clear validation path (simulate a revoked credential/GITHUB_TOKEN and assert the surfaced reason)."
+  },
+  "f365272401e37bd920c0f7dc58521fe047eb759404169b37d039c993ee14500d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/app/src/session/requests/session-question-dock.tsx: restore multiline custom-answer field with Enter-to-commit and Shift+Enter newline",
+      "packages/ui/src/forms/text-input/text-input.tsx: add or use a multiline mode that preserves newlines on paste"
+    ],
+    "risks": [
+      "Changing Enter/Shift+Enter semantics could affect other TextInput consumers if multiline mode is added globally",
+      "TUI behavior was not tested and may need separate handling",
+      "Maintainer may prefer a different implementation than a textarea"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that pastes 'alpha\\nbeta' into the custom-answer field and asserts the newline is preserved",
+      "Add a test that Shift+Enter inserts a newline while Enter commits the answer",
+      "Run the targeted package unit tests and static checks for packages/app and packages/ui"
+    ],
+    "unknowns": [
+      "Whether the TUI shares the same input path and needs a parallel fix"
+    ],
+    "why": "Issue pins the regression to #54822 replacing a textarea with a single-line TextInput in session-question-dock.tsx, with code anchors, a maintainer-bot reproduction on dev, and a concrete repro script; the fix is a scoped UI behavior change with a clear validation path."
   },
   "f3675c22ac3e04f50a2693705675db621eafb330663ebb01ac6517eadcdd6fad": {
     "confidence": 0.6,
