@@ -26596,6 +26596,40 @@
     ],
     "why": "The issue provides a deterministic reproduction with exact launch command, environment, and stack trace pointing to a specific kernel (extend_attention_fwd) and mode (compact). It identifies a concrete algorithmic path (hybrid linear attention with CUDA graph capture) and suggests a validation approach via comparison across verify modes. The root cause is not fully identified but the evidence is sufficient to start a focused investigation."
   },
+  "2af1dc3ec9bf7ae3720a0449c608999060c547e5df77eab717afca695acac541": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "chat-interface.tsx: make composer/footer wrapper non-selectable while keeping inputs selectable",
+      "conversation-main.tsx: make chat-pane-header non-selectable",
+      "add E2E regression test asserting selection focus stays within chat-scroll-container on edge auto-scroll drags"
+    ],
+    "risks": [
+      "Over-broad user-select:none could break legitimate selection in composer or other chrome",
+      "Maintainer may prefer drag-time clamping over user-select containment",
+      "Cross-browser selection hit-testing differences (Chromium vs Firefox/Safari)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Playwright drag past bottom edge on mock conversation pagination-local; assert window.getSelection().focusNode is inside chat-scroll-container and not interactive-chat-box",
+      "Playwright drag past top edge; assert focusNode is inside chat-scroll-container and not conversation-name-title",
+      "Verify composer contenteditable/textarea text remains selectable",
+      "Verify code blocks and settings text remain selectable"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix mechanism (user-select vs selection clamping)"
+    ],
+    "why": "Issue provides a concrete, reproduced UI bug with Playwright measurements, identified code anchors (chat-interface.tsx, conversation-main.tsx), a confirmed root cause (selectable siblings of the scrollable feed), and a verified minimal reproduction plus a suggested fix. Acceptance criteria and a regression test path are explicit."
+  },
   "2aff874b834f495c7a007eca6558cfbf89933744f31c556db7af0de08e516c48": {
     "confidence": 0.85,
     "contradictions": [
@@ -50544,6 +50578,41 @@
     ],
     "why": "Issue identifies a concrete wiring defect: training.nvfp4, training.fp8_attention and training.kernel_auto_compose are only applied via apply_v028_speed_memory in src/soup_cli/utils/v028_features.py, which trainer/sft.py never calls, so the default task silently accepts and ignores these flags. Evidence includes exact code anchors (v028_features.py:89/101/112, sft.py:1312/1551-1569), a grep showing no references in sft.py, a stale test exemption in tests/test_trainer_coverage_v035.py:358-365, and a parse-level reproduction showing nvfp4 accepted on seven tasks that never apply it. This is a numerics/quantization mechanism defect with a clear reference-vs-implementation validation path (patch apply_nvfp4/apply_fp8_attention to record calls, assert invocation on tiny CPU model; count apply_cut_ce calls to ensure single application)."
   },
+  "5071b2d96341f0f0c009ea39fddfb04a0f9fca3663a9aca9449a1940b3c24286": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "execute_command pre-flight validation/rewrite of known-unsafe CLI forms",
+      "stall/timeout detector for execute_command completion markers",
+      "warning when generated command matches forbidden .clinerules pattern"
+    ],
+    "risks": [
+      "Root cause spans VS Code shell integration and Cline runtime; fix scope may be ambiguous",
+      "Behavior change to execute_command could affect legitimate commands",
+      "Maintainer may prefer a different implementation approach"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a multi-line `git commit -m` or `gh pr create --body` in pwsh 7 integrated terminal and confirm stall",
+      "Add failing unit test for command validation/rewrite of unsafe forms",
+      "Run targeted package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact code path in Cline runtime that handles execute_command completion detection is not confirmed",
+      "Whether maintainers consider .clinerules enforcement in scope for the extension"
+    ],
+    "why": "Issue documents a concrete, reproducible Windows PowerShell stall tied to shell-integration completion markers and unsafe CLI forms (inline --body, multi-line -m, missing --no-browser, un-redirected streaming). Root cause is plausibly identified (marker corruption / parser waiting), and a validation path exists via a minimal repro plus targeted tests. No open PR or duplicate issue covers it. Maintainer approval is absent but not blocking."
+  },
   "509321caa5e4851d799328957ef2fd9f358d913bd1752e98eb3d91e3387cca18": {
     "confidence": 0.7,
     "contradictions": [],
@@ -52982,6 +53051,42 @@
       "Whether maintainers consider the cancel_on_disconnect-gated behavior a bug or intended 499 failure semantics"
     ],
     "why": "The issue describes a plausible spend-tracking gap for non-streaming Bedrock calls on client disconnect, but the latest comment materially narrows the reproduction: it is not reproducible on default config and requires general_settings.cancel_on_disconnect, with a specific cancellation path through common_request_processing.py and litellm/utils.py. The candidate's expected_changes and test_path still describe streaming chunk/finish/tool-call state propagation, which does not match the non-streaming cancellation root cause. Additionally, open PR #41171 has semantic overlap on non-streaming spend tracking and requires manual comparison before any code work is actionable."
+  },
+  "53d918ae6bb4d2f8361589cfbb0b397203e3fed5664ccfeeb0ba61b4e8e52937": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue body references prior public issue #41474 and unmerged fix PRs #41481/#41502/#43476, while supplied open_pr_assessment and related_issue_assessment report none; duplicate coverage is not fully resolved by supplied evidence"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons with exact rid equality across chunked/waiting/grammar/PD/running paths",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup aborts only the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: consider server-namespaced rid handling for additional isolation"
+    ],
+    "risks": [
+      "Intentional bulk-abort semantics may rely on prefix matching; must keep abort_all separate and explicitly authorized",
+      "Changing rid handling could affect PD/router paths and chunked/grammar request cleanup",
+      "Security-sensitive change may warrant maintainer design review before merge"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim stream with rid 'X-victim' and an attacker stream with rid 'X', disconnects the attacker, and asserts the victim reaches a normal length finish rather than FINISH_ABORT",
+      "Unit-test Scheduler.abort_request with prefix-related rids to assert only exact matches are aborted",
+      "Run the issue's PoC against a patched single-worker server and confirm 0/5 victim aborts, plus a non-prefix control"
+    ],
+    "unknowns": [
+      "Whether the referenced prior fix PRs are still open, merged, or superseded",
+      "Whether maintainers require a specific design (exact equality vs server-namespaced rid) for this security fix"
+    ],
+    "why": "Issue gives a concrete root cause: client-supplied rid is preserved in GenerateReqInput, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid), so a short rid aborts unrelated requests. Code anchors, a runnable PoC, and an exact-equality control (5/5 and 5/5 PD trials fixed) establish both the defect and a validation path."
   },
   "53d950a5b046494851fa50c7ca77ecc413da27b51ed680746bb5cfc30906150f": {
     "confidence": 0.7,
