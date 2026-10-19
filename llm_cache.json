@@ -50054,6 +50054,39 @@
     ],
     "why": "The issue provides a detailed root cause analysis with specific code paths (PrefillRouter::generate, Context::with_id_and_metadata, cancellation monitor learning request ID from first response) and a concrete reproduction scenario. The expected lifecycle steps are clearly enumerated, making the fix actionable. Although an open PR exists, it lacks root-cause coverage and has CI failures, leaving room for a more complete contribution."
   },
+  "4fa2afe73adc030895b832e01746797f41453141b900de3597bba6a383ccbf2c": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured Prefill set or derive from server-side topology",
+      "Decode request handler: reject or ignore client-supplied bootstrap_host/bootstrap_port/bootstrap_room",
+      "Parallel-info fetch: avoid synchronous blocking of shared request processing (timeout/async/cache)"
+    ],
+    "risks": [
+      "Changing bootstrap field handling may break legitimate direct-worker deployments relying on client-supplied topology",
+      "Fix scope may need maintainer design preference on auth vs. allowlist validation",
+      "Gateway path already overwrites fields, so fix must not regress Gateway behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test that a direct Decode request with attacker bootstrap_host/port does not trigger an outbound request to that address",
+      "Add test that a slow/unreachable bootstrap endpoint does not block concurrent normal requests beyond bounded timeout",
+      "Run targeted disaggregation unit tests and static checks on modified modules"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer allowlist validation vs. authenticated internal caller vs. removing client-supplied fields entirely"
+    ],
+    "why": "Issue provides a concrete, runtime-tested SSRF and head-of-line blocking bug: CommonKVManager.try_ensure_parallel_info trusts client-supplied bootstrap_host/port and issues a synchronous requests.get to an attacker-chosen URL. Reproduction script, canary hits, latency measurements, and negative Gateway control are all supplied, with code anchors in conn.py and pd_router.rs. Root cause and validation path are established."
+  },
   "4fbd9ee4e90f7bd75c43d1bdda36c28ad0c32124535ad1fb50b2cfdce6bb3296": {
     "confidence": 0.6,
     "contradictions": [],
@@ -63555,6 +63588,39 @@
       "Maintainer's design preference for the fix (Option vs serde default) is not confirmed"
     ],
     "why": "The issue provides a clear root cause (missing `choices` key aborts stream) and a detailed reproducer with multiple cases. Existing PR #10942 addresses the issue but lacks regression tests, leaving room for a materially better PR with comprehensive tests and the suggested Option-based fix."
+  },
+  "62ee370b49797f33eea279132249dbe47264fab64f0a13ddcb546d2f82c32e61": {
+    "confidence": 0.55,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "crates/goose/src/agents/mcp_client.rs: route 2026-07-28 tool calls through the send_request_with_context/await_response path or explicitly emit notifications/cancelled on timeout and cancel-token paths"
+    ],
+    "risks": [
+      "Behavior change in the 2026-07-28 tool-call path could affect other callers of that branch",
+      "Streamable HTTP cancellation semantics are untested and out of scope",
+      "Assignment requirement unmet; maintainer may have a preferred implementation direction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build the rmcp 3.4.1 probe server, register it as a stdio extension with timeout 5, run slow_task, press Stop after ~2s, and assert the probe log shows notifications/cancelled and no marker file",
+      "Repeat with the 5s extension timeout expiring and assert cancellation notification is sent",
+      "Run with --legacy-only to confirm the 2025-11-25 path still cancels (regression guard)",
+      "Add a Rust unit/integration test around McpClient::call_tool asserting a cancellation notification is emitted for a 2026-07-28 peer on timeout and on cancel-token fire"
+    ],
+    "unknowns": [
+      "Repository requires assignment (policy needs_assignment, assignmentRequired=true) and the issue has no assignees, so it is unresolved whether an unassigned contributor may submit a fix",
+      "No maintainer confirmation of the proposed routing direction"
+    ],
+    "why": "The issue gives a strong, code-anchored root cause (the 2026-07-28 branch of McpClient::call_tool returns on timeout/cancel without sending notifications/cancelled) and a concrete repro server, but the repository policy is needs_assignment with assignmentRequired=true and the issue has no assignees, which is a materially blocking unknown for whether code work is actionable."
   },
   "62f7e949f9b37e73e95c2d0803e0feb1b48c3259960172ce67b5995842d4adac": {
     "confidence": 0.7,
@@ -151245,6 +151311,40 @@
       "Whether maintainers intend to pursue option 1 (true vocab-parallel tied embeddings) as a permanent fix"
     ],
     "why": "The issue's concrete failure (AutoTP rejecting 'embedding_rowwise' from transformers main) is already covered by merged PR #8294, which converts embedding_rowwise tp_plan entries to SKIP specs, and a contributor comment confirms the fallback was validated on 2x L20 GPUs (18 cases passed, tied Qwen2 test passed). The remaining open question is a design/policy choice (option 1: true vocab-parallel tied embeddings) that maintainers have not committed to, so no actionable code contribution remains."
+  },
+  "e8d1039f9d339816b852b506dc1c1fdee4de8df113d4cc566c9247e7b16d7e04": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter frames it as an unresolved version-compatibility gap, while a commenter states main/commit 3e8e17bee already fixes it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Dependency pin/constraint between fastmcp and mcp in agent-server packaging",
+      "Automation/ACP execution path error handling for LLMServiceUnavailableError"
+    ],
+    "risks": [
+      "Fix may already exist on main, making the issue stale",
+      "Bumping dependency pins could break other agent-server consumers",
+      "Without stack trace the failing import site is unconfirmed"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the ImportError with the reported resolved versions (mcp==1.30.0, fastmcp==3.4.9) in a clean venv",
+      "Verify whether commit 3e8e17bee on main resolves the import, and add a regression test pinning compatible fastmcp/mcp versions"
+    ],
+    "unknowns": [
+      "Whether commit 3e8e17bee actually resolves the ImportError",
+      "Full stack trace and resolved uv pip list",
+      "In-app reproduction capture requested by triage bot"
+    ],
+    "why": "Issue reports a dependency ImportError (fastmcp 3.4.9 expecting mcp.types.CacheableResult absent in mcp 1.30.0) in the Automation/ACP execution path. The reporter offers a plausible version-compatibility hypothesis but supplies no stack trace, no uv pip list, and no in-app reproduction capture; the bot explicitly requested a screenshot/video that is still missing. A commenter claims main already fixes it via commit 3e8e17bee, which would make the issue already covered, but this is unverified. Root cause and whether code work is still actionable are therefore unresolved."
   },
   "e8dfd509ec8f96acf9aa799c24b961722871cff12e63485e01d0791225f03cab": {
     "confidence": 0.85,
