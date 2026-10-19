@@ -14140,6 +14140,44 @@
     "wait_reason": null,
     "why": "Issue provides concrete measurements showing default residual_diff_threshold is inert for MiniMax-H3, with clear reproduction setup and data. No competing PR or maintainer assignment blocks work. Actionable: adjust default or document behavior, add audio metric, and clarify RDT/MC interaction."
   },
+  "1827927aa20921461a8cbb9c73dabb5a3f04940b12123b39c568e3a3e708ffa9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims a keyword scan finds no open PR/issue for this defect, but open PR #5140 has the same title and semantic overlap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-history: add duplicate top-level `messages` guard at start of onHttpRequestBody before gjson.ParseBytes",
+      "plugins/wasm-go/extensions/ai-history: wire require/replace for local plugins/wasm-go/pkg/jsonbody module",
+      "plugins/wasm-go/extensions/ai-history: add regression test for duplicate-member 400 and single-member unchanged behavior"
+    ],
+    "risks": [
+      "Open PR #5140 appears to implement the same fix; work may be duplicate",
+      "Repository requires assignment and issue has no assignee",
+      "No public reproduction or probe evidence supplied to confirm the defect independently",
+      "Behavior change rejects previously forwarded requests with 400"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing test: request body with two top-level `messages` members returns 400 with `duplicate \"messages\" member in request body`, no Redis lookup, no forwarding",
+      "Regression test: single `messages` member still extracts question, performs Redis lookup, and merges history on cache hit",
+      "Test: incomplete JSON body skips the duplicate check and falls through to existing validation",
+      "Run existing ai-history plugin test suite in go mode and compiled-Wasm mode"
+    ],
+    "unknowns": [
+      "Whether PR #5140 fully covers the ai-history root cause",
+      "Whether a maintainer will assign the issue",
+      "Independent reproduction of the duplicate-member behavior"
+    ],
+    "why": "The issue describes a concrete gjson-first vs encoding/json-last ambiguity for duplicated top-level `messages` in ai-history and proposes reusing the #5124 jsonbody helper, but the supplied evidence shows no public reproduction, no probe-ready validation, and an open PR #5140 with the same title and semantic overlap that may already cover the root cause. The repository also requires assignment (policy needs_assignment, no assignees), which is a materially blocking unknown for actionability."
+  },
   "18348522a1bfdd7a584ae96094cb9bb55add0fbeb99e68c9d0637ced290b5740": {
     "confidence": 0.7,
     "contradictions": [],
@@ -46590,6 +46628,41 @@
     ],
     "why": "Issue reports a clear user-visible bug with a workaround, but root cause is unconfirmed and open PR/related issue lookups timed out, so duplicate implementation cannot be excluded."
   },
+  "4b3c115f9de14446f66eed7366e23654873fde04a78ebe33c6767efdd74e6377": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims the bug is unfixed on main, while open maintainer PR #9460 touches the same file and may address it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/packages/foundry_hosting/agent_framework_foundry_hosting/_responses.py: pass `request` into `_create_response_event_stream` for non-recovery responses",
+      "Add a streaming regression test asserting `metadata` is echoed on `response.created` and persisted for `GET /responses/{id}`"
+    ],
+    "risks": [
+      "PR #9460 may already change the same stream-creation path, causing a conflict or duplicate work",
+      "Repository policy flags an AI-disclosure conflict that blocks automated public action",
+      "Changing stream seeding could alter background/previous_response_id/conversation/model semantics beyond metadata"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "POST /responses with metadata {\"foo\":\"bar\"} and store=true; assert response.created carries metadata",
+      "GET /responses/{id} and assert metadata == {\"foo\":\"bar\"}",
+      "Recovery path: assert persisted_response still seeds the stream and request metadata does not override it"
+    ],
+    "unknowns": [
+      "Whether PR #9460 already fixes the metadata seeding",
+      "The exact repository AI-disclosure requirement and whether it permits this submission",
+      "Whether a maintainer has a preferred design for passing request into the stream"
+    ],
+    "why": "The issue gives a clear root cause (the stream is created without `request`, so `metadata` is never seeded) and a concrete fix, but the supplied evidence shows an open maintainer-owned PR #9460 that touches the same `_responses.py` file and may already cover this behavior. The duplicate status is 'semantic_overlap_requires_review', and the repository policy is 'ai_disclosure_conflict', so whether code work is actionable is still unresolved."
+  },
   "4b43bb22065fc24a8b05e08b244f805f977b1dff9f37b0e2de3a3c022bea49ef": {
     "confidence": 0.7,
     "contradictions": [],
@@ -50870,6 +50943,41 @@
       "Whether the merged #38346 clamp is the complete fix or only covers the 1-3 source-row chunk case."
     ],
     "why": "The issue's own status update retracts the earlier root-cause claims and states the original H20 crash remains unconfirmed; the concrete, merged fix (#38346, clamp in qsa_indexer.py) is already covered, and the remaining open PR #37638 is explicitly not credited with fixing this issue. No uncovered, actionable code work is established."
+  },
+  "5180998f5921df0d34d0cdd54126e12dc5c344c193f1618cb51eb6168044869f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "MooncakeKVManager.start_prefill_thread: validate/authenticate sender and bind registration to configured Decode workers before parsing",
+      "KVArgsRegisterInfo.from_zmq / unpack_int_lists: enforce nested-buffer count and frame-size limits before materialization",
+      "decode_kv_args_table: add table-size cap and expiry for registrations",
+      "Bootstrap /route: avoid exposing rank ZMQ endpoint without credential or restrict to trusted peers"
+    ],
+    "risks": [
+      "Tightening registration validation could break legitimate Decode workers if identity binding is too strict",
+      "Nested-buffer limits must accommodate valid large KV configurations",
+      "Bootstrap /route auth changes may affect router integration"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sends a registration with an oversized nested-buffer frame and asserts rejection before allocation",
+      "Add a test that a unique fake session ID is not retained in decode_kv_args_table",
+      "Reproduce with repro_oom.py under a memory-limited cgroup and confirm no OOM kill and Prefill /health stays responsive",
+      "Run existing PD disaggregation serving tests to confirm legitimate Decode registration still works"
+    ],
+    "unknowns": [
+      "No maintainer design preference on auth mechanism vs. resource limits",
+      "Whether existing open PRs touch the same Mooncake registration path (none found with direct overlap)"
+    ],
+    "why": "Issue provides a concrete, reproducible unauthenticated Mooncake decode-registration path: bootstrap /route exposes the ZMQ rank port, start_prefill_thread stores sender-supplied session IDs in decode_kv_args_table, and KVArgsRegisterInfo.from_zmq materializes unbounded nested buffers before any peer/size check. Reproduction includes executable repro_oom.py, cgroup OOM counters, and latency/availability measurements, giving a clear reference-vs-implementation validation path."
   },
   "518540d4252fc5b9ffe9f566613686866f754145b3d5969bd9c092b5ea2db99b": {
     "confidence": 0.8,
@@ -130262,6 +130370,47 @@
     ],
     "why": "Issue describes a plausible FSDP2/TorchFT async-healing race with code anchors, but the supplied evidence does not establish a concrete reproduction or validation path, and the only overlapping open PR (#4754) is a config change that does not cover the root cause, leaving unresolved duplicate/coverage uncertainty."
   },
+  "caa46034a0537b09c29cf8d8ad8257f08adeb8447da34d9bf7b53be219d2a6ee": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states a keyword scan finds no open PR/issue covering this defect, but open PR #5142 is titled 'fix(ai-cache): reject request bodies with a duplicated top-level messages member' with semantic overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-cache: guard onHttpRequestBody with jsonbody.DuplicateTopLevelMember(\"messages\")",
+      "plugins/wasm-go/extensions/ai-cache: return 400 with DuplicateMemberMessage and ActionPause before cache key derivation",
+      "plugins/wasm-go/extensions/ai-cache: skip guard when cacheKeyStrategy is disabled",
+      "plugins/wasm-go/extensions/ai-cache: add require/replace for local pkg/jsonbody module",
+      "plugins/wasm-go/extensions/ai-cache: regression test for duplicate vs single messages member"
+    ],
+    "risks": [
+      "Open PR #5142 appears to implement the same fix, so new work may duplicate it",
+      "Repository requires assignment before contribution and the issue has no assignee",
+      "Dependency wiring (require/replace for local jsonbody module) may conflict with existing module setup",
+      "Behavior change rejects previously forwarded duplicate-member requests"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing test: body with two top-level messages members returns 400 'duplicate \"messages\" member in request body' and performs no Redis/cache callout",
+      "Regression test: single messages member still derives key, performs lookup, and stores response on miss",
+      "Regression test: cacheKeyStrategy disabled forwards body untouched",
+      "Regression test: malformed JSON skips the check and existing validation decides",
+      "Run existing ai-cache plugin test suite in go and compiled-Wasm modes"
+    ],
+    "unknowns": [
+      "Whether PR #5142 fully covers the issue's acceptance criteria or will be merged",
+      "Whether a maintainer will assign the issue to satisfy the needs_assignment policy",
+      "Whether the local pkg/jsonbody module wiring matches the repository's expected dependency pattern"
+    ],
+    "why": "The issue gives a clear root cause (gjson reads the first duplicate top-level messages member while upstream parsers keep the last, enabling cache poisoning in ai-cache) and a concrete fix path reusing jsonbody.DuplicateTopLevelMember plus a 400/ActionPause response. However, two supplied facts materially block actionability: the repository policy is needs_assignment with assignmentRequired=true and no assignees, and open PR #5142 already implements the same ai-cache duplicate-messages rejection with tests, so duplicate coverage is unresolved."
+  },
   "cab2b6e5e69e766e6fe0f2a511d9856ad70672610dc92988afe16f41c5e29930": {
     "confidence": 0.6,
     "contradictions": [
@@ -133397,6 +133546,46 @@
     ],
     "why": "The issue aggregates at least six distinct failure cases (A-F) with conflicting evidence: case A (missing tools on 0.2.5/Codex 0.146.1) did not reproduce on 0.10.1 per r0mm4k, while other reports show protocol-version rejections that Claude recovers from, and a Windows proxy case with a verified NO_PROXY workaround. The issue body itself states these cases 'do not establish one root cause.' No single concrete root cause or code path is established, so a fix cannot be scoped without first determining which case is actionable."
   },
+  "cfdfb806421dd35b2cae8c2015dd0b3211da62010dafb4e62f614c88de9b7088": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims a keyword scan of open PRs/issues finds no fix, but open PRs #5138 and #5136 have titles matching the exact duplicate-messages rejection"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-search: call jsonbody.DuplicateTopLevelMember(body, \"messages\") in onHttpRequestBody after enablement check and before query extraction",
+      "Return 400 with jsonbody.DuplicateMemberMessage(\"messages\") and ActionPause on positive verdict",
+      "Add require/replace wiring for the local plugins/wasm-go/pkg/jsonbody module",
+      "Add regression test covering duplicate-member rejection and unchanged single-member behavior"
+    ],
+    "risks": [
+      "Open PRs #5138 and #5136 appear to implement the same duplicate-messages rejection; work may be duplicate",
+      "PR #5106 touches the same ai-search file (streaming buffer) and could conflict",
+      "Repository requires assignment; no assignee is set",
+      "Pre-review gate failed on duplicate_changed, assignment_required, reproduction_or_validation_missing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with plugin test host in go mode: duplicate top-level `messages` body currently proceeds through search path; assert 400 after fix",
+      "Reproduce in compiled-Wasm mode with the same duplicate body",
+      "Regression: single `messages` member still extracts query, calls engines, rewrites prompt",
+      "Regression: defaultEnable false without web_search_options forwards body untouched",
+      "Regression: incomplete JSON body skips the check and existing validation decides"
+    ],
+    "unknowns": [
+      "Whether PR #5138 or #5136 already fully covers this root cause and should be merged instead",
+      "Whether a maintainer will assign this issue to the candidate",
+      "Whether the reproduction/validation path is accepted by the pre-review gate"
+    ],
+    "why": "The issue gives a clear root cause (gjson reads the first duplicate `messages` member while upstream parsers keep the last, so ai-search searches the wrong conversation and drops the augmentation) and a concrete validation path (plugin test host in go and compiled-Wasm mode). However, three open PRs (#5138, #5136, #5106) semantically overlap the same ai-search request-body path, and the duplicate status is 'semantic_overlap_requires_review' with no direct code overlap confirmed. The repository also requires assignment (policy needs_assignment, no assignees), and the pre-review gate failed on duplicate_changed, assignment_required, and reproduction_or_validation_missing. These are materially blocking unknowns for actionability."
+  },
   "cfe362a44594b59b9b5baeffac8435baac56328f9c3fc859dc285e6b8ad39240": {
     "confidence": 0.8,
     "contradictions": [],
@@ -134196,6 +134385,41 @@
       "Whether a prebuilt runtime image compatible with single-ID namespaces is already available."
     ],
     "why": "The issue provides a clear root cause: rootless Podman without subuid/subgid ranges cannot map the multiple UIDs/GIDs required by the runtime image's APT/dpkg and libutempter0/tmux dependencies. It includes detailed reproduction steps, environment configuration, and observed errors, making the problem actionable for a code fix."
+  },
+  "d0f9ab733f65ef625000df115f824468ff6ca5542374e45f7d6f98990897931a": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons in abort_request with exact rid equality across chunked, waiting, grammar, PD prefill/decode, and running request paths",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup aborts only the exact request identity and keep any bulk abort separate and explicitly authorized",
+      "python/sglang/srt/managers/io_struct.py: optionally namespace or validate server-side rid handling for isolation"
+    ],
+    "risks": [
+      "Changing prefix matching to exact equality may break intentional bulk-abort or internal callers that rely on prefix semantics; must audit all eight comparison sites",
+      "PD prefill/decode paths and router deployments need verification since abort propagation crosses worker boundaries",
+      "Server-namespaced rid changes could alter API-visible behavior for clients that supply custom rids"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid '<prefix>-victim' and an attacker request with rid '<prefix>', disconnects the attacker, and asserts the victim reaches normal length finish rather than FINISH_ABORT",
+      "Add a negative control asserting a non-prefix attacker disconnect does not abort the victim",
+      "Add an exact-equality unit test on Scheduler.abort_request verifying only the matching rid is finished",
+      "Run the targeted scheduler/tokenizer_manager unit tests and the issue's PoC script against an isolated server to confirm 0 victim aborts after the fix"
+    ],
+    "unknowns": [
+      "Whether any internal caller intentionally depends on prefix-based abort semantics",
+      "Whether maintainers have a preferred design (exact equality vs server-namespaced rid) that affects scope"
+    ],
+    "why": "Issue provides a concrete root cause: client-controlled rid is preserved in GenerateReqInput._normalize_single_inputs, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid) instead of exact equality, enabling cross-request aborts. Code anchors, an executable PoC, and a controlled test matrix (prefix vs non-prefix, exact-equality control, single-worker and 1P1D) are supplied, establishing both reproduction and validation paths."
   },
   "d107919dae54e1cf764f22cca6ab9e08ee2e8a401f6247e3758fb695bd0bc74f": {
     "confidence": 0.7,
