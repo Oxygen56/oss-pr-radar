@@ -31336,6 +31336,40 @@
     ],
     "why": "Issue provides a clear, deterministic reproduction at the scheduler level, identifies the exact control-flow flaw (missing budget check after resuming chunked request), and references existing helper `budget_state()`. This is a concrete, actionable bug in the scheduler's prefill path."
   },
+  "338e1ed83f94f574be6b4233c0b4618918f400c21d59f79bbc258f11716ac71f": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/turns/user_turn_controller.py: reconcile _user_speaking on mute stop / VAD stop while muted",
+      "src/pipecat/processors/aggregators/llm_response_universal.py: release held post-tool context push when turn ends without new text",
+      "src/pipecat/turns/user_mute/function_call_user_mute_strategy.py: ensure mute does not suppress VAD stop state updates"
+    ],
+    "risks": [
+      "Changing mute/VAD state handling could alter interruption semantics for other mute strategies",
+      "Releasing held context pushes on turn end may cause duplicate or premature inference in edge cases",
+      "Maintainers may prefer the cancel-in-flight-inference direction over state reconciliation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.py against current main and confirm inferences==1, _user_speaking==True, stop_timeouts==0",
+      "Add a regression test in the turns/aggregator test suite asserting inferences==2 and turn closed after the tool result",
+      "Add a variant without FunctionCallUserMuteStrategy to cover the held-push-without-transcript path",
+      "Run targeted unit tests for user_turn_controller and llm_response_universal plus static checks"
+    ],
+    "unknowns": [
+      "No maintainer confirmation of preferred fix direction among the three proposed options",
+      "Whether existing tests already encode the current mute-suppresses-VAD-stop behavior as intended"
+    ],
+    "why": "Issue provides a runnable minimal repro, expected-vs-actual output, and precise code anchors (user_turn_controller.py L399/L426, llm_response_universal.py L1267/L2143) tracing the stale _user_speaking state through the mute path. Root cause is a concrete state-machine interaction between FilterIncompleteUserTurnStrategies and FunctionCallUserMuteStrategy, not a vague symptom. No competing PR covers the same code path; PR #5870 is keyword-only overlap and a draft."
+  },
   "3392dfc1bbbdd3642ff4e13ffb75cddd5b7bea57d71b19776ca1c0a81e973991": {
     "confidence": 0.85,
     "contradictions": [],
@@ -44522,6 +44556,34 @@
       "Whether the loss is in generic ACP lifecycle or WeChat adapter"
     ],
     "why": "The issue is a real user-facing bug with a clear repro and fresh evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction."
+  },
+  "4891b636f460803e4017d60ec5ebbcb9d6fd1b4e61be346356bc25dc6a7d815f": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue proposes client contract validation bug, but bot evidence shows the same error varies by network/ISP and is already reported in #56324"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Fixing client headers would not address a network-dependent server-side rejection",
+      "Duplicate coverage already tracks this behavior"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce from a different network/VPN to confirm whether the failure is server-side or client-side before any code change"
+    ],
+    "unknowns": [
+      "Whether the free-tier rejection originates in this repository's code or in the hosted server",
+      "Whether #56324 has an accepted fix direction"
+    ],
+    "why": "The issue is a user-visible free-tier 403 on Windows TUI, but the bot comment identifies it as a duplicate of #56324 and lists several related reports (#56334, #56570, #56338, #56585) where the error depends on network/ISP rather than client code. No root cause in the repository is established; the proposed header/User-Agent theory is speculative and contradicted by network-dependence evidence."
   },
   "489b383d861e30d75eda0013b8108b7356339e3901cd950f9bb4af7ccb7e2246": {
     "confidence": 0.85,
@@ -129443,6 +129505,42 @@
     ],
     "why": "Issue provides a concrete HTTP 400 reproduction with expected/actual pair and names the Go adapter (internal/entity/models/openai.go) that builds Chat Completions requests. Root cause is partially established: the adapter hardcodes Chat Completions and does not support Responses API or explicit reasoning_effort=none for tool calling. The exact effective reasoning configuration was not captured, and success with reasoning_effort=none is unconfirmed, but the failure mode and code anchor are actionable."
   },
+  "ca8b3eb70a132e0fc588bc9f5967e9c2462ef0e1ab11638d5f308f19040010b2": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims /connect sign-in restored access while the error says signing in will not renew the key; bot reply frames this as needing backend message changes, not a confirmed app-side root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "backend error message text for expired Go API key",
+      "hint/actionability layer in TUI for auth errors",
+      "docs reconciliation for Go key creation flow"
+    ],
+    "risks": [
+      "Error strings originate in the backend, so app-side changes may be cosmetic only",
+      "Overlap with open PR #56670 and related issues #52227/#56560/#56556 could duplicate work",
+      "Scope creep into docs and billing messaging"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test asserting the expired-key error includes an accurate recovery path and does not claim /connect will not work",
+      "Regression test distinguishing 'Insufficient account funds' entitlement/routing from billing shortfall"
+    ],
+    "unknowns": [
+      "Whether the expiry is a genuine key lifetime or part of the #56560/#56556 event",
+      "Whether maintainers want backend message changes vs app-side hints",
+      "Whether PR #56670 already resolves the actionable portion"
+    ],
+    "why": "The issue is a UX/messaging complaint about backend error strings and docs, with no code anchors and no established root cause. The bot reply confirms the messages come from the backend and that maintainers will consider it, and it links several related issues (#52227, #56560, #56556, #54244, #50611) suggesting the expiry may be part of a broader event rather than a fixed lifetime. An open PR #56670 already covers the recovery-message fix but lacks root-cause coverage, so duplicate/coverage status is unresolved."
+  },
   "ca8ebce1c3c5c5f36fe209a32ed9c99e1f759add400a7a88d59d6ebe18f3c626": {
     "confidence": 0.8,
     "contradictions": [
@@ -138359,6 +138457,42 @@
       "Maintainer design preference for handling long-argument streaming performance."
     ],
     "why": "The issue provides a precise root cause (arg_structural_chars filtering) and a minimal parser-only reproduction with expected behavior, making it actionable for a targeted fix."
+  },
+  "d81ef55964864cc8920a3212853f90ef2fa8105d11925f494e9c555091d29962": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Pre-review flagged reproduction_or_validation_missing, but the issue body contains ordered reproduction steps and a validation path plan exists"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/ai/src/generate-text/is-tool-execution-allowed-finish-reason.ts: handle v2-shaped finishReason or normalize upstream",
+      "packages/ai/src/generate-text/stream-text.ts: ensure finish part normalization before tool-execution gating",
+      "packages/ai/src/types/usage.ts: accept/normalize flat usage shape",
+      "Gateway provider: normalize v2 finish part to v4 shape"
+    ],
+    "risks": [
+      "Two reasonable fix locations (Gateway normalization vs ai core tolerance) may need maintainer preference",
+      "Broadening finishReason/usage acceptance could mask genuine protocol mismatches",
+      "Behavior change in tool-execution gating needs careful regression coverage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's streamText + tool() script against Gateway and assert a tool-result part appears",
+      "Add streaming regression test feeding a v2-shaped finish part (string finishReason, flat usage) and assert tool execution and populated usage",
+      "Run targeted unit tests for generate-text and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing in @ai-sdk/gateway vs ai core",
+      "Whether captured raw SSE streams will be shared to confirm exact shape"
+    ],
+    "why": "Issue provides a concrete reproduction, version matrix, and a specific root cause: the Gateway's finish part arrives in v2 shape (string finishReason, flat usage), so finishReason.unified is undefined and isToolExecutionAllowedFinishReason blocks tool execution; usage also reads empty. Direct Anthropic comparison isolates the failure to Gateway normalization. Code anchors and a validation path (streaming regression test) are supplied."
   },
   "d8247ffe40d603b1c3b52c3dbd0afea10ff1dbeef7111256d36b23edce1c441f": {
     "confidence": 0.7,
@@ -156593,6 +156727,42 @@
     ],
     "wait_reason": null,
     "why": "Issue identifies a concrete bug in media-strip recovery: isImageFormatError only matches specific patterns, so generic 400 'Invalid request.' bypasses recovery and permanently bricks sessions. Root cause is clear with code anchors and a suggested minimal fix (attempt strip on any 400 when media present). No competing PR or issue found."
+  },
+  "f40cbe7aba9da59e5858ff777ab1da61e599add97389545cecff67e23327424f": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue body states public issue #41474 and unmerged fix PRs #41481/#41502/#43476 described the same root cause, while open_pr_assessment and related_issue_assessment report none found"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons with exact rid equality for ordinary aborts",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup targets only the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: optionally namespace or validate client-supplied rid to prevent collisions"
+    ],
+    "risks": [
+      "Exact equality may break intentional bulk-abort or chunked-request cleanup paths that rely on prefix matching; those must be audited and kept as an explicit separate operation",
+      "PD prefill/decode and grammar/waiting request paths each have their own prefix comparison and must all be updated consistently",
+      "Server-namespaced rid changes could alter API-visible behavior for clients that depend on their supplied rid"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid 'X-victim' and an attacker request with rid 'X', disconnects the attacker, and asserts the victim reaches normal length finish rather than FINISH_ABORT",
+      "Add a unit test on Scheduler.abort_request asserting a prefix rid does not abort a longer rid sharing that prefix",
+      "Run the issue's PoC script against a patched single-worker server and confirm 0/5 victim aborts, plus a non-prefix control that also yields 0 aborts"
+    ],
+    "unknowns": [
+      "Whether the referenced prior fix PRs (#41481/#41502/#43476) are still open, closed, or superseded, which affects duplicate coverage",
+      "Whether maintainers have a preferred design (exact equality vs server-namespaced rid) for the fix"
+    ],
+    "why": "Issue provides a concrete root cause: client-supplied rid is preserved in GenerateReqInput, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid), enabling cross-request aborts. Code anchors, a runnable PoC, and a controlled 5/5 vs 0/5 test matrix with an exact-equality control establish both reproduction and a validation path."
   },
   "f40e869f1616b05a03875749aa9c7a4b35f533a4c393c9325241753c9d967fac": {
     "confidence": 0.7,
