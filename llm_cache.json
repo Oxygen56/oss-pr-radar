@@ -34222,6 +34222,43 @@
     ],
     "why": "The issue reports two intermittent, non-deterministic CUDA runtime failures (cudaErrorInvalidValue in cuDNN SM90 DSA backward, cudaErrorUnknown in packed-THD build_attention_indices) with no small deterministic reproducer; both incidents succeeded on exact retries, and CUDA_LAUNCH_BLOCKING was off so the reported call may not be the originating kernel. Root cause is explicitly unknown and the two failures may not share one. Multiple open PRs (#6848, #6910, #6939, #7169) already overlap the failing code paths, and the maintainer comment only suggests padding flags plus an untested community PR, so duplicate/merged-fix coverage is unresolved."
   },
+  "37cf6c336622cd319bf9550bac96be6ad01efd8310fdcea847aadb3d2ff43418": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states no open PR touches ai-context-limit/ai-prompt-decorator, but open_pr_assessment lists PR #5136 with semantic overlap on ai_context_limit and ai_prompt_decorator"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-context-limit: guard onHttpRequestBody with jsonbody.DuplicateTopLevelMember(body, \"messages\")",
+      "plugins/wasm-go/extensions/ai-prompt-decorator: same guard before gjson/sjson rewrite",
+      "go.mod require/replace wiring for local pkg/jsonbody module",
+      "regression tests for duplicate and single `messages` bodies"
+    ],
+    "risks": [
+      "Open PRs #5136/#5142/#5140 may already cover this exact guard, making the candidate redundant",
+      "Issue's 'no open PR touches these paths' claim conflicts with supplied duplicate evidence",
+      "Dependency wiring for local jsonbody module could diverge from #5124 conventions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing test: body with two top-level `messages` members returns 400 with duplicate message and is not forwarded (both plugins)",
+      "Regression: single `messages` body still enforces max_context_tokens in ai-context-limit",
+      "Regression: single `messages` body still applies prepend/append/replace in ai-prompt-decorator",
+      "Malformed JSON body skips the guard and falls through to existing validation"
+    ],
+    "unknowns": [
+      "Whether PR #5136 (or #5140/#5142) already implements the ai-context-limit and ai-prompt-decorator guards, i.e. whether the candidate is already covered",
+      "Whether the repository requires assignment before work (policy status needs_assignment, no assignees)"
+    ],
+    "why": "The issue gives a clear root cause (gjson reads first duplicate `messages`, upstream parsers keep last) and a concrete fix reusing the #5124 helper, with acceptance criteria and a stated reproduction. However, three open PRs (#5136, #5142, #5140) already implement the same duplicate-`messages` guard across sibling plugins, and the issue's own claim that no open PR touches these paths is contradicted by the supplied duplicate assessment. Whether the candidate work is already covered is a materially blocking unknown."
+  },
   "37e2b9794a640987e4e4e5da1cdd0732db774c98f9ff7e2ad3d739083fd4dc51": {
     "confidence": 0.7,
     "contradictions": [
@@ -60353,6 +60390,41 @@
     ],
     "why": "The issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and potential host-cache load-back. The reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "5f363c37d01a64af2f087a864a95a4e548355da53081e0b7877e13ce9d31f78d": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "execute_command pre-flight validation/rewrite of known-unsafe CLI forms",
+      "stall/timeout detector for execute_command completion markers",
+      "warning when generated command matches forbidden .clinerules pattern"
+    ],
+    "risks": [
+      "Root cause spans VS Code shell integration and model rule-adherence, so a code-only fix may not fully eliminate stalls",
+      "Rewriting user/model commands could alter intended behavior and needs careful scoping",
+      "Windows PowerShell-specific behavior is hard to reproduce in CI"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that feeds a multi-line --body/-m command through the execute_command path and asserts completion detection or rewrite",
+      "Regression test for missing completion sentinel / timeout auto-recovery",
+      "Targeted unit tests on the command-validation module plus static checks"
+    ],
+    "unknowns": [
+      "Exact code location where execute_command completion is detected is not pinned to a specific file",
+      "Whether maintainers prefer validation/rewrite vs timeout recovery is undecided"
+    ],
+    "why": "Issue documents a concrete, recurring failure mode: unsafe inline CLI forms (multi-line --body/-m, un-redirected streaming commands) corrupt VS Code shell-integration completion markers on Windows PowerShell, so Cline never detects command completion and stalls. Reproduction steps and root-cause mechanism are supplied, and a validation path (failing test on execute_command completion detection plus targeted unit tests) is feasible. No duplicate/merged fix found and no assignment requirement."
+  },
   "5f3c9f75fdcc6173cbe44d467671bbc9e118226481b3bdf8d184ab2764be1a80": {
     "confidence": 0.85,
     "contradictions": [],
@@ -64054,6 +64126,44 @@
       "Whether the fix should be bundled with #4692 or landed standalone (owner recommends standalone)"
     ],
     "why": "Issue pins a concrete root cause: decodeSchtasksOutput in src/service/windows-scheduler.ts probes UTF-16 then falls back to plain UTF-8, mangling GBK schtasks XML on ACP/OEMCP 936 hosts so CJK UserId becomes U+FFFD, windowsTaskRegistrationHealthy() returns false, and repair aborts at the recognition gate. The repo already has decodeWindowsTextBytes (src/lib/windows-text.ts) implementing UTF-16 -> strict UTF-8 -> locale legacy (GBK), used by sibling call sites; the schtasks call site is the remaining unwired one. Owner comment confirms the call site still exists on dev HEAD and endorses a one-line delegation plus a GBK fixture regression."
+  },
+  "6487edba6f3f312ae59257ab928159089284c75e0d32a67efe146445d363e19c": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims a keyword scan finds no report or fix for this defect, but open PR #5140 is titled exactly 'fix(ai-history): reject request bodies with a duplicated top-level messages member'"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-history: add duplicate-messages guard at start of onHttpRequestBody",
+      "plugins/wasm-go/extensions/ai-history: wire require/replace for local jsonbody module",
+      "plugins/wasm-go/extensions/ai-history: add regression test for duplicate and single messages bodies"
+    ],
+    "risks": [
+      "PR #5140 already implements the same ai-history guard, so new work may be redundant",
+      "PRs #5138 and #5147 apply the same pattern to sibling plugins, suggesting a broader coordinated change",
+      "Repository requires assignment before submission; no assignee is present",
+      "Behavior change rejects previously forwarded requests with 400"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test: request body with two top-level `messages` members returns 400 with `duplicate \"messages\" member in request body`, no Redis lookup, no forward",
+      "Regression test: single `messages` member still extracts question, performs Redis lookup, merges history on hit",
+      "Test: malformed/incomplete JSON skips the guard and falls through to existing validation",
+      "Run the existing ai-history plugin test suite in go mode and compiled-Wasm mode"
+    ],
+    "unknowns": [
+      "Whether PR #5140 already fully covers the ai-history root cause and should be reviewed/merged instead of new work",
+      "Whether a maintainer will assign this issue to an implementer",
+      "Whether the sibling PRs (#5138, #5147) indicate a maintainer-preferred consolidated approach"
+    ],
+    "why": "The issue gives a concrete root cause (gjson reads the first duplicate `messages` member while upstream parsers keep the last) and a concrete fix path (call jsonbody.DuplicateTopLevelMember first in onHttpRequestBody, return 400 with ActionPause). However, three open PRs (#5140 ai-history, #5138 ai-search, #5147 ai-security-guard) already implement the same duplicated-top-level-member rejection, and #5140 targets the exact ai-history plugin. Duplicate/merged-fix coverage is unresolved, and the repository policy requires assignment (needs_assignment) with no assignee present. These are materially blocking unknowns, not normal implementation uncertainty."
   },
   "64913e2f434468ff4b04c2488a19d1cd8f62fbfbac4627421d7a6ce0087f2cb0": {
     "confidence": 0.8,
@@ -102654,6 +102764,43 @@
     ],
     "why": "Issue reports a concrete, reproducible startup OOM with FP8 KV cache on a 24 GiB GPU: KV cache budget (~19.93 GiB) is computed with a near-zero CUDA graph estimate, then graph capture consumes ~0.80 GiB, exceeding gpu_memory_utilization. Root cause is localized to profile_cudagraph_memory()/KV cache sizing, and the issue proposes a concrete fix direction (account for graph capture cost incl. KV-block dependence, or re-adjust cache after capture). No duplicate/merged fix found; open PRs are keyword-only overlaps with no code-path or mechanism overlap."
   },
+  "9f43e5f049cecdc57f5b594e606a598a8b37253c91f12d5d880b168de7bbd246": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Candidate gate_decision is HUMAN_REVIEW/WAIT_MAINTAINER with precheck failures (base_sha_changed, reproduction_or_validation_missing), but issue body supplies a concrete validation path and collaborator comment narrows scope; no maintainer design confirmation yet"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/hooks/mutation/use-create-conversation.ts: add ACP readiness preflight before launch",
+      "src/hooks/mutation/resolve-conversation-launch.ts: gate createConversation on readiness result",
+      "src/utils/acp-error-codes.ts: distinguish unauthenticated vs unknown vs spawn failure messaging",
+      "src/components/features/home/home-chat-launcher.tsx: surface preflight message and recovery action"
+    ],
+    "risks": [
+      "Scope ambiguity on too-old CLI case (no version floor source of truth) may expand work into SDK changes",
+      "Blocking vs warning UX choice affects observable acceptance criteria",
+      "Probe latency on happy path if not cached"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Extend __tests__/hooks/mutation/use-create-conversation.test.tsx: mocked auth probe returns unauthenticated -> no conversation created, specific message shown",
+      "Extend __tests__/hooks/mutation/resolve-conversation-launch.test.ts: probe unknown/discovery rejects -> conversation still created",
+      "Add test: cloud backend and non-ACP agent -> no probe invoked, payload unchanged",
+      "Happy path: probe ready -> createConversation payload identical to today"
+    ],
+    "unknowns": [
+      "Whether maintainers accept block-on-unauthenticated v1 scope",
+      "Whether too-old CLI case is in or out of scope for this issue"
+    ],
+    "why": "Issue provides concrete code anchors showing launch path (launchConversation -> createConversation) never consults existing ACP readiness probes (useAcpAuthStatus, useAcpModelDiscovery), and only ACPAuthRequired gets a specific error header. A collaborator comment confirms the gap and narrows v1 scope to block on unauthenticated, warn on unknown, no probe for cloud/non-ACP. Concrete Vitest suites and validation path are named."
+  },
   "9f56014d00bc17e68f460b2d1b643185db72b637b6cff4202360ce6076790957": {
     "confidence": 0.85,
     "contradictions": [
@@ -112730,6 +112877,39 @@
       "Exact location in codebase where the fix should be applied"
     ],
     "why": "The issue provides a clear root cause: Mastra's channel handler ignores the `context.skipped` field from the chat SDK, causing message loss with batching strategies. It includes a concrete reproduction scenario and a specific code path, making the fix actionable."
+  },
+  "b0a8e5015d86e493b7f7c2879933a3fb6bc99214a5c518d4ed8cf502e08e0c94": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons with exact rid equality for ordinary aborts",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup targets only the originating request identity",
+      "python/sglang/srt/managers/io_struct.py: optionally namespace or validate client-supplied rid to prevent collisions"
+    ],
+    "risks": [
+      "Intentional bulk-abort or chunked-request paths may rely on prefix matching; changing to exact equality could break legitimate multi-part request cleanup",
+      "PD prefill/decode and grammar paths have separate prefix comparisons that must be updated consistently",
+      "Server-namespaced rid changes could alter API-visible request IDs and break clients that rely on supplied rid"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid 'X-victim' and an attacker request with rid 'X', disconnects the attacker, and asserts the victim reaches normal finish rather than FINISH_ABORT",
+      "Add a unit test on Scheduler.abort_request asserting exact-equality semantics: aborting rid 'a' does not finish an active request with rid 'a-victim'",
+      "Run the issue's PoC against a patched single-worker server and confirm 0/5 victim aborts, plus a non-prefix control that remains 0/5"
+    ],
+    "unknowns": [
+      "Whether any internal caller intentionally relies on prefix-based abort for chunked or multi-part requests",
+      "Whether maintainers prefer exact-equality fix versus server-namespaced rid isolation"
+    ],
+    "why": "Issue provides a concrete root cause: client-controlled rid is preserved in GenerateReqInput, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid), enabling cross-request aborts. Code anchors, a runnable PoC, and a controlled 5/5 vs 0/5 test matrix with an exact-equality control establish both reproduction and a validation path."
   },
   "b0b15ca84081da9279a79f70a3fe6de5b086346f7abbe5532dc25b5ce61c4b2b": {
     "confidence": 0.7,
@@ -130865,6 +131045,45 @@
     ],
     "why": "The issue describes a plausible DFlash/DSpark draft-KV corruption mechanism with a concrete reproduction sketch and a mitigation PR (#47926), but the reporter explicitly states they have not pinned which step registers unwritten draft blocks, and the supplied evidence shows an open maintainer-owned draft PR (#56723) with overlapping code path and distinctive 'dflash_dspark' semantics that may already cover the root cause. The duplicate/coverage question is unresolved, which materially determines whether independent code work is actionable."
   },
+  "cb8b4dec8849604fe52d2fd95625c3a4ecae1581152e0b16c428bd6227c6aada": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims keyword scan finds no open PR/issue for this defect, but open PRs #5138 and #5136 have titles matching the exact fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-search: add DuplicateTopLevelMember guard in onHttpRequestBody after enablement check and before query extraction",
+      "plugins/wasm-go/extensions/ai-search: return 400 with DuplicateMemberMessage(\"messages\") and ActionPause",
+      "plugins/wasm-go/extensions/ai-search: add require/replace for local pkg/jsonbody module",
+      "plugins/wasm-go/extensions/ai-search: regression test for duplicate vs single messages and disabled-plugin passthrough"
+    ],
+    "risks": [
+      "Open PRs #5138/#5136 may already implement this exact guard, making the work duplicate",
+      "PR #5106 touches the same file (streaming buffer) and could conflict",
+      "Repository requires assignment before contribution; none present",
+      "Behavior change rejects previously accepted ambiguous requests"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Plugin test host (go mode and compiled-Wasm mode): duplicate top-level messages body returns 400 with 'duplicate \"messages\" member in request body' and no engine call",
+      "Single messages body: query extracted, engines called, prompt rewritten as before",
+      "defaultEnable:false without web_search_options: body forwarded untouched",
+      "Malformed JSON: helper error skipped, existing validation decides"
+    ],
+    "unknowns": [
+      "Whether PR #5138 or #5136 already fully covers the ai-search duplicate-messages guard",
+      "Whether a maintainer will assign the issue to the contributor",
+      "Whether the reproduction was validated beyond the issue author's claim (reproduction_or_validation_missing gate failure)"
+    ],
+    "why": "The issue gives a concrete root cause (gjson reads the first duplicate top-level `messages`, sjson rewrites that occurrence, upstream parsers keep the last) and a clear fix path reusing the #5124 jsonbody helper. However, three open PRs (#5138, #5136, #5106) semantically overlap the same ai-search request-body path, and the duplicate status is 'semantic_overlap_requires_review' with no direct code overlap confirmed. The repository also requires assignment (policy needs_assignment, no assignees), and the pre-review gate failed on duplicate_changed, assignment_required, and reproduction_or_validation_missing. These are materially blocking unknowns for actionability."
+  },
   "cb9d87b4f5f531b04d1e5721346ad4d03389b1b0ec68206144472bde91b2e1e5": {
     "confidence": 0.55,
     "contradictions": [
@@ -133617,6 +133836,39 @@
       "Which of the several proposed root causes is the actual cause on the reporter's BF16 TP=4 SM86 setup"
     ],
     "why": "Issue reports a concrete, reproducible greedy-divergence at token 30 for Qwen3.8-27B + DFlash2 spec decode (K=1, no prefix cache, --enforce-eager), which is a legitimate algorithm-level correctness signal. However, supplied evidence contains materially conflicting root-cause attributions: commenters point to BF16 numerical path differences, GDN gate row misalignment fixed by #51812, NVFP4/MoE finalize nondeterminism, mamba/GDN block-size seeding on prefix-cache resume, and persistent_topk instability. The candidate's own duplicate assessment flags PR #56431 (DFlash context-key normalization) as semantic overlap requiring review, and related issue #57016 shares stack signatures. The pre-task evidence also records policy_or_disclosure_uncertain / ai_disclosure_conflict and base_sha_changed, which are unresolved repository-level blockers. These unresolved duplicate coverage and disclosure facts determine whether code work is actionable, so RETRY rather than NO_OBJECTION."
+  },
+  "d0889365b43df94c99ef3ccbcf818dd1bd866e5b58ce207b8e31a3dcb1b658a4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "MooncakeKVManager.start_prefill_thread: validate sender/Decode identity before parsing registration",
+      "KVArgsRegisterInfo.from_zmq / unpack_int_lists: bound nested-buffer count and frame size before materialization",
+      "decode_kv_args_table: add table size limit and expiry for registrations"
+    ],
+    "risks": [
+      "Tightening registration validation could break legitimate Decode-Prefill handshake if identity binding is too strict",
+      "Nested-buffer limits must accommodate real workloads' buffer counts",
+      "Cross-host binding to 0.0.0.0 is part of the repro; fix should not rely solely on network isolation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_oom.py against an isolated 1P1D Mooncake stack in a memory-limited cgroup and confirm registrations are rejected without OOM",
+      "Add a unit test feeding a 100,000-nested-buffer frame to KVArgsRegisterInfo.from_zmq and assert rejection before list materialization",
+      "Regression test that a legitimate Decode registration still succeeds and completions remain within baseline latency"
+    ],
+    "unknowns": [
+      "No maintainer design preference on auth mechanism vs. resource limits",
+      "Whether existing Mooncake protocol supports a credential/identity field to bind Decode workers"
+    ],
+    "why": "Issue provides a concrete, reproducible unauthenticated ZMQ registration path in MooncakeKVManager.start_prefill_thread that materializes nested buffers via KVArgsRegisterInfo.from_zmq and retains entries in decode_kv_args_table without auth, size, or expiry limits; includes executable repro_oom.py, cgroup OOM evidence, and a clear expected-vs-observed validation path."
   },
   "d08b5b8a8031004aa3ca6975dedbeffa024e498c4bb8437d33766f780e4895ed": {
     "confidence": 0.8,
