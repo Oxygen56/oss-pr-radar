@@ -9657,6 +9657,41 @@
     ],
     "why": "Issue provides a concrete, user-visible bug with ordered reproduction steps, expected/actual behavior, and a specific root cause in internal/service/nlp/retrieval.go: compile_kwd is omitted from SelectFields and not copied into the projected API result. The proposed fix is a minimal projection change with a clear regression test path. No open PR directly covers this issue; the three referenced PRs are historical and do not reference or close it."
   },
+  "10be86bd16023e05207619a3552ff074ba098d89b6e2a1249e0ffd0ddba614ff": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports external kill leaves job running, but bot reproduction shows kill -9 is handled correctly on Linux; root cause attributed to location teardown instead"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/job.ts: persist cancelled state on scope-close/settle path",
+      "packages/core/src/shell.ts: finalize background job when shell record disappears",
+      "packages/schema/src/session.ts: reconcile stale running job markers"
+    ],
+    "risks": [
+      "Windows-specific external kill path unverified; fix may only cover location teardown",
+      "Changing settle semantics could affect explicit cancel persistence",
+      "Maintainer may prefer a different owner for timeline settlement"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test reproducing drive-evict.ts flow: start background shell, evict location, assert job marker transitions out of running",
+      "Regression test that explicit jobs.cancel still persists cancelled marker",
+      "Targeted unit tests for job settle/scope-close path and static checks"
+    ],
+    "unknowns": [
+      "Whether the fix should live in job settle or shell teardown",
+      "Whether Windows external-kill path needs separate handling"
+    ],
+    "why": "Issue has ordered reproduction steps and a maintainer-bot reproduction on latest dev confirming the background job is never finalized when the location is torn down; the scope-close path marks the job cancelled without persisting the cancelled marker, leaving the kv record stuck at running. The API half (DELETE 404) was correctly closed as intentional contract, leaving a concrete server-side settlement fix."
+  },
   "10c3036ba6c187114f83f8d9c7517a0679e3c3151bdf2bcef168b38052169b87": {
     "confidence": 0.85,
     "contradictions": [
@@ -21810,6 +21845,45 @@
       "Whether the open PR #2397 fully resolves the issue or if additional changes are needed."
     ],
     "why": "The issue provides a clear root cause (token underestimation in count_tokens), reproducible benchmark data, and a concrete validation path comparing estimates to actual usage. The open PR #2397 is actively being updated to address the issue, but the issue itself remains a valid, actionable bug report with strong evidence."
+  },
+  "24c9157c39f1e2b73d6c4a46afd7e1a5a979a3b17d44d9a3085061c08c1d6c42": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Traceback points at grammar-mask/FSM advance, but the crash is asynchronous and the stack is stated to be possibly incorrect",
+      "Candidate claims root-cause clarity via algorithm mechanisms, yet actionability_evidence.root_cause_signal is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Isolate the faulting kernel in run_eagle_verify/build_grammar_vocab_mask (e.g. CUDA_LAUNCH_BLOCKING, compute-sanitizer) before proposing a code fix",
+      "If confirmed, fix grammar-vocab-mask buffer sizing/indexing or the EAGLE verify path in eagle_worker_common.py/spec_utils.py",
+      "Add a regression test reproducing the multi-request decode-batch grammar-mask path"
+    ],
+    "risks": [
+      "Async IMA stack may misattribute the fault; fixing the reported frame could be wrong",
+      "Overlap with open PRs #44417/#39780 and related IMA issues may mean the root cause is already covered",
+      "Requires 8×H20 hardware to reproduce"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the given TP8/EP8 EAGLE launch config and CUDA_LAUNCH_BLOCKING=1 to localize the failing kernel",
+      "Run compute-sanitizer on the grammar-mask/verify path to identify the out-of-bounds access",
+      "Compare against a single-GPU or TP1 run to determine whether the fault is parallelism-specific"
+    ],
+    "unknowns": [
+      "Which kernel actually performs the illegal access",
+      "Whether PR #44417 or #39780 already fixes this path",
+      "Whether the related IMA issues share the same root cause"
+    ],
+    "why": "The issue supplies a traceback and launch config, but the traceback is a generic async CUDA illegal-memory-access surfacing in build_grammar_vocab_mask/advance_grammar_fsm, not a demonstrated root cause in the EAGLE verify or grammar-mask kernel. No minimal repro, no bisect, and no evidence isolating the faulting kernel; the crash is explicitly asynchronous and the stack is acknowledged as possibly incorrect. Related issues #37633/#38207/#39173/#40948 share the same IMA signature, and open PRs #44417/#39780 touch overlapping GLM-5.3-Flash MTP verify paths, so duplicate/coverage status is unresolved."
   },
   "24d354d71a57115253108e73c83b164328a599777321aa838987264118640e54": {
     "confidence": 0.85,
@@ -84106,6 +84180,40 @@
     ],
     "why": "Issue clearly identifies a real performance bug with a concrete root cause and reproduction, but maintainer has not confirmed design direction and the issue is labeled 'needs triage' with a request for minimal reproduction. The proposed fix is actionable but requires maintainer confirmation to avoid conflicting with intended query semantics."
   },
+  "82e302c908c04ac4eae166ce613a2c0529a6a18af11409aa42931e066d9e4e4c": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons in abort_request with exact rid equality, keeping abort_all as a separate explicit bulk path",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup aborts only the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: consider server-namespaced rid handling for additional isolation"
+    ],
+    "risks": [
+      "Changing prefix to exact equality may break intentional bulk-abort or chunked-request cleanup paths that rely on prefix matching",
+      "PD prefill/decode and grammar/waiting request paths each have separate prefix comparisons that must be updated consistently",
+      "Server-namespaced rid changes could alter API-visible request ID behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid 'X-victim' and an attacker request with rid 'X', disconnects the attacker, and asserts the victim reaches normal finish rather than FINISH_ABORT",
+      "Add a negative control with non-prefix attacker rid asserting no victim abort",
+      "Add an exact-equality unit test on Scheduler.abort_request verifying only the matching rid is finished",
+      "Run the issue's PoC script against an isolated single-worker server and confirm victim finish_reason is not abort"
+    ],
+    "unknowns": [
+      "Whether any internal caller intentionally relies on prefix-based abort semantics for chunked or PD requests"
+    ],
+    "why": "Issue provides a concrete root cause: client-controlled rid is preserved in GenerateReqInput._normalize_single_inputs, delayed disconnect cleanup calls abort_request(obj.rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid) instead of exact equality, enabling cross-request aborts. Code anchors, an executable PoC, and a controlled test matrix (prefix vs non-prefix, exact-equality control, single-worker and 1P1D) establish a reference-vs-implementation validation path. No duplicate or merged fix covers this; open PRs are keyword-only overlaps."
+  },
   "82e43d952a1e6b4b2e6c1ae483c8109b43de57a878a5392cd755e18bf297d40f": {
     "confidence": 0.72,
     "contradictions": [],
@@ -98935,6 +99043,43 @@
     ],
     "why": "Issue provides a minimal reproduction, a verified root cause in variable_analyzer.py (_process_typed_parameter/_process_typed_default_parameter storing quoted annotations verbatim), and a concrete fix mirroring existing .strip(\"\\\"'\") logic. Real-world impact shown on fastapi and pydantic. Open PR #2955 overlaps semantically but is not linked to the issue and does not cover the quoted forward-reference root cause, so it is not a blocking duplicate."
   },
+  "9984a517201a0efc2c65e48d4a1845859f9e6e79bbb66980e781a0291d31c103": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Proposal body says no open decision blocks design, but pre-review gate failed on assignment_required and reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-endpoint-picker/scheduling/parser.go: reject KV samples outside [0,1] so SignalKVCache is unavailable",
+      "scheduling/parser_test.go and pipeline_test.go: add negative-KV regression cases"
+    ],
+    "risks": [
+      "Potential duplicate/overlap with issue #5154 may already cover the same fix",
+      "Repository requires assignment before implementation; no assignee present",
+      "Maintainer may prefer clamping over dropping the signal (scope change)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add unit test feeding vllm:kv_cache_usage_perc = -0.1 and assert SignalKVCache absent",
+      "Add unit test feeding legacy vllm:gpu_cache_usage_perc = -0.1 and assert SignalKVCache absent",
+      "Regression test that 0 and 1 still normalize to 1-utilisation unchanged",
+      "Run targeted package tests and Wasm build"
+    ],
+    "unknowns": [
+      "Whether the issue is assigned or authorized for implementation under needs_assignment policy",
+      "Whether issue #5154 already resolves or duplicates this fix",
+      "Whether maintainers prefer dropping vs clamping out-of-range KV values"
+    ],
+    "why": "The proposal identifies a concrete root cause (KV signal lacks the value>=0 guard that queue has, so negative samples clamp to 0 and transformOneMinus yields 1.0), and the SPEC comment defines clear scenarios. However, the pre-review gate failed on assignment_required and reproduction_or_validation_missing, and the repository policy is needs_assignment with no assignee. A materially blocking unknown remains: whether the issue is assigned/authorized for implementation, plus unresolved overlap with issue #5154 (semanticOverlap 91) that could mean the fix is already covered."
+  },
   "99864e26e9a7974851dde8a2697b7de63ffa1d6c5d5a8ab2ffca646a8853dec7": {
     "confidence": 0.72,
     "contradictions": [],
@@ -108972,6 +109117,42 @@
       "Whether #50720 will be fixed soon"
     ],
     "why": "The issue reports a crash in FLASHMLA_SPARSE_DSV4 backend on SM12x, but the root cause is that FlashMLA-sparse kernels are unsupported on SM12x. The proposed fix is a fail-fast error message, not a functional backend. The issue is already being investigated by a contributor, and the user is satisfied with waiting. No competing implementation exists, but the work is not actionable as a new algorithm contribution."
+  },
+  "a90f2d5f74f3809ced150bf4eece21721037c5242c0957a9dc4355c5b9235b44": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Preflight readiness check in useCreateConversation/launchConversation for local ACP providers",
+      "Specific actionable message and recovery action for unauthenticated ACP CLI at launch",
+      "Distinguish ACPSpawnError from generic agent error header in acp-error-codes.ts",
+      "No probe for cloud backends or non-ACP agents"
+    ],
+    "risks": [
+      "Maintainer has not yet resolved the three open decision questions (block vs warn, too-old scope, surfacing location)",
+      "Too-old CLI case has no source-of-truth version floor and may be out of scope",
+      "Behavior change to launch path could affect existing launch tests"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Extend __tests__/hooks/mutation/use-create-conversation.test.tsx: mocked auth probe returns unauthenticated -> specific message, conversation not created",
+      "Extend __tests__/hooks/mutation/resolve-conversation-launch.test.ts: probe unknown/rejection still allows launch",
+      "Add test that cloud backend and non-ACP launches perform no probe and are unchanged",
+      "Happy path: probe ready -> createConversation payload unchanged",
+      "Run npm test (vitest) for affected suites"
+    ],
+    "unknowns": [
+      "Whether maintainer will confirm block-on-unauthenticated vs warn-and-allow",
+      "Whether too-old CLI detection is in scope for this issue"
+    ],
+    "why": "Issue provides concrete code anchors showing the launch path (use-create-conversation.ts, resolve-conversation-launch.ts) never consults existing ACP readiness probes (useAcpAuthStatus, useAcpModelDiscovery), and only ACPAuthRequired gets a specific error header. A collaborator comment confirms the gap and narrows v1 scope to blocking on unauthenticated, warning on unknown, no probe for cloud/non-ACP. Concrete Vitest suites are named for validation."
   },
   "a90fabcdd9a3fa75303c8f110537d7c8aa7c8ed866b3dadad181880db3aa919d": {
     "confidence": 0.9,
@@ -119549,6 +119730,37 @@
       "Repository AI-disclosure policy status is ai_disclosure_conflict, which affects submission mechanics but not the technical actionability of the fix"
     ],
     "why": "Issue provides a concrete, reproducible keyboard-accessibility defect in agent-profile-actions-menu.tsx with file:line root causes (mount-only focus effect behind portal, arrow navigation not skipping natively disabled items, Escape/Tab not restoring focus), a merged sibling fix (#18019) as reference, and a validated local patch with 6 new tests (5 failing pre-patch). Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply. No open PR or issue covers this menu's keyboard behavior."
+  },
+  "ba74ceca460ccc9eae98685f7c0d5a0c784eb2fc896cfa2d78e5be3d60db32e9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MooncakeKVManager.start_prefill_thread: validate/authenticate sender and bound nested-buffer parsing before materialization",
+      "decode_kv_args_table: add table size limit and expiry for registrations",
+      "KVArgsRegisterInfo.from_zmq: cap nested buffer count and frame size"
+    ],
+    "risks": [
+      "Authentication design may need maintainer input on credential mechanism",
+      "Overly strict limits could reject legitimate large registrations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_oom.py against a memory-limited Prefill cgroup and confirm registrations are rejected before nested metadata is materialized",
+      "Regression test asserting decode_kv_args_table does not grow unbounded from unique fake session IDs",
+      "Verify normal 1P1D completions still succeed after the fix"
+    ],
+    "unknowns": [
+      "Preferred authentication/credential mechanism for Mooncake PD peers is not specified"
+    ],
+    "why": "Issue provides a concrete, reproducible unauthenticated ZMQ registration path in MooncakeKVManager.start_prefill_thread that materializes nested buffers and retains entries in decode_kv_args_table without limits; includes executable repro, cgroup OOM evidence, and a clear expected-vs-observed validation path."
   },
   "bab9c75d1d59965be3965cd1fddd4016c4ec46ebd7b9d7c36564367351b588fa": {
     "confidence": 0.85,
@@ -138629,6 +138841,42 @@
       "Whether any older torchao release exported the current spellings, affecting backward-compatibility of the rename."
     ],
     "why": "Issue #826 documents a concrete, reproducible defect: Soup resolves torchao configs by name (NVFP4Config, Int8DynActInt4Config, Float8DynActFloat8Config) that torchao 0.18.0 does not export, with a real-hardware reproduction (RTX 5070, sm_120, torch 2.14.0+cu130) showing hasattr=False and the resulting RuntimeError, plus the silent bf16 fallback via utils/v028_features.py. The proposed fix (map schemes to real 0.18 class names, import prototype paths, catch ImportError, unify the torchao floor, add a real-torchao contract test) is actionable and testable. The related PR #947 (doctor GPU/precision diagnostics) and issue #829 (doctor GPU info) overlap only on the doctor/diagnostics surface, not on the torchao class-name resolution root cause, so they do not cover this fix."
+  },
+  "d6bf624ea315bf87786abdec555bca69a863d424b0913e519c2736042c8a39d4": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims no prior reports of this path, but related issues #13700/#14916 are cited as adjacent credential-exposure work"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Redact or omit credential-bearing text in provider-request capture payload previews",
+      "Gate machine/user-level env var writes behind explicit confirmation",
+      "Surface auto-approve state in UI"
+    ],
+    "risks": [
+      "Scope creep across three distinct security behaviors",
+      "Possible overlap with existing redaction/VCR sanitizer work (#14916)",
+      "No maintainer design preference on which layer should enforce redaction"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with dummy credential per issue steps and assert no plaintext in *.ai_sdk_prompt.*.provider-request.json payload.preview",
+      "Add regression test that `full` mode applies the existing redaction helper to message content",
+      "Verify `summary` mode remains text-free"
+    ],
+    "unknowns": [
+      "Whether maintainers consider capture redaction in scope or already tracked",
+      "Which code path actually writes payload.preview and whether a redaction helper is reusable there",
+      "Whether the env-var write confirmation is a separate accepted issue"
+    ],
+    "why": "The issue describes a real security concern (unredacted credential capture in `full` mode), but the supplied evidence is a single user report with no maintainer confirmation, no code-level root cause anchor beyond binary strings, and the candidate's own actionability evidence marks reproduction_or_validation_missing and probe_ready=false. The proposed fix spans multiple independent behaviors (capture redaction, env-var write confirmation, auto-approve defaults), so scope and root cause are not yet pinned down enough to be actionable."
   },
   "d6dcf2cfda6e57ed0dec2732cb56e61bf7c1b8a06188bce0b4b06c5e094923f6": {
     "confidence": 0.85,
