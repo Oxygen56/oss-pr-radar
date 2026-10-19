@@ -4812,6 +4812,41 @@
     "unknowns": [],
     "why": "The supplied recent comment states the exact root cause was already fixed on main by commit f2d45f26bd6a, which conditionally creates KV projections/norms on KV-shared layers so track_weights_loading no longer requires the dropped tensors. The issue was filed against 0.26.0, predating the fix, so the opportunity is already covered."
   },
+  "08680fca9821df244d28cbcd86d4cc8e7fbfbe43686cbd314dc76b1a56151e49": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons in abort_request with exact rid equality, keeping abort_all as a separate explicit bulk path",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup aborts only the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: consider server-namespaced rid handling for client-supplied IDs"
+    ],
+    "risks": [
+      "Changing prefix to exact equality may break intentional bulk-abort or chunked-request cleanup paths that rely on prefix matching; must audit all eight comparisons",
+      "PD prefill/decode paths may have separate abort semantics that need verification",
+      "Server-namespaced rid changes could alter client-visible request ID behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid '<prefix>-victim' and an attacker request with rid '<prefix>', disconnects the attacker, and asserts the victim reaches normal length finish rather than FINISH_ABORT",
+      "Add a unit test on Scheduler.abort_request asserting a prefix rid does not abort a longer rid sharing that prefix, while exact rid and abort_all still abort",
+      "Run the issue's PoC script against an isolated single-worker server and confirm victim finish_reason is not abort",
+      "Run targeted scheduler/tokenizer_manager unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether any of the eight prefix comparisons are intentionally used for non-request-specific bulk aborts",
+      "Whether maintainers have a preferred fix shape (exact equality vs server-namespaced rid)"
+    ],
+    "why": "Issue gives a concrete root cause: client-controlled rid is preserved in GenerateReqInput._normalize_single_inputs, delayed disconnect cleanup calls abort_request(obj.rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid) instead of exact equality, enabling cross-request aborts. Code anchors, a runnable PoC, and a controlled 5/5 vs 0/5 test matrix with an exact-equality control establish both reproduction and validation path. No competing open PR covers the same code path; the only nearby PR is keyword-only overlap."
+  },
   "08701bc38c30e3d92b4ad733febe4987401dc8069cfbe396e3ac59ea013f2826": {
     "confidence": 0.55,
     "contradictions": [
@@ -10862,6 +10897,39 @@
       "Whether the dev replay logs and redacted timeline would be sufficient to validate a fix"
     ],
     "why": "Issue describes a plausible production failure (Flux stream stays open but stops sending events, leaving an open user turn), but the reporter explicitly states it is not reproducible on demand and provides no public reproduction; the root cause is inferred from source reading rather than demonstrated. The request is also framed as a design question ('would a service-level watchdog be in scope'), so the concrete fix is not yet settled."
+  },
+  "1287d254979549b97b9a3371ad12ada515381c9cd64b8ec66cfa48b7ab09eef6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured prefill set or derive from server-side topology",
+      "Avoid synchronous blocking fetch in shared request processing path (async/offload or cached parallel-info)",
+      "sgl-model-gateway pd_router.rs: confirm server-side overwrite of bootstrap fields remains authoritative"
+    ],
+    "risks": [
+      "Fix may alter direct worker API contract for internal callers",
+      "Maintainer may prefer gateway-only enforcement over worker-side validation",
+      "Async refactor of parallel-info fetch could touch shared scheduler paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting a client-supplied bootstrap_host/port not in prefill_info_table is rejected or ignored",
+      "Run the provided loopback PoC with --delay-s 0 and assert canary receives zero requests",
+      "Run matched --delay-s 2 vs 0 latency comparison and assert normal Gateway request latency is not inflated"
+    ],
+    "unknowns": [
+      "Whether maintainers consider direct Decode worker API access in-scope for hardening vs. documented trust boundary"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and head-of-line blocking bug: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and issues a synchronous requests.get, with code anchors, a loopback-only PoC, and measured latency regression (20.35s vs 0.25s). Root cause and validation path are established; no duplicate PR/issue coverage found."
   },
   "129933c2386a580c6789e500c12d74775d9f96cc96269c19296d48be6fb1d413": {
     "confidence": 0.95,
@@ -20042,6 +20110,43 @@
       "Maintainer's preferred approach for the live package"
     ],
     "why": "Issue provides a clear root cause: commit 85b52f6a introduced an import of google.adk.live.live_request_queue without adding the package, causing ModuleNotFoundError. Reproduction steps are concrete and the fix is straightforward (either add the missing package or correct the import)."
+  },
+  "21efc825fc74ef026c9e6ef17361032974278b82e0cc9333df0fa1790f00b6ef": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR #45194 title suggests bounding Mooncake registration decoding, but assessment reports semantic_overlap=false and no direct code overlap; unclear whether it already addresses this root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Mooncake prefill ZMQ receive path: validate/authenticate sender or bind to configured Decode identity before parsing",
+      "KVArgsRegisterInfo.from_zmq / unpack_int_lists: bound nested-buffer count and frame size before materialization",
+      "decode_kv_args_table: add table-size cap and expiry for registrations",
+      "Bootstrap /route: consider restricting rank address disclosure to authorized peers"
+    ],
+    "risks": [
+      "Authentication/identity binding may require protocol or config changes affecting existing Decode-Prefill handshake",
+      "Overly strict nested-buffer limits could reject legitimate large registrations",
+      "Open PR #45194 ('Bound Mooncake registration decoding') may overlap in intent though supplied evidence marks semantic_overlap=false and no direct code overlap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sends a registration with an oversized nested-buffer count and asserts rejection before list materialization",
+      "Add a regression test that floods unique fake session IDs and asserts decode_kv_args_table stays bounded",
+      "Run the issue's repro_oom.py against a memory-limited prefill cgroup and confirm no OOM kill and completions remain within baseline latency",
+      "Verify legitimate Decode registration still succeeds end-to-end in a 1P1D Mooncake stack"
+    ],
+    "unknowns": [
+      "Whether PR #45194 actually covers the same nested-buffer/table-retention root cause",
+      "Whether maintainers require a specific auth mechanism or consider this out of scope for the Mooncake backend"
+    ],
+    "why": "Issue provides a concrete, reproducible unauthenticated ZMQ registration path in Mooncake prefill: `room == \"None\"` messages are parsed via `KVArgsRegisterInfo.from_zmq()` and stored in `decode_kv_args_table` with no sender auth, nested-buffer limit, table cap, or expiry. Reproduction includes executable `repro_oom.py`, cgroup OOM evidence (`oom=1`, `oom_kill=1`), and latency/availability measurements, giving a clear reference-vs-implementation validation path."
   },
   "221326fb01dc672c61ff8a2210e0dc26f465b4a64c52f1a4757e1d5af27a2ebd": {
     "confidence": 0.6,
@@ -77138,6 +77243,40 @@
     ],
     "why": "Issue provides a concrete, reproducible TP>1 Mamba in_proj LoRA refit bug: export_hf_weights merges adapters with plain concatenation while base weights are gathered per z|x|B|C|dt component, causing vLLM to receive a TP-misordered delta. Reproduction steps, control comparison, tensor fingerprints, and a validation path (refit-vs-TP1-merge consistency check) are supplied. Root cause is attributed to Megatron-Bridge #6310/#6311, with the NeMo RL side being a submodule bump plus regression coverage."
   },
+  "7743ab804c3620196c03a20214938697f47a285b32bb65803d2617e0f51776d7": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/components/features/chat/chat-interface.tsx: make composer/footer wrapper non-selectable, re-enable text selection for inputs",
+      "src/components/features/conversation/conversation-main/conversation-main.tsx: make chat-pane-header non-selectable",
+      "Add E2E regression test asserting selection focusNode stays within chat-scroll-container after edge auto-scroll drag in both directions"
+    ],
+    "risks": [
+      "Over-broad user-select:none could break legitimate text selection in chrome areas",
+      "Maintainer may prefer the alternative selection-clamping approach over CSS user-select",
+      "Cross-browser selection hit-testing differences (Chromium verified, others assumed)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Playwright drag test on mock conversation pagination-local: drag past bottom edge, assert window.getSelection().focusNode is within chat-scroll-container",
+      "Playwright drag test: drag past top edge, assert focusNode stays within chat-scroll-container",
+      "Verify composer contenteditable/textarea text remains selectable",
+      "Verify code blocks and other legitimate text remain selectable"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated between CSS user-select fix vs selection-clamping approach"
+    ],
+    "why": "Issue provides a concrete, reproducible UI selection bug with measured Playwright evidence, identified root cause (selectable siblings of the scrollable feed: chat-pane-header and composer/footer), specific code anchors, and a verified minimal fix (user-select:none on chrome, re-enable on inputs). Acceptance criteria include a concrete E2E regression test asserting focusNode stays within chat-scroll-container."
+  },
   "774cb93f6061b7669bbf2499d6e71bd96f8cece88d0a6260aa63f2b0e39ee3e0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -95053,6 +95192,46 @@
       "Whether the fix should be layered on one of the open MAX_TOKENS PRs (#36870/#38301/#40252) or implemented independently"
     ],
     "why": "Issue provides a deterministic reproduction (gemini-2.5-flash-image with modalities:[\"image\"] and a text-only prompt yields finishReason NO_IMAGE with no content), exact curl commands for /v1/chat/completions, /v1/messages (stream and non-stream), and /v1/responses, and identifies the drop of candidates lacking content as the root cause. The fix surface is concrete: preserve the candidate, emit an empty assistant message, and map Gemini finishReason to OpenAI finish_reason, Anthropic stop_reason, and Responses incomplete_details. No open PR directly covers this issue; the only related PR (#40294) is merged and merely stopped the 500, leaving the missing reason unaddressed. The issue also correctly flags the overlapping MAX_TOKENS/no-content case (#36881, PRs #36870/#38301/#40252) as a dependency to build on rather than duplicate."
+  },
+  "92e4a7cc0ecc5118a93dc4b9a00d9a0fd7ed8311edaf39795e951fc19b7fc823": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence reports maintainer_approved=true and public_repro_signals=0, while the issue is a removal checklist rather than a bug reproduction; not blocking since acceptance criteria and validation path are explicit"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Remove session= ClientSession parameter and _SessionMCPConnection routing from MCPTool/MCPStdioTool/MCPStreamableHTTPTool",
+      "Remove MCPTaskOptions, task_options param, and root lazy exports/__all__/__init__.pyi entries",
+      "Remove MCPWebsocketTool and its telemetry/docstrings",
+      "Remove MCPTool.sampling_callback, SamplingApprovalCallback, and sampling constructor options",
+      "Migrate Declarative, Foundry Toolbox, security helpers, and skills off MCPTool.session",
+      "Update docs, ADRs, samples, and migration notes for removed symbols"
+    ],
+    "risks": [
+      "Broad breaking change across many packages; risk of accidentally removing supported legacy wire-protocol behavior",
+      "Cross-package integrations (Declarative, Foundry Toolbox, MCPSkills) may have hidden MCPTool.session dependencies",
+      "Scope overlaps with open maintainer PR #9532 on MCP client ownership, requiring coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Repo-wide grep for MCPTaskOptions, task_options, MCPWebsocketTool, SamplingApprovalCallback, sampling_callback, MCPTool.session to confirm absence",
+      "Run Python package tests for core, hosting-mcp, declarative, foundry-hosting, security, observability, skills",
+      "Run public-API snapshot/type-stub validation and formatting/lint/typing checks",
+      "Regression test that legacy MCP peer negotiation and high-level mcp.Client operation coverage still pass"
+    ],
+    "unknowns": [
+      "Whether #9237 has already merged the FastMCP->MCPServer sample rename and sampling sample removal",
+      "Exact current state of MCPTool.session consumers in Declarative/Foundry Toolbox not enumerated in supplied evidence"
+    ],
+    "why": "Issue is a concrete, maintainer-authored vNext API-cleanup checklist with explicit symbols, parameters, and code anchors (MCPTool.session, MCPTaskOptions, MCPWebsocketTool, SamplingApprovalCallback, session= params). Root cause is clear: deprecated MCP 2.x compatibility surfaces must be removed. Validation path is concrete (repo-wide symbol search, public-API snapshot checks, package tests, legacy peer negotiation regression). No competing PR covers the same code paths; #9532 is keyword-only overlap."
   },
   "92e7c39ed01acd3637dd76ff1ddb4805d06ac3b53c14022d330e351f931eef77": {
     "confidence": 0.85,
@@ -129317,6 +129496,46 @@
       "Exact current LinkedIn top-card DOM structure beyond the probe output (probe returned counts, not full markup), which affects how broadly the selector must be rewritten"
     ],
     "why": "Issue provides a concrete, reproducible failure (4 identical attempts across URL/URN/slug/fresh session) and a specific code anchor: _PROFILE_MESSAGE_TARGET_JS in linkedin_mcp_server/scraping/message_sender.py scopes DOM search to the first <section> child of <main> and requires exactly one visible <h1> plus at most one active compose anchor. Maintainer's DevTools probe was run by a reporter and returned h1Count=0 and composeHrefs=[] inside that section while 4 compose links exist elsewhere on the page, directly confirming the narrow-scoping root cause. This is a concrete, testable fix path (broaden selector scope / relax h1 constraint) with a clear regression test."
+  },
+  "c8f32a008247f41fb8a82fa94ee648eaebc3e82d3e8111ded089ce04933fa2b2": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence qualified=true with PEFT/model_architecture mechanisms conflicts with issue content describing a Chroma filter adapter bug",
+      "candidate.why claims formula/objective-level algorithm evidence while issue body contains no training objective or numerical method"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/langchain.py: normalize compound filters into $and before calling Chroma get/delete",
+      "mem0/memory/main.py: guard empty list in delete_all instead of IndexError and avoid false-success async delete",
+      "Add provider regression tests for compound-filter list and delete_all"
+    ],
+    "risks": [
+      "Track is llm_algorithm but work is ordinary vector-store API plumbing, outside allowed algorithm scope",
+      "PR #60 (maintainer-owned) already contains a real Chroma reproduction for the same compound-filter behavior",
+      "PR #7647 and PR #7599 overlap on the same code paths and get_all semantics",
+      "Only a limited scalar-equality control was validated; general operators and backend-error handling untested"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the linked check_compound_filters.py harness against pinned main to confirm 4 passed / 4 failed",
+      "Apply equality-normalization control and confirm 8 passed",
+      "Add regression test asserting two targets deleted, three controls retained, two SQLite DELETE rows"
+    ],
+    "unknowns": [
+      "Whether PR #60 or #7647 already covers the root cause and would make this duplicate",
+      "Whether maintainers consider this in-scope for the llm_algorithm track or would reject as plumbing",
+      "Whether the accepted-issue label requirement is met"
+    ],
+    "why": "The issue is a vector-store adapter bug (raw compound filters forwarded to Chroma, swallowed validation error, false-empty list and false-success delete), not an LLM algorithm contribution. The supplied algorithm_evidence claims PEFT/model-architecture mechanisms via generic term matches ('adapter', 'normalization'), which is a misclassification. Reproduction and a concrete validation path exist, but the track mismatch and unresolved duplicate/overlap coverage (PR #60 maintainer-owned reproduction, PR #7647 flat-list change, PR #7599 get_all overlap) leave actionability uncertain."
   },
   "c8f81218ff5272b946e1317e33e6d86a21e6a6246c0ff56e9945d502b44c79d9": {
     "confidence": 0.8,
