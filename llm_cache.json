@@ -18930,6 +18930,40 @@
     ],
     "why": "Issue provides a precise root cause (arity mismatch between _on_deferred_native_stream_complete and _deferred_stream_complete_args producers) and a concrete fix, but a recent comment states the bug is already fixed on main by PR #40869, with only a backport to rc/1.101.0 outstanding. Whether code work is actionable depends on whether the fix is truly merged and whether the remaining gap is a backport rather than a new implementation."
   },
+  "2097706f0803f802154c3d14aece13946099aea4d4b2337d78913edd273a5578": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/agent/component/begin.go: stop overwriting state.Sys[\"user_id\"] with business Begin inputs; keep the value as a node output",
+      "internal/agent/tool/canvas_ctx.go: ensure CheckCanvasDependencies uses the seeded authenticated identity, not a business-supplied field",
+      "internal/service/agent.go: confirm trusted identity seeding remains the single source of the authorization subject"
+    ],
+    "risks": [
+      "Changing Begin's Sys assignment could break workflows that intentionally relied on the business value propagating as identity",
+      "Fix must not weaken the dataset permission check for genuinely unauthorized callers",
+      "The nested permission error is masked by HTTP 200 / code 0, so tests must inspect nested run status rather than top-level code"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: seed an authenticated caller, invoke Begin with a different business user_id, assert state.Sys[\"user_id\"] still equals the authenticated identity",
+      "Assert the business user_id remains resolvable as a downstream node reference/output",
+      "End-to-end test: Begin -> Retrieval -> Message on a same-account private dataset with a business user_id input succeeds and returns chunks",
+      "Negative control: verify cross-account retrieval is still denied"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated on whether to rename the Sys key or namespace business inputs",
+      "Exact expected behavior for downstream references to the business user_id is not fully specified beyond 'remain available'"
+    ],
+    "why": "Issue pins a concrete root cause with code anchors: BeginComponent.Invoke writes business inputs[\"user_id\"] into state.Sys[\"user_id\"], and CheckCanvasDependencies later reads that same Sys field as the authorization subject, so a business field shadows the authenticated identity. Reproduction steps, an input-control comparison, and a suggested regression test are supplied; the only open PR is keyword-overlap-only and does not cover the same code path."
+  },
   "20980ee724d13a2dad1d2989e54311f6c92b610d2340c17cd448aef7abe56770": {
     "confidence": 0.82,
     "contradictions": [],
@@ -73580,6 +73614,40 @@
     ],
     "why": "Issue provides a concrete crash scenario with traceback frames and a clear dependency fix (raise hiredis minimum to 3.4.1). Existing PR #39768 is draft and lacks root-cause coverage, leaving room for a more complete contribution."
   },
+  "725b4c4e35c6df13d30667aa85bb49422b82e570f194d4ebb7dc9799604f24d1": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons in abort_request with exact rid equality, keeping abort_all as the explicit bulk path",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup aborts only the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: optionally namespace or validate server-side rid handling for isolation"
+    ],
+    "risks": [
+      "Changing prefix to exact equality may break intentional bulk-abort or chunked-request cleanup paths that rely on prefix matching; must audit all eight prefix comparisons",
+      "PD prefill/decode paths may use derived rids that require careful identity handling",
+      "Maintainer may prefer server-namespaced rids over exact-equality as the primary fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid 'X-victim' and an attacker request with rid 'X', disconnects the attacker, and asserts the victim reaches normal length finish rather than FINISH_ABORT",
+      "Add a negative control asserting a non-prefix attacker disconnect does not abort the victim",
+      "Add a unit test on Scheduler.abort_request verifying exact-equality matching across chunked, waiting, grammar, PD prefill, and PD decode request lists",
+      "Run the issue's PoC script against an isolated single-worker server and confirm victim_finish_reason is not 'abort'"
+    ],
+    "unknowns": [
+      "Whether any internal caller intentionally relies on prefix-based abort semantics (e.g., chunked or PD derived rids) that exact equality would break"
+    ],
+    "why": "Issue provides a concrete root cause: client-controlled rid is preserved in GenerateReqInput._normalize_single_inputs, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid) instead of exact equality, allowing cross-request aborts. Code anchors, an executable PoC, and a controlled test matrix (prefix vs non-prefix, exact-equality control, single-worker and 1P1D) establish both reproduction and validation path. No open PR or issue covers this fix; the only overlapping PRs are keyword-only matches with no code-path or mechanism overlap."
+  },
   "725df2130f6bf992b13b1b56864298a43c6feab710a86d552bc1077ead5d91c0": {
     "confidence": 0.85,
     "contradictions": [
@@ -95312,6 +95380,37 @@
       "Whether the repository's AI disclosure policy blocks an automated public contribution"
     ],
     "why": "Issue provides a concrete reproduction command, a full call-chain root-cause analysis, and a specific code anchor (forward_context.py:96 assertion) showing the dummy-run path passes num_tokens_across_dp=None, triggering an inconsistent DP all_reduce. This is a distributed-training invariant bug with a clear reference-vs-implementation validation path."
+  },
+  "9431bb03042e4091d4baf7303cb6088b610111255a71b491cbdd4327e5394fa1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "MooncakeKVManager.start_prefill_thread: validate/authenticate sender and bound nested-buffer count before parsing",
+      "KVArgsRegisterInfo.from_zmq: enforce nested-buffer and frame-size limits",
+      "decode_kv_args_table: add table size cap and expiry for registrations"
+    ],
+    "risks": [
+      "Tightening validation could break legitimate Decode registration if limits are too strict",
+      "Authentication changes may require protocol/version coordination with Decode workers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_oom.py against a memory-limited Prefill cgroup and confirm registrations are rejected without OOM",
+      "Regression test that a 100,000-buffer nested frame is rejected before list materialization",
+      "Verify normal Decode registration and routed completions still succeed after the fix"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer authentication vs. resource-limit-only mitigation"
+    ],
+    "why": "Issue provides a concrete, reproducible unauthenticated ZMQ registration path in MooncakeKVManager.start_prefill_thread that materializes nested buffers via KVArgsRegisterInfo.from_zmq and retains entries in decode_kv_args_table without limits, with executable repro, cgroup OOM evidence, and a clear validation path (reject before materialization/retention)."
   },
   "9438268e994ab870a70eca57e0a02f850981afe23ffb6dbf826fab672270c7e8": {
     "confidence": 0.55,
@@ -124917,6 +125016,42 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a clear root cause and stack trace for a crash in DCP planner when extend_prefix_lens is None during DSPARK target-verify. However, existing PR #34432 has semantic overlap with the code path and key terms, and the issue itself is a bug report without a proposed patch. The deterministic gate is HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. Therefore, a maintainer must decide whether the existing PR already addresses this issue or if a new PR is needed."
   },
+  "c41b63cf6673ce4555788b06f08337ca38104524b6777d077601daa14de965bc": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: request construction to select Responses API when reasoning+tools enabled, or pass reasoning_effort none",
+      "response parsing and streaming/tool-call continuation for Responses API",
+      "pre-execution validation with actionable error for unsupported model/endpoint/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API adaptation touches request, parsing, streaming, and tool-call continuation, expanding scope",
+      "Potential overlap with open PR #20161 (Bedrock GPT-6 routing) though different provider/path",
+      "Potential behavioral overlap with issue #21145 on tool pass-through semantics",
+      "Exact effective reasoning config unconfirmed, may affect which fix branch applies"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: gpt-6-luna with tools and reasoning enabled routes through Responses API and completes tool call",
+      "Regression test: gpt-6-luna with tools and explicit reasoning_effort none via Chat Completions succeeds",
+      "Unit test: unsupported combination yields clear validation error before request"
+    ],
+    "unknowns": [
+      "Exact effective reasoning_effort value in the failing deployment",
+      "Whether reasoning_effort none workaround actually succeeds",
+      "Whether maintainers prefer Responses API migration vs. validation-only fix"
+    ],
+    "why": "Issue provides a concrete HTTP 400 reproduction with the exact OpenAI error, a named code anchor (internal/entity/models/openai.go), and a clear expected behavior: route reasoning+tools to Responses API or allow reasoning_effort none. This is an actionable provider-adapter fix with a defined validation path, though the exact effective reasoning config was not captured and the 'none' workaround is unconfirmed."
+  },
   "c4216ecaecf18c02b813e4ad049b170bc4b95e44e6c0c4e75846b7ec1afb2719": {
     "confidence": 0.85,
     "contradictions": [],
@@ -130273,6 +130408,39 @@
       "Maintainer preference on the protocol extension shape and whether to split the three layers into separate issues"
     ],
     "why": "Issue requests reject-with-reason feedback to the model. Triage and an independent collaborator verification both anchor the gap in concrete code: ToolConfirmationPayload.cancelMessage exists (tools.ts:1062) but no UI sets it; coreToolScheduler.ts:4356-4360 falls back to 'User did not allow tool call'; resolvePermissionOutcome (permissionUtils.ts:230-235) collapses the ACP response to an enum with no reason. The ACP response-level _meta extension point is already live on this exact response (bridgeClient.ts:578-593, bridgeTypes.ts:1093-1102), so no upstream protocol change is required. This is a concrete, actionable code change with a clear validation path."
+  },
+  "cb04f162525b59e58740da9d80159b149ba7f7112945fb4e1adb1e0c2b06eafe": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate expected_changes describe streaming state propagation, but the issue reports a gateway-wide upstream 400 model-unavailable error",
+      "Candidate gate_decision is ALLOW_TO_WORK while actionability_evidence.root_cause_signal is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No concrete client-side module identified; the failure is upstream gateway model availability, not a code path in packages/ai or packages/sdk"
+    ],
+    "risks": [
+      "Attempting a code change would likely mask or misattribute an operational outage",
+      "The candidate's expected_changes are inconsistent with the issue's actual symptom",
+      "No maintainer confirmation that this is a code-fixable defect rather than an infra incident"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Cannot construct a reference-vs-implementation regression test because the failure is a remote service outage; a local failing test would only mock the 400 response, not validate a fix"
+    ],
+    "unknowns": [
+      "Whether any client-side code path is responsible for the 'Model is unavailable' response",
+      "Whether maintainers consider this an infra incident rather than a code defect",
+      "Whether a reproducible local failure can be established without the live gateway"
+    ],
+    "why": "The issue describes a gateway-wide upstream outage (HTTP 400 'Model is unavailable' from the hosted zen endpoint) with no code-level root cause. The candidate's own actionability evidence sets root_cause_signal=false, and the expected_changes (streaming chunk/finish/tool-call state propagation) do not match the reported symptom, which is a server-side model availability failure, not a client streaming bug."
   },
   "cb099e3b3736cf4f6cada4e94c859062c3a3f82bbffa878e7b56e271cb42a539": {
     "confidence": 0.6,
