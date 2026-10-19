@@ -90647,6 +90647,40 @@
     ],
     "why": "Issue #1464 documents seven concrete resource-leak sites with executed reproductions, file:line anchors, and observed leftovers; maintainer confirmed the sweep site was fixed by merged PR #1640 and explicitly released the remaining six sites as unclaimed, each independently actionable. The candidate's algorithm_evidence (post_training_objective, PEFT, distributed_training, etc.) is misapplied: this is CLI/resource-lifecycle plumbing, not an LLM algorithm mechanism, so the llm_algorithm track framing is not supported by the evidence."
   },
+  "8d38aa64eabb98122f4f9a6aaae35fb9dfb75bfd724b57ddbfd41e0ec9667632": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: request construction to select Responses API or explicit reasoning_effort none when tools are enabled",
+      "response parsing and streaming for Responses API tool-call continuation",
+      "pre-execution validation with actionable error for unsupported model/endpoint/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API migration touches streaming and tool-call continuation, widening blast radius beyond a minimal fix",
+      "Successful execution with reasoning_effort none is unconfirmed in the reporter's deployment",
+      "Maintainer may prefer one of the two fix directions, affecting scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test that builds a chat request for gpt-6-luna with tools and reasoning enabled and asserts the adapter does not emit an unsupported reasoning_effort on /v1/chat/completions",
+      "Add a test for explicit reasoning_effort none with tools through Chat Completions",
+      "Add a test for Responses API request/response parsing including tool-call continuation",
+      "Add a validation test asserting a clear error for unsupported combinations"
+    ],
+    "unknowns": [
+      "Whether the adapter currently sends reasoning_effort by default or only when configured",
+      "Whether reasoning_effort none actually resolves the failure in this deployment"
+    ],
+    "why": "Issue provides a concrete HTTP 400 error, expected/actual pair, reproduction steps, and a named code anchor (internal/entity/models/openai.go) where chat request construction and response parsing would need adaptation. The root cause is partially established: the adapter uses /v1/chat/completions with reasoning_effort while function tools are enabled, which OpenAI rejects for gpt-6-luna. Two reasonable fixes exist (route to Responses API or allow reasoning_effort none), and the issue explicitly notes Responses support requires request/response/streaming/tool-continuation changes. No duplicate or merged fix covers this; PR #20161 is keyword-only overlap on a different provider path (Bedrock Converse)."
+  },
   "8d393878c57c4bfaaa2c182456ccde3b2c30ce9669c85dfd26ba4b0af0735a7c": {
     "confidence": 0.8,
     "contradictions": [],
@@ -144560,6 +144594,42 @@
       "Whether the maintainers prefer building the kernel for sm_110a versus adding a runtime fallback; the exact cubin compilation flags for the wheel."
     ],
     "why": "The issue provides a clear root cause: the capability guard checks symbol presence and device capability but not cubin arch coverage, causing a kernel launch failure on sm_110a. The reproduction is concrete (exact command and traceback), and the suggested fixes are actionable. The algorithm track is satisfied because the issue involves a fused kernel for GDN linear attention with MTP, a model architecture and numerical path, and the validation path is a direct runtime test on the affected hardware."
+  },
+  "e1ac1149579a1cc25c6db68ecbc03f859e0d29a93c4fcc22330f619eb901e459": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue body states public issue #41474 and unmerged fix PRs #41481/#41502/#43476 described the same root cause, while open_pr_assessment and related_issue_assessment report none found"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace prefix startswith comparisons in abort_request with exact rid equality for ordinary aborts",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup aborts only the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: consider server-namespaced rid handling for additional isolation"
+    ],
+    "risks": [
+      "Intentional bulk-abort semantics may rely on prefix matching; fix must keep abort_all separate and explicitly authorized",
+      "Chunked/PD/grammar/waiting/running paths each have their own prefix comparison and must all be updated consistently",
+      "Server-namespaced rid changes could alter API-visible behavior for clients that rely on supplied rid"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid 'X-victim' and an attacker request with rid 'X', disconnects the attacker, and asserts the victim reaches normal length finish rather than FINISH_ABORT",
+      "Add a unit test on Scheduler.abort_request asserting a prefix rid does not cancel a non-equal active request",
+      "Run the issue's PoC script against a patched single-worker server and confirm victim_finish_reason is not 'abort'",
+      "Run targeted scheduler/tokenizer_manager unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether the referenced prior PRs #41481/#41502/#43476 are still open or were closed without merge, which affects duplicate coverage"
+    ],
+    "why": "Issue provides a concrete root cause: client-supplied rid is preserved in GenerateReqInput._normalize_single_inputs, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid) instead of exact equality, enabling cross-request aborts. Code anchors, a runnable PoC, and a controlled test matrix (including exact-equality control showing 0/5 aborts) establish both reproduction and validation path."
   },
   "e1c2e68e14193b0cf2be359ec940a10ce8f25aec3ac9b67afe99d034299832d5": {
     "confidence": 0.8,
