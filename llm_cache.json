@@ -6310,6 +6310,37 @@
     ],
     "why": "Issue reports a tool call error when switching moe-runner-backend from marlin to flashinfer_mxfp4, but lacks a minimal reproduction and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
   },
+  "0aac7de14c089ae5a0a41e98ec5e9c65d86b707a17fec6729d64aa2cadb1985a": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels this NEW_CLEAN_CANDIDATE with no duplicate, but the bot comment identifies it as a duplicate of #55476"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code change for this issue; the fix belongs in #55476 (session ID validation/affinity header handling in packages/core/src/session/affinity.ts)"
+    ],
+    "risks": [
+      "Fixing only the fork path would leave the underlying imported-session rejection in place",
+      "Changing affinity header behavior could affect provider cache routing for legitimate forks"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add the empty-fork A/B case as a regression test in #55476: fork a session with a non-native source ID and assert the affinity header does not carry the invalid ID",
+      "Verify a native-format session ID passes the free-tier gate while an imported non-native ID is rejected"
+    ],
+    "unknowns": [
+      "Whether #55476 is still open and unfixed",
+      "Whether the maintainers want the fork-propagation detail folded into #55476 or tracked separately"
+    ],
+    "why": "The supplied evidence already identifies the root cause and a covering issue: the free-tier gateway rejects non-native session IDs, and forks propagate the source session ID via x-opencode-session/x-session-affinity headers in packages/core/src/session/affinity.ts. The bot comment explicitly marks this as a duplicate of #55476, which covers the same cause; this report only adds the fork-propagation detail. The work is therefore already covered, so it is low value as a separate contribution."
+  },
   "0ac11f7f32dfbb6fec4eec749973875d881676b0fab6d73d93a02a062d790cc3": {
     "confidence": 0.8,
     "contradictions": [
@@ -152724,6 +152755,37 @@
       "Whether PR #35645 will be updated with tests and merged before a new contribution"
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to re-check the updated chunk budget before scanning the waiting queue, causing unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the existing budget_state() already signals exhaustion, making the fix actionable."
+  },
+  "ea98187265d69096705a370b659161a8330da64a75e9fe6b9c59289e0397540e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body asserts pinning fixes it, but open PR #56855 already implements that same one-line fix, leaving no clear independent implementation space"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "github/action.yml: replace actions/cache@v4 with a full-length commit SHA reference"
+    ],
+    "risks": [
+      "PR #56855 may already resolve this, making a new contribution redundant",
+      "Pinning to a SHA requires tracking upstream cache action updates"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Enable require-SHA-pinning on a test repo and run a workflow using anomalyco/opencode/github@<SHA>; confirm setup no longer fails",
+      "Static check that github/action.yml contains no tag-based uses: references"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to merge PR #56855 or prefer a different SHA/pinning approach",
+      "Whether the duplicate PR is considered sufficient coverage"
+    ],
+    "why": "The issue clearly identifies the root cause: github/action.yml uses actions/cache@v4, a tag rather than a full-length commit SHA, which blocks repos enforcing GitHub's require-SHA-pinning policy. However, an open PR #56855 already directly covers this exact fix (pinning actions/cache to a commit SHA), and the duplicate status is human_review_required. The candidate's own pre-review also failed with reproduction_or_validation_missing. The unresolved duplicate/coverage question materially determines whether independent code work is actionable."
   },
   "eaa43ccde1d9d2fe7793ea2dafa1d2ac7f0f897bb418202a993d367211b757ec": {
     "confidence": 0.9,
