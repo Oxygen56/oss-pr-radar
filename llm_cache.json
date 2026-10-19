@@ -48927,6 +48927,38 @@
     ],
     "why": "Issue identifies a concrete bug: DFlash draft model hardcodes is_neox_style=True instead of inheriting target's RoPE layout, causing silent acceptance drop. Root cause is clear from code snippet and measured performance regression. Fix is localized and testable."
   },
+  "4ec804755c56cdf8a2640d116ec78e8ec9b1739130b0ef6397a19897b45d66f4": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: detect gpt-6-luna + tools + reasoning_effort != none on Chat Completions and either set reasoning_effort to none or emit actionable validation error",
+      "Agent node tool-calling request construction path to surface the unsupported-combination guidance before execution"
+    ],
+    "risks": [
+      "Silently overriding user-requested reasoning_effort may be undesirable; prefer explicit validation/guidance",
+      "Full Responses API support is a larger change and should not be conflated with the minimal fix",
+      "Exact effective reasoning_effort in the reporter's deployment was not captured, so the trigger condition needs confirmation in code"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: build a Chat Completions request for gpt-6-luna with function tools and reasoning_effort set, assert reasoning_effort is forced to none or a clear validation error is returned",
+      "Regression test: gpt-6-luna with tools and reasoning_effort none produces a valid request payload",
+      "Negative test: unsupported combination yields actionable error message rather than raw HTTP 400 passthrough"
+    ],
+    "unknowns": [
+      "Whether the adapter currently sets reasoning_effort by default or only when user-configured, which determines the exact trigger condition",
+      "Whether maintainers prefer the reasoning_effort:none validation path over Responses API routing for this issue"
+    ],
+    "why": "Issue provides a concrete HTTP 400 error, expected/actual pair, reproduction steps, and a named code anchor (internal/entity/models/openai.go) where the Chat Completions request is built. The root cause is well-scoped: the adapter sends function tools with a non-none reasoning_effort to /v1/chat/completions for gpt-6-luna, which the API rejects. Two reasonable fixes exist (route to Responses API or force reasoning_effort none), and the issue explicitly notes Responses support requires request/response/streaming/tool-continuation changes, so the minimal actionable path is the reasoning_effort:none validation/override. No duplicate or merged-fix coverage; the only related PR (#20161) is keyword-overlap only on Bedrock routing and does not cover this path."
+  },
   "4ed460cf80bbd028590339823dcc56851cb383a47fce9bc6719aa796cf0c05a2": {
     "confidence": 0.8,
     "contradictions": [],
@@ -131843,6 +131875,40 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a WSL2 CUDA IPC crash with a concrete repro and a proposed auto-detection fix. However, PR #35259 has semantic overlap on the same code path and is still draft, requiring manual comparison to avoid duplicate work."
+  },
+  "ce1521e9705263ad52a0065a8bfe7b2ac2eaf502893d3549f97b479fec142134": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons with exact rid equality for ordinary aborts",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup aborts only the exact request identity",
+      "Keep any intentional bulk-abort (abort_all) path separate and explicitly authorized"
+    ],
+    "risks": [
+      "Changing prefix matching to exact equality may break any internal callers that intentionally rely on prefix-based bulk abort",
+      "PD/router deployments may pass transformed or namespaced rids, so exact-match semantics must be verified across prefill/decode paths",
+      "Security-sensitive change may warrant maintainer design review on whether server-namespaced rids are also desired"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid '<prefix>-victim' and an attacker request with rid '<prefix>', disconnects the attacker, and asserts the victim reaches normal length finish rather than FINISH_ABORT",
+      "Add a negative control where attacker rid is not a prefix of the victim rid and assert no abort",
+      "Add a test asserting abort_all still cancels all requests while a non-abort_all abort with a short rid cancels nothing else",
+      "Run the targeted scheduler/tokenizer_manager unit tests and the PoC script against an isolated server"
+    ],
+    "unknowns": [
+      "Whether any internal code path intentionally depends on prefix-based abort semantics beyond abort_all"
+    ],
+    "why": "Issue provides a concrete root cause: client-controlled rid is preserved in GenerateReqInput._normalize_single_inputs, delayed disconnect cleanup calls abort_request(obj.rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid), enabling cross-request aborts. Code anchors, an executable PoC, and a controlled 5/5 vs 0/5 test matrix with an exact-equality control establish both reproduction and validation path."
   },
   "ce1b33906ae41d87ca25366e7392dde974ff895547568d654c9e9ea8f3ba40fa": {
     "confidence": 0.85,
