@@ -30478,6 +30478,44 @@
     ],
     "why": "Issue provides a concrete reproduction (DGD with replicas:0 on Grove-backed multinode component), the exact admission webhook error, and a specific code anchor (deploy/operator/internal/dynamo/graph.go) where component.Replicas is passed unchecked and minAvailable is hardcoded to 1. This is a user-visible operator bug with a clear reference-vs-implementation validation path (apply the YAML, observe webhook rejection, then verify the fix renders a valid PCS or rejects at admission)."
   },
+  "3129d889c1f2dbf6f81168f71b281f9495539a2bcb40899f40e7f7633088ca4c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body claims a keyword scan finds no open PR fixing this defect, but open PR #5147 has the same title and overlapping ai-security-guard main.go path"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-security-guard/main.go: reject duplicated top-level messages before moderation/masking",
+      "plugins/wasm-go/extensions/ai-security-guard go.mod/go.sum: require/replace local pkg/jsonbody module",
+      "Add regression test for duplicate-messages 400 and single-messages unchanged behavior"
+    ],
+    "risks": [
+      "PR #5147 may already implement this exact fix, making the task duplicate",
+      "Behavior change rejects previously-forwarded ambiguous requests",
+      "Dependency wiring for local jsonbody module could conflict with existing module setup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Plugin test host (go mode and compiled-Wasm): duplicate top-level messages body returns 400 with 'duplicate \"messages\" member in request body', no moderation call, no forwarding",
+      "Single messages body still dispatches moderation and applies mask rewrite",
+      "checkRequest:false still forwards untouched",
+      "Malformed JSON skips the check and falls through to existing validation",
+      "Run existing ai-security-guard test suite"
+    ],
+    "unknowns": [
+      "Whether PR #5147 fully covers the duplicate-messages guard in ai-security-guard main.go",
+      "Whether the repository requires assignment before work (policy status needs_assignment, no assignees)",
+      "Whether a public minimal reproduction exists beyond the issue's described plugin-host reproduction"
+    ],
+    "why": "The issue gives a clear root cause (gjson reads first duplicate top-level messages while upstream parsers keep the last, enabling a guardrail bypass) and a concrete fix path via jsonbody.DuplicateTopLevelMember in onHttpRequestBody. However, the supplied evidence shows an open PR #5147 with the same title and overlapping ai-security-guard main.go path, and the duplicate status is 'semantic_overlap_requires_review' with no resolution. Whether that PR already covers this exact fix determines whether new code work is actionable, so this is a materially blocking unknown."
+  },
   "313a2336d5d09dafa2c250f1489749dc267149e6808b06f92ed40205b1381701": {
     "confidence": 0.7,
     "contradictions": [],
