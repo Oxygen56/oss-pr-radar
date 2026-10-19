@@ -12243,6 +12243,40 @@
     ],
     "why": "The issue is a release-qualification report for stock 1.4.2, and the reporter explicitly states the fix (PR #12100, commit a97afd2d) is already merged on main but not an ancestor of tag v1.4.2. The remaining work is a backport/support-boundary decision, not a new code contribution; the supplied evidence does not establish whether a backport is wanted or whether the merged fix already covers this case, which materially determines actionability."
   },
+  "14ea641858440ae4bee0eb9f951b6419065e7fa0996c6bf4bf7ce3025fe0668a": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue asserts clear root cause but evidence flags root_cause_signal=false and rootCauseCoverage=false",
+      "Open PR #4470 already covers the described fix while candidate is framed as competition opportunity"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "MinerU protocol detection attaches configured API key header",
+      "PingMinerU connection test path",
+      "MinerUReader.Read parsing path"
+    ],
+    "risks": [
+      "Duplicating open PR #4470's fix",
+      "Broadening API behavior beyond header attachment"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing test where /v1/health returns 401 without Authorization and 200 with Bearer key",
+      "Regression test for PingMinerU and MinerUReader.Read behind authenticating gateway"
+    ],
+    "unknowns": [
+      "Whether PR #4470 fully resolves the issue or has gaps worth competing on",
+      "Confirmation that detectMinerUProtocol is the sole failing path"
+    ],
+    "why": "Issue describes a plausible root cause (detectMinerUProtocol omits Authorization header), but supplied evidence marks root_cause_signal=false and rootCauseCoverage=false, and an open PR #4470 already targets the same fix with tests and passing checks. Whether independent code work is actionable depends on unresolved duplicate coverage and missing root-cause confirmation."
+  },
   "1507a269398aba85debbe3190419aeadc9eee5c456e88a3d92881096308537fe": {
     "confidence": 0.85,
     "contradictions": [
@@ -15606,6 +15640,42 @@
       "Whether SM120 hardware is available for validation"
     ],
     "why": "The issue describes a concrete SM120 sparse-MLA gap for rope-free MLA (qk_rope_head_dim=0), but the supplied evidence shows unresolved duplicate/overlap coverage: PR #15 ('Make the rope-free MLA path work on SM12x', 3 test files, overlapping vllm/platforms/cuda.py) and PR #54929 (SM12x sparse-MLA fallback) both semantically overlap and are not linked to the issue. The duplicate status is explicitly 'semantic_overlap_requires_review', and the pre-task policy is 'ai_disclosure_conflict' with reproduction_or_validation_missing. These are materially blocking unknowns for deciding whether new code work is actionable."
+  },
+  "1a913019f228b43b4d347d3c6f3a73a15001e1be4f6312cd938b99d8c096b1d6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter claims oc:// handler not proxying /api is root cause; maintainer states renderer calls server cross-origin and server allows oc://renderer, so missing proxy is probably not the cause",
+      "Reporter's 2.0.22 DirectoryNotFoundError matches #50951, suggesting the real failure is folder-related rather than protocol-related"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/desktop/src/renderer/startup/root.ts",
+      "packages/app/src/runtime/extension/root.tsx"
+    ],
+    "risks": [
+      "Fixing a non-existent oc:// proxy problem would be wasted or harmful work",
+      "Actual cause may be the missing-project-folder 500 path already tracked in #50951",
+      "ELECTRON_RENDERER_URL is dev-only and not a valid long-term fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on 2.0.32 with all project folders present and no ELECTRON_RENDERER_URL; capture DevTools Network 404 request URLs including host/port",
+      "Compare against sidecar direct curl to /api/model to confirm whether the renderer request reaches the server",
+      "Verify whether the failure is the #50951 DirectoryNotFoundError path rather than a protocol/proxy issue"
+    ],
+    "unknowns": [
+      "Exact 404 request URLs (host/port) and whether they reach the sidecar",
+      "Whether a clean 2.0.32 launch with all folders present still reproduces the empty picker",
+      "Whether the failure is the #50951 DirectoryNotFoundError path or a distinct renderer networking bug"
+    ],
+    "why": "The reporter's proposed root cause (oc:// static handler not proxying /api) is directly contradicted by the maintainer bot: the renderer is designed to call the local server cross-origin with its full address, and the server already allows oc://renderer origin, so the missing proxy is likely not the cause. The maintainer also asks for the exact 404 URLs, log lines, and a clean 2.0.32 reproduction, and points to #50951 (DirectoryNotFoundError) and #56479 as more likely matches. The root cause is therefore unresolved and the reproduction is incomplete."
   },
   "1aa7ddca57603a6f8f4861c4d09f73f494607eb046b80218a7c00b7492d2ccaa": {
     "confidence": 0.85,
@@ -61099,6 +61169,39 @@
     ],
     "why": "Issue describes a concrete, reproducible FP8 KV cache startup OOM on a 24 GiB GPU with a specific mechanism: profile_cudagraph_memory() underestimates CUDA graph capture cost, so KV cache sizing (~19.93 GiB) plus graph capture (~0.80 GiB) exceeds the gpu_memory_utilization budget. Suggested fix (account for actual graph capture cost, including KV-block dependence, or re-adjust cache after capture) is actionable. No duplicate/merged fix is established: open PRs #60186, #60367, #60143 are keyword-only overlaps with no direct code-path or semantic overlap. The ai_disclosure_conflict policy is a submission-process constraint, not a technical blocker for private work."
   },
+  "5f5d8a00215faa370353e5b2598f3fe0c2e8e6a13598c4467f3a94ebc1bd8318": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/base_aws_llm.py: stop restoring non-Bearer incoming Authorization over the fresh SigV4 signature",
+      "Preserve AWS_BEARER_TOKEN_BEDROCK bearer-token passthrough behavior",
+      "Retry path in llm_http_handler.py: ensure re-signed request carries the fresh signature after thinking-block strip"
+    ],
+    "risks": [
+      "Broadening the change could alter header-forwarding behavior for x-forwarded-* or other unsigned headers",
+      "Bearer-token detection via string prefix may miss other non-SigV4 auth schemes",
+      "No maintainer design confirmation on the exact fix shape"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that calls _sign_request with an incoming stale SigV4 Authorization and asserts the outgoing Authorization differs from the incoming one and matches the new body",
+      "Add a regression test that the strip-and-resign retry in _async_post_anthropic_messages_with_http_error_retry sends a signature consistent with the stripped body",
+      "Add a test that a Bearer Authorization is still preserved",
+      "Run targeted bedrock unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different fix location (e.g., retry loop clearing Authorization) rather than _sign_request"
+    ],
+    "why": "Issue pinpoints the root cause in BaseAWSLLM._sign_request: incoming SigV4 Authorization is restored over the fresh signature on the strip-and-resign retry, so the stale signature covers the pre-strip body. Concrete code anchor, instrumented payload-hash evidence, ordered reproduction, and a proposed minimal diff with end-to-end verification are all supplied; no competing PR covers this path."
+  },
   "5f6d16a9a85fab552d345aecacc994a06baf5c8d3402e0f09237b8cad829ea3f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -80229,6 +80332,41 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue describes a streaming protocol violation on the Zen gateway for muse models, with a clear expected/actual pair and reproduction steps. However, the root cause is not identified (gateway-side vs upstream provider), and the repository is a client (opencode) while the bug appears to be in the gateway service. No code anchors or maintainer confirmation exist, and the suggested fix is speculative."
+  },
+  "7b7387bc88c25ab921423d9e7295e6cefd2bd624363e9fbe47fe02d584c3b297": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/pgvector.py: guard conn.rollback() in _get_cursor except block (psycopg2 and psycopg3 paths) so the original exception propagates",
+      "mem0/vector_stores/pgvector.py: discard broken connections via putconn(conn, close=True) instead of returning them to the pool",
+      "mem0/vector_stores/pgvector.py: add one-shot retry on connection-level errors (OperationalError/InterfaceError) on a fresh connection, or enable psycopg3 ConnectionPool check=ConnectionPool.check_connection"
+    ],
+    "risks": [
+      "Retry-on-write safety depends on the failed attempt not having committed; must scope retry to pre-commit connection-level failures",
+      "Enabling psycopg3 check= adds a round trip per checkout, which interacts with the round-trip concern in #7678",
+      "Behavior change in error surfacing may affect callers relying on current exception types"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that terminates the store's backend (pg_terminate_backend on its application_name) and asserts the next get()/search() either succeeds on a fresh connection or raises the real server-side error, not 'connection already closed'/'the connection is lost'",
+      "Run the provided p3_stale_conn_repro.py for both --driver psycopg2 and --driver psycopg3 and confirm no masked __context__ error and no lost first call",
+      "Run targeted pgvector vector-store unit tests and static checks on the modified module"
+    ],
+    "unknowns": [
+      "Issue author states they did not personally reproduce it (AI-run), though full pasted outputs and a runnable script are provided",
+      "No maintainer design preference recorded on retry vs. pool check= approach"
+    ],
+    "why": "Issue gives a concrete, code-anchored root cause in mem0/vector_stores/pgvector.py: unguarded conn.rollback() in _get_cursor's except block masks the real OperationalError/AdminShutdown, plus no dead-connection detection/retry on pooled connections. Reproduction is executable (p3_stale_conn_repro.py) with expected/actual pairs across both psycopg2 and psycopg3, and a commenter supplies a concrete fix sketch (guard rollback, putconn(close=...), one-shot retry). No duplicate PR/issue coverage found."
   },
   "7b752f743fe525ff37ae02d56a89727736cf8ec0bdb1999b6b2b250f6735fec5": {
     "confidence": 0.55,
