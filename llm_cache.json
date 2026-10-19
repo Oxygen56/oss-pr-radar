@@ -24077,6 +24077,44 @@
     ],
     "why": "Issue #6001 provides a concrete reproduction and root cause for SarvamRealtimeSTTService losing transcription after a dropped/failed websocket. However, two open PRs (#6031 and #6032) already target the same code path and semantics, and the duplicate status is 'semantic_overlap_requires_review'. Whether those PRs already cover the root cause is unresolved, which materially affects whether new code work is actionable."
   },
+  "27ebf08b9d4a0246c7edfe0f5b8218585afcbb095a06a80a9c955fc5ce07f199": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body claims a keyword scan of open PRs/issues finds no fix, but open PRs #5138 and #5136 are titled 'reject request bodies with a duplicated top-level messages member'"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-search: call jsonbody.DuplicateTopLevelMember(body, \"messages\") in onHttpRequestBody after enablement check and before query extraction",
+      "Return 400 with jsonbody.DuplicateMemberMessage(\"messages\") and ActionPause on positive verdict",
+      "Add require/replace wiring for the local plugins/wasm-go/pkg/jsonbody module",
+      "Add regression test for duplicate-messages rejection and single-messages unchanged behavior"
+    ],
+    "risks": [
+      "PR #5138 and #5136 appear to implement the same duplicate-messages rejection; new work may duplicate an existing fix",
+      "PR #5106 touches the same file (streaming buffer) and could conflict",
+      "Behavior change: clients sending duplicated members now get 400 instead of silent misrouted search"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Plugin test host (go mode and compiled-Wasm mode): body with two top-level `messages` members returns 400 with 'duplicate \"messages\" member in request body', no engine call, no forward",
+      "Body with one `messages` member: query extracted, engines called, prompt rewritten as before",
+      "defaultEnable:false without web_search_options: body forwarded untouched",
+      "Malformed/incomplete JSON: duplicate check skipped, existing validation decides"
+    ],
+    "unknowns": [
+      "Whether PR #5138 or #5136 already fully implements the ai-search duplicate-messages guard and tests",
+      "Whether the repository requires issue assignment before a PR (policy status needs_assignment, no assignees)",
+      "Whether maintainers have a preferred implementation boundary between #5138 and #5136"
+    ],
+    "why": "The issue gives a clear root cause (gjson reads the first duplicate top-level `messages` while upstream parsers keep the last, so ai-search searches the wrong conversation and drops the augmentation) and a concrete fix reusing the #5124 jsonbody helper. However, three open PRs (#5138, #5136, #5106) semantically overlap the same ai-search request-body path, and the duplicate status is 'semantic_overlap_requires_review' with no direct code overlap confirmed. Whether #5138/#5136 already implement this exact guard determines whether new code work is actionable, so this is a materially blocking unknown."
+  },
   "27ec4110829a9597c29194bc3d72dd421e5c7a6b0a31ae534fd6ce321b54df63": {
     "confidence": 0.7,
     "contradictions": [],
@@ -43374,6 +43412,33 @@
     ],
     "why": "The issue reports a CUDA illegal memory access in the GDN kernel with multiple reproductions, but the root cause is unclear and may involve multiple paths (e.g., FlashInfer allreduce fusion, GDN prefill, or speculative decoding). Existing PRs overlap semantically but none directly reference the issue, and the deterministic gate requires HUMAN_REVIEW. The candidate is algorithmically relevant but needs maintainer confirmation and comparison with existing PRs."
   },
+  "466ba8b3fc23eb29c01f0e707b93770311c1bced1cf59d8e0c04c58abedaeeba": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate marks root_cause_signal true and probe_ready true, but the only supplied root-cause evidence is an upstream error string, and the maintainer bot attributes it to service/account support rather than repository code."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Attempting a code change would be speculative and could alter provider routing behavior without evidence.",
+      "Issue is already covered by several duplicate reports and is pending closure."
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No in-repo regression test is feasible; the failure depends on upstream provider geo-routing and account state."
+    ],
+    "unknowns": [
+      "Whether any repository code path (model listing vs. routing) actually contributes to the mismatch is unestablished."
+    ],
+    "why": "The error is an upstream provider region restriction surfaced through the OpenCode Go service, not a code defect in the repository; the maintainer bot explicitly routes this to account/service support and cites multiple duplicate reports (#41518, #43565, #47439, #44768, #40162). No code surface or reproducible in-repo root cause is established."
+  },
   "4681c5e8bae01ccc8a34f9f64a01070153a32ee00af72dc3c13c6a7caa50294c": {
     "confidence": 0.6,
     "contradictions": [
@@ -44757,6 +44822,41 @@
       "Whether the issue is limited to media generate or also affects media wait, as maintainer asked; this affects the scope of the fix but does not block actionability."
     ],
     "why": "Issue provides a clear Windows-specific bug with reproduction steps, a working workaround, and maintainer confirmation that the gap is real and actionable. The root cause is likely PowerShell stdout capture failure when invoking the Electron/Node runtime directly, and the fix path is concrete."
+  },
+  "48b02624dd6aae8a24f4fb8df6dbde07dda1181e5325dbc4fabb9bc9df33c5d0": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims keyword scan finds no open PR fixing this defect, but open PR #5140 titled 'fix(ai-history): reject request bodies with a duplicated top-level messages member' appears to target the same fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-history: add DuplicateTopLevelMember guard at start of onHttpRequestBody",
+      "plugins/wasm-go/extensions/ai-history: wire require/replace for local jsonbody module",
+      "plugins/wasm-go/extensions/ai-history: add regression test for duplicate messages rejection"
+    ],
+    "risks": [
+      "PR #5140 may already implement this exact ai-history fix, making the task duplicate",
+      "Repository policy requires assignment (needs_assignment) and issue has no assignee",
+      "Pre-review flagged reproduction_or_validation_missing and duplicate_changed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Send body with two top-level messages members; assert 400 with 'duplicate \"messages\" member in request body', no Redis lookup, no forward",
+      "Send body with single messages member; assert unchanged question extraction, Redis lookup, history merge",
+      "Send malformed JSON; assert duplicate check skipped and existing validation applies",
+      "Run existing ai-history test suite"
+    ],
+    "unknowns": [
+      "Whether PR #5140 fully covers the ai-history guard described in the issue",
+      "Whether maintainers will assign the issue to enable submission"
+    ],
+    "why": "The issue describes a concrete gjson-first vs encoding/json-last ambiguity in ai-history and proposes reusing the jsonbody helper from #5124, but the supplied evidence shows three open PRs (#5140, #5138, #5147) with near-identical titles and semantic overlap, and the duplicate status is 'semantic_overlap_requires_review'. Whether #5140 already covers this exact ai-history fix is unresolved, which determines whether new code work is actionable."
   },
   "48bc56c6536379467cd316dfbe4e64456831fc86b044157d7f6ea5fe7c5f5af5": {
     "confidence": 0.85,
@@ -63926,6 +64026,35 @@
       "Whether maintainers have a preferred design (per-client cancellation vs endpoint-scoped sharing)"
     ],
     "why": "The issue identifies a concrete resource leak in the Rust runtime: each Endpoint::client() call spawns a reconciliation task that retains a clone of the Client, preventing garbage collection of per-client routing state. The root cause is clearly traced to monitor_instance_source_with_cancellation using primary_token() and cloning the Client. The expected behavior and reproduction steps are specific, and the fix is actionable without requiring design confirmation."
+  },
+  "640ff26827815fa518037e736c34afc34df2882a08ab453d098c64e196d72e7f": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.related_issue_assessment reports no related issues, but recent_comments identifies #53221, #56583, #53746 as duplicates/related"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "No new code work; covered by #53221/#56583/#53746"
+    ],
+    "risks": [
+      "Working on this would duplicate existing tracked issues",
+      "v1 is unlikely to receive non-critical fixes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Not applicable; duplicate coverage already established"
+    ],
+    "unknowns": [
+      "Whether maintainers intend any v1 forward-compatibility guard at all"
+    ],
+    "why": "The issue is a v1-vs-v2 schema mismatch crash already covered by duplicate #53221 (and related #56583, #53746), with a documented workaround (isolated XDG_DATA_HOME). The bot flagged it as a duplicate and it is pending close; v1 only receives critical fixes, so this is a low-value/covered opportunity."
   },
   "6424c6c98e827efd5e64d28d2b3a9b699b09693801673099aa53b69fe9d445e0": {
     "confidence": 0.82,
@@ -120633,6 +120762,42 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a runtime 400 error when using extra_body thinking with DeepSeek via react_agent, but lacks a minimal reproducible example and exact code. Comments suggest possible conversion issue but no confirmed root cause. Existing PR #8580 is closed and not merged, and repository requires assignment. No maintainer confirmation or design direction."
   },
+  "bcabb00354af0c9aa9ebe6b536207511e75c3e4e08fed900c5eb615712d75b35": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter's theory (missing reasoning_text) is plausible but all 6 mutated request shapes returned 200, so the theory is unconfirmed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/ai/src/protocols/open-responses.ts lowerReasoning: include reasoning_text content on full replay",
+      "incremental vs full replay mode selection after history rewrites"
+    ],
+    "risks": [
+      "Fix may not address the actual server-side reference invalidation",
+      "Behavior change to outbound reasoning payload could affect other providers",
+      "Existing PR #56879 overlaps the same file and may cover the root cause"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture outgoing request body of a failing continuation (redacted) and confirm full-replay vs incremental",
+      "Replay captured body against real DeepSeek/OpenCode Go endpoint to reproduce the 400",
+      "Add regression test asserting reasoning items include reasoning_text on full replay"
+    ],
+    "unknowns": [
+      "No captured failing request body",
+      "No server-side request_id lookup result",
+      "Whether PR #56879 already fixes the root cause",
+      "Whether re-sending reasoning_text actually avoids the 400 against the real API"
+    ],
+    "why": "The issue is a well-documented intermittent provider-side 400 on the Responses path, but the reporter explicitly states there is no minimal repro and that request-shape replay returns 200. The maintainer bot confirms it cannot reproduce and that whether re-sending reasoning_text fixes it must be tested against the real API. Root cause is unproven and validation requires provider accounts/request-id lookup that is unavailable."
+  },
   "bcb632be4de5f807d3f234d5536a1d74fb0e5e7e969d7106ae513234669a29bb": {
     "confidence": 0.8,
     "contradictions": [],
@@ -162158,6 +162323,47 @@
       "Whether PR #30967 or #32691 resolves this specific failure"
     ],
     "why": "Issue reports a reproducible CUDA illegal memory access near context boundary with NEXTN on Qwen3.5-397B, but root cause is unconfirmed and may relate to existing PR #32691 or #30967. The supplied gate says HUMAN_REVIEW, and open PRs overlap semantically, requiring maintainer comparison before new work."
+  },
+  "fa4b6a215e94b1d147c903e21b467670d3139db334e6fb48e60e935cbbb232b2": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states a keyword scan of open PRs/issues finds no fix for this defect, but open PR #5142 is titled 'fix(ai-cache): reject request bodies with a duplicated top-level messages member' with semantic overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-cache: guard at top of onHttpRequestBody calling jsonbody.DuplicateTopLevelMember(body, \"messages\")",
+      "plugins/wasm-go/extensions/ai-cache: skip guard when cacheKeyStrategy is disabled",
+      "plugins/wasm-go/extensions/ai-cache: return 400 with jsonbody.DuplicateMemberMessage(\"messages\") and ActionPause",
+      "plugins/wasm-go/extensions/ai-cache go.mod: add require/replace for local plugins/wasm-go/pkg/jsonbody module",
+      "plugins/wasm-go/extensions/ai-cache: regression test for duplicate-member rejection and unchanged single-member behavior"
+    ],
+    "risks": [
+      "PR #5142 may already cover the same root cause, making a new implementation duplicative",
+      "Repository requires assignment before work; no assignee is set",
+      "Adding a require/replace for the local jsonbody module could affect plugin build wiring",
+      "Behavior change rejects previously forwarded duplicate-member requests with 400"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that sends {\"messages\":[benign],\"messages\":[malicious]} and asserts 400 with 'duplicate \"messages\" member in request body' and no cache callout",
+      "Assert a single-messages body still derives the key, performs lookup, and stores on a miss",
+      "Assert cacheKeyStrategy: disabled forwards the duplicate body untouched",
+      "Assert malformed/incomplete JSON skips the check and falls through to existing validation",
+      "Run the ai-cache plugin test suite in go mode and compiled-Wasm mode"
+    ],
+    "unknowns": [
+      "Whether PR #5142 fully covers this issue's root cause and acceptance criteria",
+      "Whether the needs_assignment policy is satisfied or waived for this issue",
+      "Whether maintainers prefer #5142 over a separate implementation"
+    ],
+    "why": "The issue gives a clear root cause (gjson reads the first duplicate `messages` member while upstream parsers keep the last, so ai-cache keys on one conversation and stores the answer for another) and a concrete fix path (call jsonbody.DuplicateTopLevelMember in onHttpRequestBody, skip when strategy is disabled, return the #5124 400 shape). But two supplied facts block actionability: the repository policy is needs_assignment with assignmentRequired=true and no assignees, and open PR #5142 already implements the same ai-cache duplicate-messages guard (semantic_overlap_requires_review, 11 overlapping terms, 3 files, 120 additions, test file included). Whether code work is actionable depends on resolving that duplicate coverage and the assignment requirement."
   },
   "fa5db78981e87470ac8a1c48fbf83f41c0efa3fef3ebdee50269c4ea75f15eb2": {
     "confidence": 0.8,
