@@ -13417,6 +13417,45 @@
     ],
     "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied evidence contains a material unresolved duplicate/overlap: open PR #40897 is flagged as semantic_overlap_requires_review with overlapping code paths and the distinctive token reasoning_effort, and the pre-task duplicate status is semantic_overlap_requires_review. Whether that PR already covers the root cause determines whether new code work is actionable, so this is a materially blocking unknown rather than normal implementation uncertainty."
   },
+  "16d193651e64a795036923965963f34f63fc62944b6dbf8e490df443f2533cd6": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter says spin is tied to cwd=/home/user; A/B update says idle serve at /home/user is 0% and spin requires an attached session",
+      "Contributor links merged #55597 as a candidate fix but states it is unverified",
+      "Third commenter's Windows kernel-time-heavy fingerprint differs from the Linux userspace spin"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/config/plugin/compatibility.ts skill discovery/watch scope",
+      "packages/cli/src/cpu-profile.ts profiling path (validation only)",
+      "watcher lifecycle for removed directories (unconfirmed)"
+    ],
+    "risks": [
+      "Fixing the wrong path (skill loader vs watcher leak vs Windows backend) without a profile",
+      "Over-broad watcher changes altering file-picker behavior",
+      "Confusing the Windows kernel-time fingerprint with the Linux userspace spin"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture a .cpuprofile via `kill -PROF <service-pid>` during a spike and identify hot functions",
+      "Reproduce the session-attached spin with cwd=/home/user and compare against a dev build containing 49e9786bb72b0ad85969df4cd6bea3fea96d1a61",
+      "Add a regression test asserting idle `serve --service` CPU stays near zero with an attached session"
+    ],
+    "unknowns": [
+      "No CPU profile or stack sample identifying the hot code path",
+      "Whether #55597 / commit 49e9786 actually resolves the spin",
+      "Whether the watcher restart loop is causal or incidental"
+    ],
+    "why": "The issue documents a real 100% CPU busy-loop in `opencode serve --service`, but no root cause is established. The reporter could not capture a profile; a contributor points to the compatibility skill loader and merged PR #55597 as a candidate path but explicitly says they have not reproduced the spin or identified the cause. A third commenter describes a different Windows-only fingerprint. The candidate's own actionability evidence records root_cause_signal=false, and the algorithm_evidence is null, so no concrete mechanism or reference-vs-implementation test is supplied."
+  },
   "16d8d49fe4a101a088034adcc6e87190aabff6ef45e53657a5deff4c373f92e5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -24556,6 +24595,42 @@
       "Maintainer-preferred fix shape (cache-layer coverage tracking vs. speculator-side masking)"
     ],
     "why": "Issue describes a plausible draft-KV/prefix-cache corruption mechanism with code anchors and a workaround (#47926) that recovers acceptance, but the reporter explicitly states they have not pinned which step registers unwritten draft-group blocks, and asks maintainers where drafter coverage can lapse. The proposed fix shape is undecided, and the related-issue assessment flags a potential duplicate (#55238) sharing stack/failure signatures. Policy evidence also reports an AI-disclosure conflict, which is a materially blocking unknown for public action."
+  },
+  "280dec89c41231c4dff331aa573b9bf34a67402fa77c057c78ba8788d07adef9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "desktop-backend start/resume path (K3c): stop duplicating initialMessages into config",
+      "hub runtime client frame builder (Tqi): ensure sessionConfig does not re-include initialMessages",
+      "error surfacing: map 'Received too big message' to a user-visible session-too-large error"
+    ],
+    "risks": [
+      "Fix touches minified desktop-backend bundle; source-of-truth location must be confirmed",
+      "Removing config.initialMessages could break a consumer that reads it from config rather than top-level",
+      "Other double-serialized fields may remain (qR/Tqi audit needed)",
+      "Underlying unbounded transcript growth (inline base64 media) remains a latent issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that builds a session.create frame from a session with initialMessages and asserts the frame does not contain the transcript twice",
+      "Regression test: session with ~8.16 MiB messages produces a frame under the 16 MiB hub limit after fix",
+      "Control test: trimmed 3.38 MiB payload still creates session successfully",
+      "Integration/probe against hub client: oversized frame yields a surfaced 'session too large' error rather than generic 1006"
+    ],
+    "unknowns": [
+      "Whether the minified desktop-backend/index.js maps to an editable source path in the repo",
+      "Whether any hub-side consumer depends on config.initialMessages"
+    ],
+    "why": "Issue provides a concrete, measured root cause: the desktop sidecar serializes the full transcript twice into one session.create frame (inside config via qR and again as top-level initialMessages), doubling an 8.16 MiB transcript to 16.33 MiB and exceeding the hub's 16 MiB uWS maxPayloadLength. Reproduction is explicit (live hub, frame-size measurements, trimmed-payload control) and a minimal one-line fix plus validation path are given."
   },
   "2817e41041fdf4a9488c22bf833b1080521972eaf3461b5a4b5c35b6084eaafa": {
     "confidence": 0.8,
@@ -66819,6 +66894,42 @@
     ],
     "why": "Issue #5035 is a follow-up tracking item whose two main gaps (JSONC-preserving cleanup and pre-mutation OpenCode settings validation) were already fixed by merged PRs #5052 and #5053, as confirmed by the maintainer comment. Remaining work is residual ownership-writer cleanup and an upstream Engram dependency explicitly marked not fixable here, so the actionable surface is largely covered."
   },
+  "6820286c1b5cde2675a963a517185d14c80b45b05d0ba4e645493ba3062c3376": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body provides a concrete dummy-credential repro, but actionability_evidence reports public_repro_signals=0 and reproduction_evidence empty"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Capture writer: redact or omit payload.preview in full mode, or make text preview opt-in",
+      "Env-var/tool policy: require explicit confirmation for machine-level env writes and enabling capture",
+      "Auto-approve default posture surfaced to user"
+    ],
+    "risks": [
+      "Redaction helper may not cover all credential formats present in message arrays",
+      "Changing auto-approve defaults could break existing workflows",
+      "Scope spans capture, tool policy, and UI; may need maintainer design input"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Set CLINE_CAPTURE_PROVIDER_REQUEST=full with a dummy credential in context, run a file-read session, assert the dummy value does not appear in *.ai_sdk_prompt.*.provider-request.json payload.preview",
+      "Regression test that summary mode still writes only metrics/hashes",
+      "Test that setting user-level env vars via tool requires confirmation under default policy"
+    ],
+    "unknowns": [
+      "Exact source file/module implementing the capture writer and readCaptureMode()",
+      "Whether the shipped redaction helper covers message-array payloads",
+      "Whether maintainers consider the auto-approve default in scope for this fix"
+    ],
+    "why": "The issue describes a real security/privacy defect: CLINE_CAPTURE_PROVIDER_REQUEST=full writes unredacted payload previews containing credentials, and auto-approve defaults let the agent set machine-level env vars silently. However, the supplied actionability evidence marks reproduction_or_validation_missing (public_repro_signals=0, probe_ready=false, root_cause_signal=false), and the code anchors are session IDs and env-var strings rather than confirmed source locations for the capture writer or redaction helper. The suggested fix (reuse existing redaction helper) is plausible but the exact module and behavior are not established by supplied evidence."
+  },
   "683299118fcf08738596f524968be4862b417d9fa3cfa212733d7f7d043f4607": {
     "confidence": 0.7,
     "contradictions": [],
@@ -82382,6 +82493,39 @@
       "Whether the ai_disclosure_conflict policy permits an automated contribution at all"
     ],
     "why": "Issue reports run-to-run logprob divergence for identical batches on Qwen3.6-35B-A3B (hybrid GDN+MoE) with a concrete repro script and code anchors, but the supplied evidence contains a material contradiction: the reporter frames the batch-repeat difference as a nondeterministic multi-sequence kernel defect, while a contributor's reproduction attributes it to engine-core request arrival timing (_process_input_queue) and shows batch2_repeat=0.0 with in-process engine, leaving only ordinary batch variance plus an unresolved FP8 GEMM divergence. Root cause is therefore not established, and the duplicate assessment flags semantic overlap with PR #55947 requiring human comparison."
+  },
+  "7e42636e90918b4e00ee62f272be3edb805fbfe87bacba6bc520594327edff0a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims agent/inference/RAG critical-path impact, but the issue is a TUI/client permission-payload validation error",
+      "Candidate marks root_cause_signal false while gate_decision is ALLOW_TO_WORK"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No confirmed OpenCode module change; likely OpenWork client payload fix, not this repo"
+    ],
+    "risks": [
+      "Fixing a non-existent OpenCode bug could break the v2 permission protocol",
+      "Issue may belong to the OpenWork project instead"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce in OpenCode's own TUI/desktop/web on 2.x by answering a permission prompt after cancelling a subagent",
+      "Capture the request body sent to POST /api/session/:sessionID/permission/:requestID/reply to confirm whether `decision` is present"
+    ],
+    "unknowns": [
+      "Whether the bug reproduces in OpenCode's own clients on 2.x",
+      "The actual request body sent by OpenWork",
+      "Whether the pending prompt after a cancelled subagent is the trigger"
+    ],
+    "why": "The report is a single unreproduced occurrence in a third-party bundled client (OpenWork). The maintainer bot's analysis attributes the missing `decision` key to the OpenWork client sending an outdated payload, not to an OpenCode defect; OpenCode's own clients already send `decision`. No root cause in this repo is established."
   },
   "7e729c92d762a857a1097595a739f38539eeb99455b05f885afd32c26da7823d": {
     "confidence": 0.85,
@@ -102537,6 +102681,39 @@
     ],
     "why": "Issue reports CUDA illegal memory access in GDN kernel with multiple reproductions, but root cause is unclear and multiple PRs overlap semantically. Gate says HUMAN_REVIEW, and existing PRs may already address the issue."
   },
+  "9d01d93e300801dd073eef51bb316f87971af558a958e4d6b02cfbcecf4ec0d6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "session.create frame construction in desktop sidecar: stop duplicating initialMessages inside config and as top-level field",
+      "surface actual 'payload too large' error instead of generic connection-ended message",
+      "optionally truncate/split/paginate oversized session state"
+    ],
+    "risks": [
+      "Fix location (desktop sidecar vs. hub limit) may need maintainer design preference",
+      "Trimming/pagination behavior could alter session fidelity if done incorrectly",
+      "Hub message-size limit may be intentionally enforced, requiring error-surfacing rather than payload reduction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a session whose messages.json exceeds ~8 MiB and confirm session.create frame exceeds 16 MiB and fails with 1006",
+      "After fix, assert frame size is ~1x messages.json and session.create succeeds for the same session",
+      "Regression test asserting initialMessages is not serialized twice in the session.create payload"
+    ],
+    "unknowns": [
+      "Whether the referenced focused report #15203 is open/merged and covers the same fix",
+      "Exact code location of the double-serialization in the desktop sidecar"
+    ],
+    "why": "Issue reports a concrete, reproducible failure (1006 'Received too big message' on large session resume) and a commenter supplies a measured root cause: the desktop sidecar serializes the transcript twice into one session.create frame, doubling frame size past the hub's 16 MiB inbound limit, with before/after byte measurements. This gives a clear code anchor and a concrete validation path (frame size vs. messages.json size, trimmed-session success)."
+  },
   "9d0704f4cb28bad7af56bd7009938919f2c0f6101a79a7d491ab414f957e858f": {
     "confidence": 0.8,
     "contradictions": [
@@ -103591,6 +103768,42 @@
       "Whether PR #7747 already fixes the same root cause in torch_sampling.py (it overlaps sampling_params.py and endpoint paths but direct_code_overlap is false and root_cause_coverage is false)"
     ],
     "why": "Issue provides a concrete numerical root cause: TorchSampling floors temperature to 1e-6 then divides logits in their original dtype, causing FP16 overflow to inf/NaN and BF16 tie collapse; FP32 promotion at softmax is too late. Reproduction uses a real FP16 GPTModel through the dynamic engine with explicit greedy controls, plus a finite-logit probe that isolates the arithmetic with deterministic probability vectors. This is a concrete numerical/sampling mechanism with a reference-vs-implementation validation path, matching track=llm_algorithm."
+  },
+  "9ea17491dc785a0259b536d60d087934212bde32f9eacc67fc460113d4b06235": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: stop trusting client-supplied bootstrap address; derive Prefill endpoint from server-side topology or validate against configured Prefill set",
+      "Avoid synchronous blocking fetch in shared Decode request processing path",
+      "sgl-model-gateway/src/routers/http/pd_router.rs and grpc/pd_router.rs: confirm bootstrap injection/overwrite behavior remains authoritative",
+      "Add regression test asserting attacker-selected bootstrap_host/port is rejected or ignored"
+    ],
+    "risks": [
+      "Fix may alter internal worker-to-worker bootstrap contract; must preserve legitimate Prefill discovery",
+      "Maintainer may prefer gateway-only enforcement vs worker-side validation",
+      "Runtime-tested only on v0.5.17; current main inspected but not executed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided poc.py with --delay-s 0 against isolated loopback PD deployment; assert canary receives zero /route requests and direct request does not 500 after ~14s",
+      "Run poc.py with --delay-s 2 and --gateway-url; assert concurrent normal request latency stays near baseline (~0.25s) rather than ~20s",
+      "Unit test try_ensure_parallel_info with unregistered bootstrap_addr expecting rejection/no outbound request",
+      "Negative control: request through official Gateway still returns 200 with zero canary hits"
+    ],
+    "unknowns": [
+      "Whether maintainers require worker-side validation vs gateway-only mitigation",
+      "Whether current main still reproduces at runtime (only source-inspected)"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and head-of-line blocking bug: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and issues a synchronous requests.get, with code anchors in conn.py and pd_router.rs, a working PoC, and measured latency impact. Root cause and validation path are established."
   },
   "9ed41ee46f2bb9856794228543909cf13d9abe9798db33cee69fb2f18b0d1e50": {
     "confidence": 0.8,
@@ -123536,6 +123749,37 @@
     "wait_reason": null,
     "why": "Issue describes a concrete protocol inconsistency in streaming Responses API: commentary SSE frames are dropped while the terminal payload retains the item. It includes a minimal reproduction, expected vs actual event sequences, and a validation plan. No competing PR or issue found. Root cause is not identified but the fix is actionable: enforce consistent passthrough or suppression policy."
   },
+  "bf6d468fbb0491ce7b6cd9e717ccaab81ccedc725e688db38f33b5dc3e64de69": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp/translate.ts: map SessionEvent.Renamed to a session_info_update notification with title and updatedAt",
+      "packages/cli/src/acp/service.ts: wire the bus subscription so renames are pushed to the ACP client",
+      "packages/cli/src/acp/replay.ts: emit one session_info_update with the loaded session's current title at replay start"
+    ],
+    "risks": [
+      "session_info_update is optional in ACP; maintainers may prefer a different notification shape or timing",
+      "Title generation can fail (e.g. insufficient funds), so the push must handle the timestamped fallback without emitting spurious updates",
+      "Avoid widening API behavior beyond the title push"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that drives a scripted ACP client through initialize/session/new/session/prompt and asserts a session_info_update with the generated title is received",
+      "Add a regression test for session/load replay asserting the current title is announced once",
+      "Run targeted unit tests for the ACP package plus static checks"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete reproduction (scripted ACP client, 3 runs, zero session_info_update), identifies the exact root cause (SessionEvent.Renamed published in packages/core/src/session/title.ts but never forwarded by the ACP adapter in packages/cli/src/acp/translate.ts/service.ts/replay.ts), and a maintainer bot confirmed the gap on current dev. Two prior PRs (#21111, #45536) were closed by automated cleanup bots, not substantive declines, so no merged fix covers this."
+  },
   "bf7a7492d3eaa127d552d503815d6210dab8778071dc4024972f8b10166ebc98": {
     "confidence": 0.7,
     "contradictions": [],
@@ -128542,6 +128786,38 @@
       "Whether PR #7647's flat-list change interacts with the compound-filter fix"
     ],
     "why": "The issue is a vector-store adapter bug (LangChain Chroma forwarding compound filters raw, swallowing validation errors as empty lists, causing false-empty get_all and false-success delete_all). Despite the llm_algorithm track label, this is ordinary provider-integration/API plumbing, not a training objective, model mechanism, distributed invariant, quantization method, kernel, or evaluation methodology. The algorithm_evidence 'mechanisms' (parameter_efficient_finetuning, model_architecture) are keyword matches on 'adapter'/'normalization' and do not reflect actual algorithmic content."
+  },
+  "c71b142c914eb1a104adcd2c3e151a5e285ed17c170dafe0d2b729a7c48d1507": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/constrained/xgrammar_backend.py: per-tool fallback on structural-tag compile failure (relax/drop failing tool schema) with warning log",
+      "Optional policy flag (fail/relax-tool/drop-tool) defaulting to current fail behavior",
+      "Model-agnostic unit test for schema compile fallback"
+    ],
+    "risks": [
+      "Relaxing schema loosens constraints; must confirm no malformed tool calls in smoke samples",
+      "Cold compile cost (~18s) for large tool sets may need caching consideration",
+      "Maintainer may prefer a specific policy/flag design"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: one tool with {\"type\":\"string\",\"pattern\":\"^(?!\\\\.)[a-z]+$\"} and tool_choice=auto at SGLANG_TOOL_STRICT_LEVEL=2 returns 400; assert 200 after fix",
+      "Regression: multi-tool set where one schema fails to compile still serves requests using remaining tools",
+      "Unit test dispatch_structural_tag fallback path with a mocked xgrammar compile error",
+      "Verify default fail policy preserves existing behavior"
+    ],
+    "unknowns": [
+      "Exact preferred flag naming/default semantics not confirmed by maintainer"
+    ],
+    "why": "Issue provides a concrete reproduction (single tool with negative-lookahead pattern at strict level 2 returns 400), a code anchor in xgrammar_backend.py dispatch_structural_tag where RuntimeError becomes InvalidGrammarObject, and a measured local patch showing the 177-tool set compiles with only the uncompilable pattern relaxed. This is a concrete, testable behavioral fix in the constrained-decoding path, not mere plumbing."
   },
   "c71f3556450680afc77d1ba1b29a127016a742e96710de4c5bbc9c521b43f6a2": {
     "confidence": 0.85,
@@ -154110,6 +154386,41 @@
       "Whether the maintainers prefer the minimal fix, read-side hardening, or the structural mixin refactor."
     ],
     "why": "The issue gives a clear, bisected root cause (borrowed Gemma4 methods read `_enable_mm_lora`, which DiffusionGemma never sets) and a concrete reproduction path, but the supplied evidence shows an open PR #54309 that already implements the fix on the same code path, and a contributor comment states a fix already exists there. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review', so whether independent code work is still actionable is unresolved. Additionally, the repository policy status is 'ai_disclosure_conflict', a materially blocking disclosure requirement."
+  },
+  "ec064bcb8f246b6cbb1ab25030233c33b53bee2049631e7cd4816fa5f91fca31": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "execute_command pre-flight validation/rewrite of known-unsafe CLI forms",
+      "execute_command stall/timeout detection and auto-recovery",
+      "warning surfacing when generated command matches forbidden .clinerules pattern"
+    ],
+    "risks": [
+      "Exact code anchor for the completion-marker handling is not identified in the issue",
+      "Behavior is Windows/PowerShell-specific and may be hard to reproduce in CI",
+      "Rewrite logic could over-broadly alter legitimate commands"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that feeds an inline multi-line --body command through the execute_command validation path and asserts it is rewritten to --body-file",
+      "Add a regression test that simulates a missing shell-integration completion marker and asserts the stall detector times out and recovers",
+      "Run targeted vitest suite for the terminal/execute_command package plus static checks"
+    ],
+    "unknowns": [
+      "Precise source location of the shell-integration completion-marker handling is not supplied",
+      "Whether maintainers prefer validation/rewrite vs timeout-detector approach"
+    ],
+    "why": "Issue documents a reproducible Windows PowerShell shell-integration stall tied to unsafe CLI command forms (inline --body, multi-line -m, unredirected streaming) and proposes concrete pre-flight validation/rewrite plus a stall/timeout detector for execute_command. Root cause is plausibly anchored in the terminal completion-marker path, though the exact code location is not pinned by the issue."
   },
   "ec1841e17d9bee2037a7685d2bedbc84059dc42e3d3ab6b80968817680cdc1f3": {
     "confidence": 0.85,
