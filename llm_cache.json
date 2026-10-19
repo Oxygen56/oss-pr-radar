@@ -106709,6 +106709,40 @@
     ],
     "why": "The issue clearly identifies an unbounded `while True` polling loop in ContextualAIParseTool._run() with a concrete root cause and a plausible fix, but the supplied evidence shows an open PR #7444 that already directly references this issue and implements a bounded poll timeout with tests. The duplicate/coverage status is 'weak_pr_competition_possible' with rootCauseCoverage=false, leaving unresolved whether the existing PR already covers the actionable fix. This materially affects whether independent code work is warranted."
   },
+  "a427eb62c0d6f8a08f5c33bc52b151dae5e7e689df5692be896be8d547c85749": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue body presents the bug as unfixed, but owner comments state #17031 and #17121 are integrated and address the SiliconFlow pricing/discovery path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "open-sse/config/freeModelCatalog.data.ts evidence metadata for remaining legacy rows",
+      "runtime policy for ID-only SiliconFlow discovery (regional/account-aware)"
+    ],
+    "risks": [
+      "Duplicating work already integrated in #17031/#17121",
+      "Overlapping with open #17124/#17138 audit PRs",
+      "Broad catalog-wide policy change without maintainer-agreed rollout"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Regression test that a positive per-token price vetoes a curated free row (already covered by #17121)",
+      "CI guard test requiring evidence metadata on new recurring-uncapped rows (covered by #17124)",
+      "Audit tests for remaining legacy catalog identities (covered by #17138)"
+    ],
+    "unknowns": [
+      "Whether any remaining acceptance criterion is unclaimed by #17124/#17138",
+      "Whether maintainers want an external contributor on the residual audit scope"
+    ],
+    "why": "The issue's core SiliconFlow billing bug is already addressed by integrated PRs #17031 and #17121 (per owner comments), and the remaining catalog-wide evidence-policy scope is being handled by open PRs #17124 and #17138. The residual work is a broad, policy-level audit of 60+ legacy catalog identities plus a regional/account-aware discovery enhancement, not a single actionable code fix. This is also provider-catalog/configuration plumbing rather than an algorithm contribution, so it is low-value/covered for this radar."
+  },
   "a4284d967a499038b2f0cef8c6aaec18012a110ca1e74ab24fbe2d1a4873dc62": {
     "confidence": 0.7,
     "contradictions": [],
@@ -120446,6 +120480,42 @@
       "Whether any open PR directly fixes this issue (none reference it)"
     ],
     "why": "Issue provides a concrete traceback, exact repro command, and a specific root cause: ModelOptNvFp4FusedMoEMethod.apply() dispatch guards read the live global moe_runner_backend via properties while the error message and cache use the per-layer cached value, so under --speculative-adaptive (speculative backend triton) the guard is False and the error prints the backend already in use. Suggested fix (use the local moe_runner_backend in the guards) is concrete and testable. Open PRs are only semantic-overlap references, not direct fixes for this issue, so no duplicate coverage is established."
+  },
+  "badae54ea1ac3c3d321c355c43c6476b08ff59724ff80b7ef944172f55498b05": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter says autoinvoke:false causes load failure; maintainer bot reproduced successfully with autoinvoke:false and says the tool ignores autoinvoke"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "skill tool load-by-ID path (only if reproduction confirms autoinvoke gating)",
+      "skill registration/discovery rescan behavior (alternative root cause)"
+    ],
+    "risks": [
+      "Fixing a non-existent autoinvoke gate would change documented behavior without cause",
+      "Actual bug may be in skill discovery/rescan, not the skill tool",
+      "Permission or file-read failures could be misattributed"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Restart OpenCode including background service, create hidden skill, call skill tool with {id: hidden-test}, verify load",
+      "Check GET /api/skill and debug logs (skill source loaded / skill file skipped) to confirm registration",
+      "Compare behavior with autoinvoke true vs false on a freshly restarted service"
+    ],
+    "unknowns": [
+      "Whether failure persists after full service restart",
+      "Whether hidden-test appears in GET /api/skill",
+      "Exact tool error and skill location/config (XDG_CONFIG_HOME, skills array)",
+      "Whether #52701 or #56102 is the actual cause"
+    ],
+    "why": "The reporter claims autoinvoke:false blocks explicit loading, but the maintainer bot could not reproduce it and states the skill tool never reads autoinvoke; the failure is more likely skill registration/discovery (#52701) or a permission/read error. Root cause is unresolved and the two accounts contradict each other."
   },
   "bae1d293215547b5ee1208dfa25d60301ddf55da36326669f34dcf07808e085c": {
     "confidence": 0.6,
