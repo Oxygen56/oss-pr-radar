@@ -82871,6 +82871,41 @@
     ],
     "why": "The report is a single unreproduced occurrence in a third-party bundled client (OpenWork). The maintainer bot's analysis attributes the missing `decision` key to the OpenWork client sending an outdated payload, not to an OpenCode defect; OpenCode's own clients already send `decision`. No root cause in this repo is established."
   },
+  "7e6b13e016d6f5ea0efb11744e16d109620071d71f0a26e7592bb291b7b6781a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR #4470 is marked technical_complete with tests but root_cause_coverage false, while the issue itself states a clear root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docparser MinerU protocol detection: attach Authorization: Bearer <apiKey> to the /v1/health probe when a key is configured",
+      "PingMinerU connection test path to use the authenticated probe",
+      "MinerUReader.Read path to use the authenticated probe"
+    ],
+    "risks": [
+      "Overlapping open PR #4470 may already implement the same fix",
+      "Behavior change for endpoints that reject unexpected Authorization headers",
+      "Scope creep into broader MinerU API changes beyond the header fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test with an httptest server that returns 401 unless Authorization: Bearer <key> is present, asserting detectMinerUProtocol succeeds when a key is configured",
+      "Regression test that no Authorization header is sent when no key is configured",
+      "Run targeted docparser package tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #4470 will merge before independent work lands",
+      "Whether maintainers prefer a specific header-handling approach"
+    ],
+    "why": "Issue pinpoints a concrete root cause: detectMinerUProtocol probes GET /v1/health without the configured Authorization header, so authenticating gateways return 401 and both PingMinerU and MinerUReader.Read fail. Reproduction steps, expected/actual behavior, and logs are supplied. Open PR #4470 covers the same fix but is not merged, so competition is possible rather than blocking."
+  },
   "7e729c92d762a857a1097595a739f38539eeb99455b05f885afd32c26da7823d": {
     "confidence": 0.85,
     "contradictions": [
@@ -83852,6 +83887,43 @@
       "Whether the fix is already merged and if the issue is still open; need to check current repository state."
     ],
     "why": "Issue provides a clear root cause (schema validation error not retried in context compression), a concrete reproduction path, and expected behavior. Maintainer confirms it was fixed in 2.0.7 via PR #2140, indicating the issue is valid and actionable. The candidate is a bug fix opportunity with clear validation path."
+  },
+  "8035aead30384e6a6d53469f854b44511776087a29b626b3b9644424d7c5a240": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body claims a keyword scan finds no open PR/issue for the duplicated stream member, but open PR #5149 has the identical title and overlapping path",
+      "Issue body presents a reproduced failure and validation path, while actionability evidence reports reproduction_or_validation_missing and probe_ready=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-proxy/main.go: add jsonbody.DuplicateTopLevelMember(body, \"stream\") guard after the existing model guard, returning 400 with DuplicateMemberMessage(\"stream\") and ActionPause",
+      "plugins/wasm-go/extensions/ai-proxy/test/: regression test for duplicated stream member and unchanged single-member behavior"
+    ],
+    "risks": [
+      "Open PR #5149 has the same title and overlapping path and may already implement this fix, making new work duplicative",
+      "Repository policy requires assignment (needs_assignment) and the issue has no assignees",
+      "Behavior change rejects previously forwarded requests, so scope must stay limited to the duplicated-member case"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Send a body with \"stream\": false then \"stream\": true and assert 400 with 'duplicate \"stream\" member in request body' and no provider forwarding",
+      "Send a single-stream OpenAI-protocol body and assert stream_options.include_usage injection, Accept header, and first-byte timeout are unchanged",
+      "Send a non-JSON body and assert the duplicate check is skipped and existing validation decides",
+      "Run the existing ai-proxy plugin test suite"
+    ],
+    "unknowns": [
+      "Whether PR #5149 already fully covers this fix and should be reviewed instead of new work",
+      "Whether the repository assignment requirement can be satisfied for this issue",
+      "Whether the #5124 jsonbody helper is actually available at the base SHA 43ad04ee"
+    ],
+    "why": "The issue gives a concrete root cause (gjson reads the first duplicate top-level `stream` while upstream parsers keep the last) and a concrete fix path reusing the #5124 jsonbody helper, but the supplied evidence is contradictory on actionability: the candidate is flagged needs_assignment with reproduction_or_validation_missing, and an open PR #5149 with the identical title and overlapping path (plugins/wasm-go/extensions/ai-proxy/main.go) may already cover the same fix. Whether code work is actionable depends on resolving the assignment requirement and the duplicate-PR coverage."
   },
   "803e1ea3290cdb9d948b0bbba5fb621767710dd3d967c3ac34a5d54ad8f30936": {
     "confidence": 0.7,
@@ -111259,6 +111331,44 @@
       "Whether paid models are affected (reporter could not verify due to usage cap)"
     ],
     "why": "Issue reports a reproducible config-defined permission bug: a `shell: deny` (or broader `action: \"*\"` deny) rule on a config-defined agent causes session creation to fail with a misleading free-tier error. A commenter traced the likely mechanism to `Permission.disabled()` in packages/opencode/src/permission/index.ts stripping all tools, which then produces an empty `tools` field in the request built by session/llm/request.ts. The reproduction is concrete (3/3, bisected to the deny rule), and the code anchors are supplied. The remaining uncertainty is the gateway-side rejection behavior, which is outside this repo and does not block a local fix or regression test."
+  },
+  "aaae86b379a506b4943dc73a3cdcf9154ddb206b373259097242be202ea6a4c5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter describes a reproducible flow, but the maintainer bot could not trigger the false prompt on v2.0.32",
+      "Candidate claims root-cause/key-path coverage while open_pr_assessment reports rootCauseCoverage=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/location-activity.ts: re-sync on session.moved even when directory is unchanged",
+      "TUI recovery flow: clear error locally when chosen directory equals current directory instead of enqueueing a move",
+      "Surface error.cause in the location-unavailable prompt"
+    ],
+    "risks": [
+      "Root cause is inferred from source reading, not instrumented; the actual failing request is unknown",
+      "Behavior may differ on current 2.x releases versus the dev-channel build",
+      "Overlapping open PRs #55258 and #55940 target the same trigger, risking duplicate work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the false prompt by forcing a single location sync endpoint to return an HTTP error, then verify the prompt appears",
+      "With a long-running step active, choose the same directory and assert the prompt clears without waiting for the step boundary",
+      "Regression test that session.moved with an unchanged directory triggers a re-sync and clears error"
+    ],
+    "unknowns": [
+      "Which specific location sync request fails and with what status when the prompt appears",
+      "Whether the bug still occurs on a current 2.x release",
+      "Whether the existing PR #56987 or #55258/#55940 already resolve the same-directory recovery path"
+    ],
+    "why": "The issue offers a plausible source-reading hypothesis (LocationProvider only clears error inside sync(), and same-directory moves never re-trigger sync), but the maintainer bot could not reproduce the false prompt at all, and the reporter's trigger (hourly eviction sweep on a shared service) was not simulated. Reproduction is unconfirmed, so the fix target is not established."
   },
   "aad108cf94879fa8ddf4e6ced68f411ec57a665306feae8b2a2e040201288bee": {
     "confidence": 0.82,
