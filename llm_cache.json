@@ -2826,6 +2826,41 @@
     ],
     "why": "Issue provides version-paired reproductions for both providers: Claude Code 2.1.251+ drops TodoWrite in favor of TaskCreate/TaskUpdate (CLAUDE_CODE_ENABLE_TASKS=false restores it), and Codex 0.153.4+ makes update_plan opt-in via tools.update_plan.enabled. Code anchors (anthropic-provider.ts builtinTools, codex-app-server-provider.ts buildThreadConfigurationOverrides) and a concrete validation path (tool-list assertion plus plan-update event regression) are supplied, so the work is actionable without maintainer pre-approval."
   },
+  "05948866d1ff717457c21eaec368a58150231a59950fc35553294faec29c7824": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured Prefill set or derive from server-side topology instead of trusting request fields",
+      "Avoid synchronous blocking HTTP fetch on shared Decode request path (timeout/async or cached parallel-info)",
+      "Consistent handling across disaggregation backends (mooncake/ascend/mori/base/fake conn.py) and gateway pd_router paths"
+    ],
+    "risks": [
+      "Tightening validation could break legitimate direct-worker deployments that rely on client-supplied bootstrap metadata",
+      "Fix scope may span multiple transfer backends and the Rust gateway, increasing blast radius",
+      "Maintainer may prefer a specific design (auth vs allowlist vs topology-derived) affecting implementation shape"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test that calls try_ensure_parallel_info with an unconfigured bootstrap_addr and asserts no outbound HTTP request is made",
+      "Regression test that a configured Prefill address still resolves parallel info successfully",
+      "Run the issue's loopback PoC with --delay-s 0 and assert canary receives zero hits and request does not 500",
+      "Run matched --delay-s 2 vs 0 latency comparison to confirm shared-path blocking is removed"
+    ],
+    "unknowns": [
+      "Whether direct Decode worker APIs are intended to accept client bootstrap metadata at all, which determines allowlist vs removal approach",
+      "Whether maintainers require a specific validation mechanism (auth token, configured Prefill set) before accepting a fix"
+    ],
+    "why": "Issue pins a concrete sink in CommonKVManager.try_ensure_parallel_info() where client-supplied bootstrap_host/port are used to build a synchronous requests.get URL, with runtime reproduction on v0.5.17 (canary hits, 14s/30s blocking, 82x latency inflation) and a negative control showing the Gateway overwrites the fields. Code anchors and a runnable PoC give a clear reference-vs-implementation validation path."
+  },
   "05b2723286658721bf7dee7c9f672802a8a45df487096f97f7cbc7fc10ae9e49": {
     "confidence": 0.7,
     "contradictions": [],
@@ -6225,6 +6260,48 @@
       "Whether PR #5185 will be updated with tests or merged soon."
     ],
     "why": "Issue provides clear reproduction steps, exact error logs, and identifies the root cause: Unix-style binary path in Playwright webServer command on Windows. A concrete fix is suggested (use pnpm exec). Existing PR #5185 attempts the fix but lacks tests, leaving room for a more complete contribution."
+  },
+  "0a4731d03592cedea10287bac77e0805dc6f7a1952c2730272bc4d81701e842b": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue says fix belongs on writer side and should build on #14841, but #14841 is an open maintainer-owned reader-side PR not yet merged; composition/ordering unresolved",
+      "Duplicate status is 'semantic_overlap_requires_review' (best_score 64) while related issue #14834 shows 94 semantic overlap — coverage boundary unclear",
+      "Triage comment states #14841 does not reach the scan-cap drop, so a writer-side fix scoped only to trimIndexToBudgetDetailed would be incomplete"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/memory/index-budget.ts: thread dropped-entry count/names into the stamped notice",
+      "packages/core/src/memory/structured-scan.ts: surface the MAX_SCANNED_MEMORY_FILES file_limit drop so the notice can name scan-cap evictions",
+      "packages/core/src/memory/indexer.ts: assembleIndex must emit a notice carrying count and names",
+      "Optionally wire post-write rebuild into nonInteractive/headless session path"
+    ],
+    "risks": [
+      "Writer-side change may conflict with or duplicate open maintainer PR #14841 (reader-side, same files)",
+      "Notice wording asserting '(the oldest)' is inaccurate on the char-budget backfill path",
+      "Scan-cap drop layer is not covered by #14841 and may be missed if only trimIndexToBudgetDetailed is threaded",
+      "Headless rebuild wiring is a separate, larger scope change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test in index-budget.test.ts asserting the notice includes dropped count and names when the char budget trims entries",
+      "Add a test in indexer.test.ts covering the scan-cap drop (200+ topic files) producing a named notice",
+      "Regression test that the char-budget backfill path does not assert an oldest-first order it cannot guarantee",
+      "Run targeted package unit tests and static checks for packages/core/src/memory"
+    ],
+    "unknowns": [
+      "Whether maintainer intends #14841 to land first and whether a separate writer-side PR is wanted",
+      "Whether issue #14834 is a duplicate or a distinct reader-side report that should be closed by the same change",
+      "Whether the headless rebuild wiring is in scope for this issue or a separate follow-up"
+    ],
+    "why": "The issue describes a concrete writer-side silent-drop bug with named code paths (index-budget.ts, structured-scan.ts, indexer.ts) and a triage comment confirming the root cause statically. However, the supplied evidence contains a materially blocking contradiction: open PR #14841 is a maintainer-owned, open, reader-side fix that the issue itself says must be built upon ('implement the writer-side named-drop notice on top of #14841's trimIndexToBudgetDetailed'), and the triage comment notes the fix must also cover the scan-cap drop that #14841 does not reach. Whether #14841 lands first, and how the writer-side change should compose with it, determines whether independent code work is actionable or duplicative. The duplicate status is 'semantic_overlap_requires_review' with best_score 64, and the related issue #14834 has 94 semantic overlap. These unresolved coverage/composition questions are blocking unknowns, not normal implementation uncertainty."
   },
   "0a4ac8b4b7346ac989d82d68c9156d254bf895bbab86a139e8f3b07b67d42960": {
     "confidence": 0.7,
@@ -110251,6 +110328,41 @@
     "unknowns": [],
     "why": "Issue is self-resolved by the reporter: root cause was a missing set_offloader call in the 0.27.1 release, already fixed by PR #51413 and verified working on 0.29.0. Reporter explicitly says 'Fine to close.' No remaining code work is actionable."
   },
+  "a777fa63d06bd1ce0fec6412388bbbc10e758e0f8baea1e24082ce81adf4a27c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Persist creatorIDs in URL query state alongside category and keywords in web/app/components/apps/query-params.ts",
+      "Initialize and sync creator filter from query params in web/app/components/apps/list.tsx",
+      "Ensure list requests include creator_ids when the filter is set and omit it when cleared"
+    ],
+    "risks": [
+      "Exact deployed version and browser not reported, so behavior may differ across versions",
+      "Query-param persistence must not break existing category/keywords handling or deep links",
+      "Avoid expanding API behavior beyond the existing creator_ids filter"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test reproducing: select creator(s), navigate to a workflow, return to Studio, assert filter and list remain filtered",
+      "Cover single and multiple creator selections",
+      "Cover return via Studio navigation and browser Back",
+      "Cover explicitly clearing the filter and asserting creator_ids is omitted",
+      "Run targeted web unit tests and static checks for the apps list components"
+    ],
+    "unknowns": [
+      "Exact deployed version and browser version not provided"
+    ],
+    "why": "Issue gives ordered reproduction, expected/actual behavior, and a concrete root cause: creatorIDs lives in local component state in web/app/components/apps/list.tsx while category/keywords persist via web/app/components/apps/query-params.ts, so remount resets the filter. API already supports creator_ids, so a minimal fix is actionable."
+  },
   "a7b1b1eb06f03cefedb27ecd538e5fac8c5d5dd6009430917791d62430acd750": {
     "confidence": 0.85,
     "contradictions": [],
@@ -128412,6 +128524,40 @@
     ],
     "why": "Issue reports a misleading LLMAuthenticationError masking a LiteLLM proxy DB connectivity failure, but the reporter explicitly states there is no minimal deterministic repro and the failure may be intermittent/proxy-health dependent. No code anchor in OpenHands is identified; the error originates in the LiteLLM proxy layer, so the actionable code surface is unclear."
   },
+  "c53039a09e07f52b3563bfe44423bd8ea24f49e2559891d2d65b32220e7040a8": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP catalog-discovery path: do not skip per-user-auth servers solely for missing static authentication_token",
+      "Preserve credential requirement and forwarding for authenticated tool execution",
+      "Optionally surface a clear limitation when upstream discovery itself requires auth"
+    ],
+    "risks": [
+      "Fix could accidentally bypass authentication for tool execution if scope is not limited to discovery",
+      "Maintainer may prefer an explicit config option over default behavior change",
+      "Exact discovery code path not confirmed by supplied evidence"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test: configure HTTP MCP server with auth_type: authorization and no authentication_token, call GET /mcp-rest/tools/list, assert tools are listed",
+      "Regression test: authenticated POST /mcp/{alias} with x-mcp-{alias}-authorization still requires and forwards the user token",
+      "Test that servers with a static authentication_token continue to behave unchanged"
+    ],
+    "unknowns": [
+      "Exact function/module in the discovery path that performs the missing-credential check",
+      "Whether maintainers want default behavior change vs. opt-in config flag"
+    ],
+    "why": "Issue provides a concrete reproduction (auth_type: authorization with no static authentication_token, GET /mcp-rest/tools/list returns 200 but omits tools) and a plausible root cause: the catalog-discovery path rejects/skips servers lacking an upstream credential. Code anchors authentication_token and auth_type are supplied, and a local workaround scoping the skip to discovery-only is described. This is an actionable bug fix with a clear validation path, though the exact code location is not yet pinned."
+  },
   "c5335861e4c4d234f495ddb8300bde02756db2706e340f9f0773dc75db5af34c": {
     "confidence": 0.6,
     "contradictions": [
@@ -134268,6 +134414,39 @@
       "Whether PR #2648 already implements an equivalent identity-based validation, which would make a competing fix redundant"
     ],
     "why": "Issue provides a concrete, reproducible root cause: SOPEngine restores SOPStepRunState by list index and only rejects runs when step counts differ, so same-length reorders silently misassign persisted progress. Expected behavior (reject state for reordered steps, keep backward compatibility for states lacking step identities) is well-defined and testable. Track is agent_ai_infra, not llm_algorithm, so algorithm-specific rejection does not apply. Open PR #2648 is directly related but has no root-cause coverage evidence and no direct code overlap, leaving room for a more complete fix."
+  },
+  "cc93102208727d03d1c78714d0585b655e6548004fa8876ebf029d7f2dc0908d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Related issue #13011 is flagged as potential overlap but describes an unrelated desktop message-rendering bug"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "crates/goose/src/agents/platform_extensions/developer/tree.rs: bound or skip pseudo-file reads in count_file_lines",
+      "collect_tree: avoid classifying procfs pseudo-files as safe-to-read files"
+    ],
+    "risks": [
+      "Skipping pseudo-files may change tree output for legitimate procfs users",
+      "Read-budget approach needs a defined truncation/line-count semantics",
+      "Assignment/Ready-board requirement is unmet, so code work is not yet authorized"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Regression test invoking tree on /proc/self with a bounded memory budget and asserting no unbounded read",
+      "Unit test for count_file_lines on a large single-line file and on a zero-size pseudo-file",
+      "Targeted cargo test for the developer extension package"
+    ],
+    "unknowns": [
+      "Whether the issue will be assigned and moved to Ready on the Goose Issues board, as the repository policy requires"
+    ],
+    "why": "The issue gives a concrete root cause (fs::read_to_string in count_file_lines reading procfs pagemap to EOF) and a reproduction, but the repository policy requires assignment before implementation and the issue is unassigned; the issue body also explicitly says not to begin implementation until it reaches Ready on the project board. The related issue #13011 is a different desktop chat-rendering bug, not a duplicate of this procfs OOM."
   },
   "cc9accb934572a0bd63827dfbf2a1349b149640ceaa235668b082b7599f3bc63": {
     "confidence": 0.55,
@@ -144360,6 +144539,42 @@
       "Whether #7933 merging would change the required scope"
     ],
     "why": "The issue's mechanism (nested ToolSearchMatch TypedDict lacks extra='allow') is concrete and code-anchored, but the supplied evidence contains a direct contradiction on reachability: the bot status comment states all five production construction paths emit name-only matches and divert provider extras to provider_details, so no framework-emitted persisted history can carry extras, and the issue's reproduction synthesizes the lossy state itself. The issue's 'gap in PR #7933' premise is also stale since #7933 is open/unmerged. This unresolved reachability/contract question determines whether the one-line hardening is owed by any contract or merely optional, so it is materially blocking rather than normal implementation uncertainty."
+  },
+  "db5235e38d8b94c041ddcd63289e0c98c4a4da7f819fe1ccd624958a627276a1": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states #5040 does not change the callback-level return, while open_pr_assessment flags semantic overlap requiring manual comparison"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/api-workflow/main.go: replace callback-level return with per-edge deferral so remaining sibling edges are still considered",
+      "Preserve dependency counters and avoid duplicate node dispatch when a join target is not ready"
+    ],
+    "risks": [
+      "Open PR #5040 touches the same file and may already cover or conflict with the fix boundary",
+      "Fix could introduce duplicate node dispatch or miscount dependencies if deferral logic is wrong",
+      "Reproduction is host-emulator only, not real Envoy/proxy-Wasm runtime"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing regression test using the supplied round3_probe_test.go graph asserting C is dispatched after A completes when A->D precedes A->C",
+      "Run the ordering control (swap A->D/A->C) to confirm final 200 response",
+      "Vary edge order and callback order across joins, conditional branches, and terminal end/continue behavior",
+      "Run targeted package unit tests and static checks in plugins/wasm-go/extensions/api-workflow"
+    ],
+    "unknowns": [
+      "Whether a maintainer will assign the issue as required by repository policy",
+      "Whether PR #5040's diff already resolves the join-wait sibling-skip root cause",
+      "Whether maintainer design preference exists for the deferral approach"
+    ],
+    "why": "Issue pins a concrete root cause (callback-level `return` at main.go:252-263 when a join target still waits, skipping sibling edges) and supplies a deterministic host-emulator reproduction with an ordering control. However, the repository policy requires assignment (policy=needs_assignment, assignees empty), and an open PR #5040 overlaps the same file/semantics without directly referencing the issue, so duplicate coverage is unresolved. These are materially blocking unknowns for actionable code work."
   },
   "db54f3cfd6360920a67529e7262a750bf10aea0ded8ce49d0aae50d487354e1b": {
     "confidence": 0.7,
