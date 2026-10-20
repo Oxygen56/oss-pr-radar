@@ -7480,6 +7480,37 @@
     ],
     "why": "Issue provides detailed reproduction steps, environment, and evidence that auto-compaction fails on native Ollama despite configured contextWindow and overflow warnings. Root cause is likely a mismatch between overflow diagnostic and compaction trigger estimators or provider-specific handling. Actionable with clear validation path."
   },
+  "0c9baae5dfa0ead37e421c5af71ab3c987615863d6440e5d946aeb433455ba42": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/base_aws_llm.py: stop restoring incoming SigV4 Authorization over the fresh signature; only preserve Bearer-token Authorization",
+      "litellm/llms/custom_httpx/llm_http_handler.py: ensure strip-and-resign retry passes headers without stale Authorization"
+    ],
+    "risks": [
+      "Over-broad header handling could break AWS_BEARER_TOKEN_BEDROCK auth if the Bearer branch is wrong",
+      "Other callers relying on Authorization passthrough may regress",
+      "Header case-sensitivity (authorization vs Authorization) must be handled consistently"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that signs a request, mutates the body (thinking-block strip), re-signs, and asserts the Authorization header differs and matches the new body",
+      "Unit test that a Bearer Authorization is still preserved while a SigV4 Authorization is replaced by the fresh signature",
+      "Reproduce the /v1/messages strip-and-resign retry against a mocked Bedrock 400 invalid-signature response and assert the retry succeeds rather than raising InvalidSignatureException"
+    ],
+    "unknowns": [
+      "No maintainer design preference recorded, but the issue supplies a concrete minimal fix and validation path, so this does not block actionability"
+    ],
+    "why": "Issue pinpoints the stale SigV4 Authorization restore in BaseAWSLLM._sign_request and shows the retry path in llm_http_handler reusing attempt-0 headers; instrumented payload hashes and the AWS expected canonical hash confirm the mismatch, and a concrete minimal diff plus end-to-end verification are provided."
+  },
   "0ca5f93276f359ab5d0daac532f6b4c85214bf89a4dab78703086139b51165ba": {
     "confidence": 0.8,
     "contradictions": [
@@ -18652,6 +18683,40 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly describes a fail-closed hook policy gap with a concrete repro, but explicitly requests maintainer approval on option shape and async-buffer behavior. Gate is HUMAN_REVIEW and no maintainer approval or help-wanted signal exists."
   },
+  "1fbc7f3d9698c3d217bccb35e85db399bc5f8ccc55944f8ff31e7c7240265c37": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: stop trusting client-supplied bootstrap_host/port for outbound HTTP; derive endpoint from server-side prefill topology or validate against configured prefill set",
+      "sgl-model-gateway/src/routers/http/pd_router.rs and grpc/pd_router.rs: ensure bootstrap fields are always overwritten server-side and document direct-worker trust boundary",
+      "Avoid synchronous blocking fetch in shared request processing path (async or bounded/cached lookup)"
+    ],
+    "risks": [
+      "Fix may alter direct-worker API contract for internal callers relying on client-supplied bootstrap metadata",
+      "Multiple backend conn.py variants (ascend, mooncake, mori, fake) may need consistent handling",
+      "Maintainer may prefer gateway-only enforcement over worker-side validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test that a direct Decode request with attacker-controlled bootstrap_host/port does not trigger an outbound request to that address",
+      "Add test that legitimate prefill bootstrap still resolves parallel info correctly",
+      "Run the issue's loopback PoC with --delay-s 0 and --delay-s 2 to confirm canary hits drop to zero and concurrent normal latency returns to baseline",
+      "Run targeted disaggregation unit tests and static checks for touched modules"
+    ],
+    "unknowns": [
+      "Whether maintainers consider direct Decode worker API access in-scope for hardening versus documented as trusted-internal only"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and blocking sink in CommonKVManager.try_ensure_parallel_info(), with code anchors in conn.py and pd_router.rs, an executable loopback-only PoC, and measured latency regression (82.88x). Root cause and validation path are established; no duplicate or open PR coverage found."
+  },
   "1fc050f77344b8b2237da7aaef141d81c17aba1ca352efa5ec0e16018248562e": {
     "confidence": 0.8,
     "contradictions": [
@@ -23304,6 +23369,42 @@
       "Whether an existing PR or issue already addresses this"
     ],
     "why": "The issue reports a deterministic null-pointer GPU fault in NVFP4 MoE path on GB10, with multiple independent reproductions and detailed device-level evidence. However, the root cause is not confirmed; comments suggest possible GDN kernel involvement and third-party kernel packages. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "2622fbc85db756dc7479bfc0e1065f50a8b4b3148c99755682c5e14d7ee3f349": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims renderer cannot reach /api via oc:// and needs a proxy; maintainer bot states the renderer calls the server cross-origin with full address and the server already permits oc://renderer origin, so the proxy is probably not the cause",
+      "Issue reports 404 for /api/model, but the 2.0.22 evidence shows 500 DirectoryNotFoundError, suggesting the failure mode differs across versions"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/desktop/src/renderer/startup/root.ts",
+      "packages/app/src/runtime/extension/root.tsx"
+    ],
+    "risks": [
+      "Fixing the oc:// protocol handler would address a non-cause and may break the intended cross-origin renderer design",
+      "ELECTRON_RENDERER_URL is dev-only; relying on it masks the real defect",
+      "Actual root cause may be the missing/inaccessible project folder (500) rather than a 404 network failure"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on 2.0.32 with all project folders present and no ELECTRON_RENDERER_URL; capture DevTools Network entries for /api/model with exact host/port and status",
+      "Compare against #50951 DirectoryNotFoundError path and #56479 macOS Documents-permission path to isolate the actual failure"
+    ],
+    "unknowns": [
+      "Whether a normal 2.0.32 launch with all project folders present still shows an empty picker",
+      "Where the 404s were observed and the exact request URLs/host/port",
+      "Desktop and server log lines confirming the failing requests",
+      "Whether the real cause is #50951 (missing folder) or #56479 (macOS Documents permission) rather than the oc:// protocol"
+    ],
+    "why": "The issue's proposed root cause (oc:// static handler not proxying /api/*) is directly contradicted by the maintainer bot, which states the renderer calls the local server cross-origin with its full address and the server already allows oc://renderer origin, so the missing proxy is probably not the cause. The ELECTRON_RENDERER_URL 'fix' is dev-only and not a valid long-term workaround. The maintainer requested reproduction specifics (2.0.32 normal launch, where 404s were observed, exact URLs, logs) that are not yet supplied, and points to #50951/#56479 as more likely causes."
   },
   "2626af332a787f029ba50b262f8847c8eb525c3362ab721d61457d1ad05decbe": {
     "confidence": 0.85,
@@ -50540,6 +50641,39 @@
       "existing PRs or related issues"
     ],
     "why": "Issue reports a severe hang but lacks deterministic reproducer and root cause; open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer has not confirmed design or assignment."
+  },
+  "500f7c587cbd694d111c1402d2d36990a6a2f5d7ae98a959de52340b7303e1b3": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/service_v2.rs: wrap the axum-server acceptor with NoDelayAcceptor innermost so TCP_NODELAY applies below TLS",
+      "deploy/inference-gateway/ext-proc/src/runner.rs: set TCP_NODELAY on sockets accepted by the TLS ext_proc accept loop"
+    ],
+    "risks": [
+      "No unit seam for the EPP TLS accept loop, so that half relies on packet-capture validation rather than an automated regression test",
+      "NoDelayAcceptor must be layered innermost; incorrect ordering would leave TLS-wrapped sockets without TCP_NODELAY",
+      "Benchmark A/B depends on minikube and agentgateway defaults, so environment drift could mask or mimic the effect"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test asserting TCP_NODELAY is set on accepted plaintext Frontend HTTP connections",
+      "Unit test asserting TCP_NODELAY is set on accepted TLS Frontend connections (socket below TLS)",
+      "Packet capture on the EPP TLS ext_proc listener confirming no 40-45 ms held replies",
+      "Re-run the gateway_ab A/B and confirm the ~40 ms first-token cluster disappears and TTFT p90 gap drops to a few percent"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer NoDelayAcceptor over an alternative acceptor configuration",
+      "Whether the EPP TLS accept loop can be refactored to expose a testable seam"
+    ],
+    "why": "Issue identifies a concrete root cause: axum-server default acceptor in service_v2.rs never sets TCP_NODELAY, and the EPP TLS accept loop in runner.rs has the same gap. It supplies A/B measurements (TTFT p90 +71.6%/+73.2% without, +2.1%/+3.4% with), packet-capture counts of held first tokens, and a quickack control that isolates the Nagle/delayed-ACK interaction. Code anchors and a validation path (unit tests for TCP_NODELAY on accepted plaintext/TLS connections, packet capture for EPP) are present."
   },
   "5014216150e94e4fc2fcbb5f7e9ae4c783dcb7bc364848ad698b2a0f2dafbb87": {
     "confidence": 0.8,
@@ -113589,6 +113723,38 @@
     "unknowns": [],
     "why": "The supplied maintainer-bot comment already identifies the root cause (early request before Copilot plugin model list loads, falling back to models.dev settings and hitting a nonexistent /v1/chat/completions path) and states it is fixed on dev (8ffbcc2c8) and in release 2.0.27 via #54210. The issue is covered by an existing merged fix, so no new code contribution is actionable."
   },
+  "af4174cb5d8a6babfd2776bfa54c28f7b881763c5d0470bf712e66de5ac61a83": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request upstream fetch from shared stateless session TaskGroup teardown",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools cancellation is scoped to the owning request"
+    ],
+    "risks": [
+      "Fix may require restructuring session manager lifecycle; risk of altering stateless request semantics",
+      "Recurrence of previously closed #24522 means prior fix was incomplete; need to confirm current code shape before patching",
+      "Maintainer design preference for session manager teardown not yet confirmed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two concurrent tools/list requests to POST /mcp against two HTTP streamable upstreams and assert neither raises MCPServerListError",
+      "Run targeted unit tests for mcp_server_manager and experimental_mcp_client",
+      "Verify non-overlapping requests still succeed and aggregate tools/list returns full tool set"
+    ],
+    "unknowns": [
+      "Exact current implementation of _handle_stateless_request and whether a prior partial fix exists on main"
+    ],
+    "why": "Issue provides a concrete reproduction (two overlapping tools/list requests to POST /mcp), a traceback showing cancellation via StreamableHTTPSessionManager._handle_stateless_request's shared TaskGroup cancel scope, and a specific code anchor in mcp_server_manager.py. The mechanism (shared TaskGroup teardown cancelling concurrent in-flight upstream fetches) is well-identified and testable."
+  },
   "af4905abb2c6f7c5ca458e686d74f867e637fe5ef57211e5d9b67c59073a64a7": {
     "confidence": 0.6,
     "contradictions": [
@@ -137730,6 +137896,43 @@
       "Exact maintainer preference on data field naming and structure; whether to include schema_path/json_path as lists or strings."
     ],
     "why": "The issue clearly identifies a root cause: Server.call_tool() discards structured jsonschema.ValidationError fields, leaving only a free-text message. The suggested fix is concrete and actionable: forward e.validator, e.schema_path, and e.json_path into a structured data field. The validation path is clear: add a test that triggers a validation error and asserts the structured fields are present in the CallToolResult. No contradictory evidence or missing facts block actionability."
+  },
+  "d3b8c3377813c605bdf31493e3a0a5f4a1a5d02cb29a90c90ca81bb0be79f03c": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Candidate marks maintainer_approved=true and NEW_CLEAN_CANDIDATE, but owner comments state the core fix is already integrated and remaining scope is tracked in open PRs #17124/#17138"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "freeModelCatalog.data.ts SiliconFlow rows (already corrected in integrated work)",
+      "isFreeModel/isModelFreeBadge live-price veto (already integrated)",
+      "catalog evidence CI gate (in progress in #17124)",
+      "remaining catalog identity audit (in progress in #17138)"
+    ],
+    "risks": [
+      "Overlapping with in-flight owner PRs #17124/#17138 risks duplicate or conflicting work",
+      "Broadening to catalog-wide audit is large and policy-dependent",
+      "ID-only provider discovery cannot be safely certified free without verified entitlement"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Regression test: isFreeModel('siliconflow', {id:'deepseek-ai/DeepSeek-R1', pricing:{prompts:'4',completions:'16'}}) === false",
+      "Guard test: no recurring-uncapped row without evidence source string",
+      "Positive control: a genuinely free model still passes free-only import"
+    ],
+    "unknowns": [
+      "Whether any remaining unaddressed sub-scope is small enough for an independent contribution rather than the owner's migration",
+      "Final rollout policy for catalog-wide evidence requirement"
+    ],
+    "why": "The issue is a real, well-evidenced billing bug, but the supplied owner comments show the core fix is already integrated (#17031, #17121 on release/v3.8.52) and the remaining catalog-wide evidence policy is being implemented in open PRs #17124 and #17138. Remaining scope is a broad audit/migration policy, not a clean single actionable code change; the only open question (ID-only SiliconFlow discovery) is explicitly deferred as needing a separate verified runtime policy."
   },
   "d3c2471e84522c5b3b4c5c86fa2f8fec0658eaf9e71ab376ea906b1adc35203c": {
     "confidence": 0.8,
@@ -165632,6 +165835,39 @@
       "Whether PR #30975 is still active or abandoned"
     ],
     "why": "Issue reports a reproducible UI bug (422 on guardrail creation from MCP template) with clear repro steps and logs. Existing PR #30975 is draft, stale (>30 days), and lacks root-cause analysis and robust tests, leaving room for a materially better PR. However, root cause is not yet identified and maintainer feedback is pending."
+  },
+  "fce3fac9db654ad4c278bbc5f8c67848a9f120bc7d3dcf6ec4eae1f2818ca2b2": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment marks PR #3027 technical_complete=true but root_cause_coverage=false, while also listing no material competition gaps"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/smolagents/local_python_executor.py: evaluate_call must detect duplicate keyword names across explicit keywords and ** expansions and raise TypeError before invoking the callable",
+      "Add regression tests covering dict(x=1, **{\"x\": 2}), dict(**{\"x\": 1}, **{\"x\": 2}), and dict(**{\"x\": 1}, x=2)"
+    ],
+    "risks": [
+      "Behavior change may affect existing tests or callers relying on lenient merging",
+      "Must not regress legitimate ** expansion or keyword ordering semantics",
+      "Overlap with open PR #3027 requires checking it does not already cover the same fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's snippet using evaluate_python_code against base 96f33faaf028479119ec8d34507b47694cf14e34 and confirm executor returns ({'x': 2}, False) while CPython raises TypeError",
+      "Add unit tests asserting TypeError is raised for all three duplicate-keyword forms, and that non-duplicate ** expansions still succeed",
+      "Run targeted local_python_executor tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #3027 already implements the same duplicate-keyword rejection and tests, which would make a competing fix redundant"
+    ],
+    "why": "Issue provides a concrete, dependency-free reproduction against a pinned commit, an expected-vs-actual pair, and a specific code anchor (evaluate_call accumulating kwargs via kwargs.update(starred_dict) / kwargs[keyword.arg], losing duplicates before invocation). This is a real correctness bug in the executor's call-unpacking path, distinct from #2754/#2755 signature-binding work. Open PR #3027 is directly related but lacks root-cause coverage evidence, so a fix that adds a failing regression test plus a minimal duplicate-keyword rejection is still actionable."
   },
   "fce951ebd4d7cfaa7981cd3dff5c0d689e4e4cda72f074adf1a137db34f803df": {
     "confidence": 0.85,
