@@ -125896,6 +125896,42 @@
     ],
     "why": "Issue provides a precise root cause (CronStore.claimDueRuns binds named params as an object under bun:sqlite, so values become NULL and the claim SELECT returns nothing), a runtime-independent reproduction, and a maintainer-confirmed diagnosis with a concrete fix path. Maintainer mkondratek confirmed the regression from #14004 and asked for a PR; PR #14906 was opened from the contributor's branch but lacks a regression test, leaving a clear gap for a test-backed contribution."
   },
+  "c0f268d5fab6f18fa26fd848063280e4fdcb335c4c4b386395b8893e3f37e786": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured Prefill set or derive from server-side topology",
+      "python/sglang/srt/disaggregation/common/conn.py: avoid synchronous blocking fetch on shared request path",
+      "sgl-model-gateway/src/routers/http/pd_router.rs and grpc/pd_router.rs: confirm server-side overwrite remains authoritative",
+      "disaggregation backend conn.py variants: consistent validation behavior"
+    ],
+    "risks": [
+      "Tightening validation may break legitimate direct-worker deployments that rely on client-supplied bootstrap metadata",
+      "Maintainer may prefer a different fix location (gateway vs worker) or a broader auth model",
+      "Latency/blocking fix may require async refactor with wider blast radius"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that a direct Decode request with attacker-controlled bootstrap_host/port does not trigger an outbound request to that address",
+      "Add a test that a slow/unreachable bootstrap endpoint does not block concurrent normal Decode request processing",
+      "Run the supplied PoC against a loopback Prefill/Decode deployment and confirm canary receives zero hits and latency returns to baseline",
+      "Run targeted disaggregation unit tests and static checks for changed modules"
+    ],
+    "unknowns": [
+      "Whether maintainers require an authenticated internal-caller design rather than address allowlisting",
+      "Whether direct worker API access without gateway is a supported deployment mode"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and blocking sink: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and calls requests.get synchronously. Reproduction includes executable PoC, canary hit counts, latency measurements, and a negative control showing the Gateway overwrites the fields. Code anchors in conn.py and pd_router.rs are supplied, and no duplicate PR/issue coverage is reported."
+  },
   "c126aa7e850063ff13cfe9df7c9cbd2030ced0515af77065ca8efabcc6ebd2c6": {
     "confidence": 0.8,
     "contradictions": [
@@ -133211,6 +133247,45 @@
       "Exact root-cause location in the drop_params flow"
     ],
     "why": "Issue describes a concrete user-visible bug with a reproducible path, but the supplied evidence does not establish the root cause: the issue itself notes get_supported_openai_params omitting reasoning_effort is arguably correct, and the desired behavior (forward vs raise UnsupportedParamsError under drop_params) is an unresolved design choice. The open-PR assessment also flags semantic overlap requiring human review, and the candidate's own actionability evidence has root_cause_signal=false."
+  },
+  "cab8e141554155046943ae7689934deadd9afd087326eeb85da46c397f353c00": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence reports maintainer_approved=true and public_repro_signals=0 while the issue is a maintainer-authored cleanup checklist rather than a bug reproduction"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Remove session= constructor params and _SessionMCPConnection routing from MCPTool/MCPStdioTool/MCPStreamableHTTPTool",
+      "Remove MCPTaskOptions, task_options param, and lazy exports/__all__/__init__.pyi entries",
+      "Remove MCPWebsocketTool class and its exports/telemetry/docstrings",
+      "Remove MCPTool.sampling_callback, SamplingApprovalCallback, and sampling constructor options",
+      "Migrate MCPSkillsSource/MCPSkill and Foundry Toolbox off ClientSession/MCPTool.session to high-level mcp.Client",
+      "Update docs, ADRs, samples, and add next-major migration notes"
+    ],
+    "risks": [
+      "Large multi-package breaking change risks accidentally removing supported legacy wire compatibility",
+      "Cross-package integrations (Declarative, Foundry Toolbox, skills, security, observability) may have hidden MCPTool.session dependencies",
+      "Scope creep into the separate #9215 Tasks design or the MCPSkillsSource(url=...) lifecycle feature"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Repo-wide grep for MCPTaskOptions, task_options, MCPWebsocketTool, SamplingApprovalCallback, sampling_callback, MCPTool.session to confirm absence",
+      "Run full Python formatting, linting, typing, package tests, and public-API snapshot validation",
+      "Add/retain high-level mcp.Client coverage for fixed connections, provider-resolved replacement, caching, MRTR, and caller-owned lifecycle",
+      "Confirm legacy MCP peer negotiation/wire-compatibility tests still pass"
+    ],
+    "unknowns": [
+      "Whether PR #9237 has already merged the FastMCP->MCPServer sample rename and sampling-sample removal, affecting remaining scope"
+    ],
+    "why": "Issue is a concrete, maintainer-authored vNext API-cleanup checklist with explicit symbols, parameters, code anchors (MCPTool.session, MCPTaskOptions, MCPWebsocketTool, SamplingApprovalCallback, session= params), and a clear validation path (repo-wide symbol search, full Python lint/type/test, public-API snapshot checks). No open PR directly covers the removal work; PR #9532 is keyword-overlap only and does not reference the issue."
   },
   "cab98f4037066fe0e32c9b9937f9d70400b9fa3f05e96c4a4dec0b7ba568555c": {
     "confidence": 0.8,
