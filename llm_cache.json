@@ -6953,6 +6953,40 @@
     ],
     "why": "Issue provides detailed root cause: test never runs due to mismatched min_gb=32 on 18GB MIG slice, and assertion ill-defined due to flat-index pairing and top-k tie-breaking. Concrete fixes proposed and validated with measurements. Existing PR #53647 overlaps but does not close the issue; no blocker."
   },
+  "0bb9cc1a8747f2b46a2b1882e57ae7e6f4907ac78c08658e12c74b20745509f4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "agent_os/agent/loop.py: write-time contiguity invariant on tool-result append/persist",
+      "agent_os/daemon_v2/agent_manager.py: approved/denied result fill routed through contiguity invariant",
+      "agent_os/agent/providers/openai_compat.py: persist-side mirror of _ensure_tool_result_contiguity"
+    ],
+    "risks": [
+      "Drain-timing relocation alternative has unproven ordering side effects on frontend echo visibility and cancel/stopped/compaction branches",
+      "Write-time invariant must not alter send-time behavior already covered by TASK 1",
+      "Bug is low severity and likely UI-invisible; maintainer may deprioritize"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Construct Session, append assistant tool_calls batch [A,B,C], append tool(A), defer_message(echo), replay pop_deferred_messages()->append then append_tool_result(C CANCEL); assert raw JSONL has no tool row following a non-tool row within the block",
+      "Single intercepted tool B with deferred echo; on approval append executed result; assert contiguity in raw JSONL",
+      "Regression: run existing loop/agent_manager unit tests to confirm no ordering side effects on echo visibility, cancel/stopped/compaction branches"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated between write-time invariant and drain relocation",
+      "No confirmation that write-time invariant won't regress existing persist callers"
+    ],
+    "why": "Issue provides a confirmed root cause (deferred lifecycle-echo drain at loop.py:1196 fires before the batch tool block completes, so later tail appends at loop.py:1221 and agent_manager.py 1710/1733/1790 split the block), two constructed traces against the real Session API, enumerated vulnerable/safe sites, and a concrete probe sketch. Preferred fix (write-time contiguity invariant mirroring send-time _ensure_tool_result_contiguity) is well-scoped and testable via raw on-disk JSONL assertions."
+  },
   "0be196ae5f550396f24789b0d8da642fcd985e805cbe1f730d42950df22e5d79": {
     "confidence": 0.8,
     "contradictions": [
@@ -80424,6 +80458,43 @@
     ],
     "why": "Issue provides a detailed, reproducible memory leak with clear root-cause hypothesis (auto agent-team initialization) and concrete validation path (reproduce with --no-teams flag). No competing open PR or duplicate found."
   },
+  "7b139cd5e7bb7794c8fc144a33a692fa55819fdcd19521830e7840ad0463a684": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter says spin tied to cwd=home; A/B update says idle serve at /home/user is 0% and spin requires an attached session",
+      "Contributor suggests compatibility skill loader path but states it is unverified; reporter has no profile to confirm"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/config/plugin/compatibility.ts (skill discovery/watch bounds) — only if a profile confirms this path",
+      "packages/cli/src/cpu-profile.ts (profiling capture path) — supporting diagnostics, not the fix"
+    ],
+    "risks": [
+      "Fixing the wrong path (skill loader vs watcher vs session loop) wastes effort and may not resolve the spin",
+      "The Windows-only fingerprint in #56945 may be conflated with this Linux report",
+      "Base SHA changed since pre-review, so code anchors may be stale"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture a `.cpuprofile` via `kill -PROF <service-pid>` during a spike and identify the hot functions/stacks",
+      "Reproduce the session-attached spin in a controlled A/B (idle serve vs attached session) to confirm the trigger",
+      "Once a hot path is identified, add a regression test that exercises that path under the home-directory/attached-session conditions"
+    ],
+    "unknowns": [
+      "Hot functions/stacks from a CPU profile during the spike",
+      "Whether merged #55597 (commit 49e9786) actually resolves the spin",
+      "Whether the Linux session-attached spin shares a cause with the Windows watcher leak in #56945"
+    ],
+    "why": "The issue reports a real 100% CPU busy-loop in `opencode serve --service`, but no root cause has been established. The reporter could not capture a profile; a contributor points to the compatibility skill loader and merged PR #55597 as a candidate path but explicitly says they have not verified it fixes the spike. A third commenter describes a different Windows-only fingerprint. The candidate's own actionability evidence sets root_cause_signal=false, and the pre-review gate failed on base_sha_changed. Without a captured profile or a confirmed hot code path, the concrete code change is not yet determined."
+  },
   "7b15fd1f6777384e622d205f272e6872e8a406c5c64f909a0eeab21566d6c400": {
     "confidence": 0.7,
     "contradictions": [
@@ -83563,6 +83634,38 @@
     ],
     "why": "Issue provides a concrete regression with known good/bad commits, a 5-line repro, and a detailed root-cause hypothesis confirmed by a contributor comment: PR #53968 enabled gp-relative relaxation on a core where gp is never initialized, corrupting the local handshake address. The fix is actionable: initialize gp in active_erisc-crt0.cc."
   },
+  "7fda8cd2c53a825e25a285b49584307fefa7b5b499d48281ec541bd32aa42fa1": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "reme/steps/evolve/dream/extract.py: populate state.failed_paths and return success=False on second unusable reply",
+      "reme/steps/evolve/dream/finish.py: ensure checkpoint excludes failed paths and success reflects extraction failure",
+      "reme/steps/evolve/dream/utils.py: optional parse-error feedback/repair on retry"
+    ],
+    "risks": [
+      "Behavior change to success semantics may affect downstream consumers",
+      "Maintainer may prefer structured JSON output over YAML repair",
+      "Scope creep into provider response_format changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test stubbing extractor agent to return invalid YAML twice; assert checkpointed==0 and job success is False",
+      "Parser regression test with unquoted summary containing 'with: submodules: recursive'",
+      "End-to-end dream run asserting changed files remain retryable on next run"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer JSON structured output vs YAML repair as the primary fix"
+    ],
+    "why": "Issue provides concrete root-cause anchors (extract.py blind retry never populating failed_paths, finish.py checkpointing all changed paths and ignoring warnings, utils.py parse fallback), a deterministic parser reproduction, and a clear expected behavior (no checkpoint on unparsable extraction, success=False). No open PR covers this; merged PRs 575/618/281 are historical and do not resolve this specific failure path."
+  },
   "7fe1059573b1d9e1f5b4cb0ab4ff8fe34fb7362e51676bd328a4e783b993a96c": {
     "confidence": 0.7,
     "contradictions": [
@@ -85561,6 +85664,40 @@
       "Whether PR #1937 already fixes this exact issue; requires manual comparison."
     ],
     "why": "Issue provides a clear root cause (formatter drops encrypted_content from reasoning items), a verified local patch, and a concrete reproduction path. The fix is actionable and aligns with existing code paths."
+  },
+  "8397aa1c1ca01c976cec1e4bbdf15c0d55883fd3c67c5dfa284c1a47fd9a8ad0": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: stop trusting client-supplied bootstrap address; derive Prefill endpoint from server-side topology or validate against configured Prefill set",
+      "Avoid synchronous blocking fetch in shared Decode request processing (async/offloaded or cached parallel-info lookup)",
+      "sgl-model-gateway pd_router.rs: confirm server-side overwrite of bootstrap fields remains the only accepted path"
+    ],
+    "risks": [
+      "Fix may need to preserve legitimate direct-worker bootstrap flows used in disaggregation setups",
+      "Behavior change in bootstrap metadata handling could affect Gateway/worker contract",
+      "Maintainer may prefer a specific validation or auth design over the minimal fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that a direct Decode request with attacker-controlled bootstrap_host/port does not trigger an outbound request to that address",
+      "Add a test that a slow/unreachable bootstrap endpoint does not block concurrent normal Decode requests",
+      "Run the issue's loopback PoC with --delay-s 0 and --delay-s 2 against the patched build and confirm zero canary hits and normal latency"
+    ],
+    "unknowns": [
+      "Whether direct Decode worker API is intended to accept bootstrap metadata at all, or only via Gateway",
+      "Exact maintainer-preferred validation/auth mechanism for internal callers"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and shared-request-blocking bug: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and issues a synchronous requests.get, with code anchors, a loopback-only PoC, canary hit logs, and matched latency measurements (20.35s vs 0.25s). Root cause and validation path are established; no duplicate PR/issue coverage found."
   },
   "839d43d6618bd7370a2ede4551e2f530f31f1f03c371f89751c5ba54e4ab94aa": {
     "confidence": 0.82,
@@ -160720,6 +160857,42 @@
       "Whether the issue is already assigned or being investigated by a maintainer"
     ],
     "why": "Issue provides a strong reproduction (1437-request replay, traceback, allocator state) and a plausible root cause (unified SWA allocator reclaim_plan evicts nothing while joint available size exceeds request), but the supplied evidence explicitly flags an open PR #42700 with semantic overlap on alloc_token_slots/scheduler and status 'semantic_overlap_requires_review'. Whether that PR already covers this root cause is unresolved, which materially determines whether new code work is actionable."
+  },
+  "f538a9d009bed10dd83137f6a5fa2451adeb4fd2a259de99cde941580a31ca76": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/constrained/xgrammar_backend.py: per-tool fallback on structural-tag compile failure (relax/drop failing tool schema)",
+      "Add policy flag (fail/relax-tool/drop-tool) defaulting to fail to preserve current behavior",
+      "Warning log identifying the failing tool name"
+    ],
+    "risks": [
+      "Behavior change if default policy not preserved as fail",
+      "Relaxing schema may admit malformed tool calls in edge cases",
+      "Cold compile cost (~18s) for large tool sets",
+      "Maintainer may prefer a different fallback design"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce 400 with one tool having pattern ^(?!\\.)[a-z]+$ at SGLANG_TOOL_STRICT_LEVEL=2 and tool_choice=auto; assert 200 after fix",
+      "Regression test that default fail policy still returns 400 for uncompilable schema",
+      "Multi-tool test: one bad tool among many compiles under relax-tool policy and only that tool is relaxed",
+      "Model-agnostic unit test on dispatch_structural_tag fallback logic"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fallback policy design",
+      "Exact xgrammar version behavior across supported versions"
+    ],
+    "why": "Issue provides a concrete minimal reproduction (single tool with negative-lookahead pattern at strict level 2 returns 400), a code anchor in xgrammar_backend.py dispatch_structural_tag where RuntimeError becomes InvalidGrammarObject, and a measured local patch showing the 177-tool set compiles and 4/4 smoke requests return 200 with 0 malformed calls in 320 samples. This is actionable agent/inference-path work with a clear reference-vs-implementation validation path."
   },
   "f542cc51fe7d187be71b30e18bc273bb4917a128d1d1fed5b03ade8adc6160fe": {
     "confidence": 0.85,
