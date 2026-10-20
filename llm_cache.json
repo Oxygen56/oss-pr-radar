@@ -33070,6 +33070,38 @@
     ],
     "why": "The issue reports a deterministic 'Failed to advance FSM' error under DFlash2 spec decode + xgrammar json_object grammar, but the supplied comment evidence strongly indicates the reported build (PR-head SHA 3406ec1da) predates the merged fix #53046 (c6e19b3be243), and multiple commenters confirm the validate_tokens guard is absent in the affected builds. This creates unresolved duplicate/merged-fix coverage: the bug may already be fixed on main, so code work is not clearly actionable without a post-fix reproduction."
   },
+  "35355073cf4dda7bf84f71f450438ff9bf53fca315dc68e2d42de339d8339c47": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/constrained/xgrammar_backend.py: per-tool fallback on structural tag compile failure",
+      "policy flag (fail/relax-tool/drop-tool) with fail as default to preserve current behavior",
+      "warning log identifying the offending tool"
+    ],
+    "risks": [
+      "Relaxing schema loosens constraints and could admit malformed tool calls in edge cases",
+      "Per-tool recompilation may add latency on cold compile paths",
+      "API behavior change if default policy is not preserved as fail"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test with a single tool schema containing pattern '^(?!\\\\.)[a-z]+$' at strict level 2, asserting 200 instead of 400",
+      "Regression test that default fail policy still returns 400 for uncompilable schema",
+      "Multi-tool test verifying only the offending tool is relaxed and other tools remain strict",
+      "Model-independent unit test on dispatch_structural_tag fallback path"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred policy flag name or design for the fallback"
+    ],
+    "why": "Issue provides a concrete reproduction (single tool with negative-lookahead pattern at strict level 2 returns 400), a code anchor in xgrammar_backend.py dispatch_structural_tag where RuntimeError becomes InvalidGrammarObject, and a measured local patch showing the 177-tool set compiles and 4/4 smoke requests return 200 with 0 malformed calls in 320 samples. This is a concrete, testable constrained-decoding behavior fix."
+  },
   "353ed15963df1fc7261ba9062e24b24c91c725b417c9239a729264cf3edaac50": {
     "confidence": 0.8,
     "contradictions": [
@@ -108229,6 +108261,45 @@
     ],
     "why": "Issue provides a concrete root cause (Permission.evaluate uses findLast so config-appended allow rules override the plan plugin's early deny), a maintainer-bot reproduction on latest dev with a drive.ts script, and a clear validation path (patch tool modifies src/value.ts in Plan mode with the config line, denied without it). This is a user-visible permission-enforcement bug with a minimal, testable fix."
   },
+  "a51b5023de6d89d7599fec26044e0196020d9ba7232f541f1dc34a618269ad40": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims no open PR brings 404-reinitialize to v2, consistent with open_pr_assessment status=none; no contradiction found"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Streamable HTTP client POST path: detect 404 when _sessionId is set, clear cached session id, re-run initialize session-less, replay failed request once (bounded)",
+      "Session lifecycle handling in _connectPlainLegacy/_legacyHandshake/_connectNegotiated to support re-initialization without full transport close",
+      "Add e2e scenario client-transport:http:session-404-reinitialize and keep http:404-surfaces"
+    ],
+    "risks": [
+      "Design ambiguity (server/discover re-probe vs pinned-era handshake) may change implementation shape",
+      "Replay-once semantics could cause duplicate side effects if not bounded correctly",
+      "Repository requires assignment before code work; no assignee present"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a stateful Streamable HTTP server that drops the session, then assert client recovers on next tools/call",
+      "Unit test: 404 response with Mcp-Session-Id triggers exactly one re-initialize and one replay, no loop",
+      "Regression: 404 without session id still surfaces as error (http:404-surfaces)",
+      "Run targeted package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Maintainer decision on re-probe vs pinned-era handshake",
+      "Repository assignment (assignmentRequired=true, no assignees)",
+      "Concrete minimal reproduction artifact (public_repro_signals=0, reproduction_evidence empty)",
+      "Whether code surface is confirmed (no_code_surface flagged)"
+    ],
+    "why": "The issue describes a real spec violation (404 with Mcp-Session-Id must trigger re-initialize) and points to concrete code anchors, but the repository policy requires assignment (assignmentRequired=true, policy=needs_assignment) and the issue itself explicitly defers to maintainers on an unresolved design question (re-probe via server/discover vs. pinned-era handshake). The pre-task evidence also flags no_code_surface and reproduction_or_validation_missing, and probe_ready=false. These are materially blocking unknowns for actionable code work."
+  },
   "a51d0bfdb88e17baa5d0e47c56f0686bfbc16bce15b05b10276a84b8882a089d": {
     "confidence": 0.8,
     "contradictions": [],
@@ -146921,6 +146992,40 @@
     ],
     "why": "The issue precisely identifies a gap in the FC agent runner where a terminal answer with zero tool calls is accepted when tools were offered, and the code path is confirmed by maintainer bot with exact line references. The proposed fix (detect empty tool_responses and function_call_state False with non-empty prompt_messages_tools, then error or retry) is actionable and testable."
   },
+  "e08774850864fef26c0a7b0b921e5da368035613f38dd8db92c933bdd4b4fec9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "agent_framework_ag_ui/_agent_run.py: defer local rejections/cancellations to core when in-run execution is active, or remove rejected ids from already_approved_approval_request_groups",
+      "agent_framework/_tools.py: ensure _stage_approval_batch_responses releases approved ids when a group member is replaced by a function_result",
+      "Add regression test for mixed approve/reject parallel approval batch"
+    ],
+    "risks": [
+      "Behavior change in approval resume contract may affect other hosts",
+      "Maintainer may prefer one of the two proposed fix options, requiring rework",
+      "Session-state group cleanup must not break all-approve/all-reject paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a tool using approval_mode='always_require' and a chat client returning three parallel calls; resume with [approve, reject, approve] and assert TOOL_CALL_RESULT for approved calls and a rejected result for the rejected one",
+      "Assert the run completes to final answer instead of re-interrupting on the rejected interrupt id",
+      "Regression test that all-approve and all-reject batches still behave as before",
+      "Run targeted unit tests for agent_framework_ag_ui and core approval lifecycle modules"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated between the two proposed fix options",
+      "Repository policy flags an AI disclosure conflict for automated public submission, which affects submission mechanics but not code actionability"
+    ],
+    "why": "Issue provides a detailed traced root cause across ag-ui approval lifecycle and core _tools.py batch staging: mixed approve/reject batches leave the approved group incomplete so core holds back execution and re-issues the rejected interrupt. Two concrete fix options and a working user-side workaround are described, giving a clear reference-vs-implementation validation path."
+  },
   "e096c8ab07f2544ae565cad0b21e714c01511eca08bfc0eb28f80647f5ae890a": {
     "confidence": 0.8,
     "contradictions": [
@@ -155280,6 +155385,40 @@
       "Whether any of the open PRs (#53479, #50021, #52244) already fix the root cause; they have semantic overlap but are not linked to this issue."
     ],
     "why": "Issue provides a detailed experiment matrix isolating the corruption to speculative decoding with any KV connector attached, even with zero token transfer, and identifies a suspected code path. A maintainer comment confirms a related fix (#50344) does not resolve the issue, narrowing the root cause to connector presence interacting with mamba spec-verify rollback. The issue includes concrete reproduction signals and code anchors, making it actionable for a targeted fix."
+  },
+  "ec5a48f35af55e7fb92741340b573bf3931a79259e9468e4952dd88194949025": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "desktop-backend start/resume path (K3c): remove duplicate initialMessages from config object",
+      "hub runtime client frame builder (Tqi): audit for other double-serialized fields",
+      "error surfacing: map socket.closed 'Received too big message' to a user-visible session-too-large error"
+    ],
+    "risks": [
+      "Fix is in a minified desktop-backend bundle; source location must be confirmed in the actual repo source, not the bundle",
+      "Removing config.initialMessages could break a consumer that reads it from config rather than top-level",
+      "Chunking/lazy hydration is a larger design change that may need maintainer input",
+      "Related issues (#15029, #14707, etc.) may share symptom but different root cause; scope should stay on the double-serialization"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Register a hub client with cline-hub-auth subprotocol and send session.create with sessionConfig.initialMessages and top-level initialMessages both set to an ~8.16 MiB array; assert 1006 'Received too big message'",
+      "Send the same call with a trimmed ~3.38 MiB array; assert session.create succeeds",
+      "After fix, resume a session with ~8.16 MiB messages and assert frame size is roughly halved and session opens",
+      "Regression test asserting initialMessages appears exactly once in the serialized session.create frame"
+    ],
+    "unknowns": [
+      "Whether the minified K3c/Tqi paths map to identifiable source files in the repo (codePathsPlan lists config/session files but not the desktop-backend start path)",
+      "Whether any consumer depends on config.initialMessages being present"
+    ],
+    "why": "Issue provides a concrete, measured root cause: the desktop sidecar serializes the full transcript twice into one session.create frame (inside config via qR and again as top-level initialMessages), doubling payload past the hub's 16 MiB maxPayloadLength. Includes frame-size measurements (17.1 MB fail vs 6.9 MB ok), a minimal one-line fix, and a hub-client reproduction path. This is agent runtime/session-transport plumbing on the agent_ai_infra track, not an algorithm contribution, but the track does not require algorithm evidence."
   },
   "ec8eb21717aa249f6c3573484c78da6029a083a40a462c07cf87e4b1ec7a866e": {
     "confidence": 0.8,
