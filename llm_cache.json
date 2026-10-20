@@ -116810,6 +116810,28 @@
     ],
     "why": "Issue identifies two concrete root causes (missing content in tool_calls message and non-unique tool IDs) with expected vs actual behavior and reproduction steps. Maintainer comment requests clarification but does not invalidate the reported bugs. The contribution is actionable for an agent_ai_infra track."
   },
+  "b1a19bc43c9b2ecf6c13d542ee7a61a2a5b0a3b44aa86f59f50464b7c9620d5d": {
+    "confidence": 0.95,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Implementing against this issue would duplicate work already tracked in #56862 and PR #57236."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new test: the failure is already reproduced in #56862; any regression test belongs there."
+    ],
+    "unknowns": [],
+    "why": "The issue author and the triage bot both agree this is a duplicate of #56862, which has already been reproduced on 2.0.32 and dev; the author explicitly asks to close it as a duplicate. The root cause (compaction prompt plus generation fills the served window, the thinking model spends the remainder on reasoning, finish=length, no smaller retry) is already covered, so no new code work is actionable here."
+  },
   "b1c07d2fc0000583b16971b681ffa46fb268a378cd8951d052e2508c4ad889ae": {
     "confidence": 0.8,
     "contradictions": [
