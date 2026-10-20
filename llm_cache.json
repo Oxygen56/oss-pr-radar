@@ -45840,6 +45840,41 @@
     ],
     "why": "The issue is a hang during engine startup with multiple conflicting root-cause hypotheses in the comments: NCCL_P2P_DISABLE/custom all-reduce P2P on PCIe-only topology, HuggingFace model download latency, and a FlashInfer sampler hang in warmup_kernels. The supplied evidence does not establish a single root cause, and the candidate's own algorithm_evidence is keyword-matched (all reduce, awq, fp8, logits) rather than a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The code anchors point to sampling/warmup plumbing, not an algorithmic contribution."
   },
+  "490a845776fffb109570ec4118c3b3b27658686a81ea941196ee2fc1c5bfbec9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue asserts normalized 0-1000 space but admits this is unverified against a live MinerU service"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/ingestion/component/pdf_vision_dispatch.go: rescale MinerU bbox to PDF page points before emitting positions/_pdf_positions",
+      "reuse pdfium.PageSizes as in internal/parser/parser/pdf_parser_paddleocr.go",
+      "warn when bbox space cannot be determined"
+    ],
+    "risks": [
+      "Actual bbox space of content_list.json may vary by MinerU version, making the fix incorrect for some deployments",
+      "PR #21228 may already implement or supersede this conversion",
+      "Changing position semantics could affect existing stored positions/consumers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test mineruBBoxPosition with a known page size (e.g. A4 595x842) and a known 0-1000 normalized bbox, asserting output in PDF points",
+      "Regression test that position_int values fall within page bounds for a large-table PDF",
+      "Compare against Python _content_bbox_to_page_space output for the same content_list.json"
+    ],
+    "unknowns": [
+      "Confirmed coordinate space of MinerU content_list.json bbox for the supported MinerU version",
+      "Whether PR #21228 already performs this conversion (semantic overlap only, no direct code overlap, not linked to the issue)"
+    ],
+    "why": "Issue identifies a plausible coordinate-space mismatch in mineruBBoxPosition (no rescaling on the Go MinerU path vs Python's _content_bbox_to_page_space), but the reporter explicitly states the root cause was established by source inspection only, not by running a live MinerU service, and asks maintainers to confirm the actual bbox space of content_list.json. Open PR #21228 (maintainer-owned, 18 files, overlapping pdf_vision_dispatch.go) may already cover the same path, so duplicate coverage is unresolved."
+  },
   "49128d19733c5a04752f8a9cc9fe0df0244c9911318df48c9e7a4f509affafdd": {
     "confidence": 0.8,
     "contradictions": [],
@@ -108930,6 +108965,40 @@
       "Exact implementation details of the fix; whether maintainers prefer a specific approach."
     ],
     "why": "Issue clearly identifies a user-visible streaming bug with a concrete root cause: GenericStreamingChunk path fails to pin response_id, causing each SSE chunk to get a fresh uuid4. The fix is localized and testable, and the issue provides a repro and expected behavior."
+  },
+  "a569f9f24e53bb784712b66576dafd093dafbe166cb14564b4d7a52efcbf429d": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured Prefill set and avoid synchronous blocking fetch",
+      "sgl-model-gateway/src/routers/http/pd_router.rs: confirm server-side bootstrap injection remains authoritative",
+      "python/sglang/srt/disaggregation/*/conn.py: propagate validation to backend-specific managers"
+    ],
+    "risks": [
+      "Changing bootstrap validation may break legitimate direct-worker deployments that rely on client-supplied bootstrap metadata",
+      "Async refactor of try_ensure_parallel_info may affect ordering/consistency of parallel-info caching",
+      "Maintainers may prefer a different trust boundary (e.g., auth on internal API) over address allowlisting"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that a direct Decode request with attacker-controlled bootstrap_host/port does not trigger an outbound request to that address",
+      "Add a test that a slow/unreachable bootstrap endpoint does not block concurrent normal Decode requests",
+      "Run the issue's loopback PoC with --delay-s 0 and --delay-s 2 and confirm zero canary hits and no latency inflation",
+      "Run targeted disaggregation unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers consider direct Decode worker API access in-scope for trust boundary or out-of-scope by deployment assumption"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and head-of-line blocking bug: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and calls requests.get synchronously. Evidence includes code anchors, a loopback-only PoC, canary hit logs, latency measurements (20.35s vs 0.25s), and a negative control showing the Gateway overwrites the fields. Root cause and validation path are established."
   },
   "a57850cf9a79f4db374232e1c598d3db6bf434cf234c72c250b15341b0a2f88d": {
     "confidence": 0.85,
