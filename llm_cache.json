@@ -15502,6 +15502,44 @@
     ],
     "why": "Issue identifies two concrete, separable algorithm defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the frozen base, so the learned function is discarded rather than restarted, contradicting the module docstring's ReLoRA/Axolotl conformance claim; (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both factors and permanently killing the branch's gradients. Maintainer confirmed both halves with measured evidence (base weight delta 0, effective-map MSE 142.12 vs 8.77e-13 control; nonzero A/B = 0 with grad-norm 0.0). This is a genuine PEFT/training-objective mechanism with a clear reference-vs-implementation test path."
   },
+  "19c2eaeb0dd640a1abeb114e902b1ca9eff00d4633a447c7ac13dd87c4b62a89": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asserts a concrete root cause, but the maintainer bot could not reproduce the false prompt on a release build",
+      "Candidate claims high impact/key-path hit while its own pre-review records reproduction_or_validation_missing and root_cause_signal=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/location-activity.ts: re-sync on session.moved even when directory is unchanged",
+      "packages/core/src/session/move.ts: short-circuit same-directory move to local re-sync instead of enqueueing a steer item",
+      "TUI prompt: surface error.cause instead of generic 'location unavailable'"
+    ],
+    "risks": [
+      "Root cause is unverified; the fix may not address the actual trigger",
+      "Open PR #56987 already targets same-directory session recovery, risking duplicate work",
+      "Changing move semantics for active sessions could affect step-boundary delivery behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a failing test that mounts LocationProvider, injects a sync failure to set error, then dispatches session.moved with an unchanged directory and asserts error clears",
+      "Regression test that a same-directory session.move does not enqueue a steer inbox item while the session is active",
+      "Reproduce the false prompt by forcing one location sync endpoint to return an HTTP error (not just dropping connections) and confirm the prompt appears and clears on same-directory choose"
+    ],
+    "unknowns": [
+      "Which specific /api request fails and with what status when the prompt appears",
+      "Whether the bug still occurs on a current 2.x release",
+      "Whether PR #56987 already covers the same-directory re-sync fix"
+    ],
+    "why": "The issue gives a plausible source-level hypothesis (LocationProvider clears error only in sync(), no re-sync on session.moved, same-directory move queued behind the running step), but the maintainer bot could not reproduce the false prompt at all, and the candidate's own pre-review failed with reproduction_or_validation_missing. The root cause is asserted from reading source, not instrumented, and the trigger (hourly eviction sweep on a shared service) was not practically simulated."
+  },
   "19e4161573cdbf70d5d760fc67b68a633eb0d0c05106b94e01f1eae26adf5fb5": {
     "confidence": 0.8,
     "contradictions": [
@@ -17176,6 +17214,42 @@
       "Whether maintainers prefer config-driven (a) or model-side (b) fix"
     ],
     "why": "Issue provides a deterministic, fully specified root cause: Qwen3_5GatedDeltaNet builds in_proj_ba as a GPTQ layer unconditionally, while the checkpoint stores in_proj_a/b as bf16, so 96 'not found in params_dict' warnings occur and gptq_marlin_repack fails on size_n=96. Concrete code anchors, checkpoint evidence, and two viable fix paths (honor GPTQModel dynamic negative rules, or generalize the modelopt_fp4 guard) are supplied, with a reproducible docker command and traceback."
+  },
+  "1c16ca001bef34329982f81fa4ef81d167316d5e275b806a7462969af7654f40": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/parser/parser/pdf_parser_paddleocr.go: classify blocks by layout label (figure/image -> doc_type_kwd image, figure_title keeps layout) without inlining image bytes",
+      "internal/parser/parser/pdf_parser_paddleocr.go: populate File[\"outline\"] via pdfium.ExtractOutlines",
+      "internal/parser/parser/pdf_parser_paddleocr.go: honor output_format and flatten_media_to_text like other PDF paths",
+      "internal/ingestion/component/parser.go: consider running maybeDispatchVisionEnhancement on dispatcher-handled engines (tracked separately in #21221)"
+    ],
+    "risks": [
+      "Inlining image bytes at parse time would reintroduce the parser-phase memory peak; must use on-demand crop path and embeddedMediaBudget",
+      "Vision-enhancement gap overlaps with #21221, so scope should avoid duplicating that fix",
+      "Behavior change to output_format may affect downstream consumers expecting JSON"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test feeding a PaddleOCR structured result containing a figure block and assert an item with doc_type_kwd: image is produced",
+      "Add a test asserting file.outline is non-empty when the PDF has an outline",
+      "Add a test setting output_format: markdown and asserting the returned format is markdown",
+      "Run targeted Go package tests and static checks for internal/parser/parser and internal/ingestion/component"
+    ],
+    "unknowns": [
+      "Whether #21205 has merged and whether its positions/filtering are already on main at base SHA aad53ef",
+      "Whether maintainers want the vision-enhancement paragraph handled here or solely in #21221"
+    ],
+    "why": "Issue gives concrete code anchors and expected-vs-actual behavior for three gaps on the Go PaddleOCR PDF path: figure/image blocks never get doc_type_kwd:image, outline is hard-coded empty, and output_format/flatten_media_to_text are ignored. Root cause is identified by source inspection and a code-level reproduction is provided, so the work is actionable. No open PR or duplicate issue covers it."
   },
   "1c210b5d28267a253433d361f64faac570889718028dbb6c4ca5e585e29d9dcd": {
     "confidence": 0.8,
@@ -29630,6 +29704,47 @@
       "The actual root cause of the reported dispatch failure"
     ],
     "why": "The issue reports that every hook dispatch fails with a generic schema-validation error, but the only substantive comment (Darsh-Nandu) states that on current main the CLI's own hook payloads validate fine, so the 'every dispatch fails' claim may already be fixed. The remaining actionable scope is only improving the error message to name the offending field. This is a contradiction between the issue's core failure claim and the supplied comment, and the root cause of the original failure is not established."
+  },
+  "2f3a54d7e276a7bd304e048dcf7938f1e98de319b8d4a9a488746775abd7f8e1": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence claims qualified=true with numerics_quantization/evaluation_method mechanisms, but the issue and reproduction describe context-window/output-budget plumbing, not an algorithm mechanism",
+      "actionability_evidence lists code anchors in AMD-NR/OptiScaler and bundled chunks that are unrelated to OpenCode compaction code",
+      "preTaskEvidence reproductionPathPlan=false while recent_comments contain a reproduction script and a maintainer-bot reproduction"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Compaction request sizing: reserve output budget against the model's real context window",
+      "Retry compaction with reduced history/output when finish_reason=length",
+      "Compaction usage accounting: count reasoning tokens separately from summary output"
+    ],
+    "risks": [
+      "Misclassifying a provider-integration/plumbing bug as an LLM-algorithm contribution",
+      "Fixing token estimation alone may not address the no-retry behavior",
+      "Floating/random variation in simulated tokenizer ratios could make tests flaky without fixed seeds and tolerances"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a simulated OpenAI-compatible model at 65,792 context, tokenizer ratio ~1.25x, thinking model, and assert compaction either succeeds or retries smaller instead of stopping",
+      "Regression test asserting prompt+max_output never exceeds the configured context limit",
+      "Unit test that a length-truncated compaction summary triggers a smaller retry and that usage records reasoning vs output distinctly"
+    ],
+    "unknowns": [
+      "Which OpenCode module actually performs compaction request sizing and retry (no relevant code anchor supplied)",
+      "Whether the subagent variant ('Compaction produced no summary') shares the same root cause",
+      "Whether the open PR #57236 ('retry truncated compaction with less history') already covers the fix, since it is keyword-overlap only and not confirmed as duplicate"
+    ],
+    "why": "The issue is a real, reproduced compaction failure, but the supplied evidence does not establish an LLM-algorithm root cause. The failure is a context-window/output-budget accounting problem in OpenCode's compaction plumbing (token estimate undercount, no retry with smaller request), not a training objective, model mechanism, distributed invariant, quantization/numerical method, kernel, or evaluation methodology. The 'algorithm_evidence' matched terms (bf16, chat template, quantized) are incidental to the user's local model name, not to the code under change. The candidate's own pre-review also failed with reproduction_or_validation_missing, and the code anchors point at unrelated AMD-NR/OptiScaler files and bundled chunks rather than the compaction module."
   },
   "2f3b571d447210a06fd3cdb0ed0b91fe3d54954d08e65103475550b3ea755542": {
     "confidence": 0.9,
@@ -57994,6 +58109,38 @@
       "Exact auto-cancel path in the reporter's session is not confirmed; may require additional investigation to ensure complete coverage"
     ],
     "why": "Issue identifies a clear bug in askUserQuestion.ts where cancellation reasons are dropped and replaced with a misleading generic message. The triage bot confirms the root cause and suggests a concrete fix direction. No competing PR exists, and the repo welcomes PRs."
+  },
+  "597b1a75187d8f1d93ed225cefd6d133f1fe57e853e98dee31d4b0b8f18ae153": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/ingestion/component/pdf_vision_dispatch.go: rescale MinerU bbox to PDF points using page size before emitting positions/_pdf_positions",
+      "Add warning log when bbox space cannot be determined",
+      "Regression test with known page size and known MinerU bbox"
+    ],
+    "risks": [
+      "Exact bbox space of content_list.json may vary by MinerU version; maintainer confirmation of the space could change the conversion branch",
+      "Changing position semantics may affect existing stored positions or consumers expecting current values"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test mineruBBoxPosition with a known page size (e.g. A4 595x842) and a 0-1000 normalized bbox, asserting output in PDF points",
+      "Test the 0-1 normalized and source-pixel fallback branches",
+      "Verify downstream crop region in pdfcrop_cgo.go aligns with source text for a large-table PDF"
+    ],
+    "unknowns": [
+      "Exact bbox coordinate space returned by the MinerU version in use (0-1000 vs 0-1 vs source pixels) is asserted from source inspection, not a live run"
+    ],
+    "why": "Issue pinpoints a concrete root cause: mineruBBoxPosition in pdf_vision_dispatch.go emits MinerU bbox coordinates without rescaling to PDF page space, while the Python path (mineru_parser.py) does convert via page size. Page size is available in-process via pdfium.PageSizes as used by the PaddleOCR path, giving a concrete fix and validation path (known page size + known bbox regression test)."
   },
   "59802e04bcad3c806fd559db19ab9246d3e71347abfac9b2ea6d868336a0d514": {
     "confidence": 0.7,
@@ -101003,6 +101150,41 @@
       "Exact root cause of the write no-op; whether the scheduler issue is related."
     ],
     "why": "Issue provides a clear, reproducible bug with ordered steps and evidence that Edit/Write tools return success without writing to disk. Root cause is not identified but the reproduction is concrete and actionable for a fix."
+  },
+  "9a293164ce53f530f9e21bd61a0203972b0b5f6859cf087c6cebeed51704a886": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue proposes landing #7285/#7287 while open_pr_assessment reports no directly related open PR and only keyword-overlap PRs"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ElevenLabs realtime STT flush/commit on local VAD turn boundary",
+      "stt_node / _run_eou_detection turn-commit path"
+    ],
+    "risks": [
+      "Fix overlaps with idle PRs #7285/#7287, risking duplicate/conflicting work",
+      "Behavior change to default commit strategy may affect other realtime STT providers",
+      "Upstream ElevenLabs near-silence audio issue may not be fully fixable client-side"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with AgentSession(stt=elevenlabs.STT(model='scribe_v2_realtime'), vad=silero.VAD.load(), turn_detection=inference.TurnDetector()) and assert final transcript arrives within a bounded time after speech end",
+      "Regression test for single-word answers with server_vad settings asserting committed_transcript is emitted"
+    ],
+    "unknowns": [
+      "Current status/mergeability of #7285 and #7287",
+      "Whether #6598 already covers the flush path or only partial behavior",
+      "Exact code location where flush should be invoked in the turn flow"
+    ],
+    "why": "Issue describes a real turn-commit deadlock in the ElevenLabs Scribe v2 realtime STT path, but the supplied evidence lacks a confirmed root cause and the fix is explicitly tied to two idle PRs (#7285/#7287) whose status is unresolved. The candidate's own actionability evidence marks root_cause_signal=false, probe_ready=false, and reproduction_or_validation_missing, and the pre-review gate failed with no_code_surface. The dependency on #6598 and the open competing PRs make the actionable code surface uncertain."
   },
   "9a307b0b3bfb4c3d3e7dd849732fbad23c1a5f5223dd317056d2cc8a57536d80": {
     "confidence": 0.8,
@@ -156999,6 +157181,42 @@
     ],
     "why": "Issue reports a clear user-visible bug with a plausible root cause (missing EnableInteractiveApproval on model switch) and public reproduction steps. No competing PR or issue found, and the gate allows work."
   },
+  "ee92506d9a020bc066df082bd1988904778e42aa58fa67e060ea88fb77d02ea5": {
+    "confidence": 0.82,
+    "contradictions": [
+      "candidate.algorithm_evidence claims parameter_efficient_finetuning/model_architecture mechanisms, but the issue describes PDF parser dispatch plumbing with no model-training or numerical mechanism"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/ingestion/component/parser.go: run shared post-processing on dispatcher-handled results",
+      "internal/ingestion/component/vision_enhancement.go: apply enhancement to remote-parser items",
+      "internal/parser/parser/pdf_parser_remote_common.go: populate outline instead of hard-coded empty",
+      "internal/ingestion/component/pdf_vision_dispatch.go: honor output_format and remove_toc/remove_header_footer"
+    ],
+    "risks": [
+      "Memory discipline: enhancement must crop on demand rather than materializing images",
+      "External-analyzer path re-inlines Section.Image without a document-level budget",
+      "Per-engine adapter data gaps (#21213-#21220) are separate and not fixed here"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Parse a PDF with a remote parser (e.g. MinerU) with vision enhancement enabled and assert VLM descriptions are appended",
+      "Assert file.outline is populated for remote-parser paths",
+      "Assert output_format: markdown returns markdown rather than JSON",
+      "Regression test that DeepDoc path behavior is unchanged"
+    ],
+    "unknowns": [
+      "No concrete algorithm-level validation path exists for this parser-plumbing fix"
+    ],
+    "why": "The issue is a well-documented Go ingestion/parser dispatch bug: shared post-processing (vision enhancement, outline, remove_toc/remove_header_footer, output_format) is skipped when a remote PDF parser is selected. Despite the track=llm_algorithm label, the work is parser plumbing/dispatch control flow, not a training objective, model mechanism, distributed invariant, quantization method, kernel algorithm, or evaluation methodology. The 'adapter'/'normalization' term matches are incidental (PDF parser adapters, layout normalization), not PEFT adapters or model normalization."
+  },
   "ee98060a271e3f7de70c284ff9d739a41bd55a2ea60d90d425066c6cc5510631": {
     "confidence": 0.85,
     "contradictions": [
@@ -159429,6 +159647,42 @@
       "Whether maintainers have a preferred design for cancelled-ID tracking vs. silent ignore"
     ],
     "why": "Issue provides a self-contained reproduction (no server/credentials), a concrete root cause in packages/mcp/src/tool/mcp-client.ts (abort cleanup deletes the response handler; onResponse then throws 'unknown message ID' directly from transport.onmessage without routing to onError), and a clear expected behavior. A reproduction PR (#22655) exists but is a draft with no regression test and no root-cause fix, so it does not cover the actionable fix work."
+  },
+  "f1ea77c85a8b64b6eb84ff4a8a8a632bfbea20bf7e936f6e10303e6293265ee9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no open PR covers duplicated stream, but PR #5149 has the same title and overlapping ai-proxy path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-proxy/main.go: add jsonbody.DuplicateTopLevelMember(body, \"stream\") guard in onHttpRequestBody after the model guard",
+      "plugins/wasm-go/extensions/ai-proxy/test/: regression test for duplicate stream rejection and single-stream behavior"
+    ],
+    "risks": [
+      "PR #5149 appears to implement the same fix; work may be duplicate",
+      "Repository requires assignment before contribution",
+      "Behavior change rejects previously accepted ambiguous bodies"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Send a body with \"stream\": false then \"stream\": true and assert 400 with duplicate \"stream\" member message and no forwarding",
+      "Send a single-stream OpenAI-protocol body and assert stream_options.include_usage injection, Accept header, and first-byte timeout unchanged",
+      "Send malformed JSON and assert the duplicate check is skipped and existing validation decides",
+      "Run the ai-proxy plugin test suite in go and compiled-Wasm modes"
+    ],
+    "unknowns": [
+      "Whether PR #5149 fully covers the issue root cause",
+      "Whether the issue will be assigned to a contributor",
+      "Whether maintainers accept the 400-rejection design for stream"
+    ],
+    "why": "The issue gives a clear root cause (gjson reads the first duplicate top-level `stream` while upstream parsers keep the last, bypassing stream_options/usage accounting) and a concrete guard reusing the #5124 jsonbody helper. However, the repository policy requires assignment (policy.status=needs_assignment, assignmentRequired=true, no assignees), and open PR #5149 has the same title and overlapping ai-proxy path, so duplicate coverage is unresolved. These are materially blocking unknowns for actionable code work."
   },
   "f1f130af1744f5925898a60ee07ccefe3fdd6423528ac2efaef11c654cf04694": {
     "confidence": 0.6,
