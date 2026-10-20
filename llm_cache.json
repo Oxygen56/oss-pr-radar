@@ -122362,6 +122362,41 @@
     ],
     "why": "Issue #7385 has a clear root cause (make_text_part(str(e)) leaks raw exception text to A2A callers) and a self-contained reproduction, but the supplied evidence shows an unresolved duplicate/overlap: open PR #7252 touches the same file (src/google/adk/a2a/executor/a2a_agent_executor.py) with semantic overlap on A2aAgentExecutor, and the duplicate status is 'semantic_overlap_requires_review'. Additionally, policy status is 'needs_assignment' with assignmentRequired=true and no assignees, which is a materially blocking repository requirement."
   },
+  "bb41017cabdbe3d72fd9a10ecfc90d80a20a7cd86bb2ba9d734160f126096764": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured Prefill set or derive from server-side topology",
+      "Avoid synchronous blocking fetch in shared Decode request path (timeout/async/offload)",
+      "sgl-model-gateway pd_router.rs: confirm server-side overwrite remains authoritative"
+    ],
+    "risks": [
+      "Fix may break legitimate direct-worker deployments that rely on client-supplied bootstrap metadata",
+      "Address validation must account for hostname vs IP and port normalization",
+      "Async/offload change could alter parallel-info fetch semantics and error handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided poc.py with --delay-s 0 against a loopback Prefill/Decode deployment and assert canary receives zero /route requests after fix",
+      "Run poc.py with --delay-s 2 and --gateway-url, assert concurrent normal request latency stays near zero-delay baseline",
+      "Add unit test that try_ensure_parallel_info rejects a bootstrap_addr not in the configured Prefill set",
+      "Regression test that legitimate Gateway-injected bootstrap fields still resolve parallel info"
+    ],
+    "unknowns": [
+      "Whether maintainers consider direct Decode worker API access in scope for trust boundary",
+      "Whether an existing internal auth mechanism for worker-to-worker calls exists to reuse"
+    ],
+    "why": "Issue provides a concrete root cause: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/bootstrap_port and issues a synchronous requests.get, with code anchors, a loopback-only PoC, canary hit evidence, and measured latency impact. A reference-vs-implementation test (canary receives zero requests after fix) and a latency regression test are both concrete."
+  },
   "bb448b0dc837a1a8ba76ad98bcd4afaddd2e092d84a526de847fd59ef82c5cd7": {
     "confidence": 0.8,
     "contradictions": [],
@@ -164017,6 +164052,39 @@
       "Maintainer design preference for transaction handling is unknown but not blocking"
     ],
     "why": "Issue provides a precise root cause (transaction ownership conflict between begin_nested and update_server's commit), a clear reproduction path, and a security-relevant side effect (API key leak). No competing PR or issue found. The fix is actionable: adjust transaction handling and reorder key creation."
+  },
+  "f830bbd9d72e94da9120124145619c0a82b8a928e333acfbf82fdc338643f2fd": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "agent_os/agent/loop.py: enforce write-time tool-result contiguity on persist/append",
+      "agent_os/daemon_v2/agent_manager.py: approved/denied result fill must not split the tool block",
+      "agent_os/agent/providers/openai_compat.py: keep send-time normalizer as reference behavior"
+    ],
+    "risks": [
+      "Drain-timing relocation has unproven ordering side effects (echo visibility, cancel/stopped/compaction branches)",
+      "Write-time invariant must not reorder real results vs CANCELLED placeholders or alter retry semantics",
+      "Bug is low severity and not user-facing; scope creep risk"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Construct a Session, append assistant tool_calls batch, append one tool result, defer_message, replay pop_deferred_messages→append then append_tool_result; assert raw JSONL has no tool row following a non-tool row within the block",
+      "Regression: approval-resume path appends real result contiguously after its tool_calls assistant",
+      "Run targeted unit tests for loop.py and agent_manager.py plus static checks"
+    ],
+    "unknowns": [
+      "No maintainer design preference between write-time invariant and drain relocation, though issue states preferred shape"
+    ],
+    "why": "Issue provides a confirmed root cause (deferred lifecycle-echo drain at loop.py:1196 fires before the batch tool block completes, so later tail appends at loop.py:1221 and agent_manager.py 1710/1733/1790 split the block), two constructed traces against the real Session API, and a concrete probe sketch that reads raw on-disk JSONL. A reference-vs-implementation test (write-time contiguity invariant mirroring _ensure_tool_result_contiguity) is well supported."
   },
   "f83b8ab31acddbff1c90b98afbd79c7e2e1c6ed52acca98ba0a9cfcb4a46922b": {
     "confidence": 0.85,
