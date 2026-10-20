@@ -45153,6 +45153,40 @@
     "wait_reason": null,
     "why": "The issue describes a concrete LLM serving bug where NIXL HMA receive failures are not propagated, causing the request to return HTTP 200 with corrupted tokens. The root cause is clearly identified: HMA block IDs are omitted from invalid_block_ids, so the scheduler receives no failure signal. The issue includes a reproduction with specific hardware, model, and block sizes, and references a related PR (#52232) that fixes the propagation and yields HTTP 500. This is a kernel/algorithm-level correctness issue in the KV transfer path, with a clear validation path via the reproduction and regression test."
   },
+  "47d1d97744a78d15c0fd669cc78dc87cec01fbcdbed9dc63b0cc10031701b31e": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Open PR #44409 is marked technical_complete with tests and CI, yet root_cause_coverage is false; unclear whether it already fixes this exact case"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "web/app/components/workflow/nodes/code/use-config.ts: make extractFunctionParams skip regex literals when scanning signature nesting",
+      "web/app/components/workflow/nodes/code/panel.tsx: ensure empty parse results do not silently wipe inputs/bindings"
+    ],
+    "risks": [
+      "Regex-literal detection in a hand-rolled scanner can mis-handle division operators or nested brackets",
+      "Overlapping open PR #44409 may duplicate the fix",
+      "Behavior change to input rebuilding could affect other parse-failure paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test calling extractFunctionParams with `function main({ pattern: pattern = /[(]/, text })` and CodeLanguage.javascript, expecting ['pattern','text']",
+      "Regression test that applying generated code preserves existing text binding",
+      "Run targeted web unit tests and lint for the code node module"
+    ],
+    "unknowns": [
+      "Whether PR #44409's tests cover the regex-default signature from this issue",
+      "Maintainer preference on scanner fix vs. replacing the parser"
+    ],
+    "why": "Issue gives a concrete reproduction (extractFunctionParams on a JS signature with a regex default), expected vs actual (returns [] and clears inputs), and a plausible root cause (scanner counts '(' inside regex character class as nesting). Code anchors in panel.tsx/use-config.ts are supplied. Open PR #44409 covers the same fix but is described as lacking root-cause coverage, so a better-tested fix remains actionable."
+  },
   "47ee6d2864a0ae849e6e1486f26ad632b1e20ec4ac853dccaa0c1292b43adb71": {
     "confidence": 0.85,
     "contradictions": [
@@ -105690,6 +105724,39 @@
     ],
     "why": "The issue provides a precise root cause (missing topk=192 instantiation for decode-dsv4 on SM120) and a reproducible failure, but the proposed padding workaround was withdrawn due to intermittent text corruption, and the remaining fix (FlashInfer instantiation) requires maintainer coordination. The deterministic gate is HUMAN_REVIEW, and the existing PR #33986 is closed with no test coverage, so a new PR would need maintainer confirmation on the correct fix approach."
   },
+  "a09a5c09af4a6eefdc9c3560d27c2b4f688c0629b233a621ed2b68acb1502314": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "lib/router-plugins/builtin/src/thunderagent/request_classifier/scheduler.rs: reclaim eligible idle reservations during reconciliation when waiting demand exists",
+      "Preserve idle program session identity and context accounting across reclaim",
+      "Exclude paused programs without a waiting call from resume selection and paused-backlog admission guard"
+    ],
+    "risks": [
+      "Reclaim logic could over-evict reservations and cause thrash near the resume ceiling",
+      "Session identity/context accounting regression for idle programs on their next call",
+      "Scope creep into shared-prefix accounting (#15105) which is explicitly out of scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression admission_reclaims_idle_reservations_below_pause_threshold and confirm it fails on base SHA 1b4a55f",
+      "Run cargo test --locked -p dynamo-custom-policy-builtin admission_reclaims_idle_reservations_below_pause_threshold --lib",
+      "Add negative cases: no reclaim without waiting demand, no reclaim for hard-pinned incompatible worker, no interruption of in-flight generation"
+    ],
+    "unknowns": [
+      "No maintainer design preference recorded for reclaim policy, though this is normal review uncertainty rather than a blocker"
+    ],
+    "why": "Issue provides a deterministic CPU-only reproduction with exact config, expected/actual pair, a named failing test, and a concrete code anchor in scheduler.rs; root cause (idle reservations below pause threshold block admission) is well specified and the fix scope is bounded."
+  },
   "a09b166c3ee0d6186558b9d41307f4a067ddaa8a97eb2214263aef077b8f677a": {
     "confidence": 0.85,
     "contradictions": [
@@ -149693,6 +149760,41 @@
       "Maintainer preference between forwarding the param versus raising UnsupportedParamsError under drop_params"
     ],
     "why": "Issue describes a concrete user-visible bug with a reproducible path, but the supplied duplicate assessment flags semantic overlap with open PR #40919 and other open PRs touching reasoning_effort; the overlap is unresolved and directly determines whether new code work is actionable."
+  },
+  "e3c7f7dc942706ed6b043ba7b134b0f803958bdb2faac3330836e8e436411366": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate or derive bootstrap address from server-side Prefill topology instead of trusting client input",
+      "python/sglang/srt/disaggregation/common/conn.py: avoid synchronous blocking fetch in shared request processing path",
+      "sgl-model-gateway/src/routers/http/pd_router.rs and grpc/pd_router.rs: confirm server-side overwrite behavior and reject client-supplied bootstrap fields on direct worker API",
+      "Add regression test asserting attacker-selected bootstrap_host/port is not contacted"
+    ],
+    "risks": [
+      "Fix may need to preserve legitimate direct-worker bootstrap flows used in tests or non-Gateway deployments",
+      "Changing try_ensure_parallel_info signature or behavior could affect multiple transfer backends (mooncake, mori, ascend, fake)",
+      "Maintainer may prefer a different validation boundary (gateway-only vs worker-side allowlist)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied loopback PoC against a local Prefill/Decode deployment and assert the canary receives zero /route requests after the fix",
+      "Add a unit test for try_ensure_parallel_info that passes an unconfigured bootstrap_addr and asserts no outbound HTTP request is made",
+      "Add a concurrency test with a delayed canary endpoint asserting normal Gateway request latency is not inflated",
+      "Verify Gateway path still injects server-side bootstrap values and returns HTTP 200"
+    ],
+    "unknowns": [
+      "Whether direct worker API access without Gateway is a supported production topology that must keep accepting bootstrap metadata"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and head-of-line blocking bug: client-supplied bootstrap_host/port/room are used to build an HTTP URL in CommonKVManager.try_ensure_parallel_info without validating against configured Prefill workers. Reproduction includes a loopback-only PoC, canary hit evidence, latency measurements, and a negative control through the Gateway. Code anchors in conn.py and pd_router.rs are supplied, and no duplicate or open PR covers the fix."
   },
   "e3df931b68de6c1ca191e9f8b2362e552c1dfd9e819c84570918080a23b86ffa": {
     "confidence": 0.8,
