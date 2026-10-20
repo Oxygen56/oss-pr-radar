@@ -8204,6 +8204,42 @@
     ],
     "why": "Issue provides a precise root cause: a NoneType dereference in vLLM's llm_base_proposer.py when sharing embeddings with a draft model lacking embed_tokens. The code path is clearly identified, and the fix is a straightforward guard. This is a concrete algorithmic bug in the speculative decoding path, with a clear reproduction command and environment."
   },
+  "0d3b759547b15e56eaa827df170853e3bb7e887c6e0a1ebfc43dd5a0269bd651": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured Prefill set or derive from server-side topology",
+      "python/sglang/srt/disaggregation/common/conn.py: avoid synchronous blocking fetch on shared request path",
+      "sgl-model-gateway/src/routers/http/pd_router.rs and grpc/pd_router.rs: confirm server-side overwrite of bootstrap fields remains authoritative",
+      "Add regression test asserting client-supplied bootstrap_host/port cannot redirect the /route fetch"
+    ],
+    "risks": [
+      "Fix may need to preserve legitimate direct-worker bootstrap flows used in tests or non-Gateway deployments",
+      "Changing to async fetch could affect request lifecycle and timeout semantics",
+      "Maintainer may prefer a different trust boundary (auth on internal API vs address allowlist)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run supplied poc.py with --delay-s 0 against a loopback Prefill/Decode deployment and assert canary receives zero /route requests after fix",
+      "Run poc.py with --delay-s 2 and --gateway-url and assert concurrent normal request latency is not inflated",
+      "Unit test try_ensure_parallel_info rejecting bootstrap addresses not in the configured Prefill table",
+      "Negative control: Gateway request with attacker bootstrap fields still returns 200 and canary gets zero hits"
+    ],
+    "unknowns": [
+      "Whether direct Decode worker API is intended to be reachable without auth in supported deployments",
+      "Maintainer preference between address allowlist, authenticated internal caller, or async non-blocking fetch"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and blocking sink: CommonKVManager.try_ensure_parallel_info builds an HTTP URL from client-supplied bootstrap_host/port and calls requests.get synchronously. Reproduction script, canary hits, latency measurements, and negative control through the Gateway are all supplied, with code anchors in conn.py and pd_router.rs. No duplicate PR or issue coverage found."
+  },
   "0d3cf5b72905e6c4fea8f0d17a8f99262852bd9f7adab0beb171652588ee0eaa": {
     "confidence": 0.8,
     "contradictions": [
@@ -134054,6 +134090,37 @@
       "Whether PR #56670 already resolves the actionable portion"
     ],
     "why": "The issue is a UX/messaging complaint about backend error strings and docs, with no code anchors and no established root cause. The bot reply confirms the messages come from the backend and that maintainers will consider it, and it links several related issues (#52227, #56560, #56556, #54244, #50611) suggesting the expiry may be part of a broader event rather than a fixed lifetime. An open PR #56670 already covers the recovery-message fix but lacks root-cause coverage, so duplicate/coverage status is unresolved."
+  },
+  "ca8e63ccbae773218514f41630699af5e2886f0c0e44f9c8fb3042bf0a244286": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims server-side root cause while candidate.actionability_evidence lists code anchors in client files (rtk.ts, session_message, retry) that do not explain the measured gateway latency"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No repository code change identified; the failure is in the hosted Go gateway/endpoint scheduling, not in client code paths like session.ts or retry.ts"
+    ],
+    "risks": [
+      "Attempting a client-side fix would not address the server-side first-token latency, empty completions, or missing finish_reason",
+      "Overlapping open PRs #56457 and #50797 touch finish_reason handling but do not cover the gateway scheduling root cause"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Not applicable: reproduction requires a live opencode-go key and ~650k-token prompts against the hosted endpoint, which cannot be exercised as a repository regression test"
+    ],
+    "unknowns": [
+      "Whether a maintainer with Go gateway access has confirmed an endpoint-selection/queue defect",
+      "Whether any repository-side change (e.g., retry/backoff or finish_reason handling) is desired as a mitigation versus a pure service fix"
+    ],
+    "why": "The issue reports server-side gateway latency, empty completions, and missing finish_reason on the hosted opencode-go inference endpoint, reproduced with raw HTTP outside the client. The bot reply confirms it is a service-side problem requiring a real opencode-go key and very large prompts unavailable in the sandbox, and that a maintainer with Go gateway access must investigate. No client-side root cause is established, so no concrete code change in the repository is actionable."
   },
   "ca8ebce1c3c5c5f36fe209a32ed9c99e1f759add400a7a88d59d6ebe18f3c626": {
     "confidence": 0.8,
