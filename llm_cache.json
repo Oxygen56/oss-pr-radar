@@ -102834,6 +102834,42 @@
     ],
     "why": "Issue describes a concrete return-type mismatch in FlashKDA prefill, but the supplied evidence shows an open PR #39926 that directly references this issue, overlaps the same code identifiers (glm_5_3_flash, prefill), and already implements the minimal fix. The remaining gap is only a missing regression test, which is not enough to establish independent implementation space."
   },
+  "9b401501b67f6a1bd6f50ccae687abbc21999f9ed6504c858b58156afc8e8c18": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue frames it as a bug on dev, but the maintainer bot reply reclassifies it as a feature request",
+      "Candidate category is WAIT_MAINTAINER/HUMAN_REVIEW while gate notes pre-review failed for missing reproduction"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/tui/src/component/prompt/local-attachment.ts: add token/context estimate before attaching",
+      "prompt paste handling: allow pasting path as literal text"
+    ],
+    "risks": [
+      "Feature-request framing means maintainers may not accept the change as scoped",
+      "Overlapping PR #57305 touches the same file; implementation boundaries unclear",
+      "Token estimation for PDFs is heuristic and may be contentious"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that pastes a path to a multi-MB PDF under the 20MB cap and asserts it is not attached when estimated tokens exceed the model context",
+      "Regression test that a small file still attaches normally",
+      "Test that the literal-paste path inserts text instead of an attachment"
+    ],
+    "unknowns": [
+      "No concrete minimal reproduction or failing test supplied",
+      "Whether PR #57305 or draft #56268 already covers the requested behavior",
+      "Whether maintainers want token-estimation logic in the TUI at all"
+    ],
+    "why": "The issue describes a real TUI behavior (byte-size cap only, no token/context estimate) and names a code anchor, but the supplied evidence lacks a concrete reproduction and the maintainer bot classified it as a feature request rather than a bug. The overlapping PR #57305 covers a different behavior (expanding pasted image paths on click) and does not reference this issue, so duplicate coverage is unresolved. The candidate's own pre-review failed with reproduction_or_validation_missing."
+  },
   "9b57a66f55cd29e1f381b8d09098cb15f8a87849ed9b4d5e8515c456fb23a736": {
     "confidence": 0.85,
     "contradictions": [],
@@ -111479,6 +111515,39 @@
     ],
     "why": "The issue has a strong reproduction and a bounded implementation target, but a commenter identifies a concrete competing fix path (agent_profile_id vs agent_settings mutual exclusivity, requiring agent-server support for skills_append) and states that OpenHands/software-agent-sdk#4717 carries a closing keyword for this issue. That cross-repo closing PR is not confirmed merged or closed, so duplicate/merged-fix coverage is unresolved and materially determines whether local code work is actionable."
   },
+  "a883f14e89c1bc8796588076a35a92af4ea8683401798e5c276c33614874353e": {
+    "confidence": 0.55,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/opa/main.go: terminalize synchronous dispatch-failure branch (fail-closed local 5xx or explicit fail-open continue)",
+      "Add regression test injecting synchronous DispatchHttpCall failure"
+    ],
+    "risks": [
+      "Fix direction (fail-closed vs configurable fail-open) not confirmed by maintainers",
+      "Changing authorization failure semantics could alter security behavior",
+      "Runtime repro only on 2.0.0, not current 2.0.3"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test with mocked DispatchHttpCall returning synchronous error: assert local 5xx sent and backend request count 0 (fail-closed) or continue-once (fail-open)",
+      "E2E: route referencing non-materialized OPA k8s service, assert bounded terminal response instead of client timeout"
+    ],
+    "unknowns": [
+      "Repository requires assignment but issue has no assignee",
+      "Whether maintainers want fail-closed 5xx vs configurable fail-open",
+      "Whether the defect still reproduces at runtime on current main/2.0.3"
+    ],
+    "why": "Issue gives a plausible source-level root cause (synchronous DispatchHttpCall error -> ActionPause with no callback) and a runtime repro on OPA plugin 2.0.0, but the current main/2.0.3 branch is only source-inspected, not runtime-reproduced. More importantly, the repository policy is needs_assignment and the issue has no assignees, which is a materially blocking unknown for actionability."
+  },
   "a89687295fc181af2f35fdaf17676c5f2f6bfb795f27dd791acf4ad5c65b83ac": {
     "confidence": 0.6,
     "contradictions": [
@@ -117347,6 +117416,41 @@
       "Whether maintainers consider the field-dropping behavior intentional for this payload size"
     ],
     "why": "Issue provides a strong, reproducible user-visible bug: smart_crusher drops non-null top-level fields (tags, subtasks) from small MCP tool_result JSON while preserving null fields, with a curl repro and transforms_applied=[router:smart_crusher:0.58], ccr_hashes=[]. However, the supplied evidence does not establish the internal root cause (no code anchor beyond the smart_crusher module name, no identified field-selection logic), and an open PR (#3227) has semantic overlap on smart_crusher/tool_result with 15 changed files and 2318 additions, so duplicate/coverage status is unresolved. These are materially blocking unknowns for deciding whether a new code contribution is actionable."
+  },
+  "b2db3d8af4fce3030c0daccf3d70a66929da506d8edef8c32025708a249fb08a": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Human Input form POST submit handler: add archived-workspace/app-site check",
+      "Human Input upload-token endpoint: enforce same check",
+      "Human Input file upload endpoint: enforce same check",
+      "Shared helper to centralize archived-workspace validation across form endpoints"
+    ],
+    "risks": [
+      "Broadening the check could break legitimate flows if app-site resolution differs for standalone_web_app recipients",
+      "Historical merged PRs #32060 and #36322 introduced the endpoints; fix must align with their design rather than duplicate logic",
+      "File upload auth path may use a different token scope than form submit, requiring separate enforcement"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: archive tenant, then POST /api/form/human_input/<token> returns 403 and workflow does not resume",
+      "Regression test: archive tenant, then POST /api/form/human_input/<token>/upload-token returns 403",
+      "Regression test: archive tenant, then POST /api/human-input-forms/files with pre-archive and post-archive tokens returns 403 and stores no files",
+      "Positive test: normal workspace still allows submit and upload (200/201)"
+    ],
+    "unknowns": [
+      "Exact code locations of the POST submit, upload-token, and file-upload handlers are not pinned to file paths in supplied evidence",
+      "Whether a shared archived-workspace guard already exists that can be reused"
+    ],
+    "why": "Issue provides a concrete reproduction (PowerShell/Docker steps, expected vs actual status codes) and names the root cause: GET handler calls _get_app_site_from_form which enforces archived-workspace check, while POST submit, upload-token, and file-upload endpoints skip it. Code anchors and a validation path (403 on all endpoints after archive) are supplied."
   },
   "b2e52a163aa114157d62512829b718f50969227ccaacd762da16108e754dc9d8": {
     "confidence": 0.8,
@@ -124685,6 +124789,41 @@
       "Whether the maintainers have a design preference for the custom-delimiter behavior, as indicated by the comment 'the fix cannot be made without a design discussion'."
     ],
     "why": "The issue provides a detailed root-cause analysis with code references, a reproducible example, and a clear minimal fix (Option A). The bug is user-visible and affects a critical RAG path. Although an open PR (#18556) already addresses it, the issue remains actionable for validation and potential improvement."
+  },
+  "bd8cc1bd3942c9b815e0e403e34d8cc8956c0745517cc7a1a4b8c1d722b990dc": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured Prefill set or derive from server-side topology",
+      "python/sglang/srt/disaggregation/common/conn.py: avoid synchronous blocking fetch on shared request path",
+      "sgl-model-gateway/src/routers/http/pd_router.rs and grpc/pd_router.rs: confirm server-side bootstrap injection remains authoritative",
+      "disaggregation backend conn.py variants (mooncake, ascend, mori, base, fake) for consistent validation"
+    ],
+    "risks": [
+      "Tightening validation could break legitimate direct-worker deployments that rely on client-supplied bootstrap metadata",
+      "Fix scope may span Python and Rust gateway paths, increasing review surface",
+      "Maintainer may prefer a specific design (auth vs. allowlist vs. topology-derived) not yet confirmed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that a direct Decode request with attacker-controlled bootstrap_host/port does not trigger an outbound request to that address",
+      "Add a test that a slow/unreachable bootstrap endpoint does not block concurrent normal Decode requests",
+      "Run the issue's poc.py with --delay-s 0 and --delay-s 2 against a loopback Prefill/Decode deployment and confirm canary hits drop to zero and latency returns to baseline",
+      "Run targeted disaggregation unit tests and static checks for the touched modules"
+    ],
+    "unknowns": [
+      "Whether direct worker APIs are intended to accept client-supplied bootstrap metadata at all, which determines whether the fix is validation or removal"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/bootstrap_port and issues a synchronous requests.get, enabling SSRF and blocking shared Decode processing. Reproduction is executable, loopback-only, and includes a negative control showing the Gateway overwrites the fields. Code anchors in conn.py and pd_router.rs are supplied, and no duplicate PR/issue coverage is reported."
   },
   "bd91d191c4b48ce87015155df29e14d97bf08132893259fdffcd8529d1dae77f": {
     "confidence": 0.7,
@@ -148698,6 +148837,37 @@
       "Whether the fix should be scoped to the unconditional-invalidation defect or the full cross-replica coherence fix"
     ],
     "why": "Issue provides a concrete multi-replica cache-coherence bug with ordered reproduction steps, expected/actual behavior, and specific code anchors (per_user_oauth_store.py, mcp_management_endpoints.py, dual_cache_token_backend.py, auth_cache_invalidation_pubsub.py). A confirming comment reproduces it on v1.103.1 and identifies an additional concrete defect: the DELETE handler only invalidates when the credential row still exists, so repeated DELETEs skip invalidation. Two reasonable fix paths are offered, which is normal implementation uncertainty, not a blocker."
+  },
+  "e0c4d271a868d8352aeb29b8c68b47bf9b05c796f53e5aef406b3744bcc9c1b8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/crewai/src/crewai/agents/agent_executor.py: ensure recover_from_context_length re-enters reasoning while iteration budget remains",
+      "lib/crewai/src/crewai/agents/agent_executor.py: clear _last_context_error after successful recovery"
+    ],
+    "risks": [
+      "PR #7860 touches agent_utils.py and context_overflow semantics; must confirm it does not already cover this reactive path",
+      "Routing change could affect other terminal-label transitions in the executor state machine"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's reproduce.py offline fixture and assert the overflow case returns TASK-FINISHED with a subsequent task request",
+      "Add a regression test asserting iterations advance past 1 and finalize is not reached after successful summarization",
+      "Run targeted unit tests for agent_executor and agent_utils"
+    ],
+    "unknowns": [
+      "Whether PR #7860's implementation boundary overlaps the reactive recovery routing fix"
+    ],
+    "why": "Issue provides an offline executable reproduction with a passing control, and a contributor code trace narrows the break to the recover_from_context_length -> initialized -> check_max_iterations routing after successful summarization, distinct from merged #8191 (proactive compaction) and PR #7860 (custom LLM without acall)."
   },
   "e0e0e72ced9aeb364201d647430a0a58f4a0c178f9a5493b8bc3ede6e4f1f0a8": {
     "confidence": 0.82,
