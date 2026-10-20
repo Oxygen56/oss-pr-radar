@@ -24649,6 +24649,42 @@
     ],
     "why": "Issue describes a concrete numerical mechanism: QLoRA fp16/bf16 downcast applied to DoRA lora_magnitude_vector, causing optimizer updates below bf16 representable precision and silent no-op; restoring FP32 restores updates. This is a real quantization/numerical PEFT mechanism with a supplied Colab reproduction and a clear reference-vs-implementation validation path (DoRA FP32 vs QDoRA bf16 vs QDoRA+FP32 magnitude)."
   },
+  "279d96c3e42f030b01cab8d6daf703e0c4489c7ce382cf6966e9e1d974a81302": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against server-side Prefill topology or derive it from authenticated topology instead of trusting client fields",
+      "python/sglang/srt/disaggregation/common/conn.py: avoid synchronous blocking fetch on shared Decode request processing path",
+      "sgl-model-gateway/src/routers/http/pd_router.rs and grpc/pd_router.rs: confirm bootstrap injection remains authoritative and consistent with worker-side validation",
+      "Add regression test asserting client-supplied bootstrap_host/port cannot reach an arbitrary endpoint"
+    ],
+    "risks": [
+      "Fix may need to preserve legitimate direct-worker bootstrap flows used in tests or non-Gateway deployments",
+      "Changing the synchronous fetch to async could ripple into scheduler/request-processing code paths",
+      "Maintainer may prefer a different trust boundary (Gateway-only enforcement) over worker-side validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run supplied poc.py with --delay-s 0 against an isolated loopback Prefill/Decode deployment and assert the canary receives zero /route requests after the fix",
+      "Run poc.py with --delay-s 2 and --gateway-url and assert concurrent normal request latency no longer inflates to ~20s",
+      "Add unit test for try_ensure_parallel_info rejecting a bootstrap_addr not in the configured Prefill set",
+      "Re-run Gateway negative control to confirm inject_bootstrap_into_value still overwrites client fields"
+    ],
+    "unknowns": [
+      "Whether maintainers consider direct Decode worker API access in-scope for hardening versus documented as trusted-internal",
+      "Whether an existing internal auth mechanism for worker-to-worker calls is intended to be reused"
+    ],
+    "why": "Issue provides a concrete, runtime-tested SSRF and blocking root cause: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and issues a synchronous requests.get without validating against the configured Prefill set. Reproduction script, canary hits, latency measurements, and a negative control through the Gateway are all supplied, giving a clear reference-vs-implementation validation path."
+  },
   "279e2288d443f9c7a12f7160c56c62f688b17770ec685b22b234935c60120a14": {
     "confidence": 0.82,
     "contradictions": [
@@ -149764,6 +149800,36 @@
       "Maintainer design preference among the proposed fix options; whether any existing PR addresses this issue."
     ],
     "why": "The issue provides a detailed, reproducible bug with clear root cause: OM removes observed messages and only forwards model messages to sub-agents, breaking context forwarding and messageFilter. The proposed fixes are actionable and align with documented behavior."
+  },
+  "e34bedc8527d29326b56e45d8e4822ce3851d77f932f17b6fb65355bf541404e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate actionability_evidence lists root_cause_signal=false and code anchors in client files, but the issue body and bot reply establish the fault is server-side on the Go gateway"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "No actionable client-side module identified; the defect appears to live in the hosted Go inference gateway, not in opencode client code"
+    ],
+    "risks": [
+      "Attempting a client-side 'fix' would mask or misattribute a server-side gateway defect",
+      "Large-prompt reproduction needs a real opencode-go key and ~650k-token inputs not available in the sandbox"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Would require gateway-side access to reproduce first-token latency scaling and empty completions; a client-side regression test cannot validate a server-side defect"
+    ],
+    "unknowns": [
+      "Whether any maintainer-accessible gateway logs or code path exists in this repo to act on",
+      "Whether the empty-completion/finish_reason behavior has any client-side handling gap worth a separate scoped fix"
+    ],
+    "why": "The issue reports server-side latency, empty completions, and missing finish_reason on the hosted opencode-go inference gateway, and the reporter explicitly reproduced it with raw HTTP with no opencode client in the loop. The bot reply confirms it is a Go service/gateway problem requiring a real opencode-go key and very large prompts unavailable in the sandbox. No client-side root cause is established, so there is no concrete code change to make in this repo."
   },
   "e3580e7af20647c0ed8b44f9eb803bd3b2f9b93ebe2c1bf136e022c5780ac784": {
     "confidence": 0.85,
