@@ -17510,6 +17510,42 @@
     ],
     "why": "The issue gives a concrete, well-evidenced root cause (vendored hono .d.ts in @mastra/mcp dist/_types causing nominal type mismatch for consumer-supplied SSEStreamingApi) and a clear fix direction (peer dep + drop hono from generateTypes). However, the supplied evidence shows a closed PR #23776 with direct code overlap and semantic overlap that appears to cover the same fix, and the duplicate status is 'human_review_required' with rootCauseCoverage=false. Whether the fix is already covered by that closed PR is a materially blocking unknown for actionability."
   },
+  "1c5a74c1feab2b70b6a3acfe6277adbee80f50079e530c9fdde614e99fc7c9b7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims masking is specific to the Qwen 3.8 route, while the bot links multiple other reports of the same empty-error-body behavior on the Go gateway"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Go gateway Anthropic Messages route: propagate upstream provider error payload instead of emitting empty SSE error data",
+      "Error serialization for streaming error events on the Qwen 3.8 backend path"
+    ],
+    "risks": [
+      "Work may duplicate or conflict with the fix tracked in #51530/#50446/#51348",
+      "Changing error propagation could alter SSE error framing for other backends",
+      "No identified code anchor means the fix location is speculative"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's curl: qwen3.8-flash, max_tokens=1024, thinking.budget_tokens=1024, expect HTTP 400 with the real upstream message rather than 'event: error\\ndata: {}'",
+      "Regression: claude-haiku-5-5 invalid_request_error passthrough remains readable",
+      "Control: max_tokens=4096, budget_tokens=1024 still streams 200 with message_stop"
+    ],
+    "unknowns": [
+      "Whether #51530 already has an accepted fix or open PR covering this masking",
+      "Which gateway code path drops the upstream error payload",
+      "Whether maintainers consider this a duplicate to be closed"
+    ],
+    "why": "The issue gives a strong curl reproduction of masked SSE errors on the Qwen 3.8 Go route, but the bot comment identifies #51530 (plus #50446, #51348) as the same masking problem, and duplicate coverage is unresolved. The root cause is also unlocated: no code path in the gateway is identified, and the candidate's own pre-review failed with no_code_surface and reproduction_or_validation_missing."
+  },
   "1ca8cd3deca97b673859cbace91bbabe1969b203183862c033e9911b141fe3d1": {
     "confidence": 0.9,
     "contradictions": [],
@@ -44627,6 +44663,42 @@
     ],
     "why": "Issue provides a deterministic repro and root cause for a startup crash on SM100 with split-KV FA4 warmup. Existing PR #41834 overlaps semantically but is broad and not directly linked; a focused fix (DSL pin bump plus defensive kernel change) is actionable and materially better."
   },
+  "46d97a224cf8a3ab042488134d8c1fa9ddc0e91a233086dd51a0fb59e943733d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue asserts Dynamo skips the Harmony wrap, but no code anchor or file path in the supplied evidence confirms where the constraint is forwarded",
+      "preTaskEvidence reports no_code_surface and empty codePathsPlan while the issue names specific parser flags and a structured-outputs backend"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "frontend chat-completions request handling: wrap json_schema/json_object constraint in a Harmony structural tag so grammar starts at <|channel|>final",
+      "reasoning parser integration (gpt_oss / openai_gptoss) so reasoning channel is preserved under guided decoding"
+    ],
+    "risks": [
+      "Fix location ambiguous between Dynamo frontend and vLLM worker structured-outputs config",
+      "Open PR #434 touches the same parser/response_format area and may conflict or already cover part of the root cause",
+      "Behavior change to guided decoding could affect non-GPT-OSS models if wrapping is applied unconditionally"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's curl B and C against a Dynamo frontend + dynamo.vllm worker; assert reasoning_tokens > 0 and schema-valid JSON",
+      "Regression test comparing control (no response_format) vs json_schema vs json_object on the same prompt",
+      "Unit test that the constraint handed to the engine is wrapped in the Harmony structural tag rather than passed plain"
+    ],
+    "unknowns": [
+      "Which Dynamo module forwards response_format to the engine (frontend vs worker)",
+      "Whether PR #434 already implements the Harmony structural-tag wrap for GPT-OSS",
+      "Whether the guidance/xgrammar backend selection changes where the wrap must be applied"
+    ],
+    "why": "Issue gives a concrete reproduction (control vs json_schema/json_object) and a plausible root cause (Dynamo forwards the plain JSON constraint instead of wrapping it in a Harmony structural tag, so the grammar applies from token 0). However, the supplied evidence does not establish the actual Dynamo code surface: codePathsPlan is empty, pre-review failed with no_code_surface, and the only overlapping PR (#434, 227 files, 62k additions) is a large unlinked parser refactor whose root-cause coverage is explicitly false. Whether the fix belongs in the frontend request path or the vLLM worker's structured-outputs config is unresolved, which determines what code to change."
+  },
   "46e297b4c88fc751c3a99ce5be902485733c730804e0c83b13643036801bfc81": {
     "confidence": 0.8,
     "contradictions": [
@@ -65258,6 +65330,39 @@
     "wait_reason": null,
     "why": "Issue clearly identifies a concrete bug in mute release logic with a specific code path and expected behavior, no competing PR or issue found, and the fix is actionable."
   },
+  "63cb31a76b2c563c7107ed6e9b6d4a66fe144eb17560053975fb5c3bf6403de7": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Mooncake prefill bootstrap_thread: validate sender/Decode identity before parsing registration",
+      "KVArgsRegisterInfo.from_zmq / unpack_int_lists: bound nested buffer count and frame size before materializing lists",
+      "decode_kv_args_table: enforce table size limit and expiry for registrations"
+    ],
+    "risks": [
+      "Tightening sender validation could break legitimate Decode workers if identity binding is too strict",
+      "Nested-buffer limits must accommodate valid large registrations",
+      "Cross-host test requires isolated network and memory-limited cgroup setup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_oom.py against a memory-limited Prefill cgroup and confirm registrations are rejected before nested metadata is materialized",
+      "Regression test that a 100,000-buffer nested frame is rejected without allocating the list",
+      "Verify decode_kv_args_table does not grow unbounded under unique fake session IDs",
+      "Confirm legitimate Decode registration and routed completions still succeed after the fix"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred authentication/identity-binding design for Mooncake PD registration"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: unauthenticated Mooncake decode registrations are parsed and retained in decode_kv_args_table with no sender check, nested-buffer limit, or table bound, leading to Prefill OOM. Reproduction includes executable repro_oom.py, cgroup counters, and observed oom_kill=1 plus routed completion timeouts, giving a clear reference-vs-implementation validation path."
+  },
   "63d0ea285346a6354120831ba3f9efdfe72116cd8eea544a069239f515173ce4": {
     "confidence": 0.85,
     "contradictions": [],
@@ -83186,6 +83291,42 @@
     ],
     "why": "The issue's own reporter retracted the QSA kernel bounds root cause and now hypothesizes an overlap-scheduler race between host sequence_lengths snapshot and device row-range derivation; a second independent reporter shows the crash persists with --disable-overlap-schedule and attributes it to merged PR #38346 (compress gather clamp), which is already merged. Root cause is unresolved and duplicate/merged-fix coverage is contradictory, so code work is not yet clearly actionable."
   },
+  "7dd264936cfc102fb9ad8033ea6f7f7869cb1b4b9550f347ef6e0a4e7775733e": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue body states public issue #41474 and unmerged fix PRs #41481/#41502/#43476 describe the same root cause, while open_pr_assessment and related_issue_assessment report status 'none' with no related PRs or issues"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py: replace request-specific prefix comparisons with exact rid equality, keeping abort_all as a separate explicit bulk path",
+      "python/sglang/srt/managers/tokenizer_manager.py: ensure disconnect cleanup targets only the exact request identity",
+      "python/sglang/srt/managers/io_struct.py: consider server-namespaced rid handling for additional isolation"
+    ],
+    "risks": [
+      "Changing prefix to exact equality may break any internal caller that relies on prefix-based bulk abort; audit all AbortReq producers",
+      "PD prefill/decode and chunked/grammar/waiting paths each have their own comparison site and must all be updated consistently",
+      "Server-namespaced rid changes are a broader API behavior change and should be scoped separately"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a victim request with rid '<prefix>-victim' and a streaming attacker with rid '<prefix>', closes the attacker stream, and asserts the victim reaches normal length finish rather than FINISH_ABORT",
+      "Unit-test Scheduler.abort_request with prefix-related rids to assert only exact-match requests are aborted",
+      "Re-run the issue's PoC matrix (prefix disconnect, non-prefix disconnect, prefix normal completion) on single-worker and 1P1D to confirm 0 victim aborts"
+    ],
+    "unknowns": [
+      "Whether the referenced prior fix PRs (#41481/#41502/#43476) are still open, closed, or superseded, which affects duplicate coverage",
+      "Whether any internal caller depends on prefix-based abort semantics"
+    ],
+    "why": "Issue pins a concrete root cause: client-supplied rid is preserved in GenerateReqInput._normalize_single_inputs, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid) across eight sites, so a short rid aborts unrelated requests. Code anchors, a runnable PoC, and a controlled 5/5 vs 0/5 matrix (single-worker and 1P1D) plus an exact-equality control establish both reproduction and a validation path."
+  },
   "7ddfea126c737e9aab5258f9f4cba6eaf523c8128aebfa1110d569602b5f8bad": {
     "confidence": 0.55,
     "contradictions": [
@@ -85599,6 +85740,43 @@
       "Whether maintainers consider the cancel_on_disconnect path the intended fix location"
     ],
     "why": "Issue describes a plausible spend-tracking gap for non-streaming Bedrock calls on client disconnect, and a commenter supplies a concrete mechanism (cancel_on_disconnect flag, CancelledError swallowed by except Exception, no shielded cleanup for non-streaming). However, the supplied duplicate assessment finds three open PRs with semantic overlap on the same non_streaming/litellm/utils.py path, including #41171 'track spend for streams a deployment hook converted to non-streaming' and #41169 'log converted streams as streams so cost tracking keeps standard_logging_object'. Whether these already cover the root cause is unresolved, which materially determines whether new code work is actionable."
+  },
+  "81e440f5638a6e086e7885a72e5dc222f6e88c094b0b38242b4db148f4252790": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body claims a verified reproduction on v1.105.0 and main, but actionability_evidence reports public_repro_signals=0 and empty reproduction_evidence"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/core_helpers.py: stop mapping for error finish reasons",
+      "litellm/llms/anthropic/pass_through/adapters/streaming_iterator.py: synthetic empty text block emission",
+      "litellm/llms/anthropic/pass_through/responses_adapters/streaming_iterator.py: response.completed with zero actionable output",
+      "litellm/litellm_core_utils/streaming_handler.py: terminal finish_reason handling"
+    ],
+    "risks": [
+      "Changing stop_reason mapping may alter behavior for legitimate empty completions",
+      "Retry-in-place inside CustomStreamWrapper could duplicate upstream calls or mask real errors",
+      "Existing PR #47166 may already cover part of the root cause"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a failing streaming test that feeds a 0-output / thinking-only / error-finish-reason chunk sequence through AnthropicStreamWrapper and asserts no synthetic empty text block with end_turn",
+      "Add a regression test for AnthropicResponsesStreamWrapper when response.completed arrives with only reasoning items",
+      "Run targeted unit tests for the streaming handler and anthropic pass-through adapters"
+    ],
+    "unknowns": [
+      "Whether PR #47166 actually fixes this streaming empty-text/end_turn behavior or only overlaps on keywords",
+      "Whether maintainers prefer retry-in-place versus raising InternalServerError for zero-output streams",
+      "Concrete minimal reproduction command or fixture not supplied"
+    ],
+    "why": "Issue names concrete code anchors and a plausible root cause (error finish reasons mapped to 'stop' plus synthetic empty text block in AnthropicStreamWrapper), but the supplied actionability evidence reports zero public reproduction signals and no reproduction evidence, and the duplicate assessment flags PR #47166 as semantic overlap requiring human comparison. The issue's proposed fix also spans retry semantics and error-frame behavior, which is a design decision not yet confirmed."
   },
   "81e63f5ce1441001559f8fce3db9d93b67289081385f756b13eb38a45dbb9a75": {
     "confidence": 0.8,
@@ -92328,6 +92506,43 @@
     ],
     "why": "Issue identifies a concrete root cause: legacy Extractor fields (field_name, prompts, sys_prompt, tenant_llm_id) in chunk_summary.json and title_chunker.json are not in extractorValidParamKeys, so CleanComponentParams silently drops them, causing empty/default prompts. Reproduction steps and expected behavior are provided, and the fix is a bounded template/whitelist change with a clear validation path."
   },
+  "8c44d4a67567a29356315ad2d189d14f3fda14ec1d815b4fb44d98f94345d3a1": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured Prefill set or derive from server-side topology",
+      "python/sglang/srt/disaggregation/common/conn.py: avoid synchronous blocking fetch on shared request path",
+      "sgl-model-gateway/src/routers/http/pd_router.rs: confirm server-side overwrite remains authoritative",
+      "python/sglang/srt/disaggregation/*/conn.py: propagate validation to backend variants"
+    ],
+    "risks": [
+      "Validation may break legitimate direct-worker deployments that rely on client-supplied bootstrap metadata",
+      "Backend-specific conn.py variants (ascend, mooncake, mori, fake) may need separate handling",
+      "Maintainer may prefer a different trust boundary (auth vs allowlist) than the proposed fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting a client-supplied bootstrap_host/port not in the configured Prefill set is rejected and no outbound request is made",
+      "Run the provided poc.py with --delay-s 0 against an isolated loopback deployment and assert canary receives zero hits",
+      "Run the matched blocking check with --delay-s 2 and assert concurrent normal request latency stays near the zero-delay baseline",
+      "Run targeted unit tests for the disaggregation common module and static checks"
+    ],
+    "unknowns": [
+      "Whether direct worker APIs are intended to accept client bootstrap metadata at all, which determines allowlist vs removal approach"
+    ],
+    "why": "Issue provides a concrete root cause: CommonKVManager.try_ensure_parallel_info trusts client-supplied bootstrap_host/port and issues a synchronous requests.get to an attacker-chosen URL, with code anchors in conn.py and pd_router.rs. Reproduction is executable, includes a negative control through the Gateway, and quantifies blocking latency (82.88x). This is a security/availability fix on the disaggregation request path, not mere plumbing."
+  },
   "8c47761129f72eab6a141a725f87254a51e24d5393db6f3fe4fb2fb528cf3bbe": {
     "confidence": 0.7,
     "contradictions": [
@@ -96579,6 +96794,44 @@
       "Whether maintainers prefer a specific fix approach"
     ],
     "why": "Issue provides a clear root cause (read-after-write inconsistency with read replica), a concrete reproduction path, and a validation method (temporarily pointing reader to writer resolves the 500). The existing PR #38580 directly addresses this by pinning the read to the writer DB, but lacks root-cause coverage evidence; the issue's evidence strengthens the case for a targeted fix."
+  },
+  "922fd18c9c15f81738d7e7bcd43cfc2eeabe8b4022ef33b8adda3ec6519eff25": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims gaps are unaddressed while open maintainer PR #21228 refactors the same PDF JSON post-processing paths"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/parser/parser/pdf_parser_paddleocr.go: classify figure/image blocks to doc_type_kwd image, keep figure_title layout",
+      "internal/parser/parser/pdf_parser_remote_common.go: populate File[\"outline\"] via pdfium.ExtractOutlines",
+      "pdf_parser_paddleocr.go: honor output_format and flatten_media_to_text",
+      "internal/ingestion/component/parser.go: run maybeDispatchVisionEnhancement on dispatcher branch"
+    ],
+    "risks": [
+      "PR #21228 may already cover the same post-processing root cause, making this duplicate work",
+      "Issue #21221 may be the canonical fix location for outline/output_format/vision-enhancement",
+      "Inlining image bytes could reintroduce parser-phase memory peak"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing test ingesting a PDF with a figure block and assert doc_type_kwd image is emitted",
+      "Assert file.outline is non-empty for a PDF with a TOC",
+      "Set output_format markdown and assert returned format is markdown",
+      "Regression test that no image bytes are inlined at parse time (budget respected)"
+    ],
+    "unknowns": [
+      "Whether PR #21228 or #21205 already resolves the figure/outline/output_format gaps",
+      "Whether #21221 is the intended canonical fix for the shared post-processing root cause",
+      "Whether maintainers want this split across issues or consolidated"
+    ],
+    "why": "Issue describes concrete code-level gaps (figure/media classification, outline extraction, output_format/flatten_media_to_text ignored) with file:line anchors and a code-level repro, but an open maintainer-owned PR #21228 ('unify PDF JSON post-processing') semantically overlaps on the same parser/vision-enhancement paths, and the issue itself references in-flight PR #21205 plus sibling issue #21221 covering the outline/output_format/vision-enhancement root cause. Whether independent code work is actionable depends on unresolved duplicate/coverage status."
   },
   "92479e4cdedd5d60d2c285618f36ee66a47b4f5c8fdae31bb463d201e9c884e9": {
     "confidence": 0.85,
@@ -121473,6 +121726,42 @@
       "No maintainer approval yet; but that is not a blocker for actionability."
     ],
     "why": "Issue provides a clear root cause (routing identity mismatch between ThunderAgent and KV router under DP>1), a concrete reproduction path, and a detailed design with code-level changes. The proposed fix is technically actionable and addresses a real bug."
+  },
+  "b93f24cac9559b6dcaeda6a956a9581998f75adca5f42b6f302c16683830d8bd": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter claims direct tools genuinely absent, but maintainer-bot reproduction shows all direct tools still sent after restart and credential failure",
+      "Reporter cites search() returning only MCP tools as evidence, but bot notes search() never lists direct tools"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "session tool-surface construction on resume",
+      "provider-config load failure handling at service start"
+    ],
+    "risks": [
+      "Symptom may be model behavior after a failed turn rather than a tool-surface bug",
+      "Fork inheritance may just replay prior model claims, not persisted tool state",
+      "No reproducible trigger means a fix cannot be validated"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture OPENCODE_LOG_LEVEL=debug tool list sent to model for an affected session before deletion",
+      "Simulate /api/model 503 plus provider-config transport failure at service start and verify direct tools remain in the request payload",
+      "Directly instruct the model to call shell and record whether it runs or errors with Unknown tool"
+    ],
+    "unknowns": [
+      "Debug log of tools actually sent to the model for the affected session",
+      "Whether a direct shell call in the broken session errors with Unknown tool or simply is not invoked",
+      "Whether the persisted session data contains a permissions/tools field that dropped direct tools"
+    ],
+    "why": "The report is a single non-reproducible incident; the maintainer-bot reproduction on 2.0.32 showed direct tools still sent after restart plus credential failure, and the reporter's own suggested next step (debug log of tools sent to model) is unavailable because the session was deleted. No root cause is established and the trigger is not reproduced."
   },
   "b9641d7775b3c789a0f960ff92003dc16f997c7ac7d8fbe17a13e981b538642e": {
     "confidence": 0.7,
@@ -151039,6 +151328,42 @@
       "Whether the missing args are the sole root cause or if additional kernel signature mismatches exist."
     ],
     "why": "Issue #39402 describes a concrete TypeError in ep_scatter_from_psum missing expert_start/num_experts positional args, with a clear code anchor and reproduction path. However, the supplied duplicate assessment shows PR #39399 directly references this issue with COVERAGE relation and overlapping path python/sglang/kernels/ops/moe/ep_moe_kernels.py, and PR #37211 also targets the same fix with a test file. The duplicate status is human_review_required, meaning unresolved coverage by existing PRs materially blocks independent implementation actionability."
+  },
+  "e47ee64a586f9bef3406a6bc7dfd6544cce3af2958e9c79892df6dce31c69975": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docreader gRPC ReadStream/Read request lifecycle: explicit release of request payload and parse result",
+      "post-large-request gc.collect() or equivalent cleanup",
+      "investigate native copy retention in server path (grpcio/protobuf/pypdfium2 interaction)",
+      "add streaming regression test asserting memory release after request completion"
+    ],
+    "risks": [
+      "Root cause split between Python reference cycle and native mapping; fix may only address one copy",
+      "gc.collect() after large requests could add latency",
+      "Behavior/API changes to streaming path if cleanup is misplaced"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a large scanned PDF via Docker Compose and measure cgroup anon before/after request",
+      "Standalone DocReaderServicer().ReadStream test confirming baseline RSS restoration",
+      "Add regression test that request payload is not retained after ReadStream returns",
+      "Run targeted docreader unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact source of the native mapping retention (grpcio vs protobuf vs pypdfium2) not identified",
+      "Whether maintainers have a preferred cleanup approach"
+    ],
+    "why": "Issue provides a detailed, ordered reproduction with expected/actual memory measurements and narrows the leak to the gRPC server request path (parser alone does not leak). Root cause is not fully pinned (reference cycle vs native mapping), but the evidence supports a concrete investigation and fix path in docreader's ReadStream/Read lifecycle."
   },
   "e48bb6e76acdf0b0873aa016bdbaa61c496082187e50eeb3407479dbb6b78911": {
     "confidence": 0.6,
