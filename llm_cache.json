@@ -9359,6 +9359,39 @@
     ],
     "why": "The issue is a UX/rendering design request with explicitly open design questions (collapse-by-default vs setting, compact form contents, thinking blocks, reply density). The collaborator comment only agrees the change is probably time; it does not settle the design. The issue itself states implementation must not begin until it reaches Ready on the Goose Issues board, and the pre-task policy is needs_assignment with assignmentRequired=true. A sketch commit exists but is not a PR and does not resolve the design or assignment blockers."
   },
+  "0fef8a895fc88c0d100902c25ee1f3ef96c1a5089a53086b7645f61462aa73e0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/constrained/xgrammar_backend.py: per-tool compile isolation and relax/drop fallback on InvalidGrammarObject",
+      "Add configurable policy flag (fail/relax-tool/drop-tool) defaulting to fail to preserve behavior",
+      "Warning log identifying the failing tool name"
+    ],
+    "risks": [
+      "Relaxing schema loosens constraints and could admit malformed tool calls in edge cases",
+      "Cold compile cost (~18s for 177 tools) may be a latency concern if per-tool isolation recompiles",
+      "Maintainer may prefer a different policy default or upstream xgrammar fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with one tool schema {\"type\":\"string\",\"pattern\":\"^(?!\\\\.)[a-z]+$\"} and tool_choice=auto at SGLANG_TOOL_STRICT_LEVEL=2, assert 400 before fix and 200 after",
+      "Regression test that default fail policy still returns 400 for uncompilable schema",
+      "Multi-tool test verifying only the failing tool is relaxed and other tools remain strict",
+      "Model-agnostic unit test on dispatch_structural_tag fallback path"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated for fallback policy naming/default",
+      "No open PR or duplicate coverage confirmed beyond the assessment"
+    ],
+    "why": "Issue gives a concrete reproduction (single tool with negative-lookahead pattern at strict level 2 returns 400), a code anchor (dispatch_structural_tag in xgrammar_backend.py where RuntimeError becomes InvalidGrammarObject), and a measured local patch showing the 177-tool set compiles and smoke requests return 200. Root cause is upstream xgrammar regex limitation, but SGLang can add a per-tool fallback policy, which is actionable code work."
+  },
   "100566fa383c244f54070c20ad69feb40f8effb4799d4f1cc3e1c74ab72b4d32": {
     "confidence": 0.9,
     "contradictions": [
@@ -42560,6 +42593,40 @@
       "Whether maintainers accept the private Ink layout-listener dependency"
     ],
     "why": "The issue describes a real commit-phase layout feedback loop in VirtualizedList, and the reporter supplies a deterministic unique-key regression that still fails with #11743 applied and passes with the proposed fix. However, the supplied evidence leaves the duplicate/coverage question unresolved: triage states this is very likely the same defect as #11500 whose confirmed driver is duplicate history-item keys, and the open PR #11761 (draft, same code paths, semantic overlap 7) may already cover the same root cause. The reporter's own scope note concedes the regression does not prove the field crash was initiated independently of the duplicate-ID driver. That unresolved duplicate/merged-fix coverage is a materially blocking unknown for deciding whether new code work is actionable."
+  },
+  "43f090789d4f7bb90738fff0fd1f81c59d6e8c5d423aa16de9d0591ec00bee61": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: stop trusting client-supplied bootstrap address; derive Prefill endpoint from server-side topology or validate against configured Prefill set",
+      "Avoid synchronous blocking fetch on shared Decode request path (async/timeout/offload)",
+      "sgl-model-gateway pd_router.rs: confirm bootstrap injection remains authoritative and consistent with worker-side validation"
+    ],
+    "risks": [
+      "Fix may alter disaggregation bootstrap contract between Gateway and workers; must keep Gateway-injected values working",
+      "Multiple backend conn.py variants (ascend/mooncake/mori/fake/base) may need consistent handling",
+      "Maintainer may prefer a specific validation-vs-derivation approach"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that a direct Decode request with attacker-controlled bootstrap_host/port does not trigger an outbound request to that address",
+      "Add a test that a slow/unreachable bootstrap endpoint does not block concurrent normal Decode requests",
+      "Run the issue's loopback PoC with --delay-s 0 and --delay-s 2 against the patched build and confirm zero canary hits and normal latency"
+    ],
+    "unknowns": [
+      "Whether all disaggregation backends share the same sink or only common/conn.py",
+      "Whether maintainers require an authenticated internal-caller path vs topology-derived endpoint"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and head-of-line blocking bug: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and issues a synchronous requests.get, with code anchors, a loopback-only PoC, canary hit logs, and matched latency measurements (20.35s vs 0.246s). Root cause and validation path are established; no duplicate PR/issue coverage found."
   },
   "4444f931e8224be6b92c2f635679663d46e761c707bdde4694e3796ca1846757": {
     "confidence": 0.72,
@@ -107098,6 +107165,45 @@
     ],
     "why": "Issue pinpoints the exact unwired call site: decodeSchtasksOutput in src/service/windows-scheduler.ts falls back to plain UTF-8 instead of the project's existing decodeWindowsTextBytes (src/lib/windows-text.ts), which already handles GBK/legacy code pages. Instrumented A/B evidence shows the mojibake in trigger scopes and the healthy-check failure, with a concrete one-line delegation fix and a deterministic reproduction under chcp 936."
   },
+  "a3a995fc332ec63dfac46ea7956fcfd44688cd335f18ae50ffe3d4248778acc0": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter says spin tied to cwd=home; A/B shows idle serve at 0% and spin only with attached session",
+      "Contributor links merged #55597 as likely fix but states it is unverified",
+      "Windows commenter describes continuous kernel-time-heavy spin, a different fingerprint"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/config/plugin/compatibility.ts skill discovery/watch scope (candidate, unverified)",
+      "packages/cli/src/cpu-profile.ts profiling path (diagnostic only)",
+      "watcher subscription lifecycle for type=entries/type=file (candidate, unverified)"
+    ],
+    "risks": [
+      "Fixing the wrong path (skill loader vs watcher leak vs session runtime) wastes effort",
+      "Windows fingerprint may be a separate bug and could be conflated",
+      "Large session DB / JITWorker growth may indicate a distinct cause"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture a .cpuprofile via `kill -PROF <pid>` during a spike and identify hot stacks",
+      "Reproduce with an attached session and cwd=/home/user, then A/B against a build containing 49e9786bb72b0ad85969df4cd6bea3fea96d1a61",
+      "Add a regression test asserting idle `serve --service` CPU stays near zero with an attached session"
+    ],
+    "unknowns": [
+      "No captured CPU profile or hot stack identifying the spinning code path",
+      "Whether commit 49e9786bb72b0ad85969df4cd6bea3fea96d1a61 actually resolves the spike",
+      "Whether the Linux session-dependent spin and the Windows watcher leak share a root cause"
+    ],
+    "why": "The issue reports a real 100% CPU busy-loop in `opencode serve --service`, but no root cause has been established. The reporter could not capture a profile; a contributor points to the compatibility skill loader and merged PR #55597 as a candidate path but explicitly says it is unverified and asks for a profile. A third commenter describes a different Windows-only fingerprint and watcher-leak data point. The candidate's own actionability evidence has root_cause_signal=false, and the algorithm_evidence is null while the track is agent_ai_infra (not llm_algorithm), so no concrete mechanism is pinned down."
+  },
   "a3b50d27048a9eef3dfb78986379398e13d163371b7a29fc67ac1571682f1d0e": {
     "confidence": 0.8,
     "contradictions": [
@@ -163579,6 +163685,41 @@
       "Maintainer interest or design confirmation for the proposed approach"
     ],
     "why": "Issue provides a detailed root cause, quantified impact (26.7% of GGUF repos dropped), and a concrete proposed design. Existing PR #11005 is a draft with material gaps (still draft, no maintainer approval), leaving room for a stronger, more complete implementation."
+  },
+  "f9b16ab7055e4b7c730c8bfe2ee99b954de9600b0d0b545ea25b334b6d2063c4": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body states the analysis and fix directions are untested, while the candidate summary treats the root cause as established"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/google/adk/workflow/_dynamic_node_scheduler.py: avoid counting barrier-waiting replayed nodes against max_concurrency, or wait on the barrier before acquiring a slot",
+      "src/google/adk/workflow/utils/_replay_sequence_barrier.py: clarify ordering/timeout semantics",
+      "src/google/adk/workflow/_workflow.py: adjust _at_concurrency_limit accounting"
+    ],
+    "risks": [
+      "Changing concurrency accounting could weaken the max_concurrency guarantee or allow unbounded in-flight nodes",
+      "Scheduling replayed nodes in recorded order may interact with the #7502 out-of-order completion fix",
+      "The exact root cause is unverified; the fix could mask a different divergence"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test mirroring the repro: Workflow(max_concurrency=1) with a two-round RequestInput loop beside a three-node sibling chain and a JoinNode; assert both resumes complete without WorkflowInvariantError",
+      "Run the same test with max_concurrency=2 and None to confirm parity",
+      "Run targeted workflow package unit tests and static checks"
+    ],
+    "unknowns": [
+      "No assignee despite assignmentRequired=true policy",
+      "Root cause not confirmed by maintainer or code-level verification",
+      "Whether the #7502 fix already covers or conflicts with this path"
+    ],
+    "why": "The issue gives a strong reproduction and a plausible mechanism (a replayed node holding the only concurrency slot while waiting on the ReplaySequenceBarrier), but the repository policy requires assignment and the issue has no assignee, so code work is not yet actionable. The root-cause claim is also self-described as untested analysis with two alternative fix directions."
   },
   "f9b37c6c0f914bde140aa66f3f5975e340353963f2525d2f378b4a00165c9a3d": {
     "confidence": 0.55,
