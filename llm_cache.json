@@ -33590,6 +33590,41 @@
     ],
     "why": "Issue provides a strong reproduction (traceback, ordered steps, executable replay client) and a plausible root-cause hypothesis (flush_cache/reset_prefix_cache emptying the radix tree while pages stay allocated at both ends of the shared buffer), but the reporter explicitly states 'This has not been reduced further.' The open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') has semantic overlap on alloc_token_slots/scheduler and may already cover the same root cause, yet it does not reference this issue and its root_cause_coverage is false. Whether the issue is already addressed by that PR is a materially blocking unknown that determines whether new code work is actionable."
   },
+  "34f43c447f4c8f9ee51549724cbab5dd676dae79da556089ac7c3a1e047013b2": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims formula_signal and high depth, but issue body admits no operator isolation and no established root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "PP/NEXTN recurrent-state or cache handling in speculative decode path",
+      "scheduler microbatch determinism for concurrent arrivals"
+    ],
+    "risks": [
+      "Confusing floating-point/batch numerical variance with a real state bug",
+      "Fixing a symptom without isolating the responsible operator",
+      "Requires 2x H20 GPUs and specific checkpoint with MTP weights"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reduce to single-input workload with fixed warmup and confirm reproducible divergence",
+      "Ablate PP-only vs NEXTN-only to isolate the contributing component",
+      "Compare logits/token IDs at output index 19 across runs with fixed seed and cache state"
+    ],
+    "unknowns": [
+      "Whether PP or NEXTN is individually necessary for the divergence",
+      "Whether divergence is numerical batch-dependence or a recurrent-state/cache bug",
+      "A minimal single-input reproduction that reliably triggers the mismatch"
+    ],
+    "why": "Issue reports arrival-sensitive greedy-token divergence under TP1/PP2 + NEXTN, but explicitly states the responsible operator/state transition is not isolated, PP vs NEXTN necessity is untested, and batch-dependent numerical behavior cannot be distinguished from a PP/NEXTN recurrent-state/cache/scheduling bug. No root-cause evidence and no concrete algorithm-level fix target."
+  },
   "34f77276395bf13cc886ad7faac1c9dd213a4e2f28efc3e8aa171d94d9941638": {
     "confidence": 0.6,
     "contradictions": [
@@ -60726,6 +60761,41 @@
       "Exact behavior of programmatic initial-title callers that should opt out of pinning"
     ],
     "why": "Issue clearly identifies a user-visible bug where manual thread renames are overwritten by Observational Memory's auto-generated titles. Root cause is precisely located in three OM strategies that unconditionally update titles, with no distinction between manual and generated titles. Proposed fix is concrete: add a pinned flag in thread metadata, set it on rename, clear on regenerate, and centralize title-update logic. Test surface is specified. No blocking unknowns; open PRs have semantic overlap but do not cover the root cause."
+  },
+  "5c03965b21d32eae197e58c2389ba24577998b3292a68a0caece55b727c0c94f": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment summary says no related open PRs, but lists three closed/merged PRs with semantic overlap on session_info_update"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp/translate.ts: map SessionEvent.Renamed to a session_info_update notification with title and updatedAt",
+      "packages/cli/src/acp/service.ts: wire the rename event subscription into the ACP session update stream",
+      "packages/cli/src/acp/replay.ts: emit one session_info_update with the loaded session's current title at replay start"
+    ],
+    "risks": [
+      "Title generation can fail (e.g. insufficient funds), so the push must be skipped or fall back cleanly rather than emitting an empty title",
+      "session_info_update is optional in ACP; maintainers may prefer a narrower scope (push only, or replay only)",
+      "Event subscription lifecycle must avoid duplicate or leaked listeners per ACP session"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that drives a scripted ACP client through initialize, session/new, session/prompt, and asserts a session_info_update with the generated title arrives",
+      "Add a session/load replay test asserting the current title is announced before replayed messages",
+      "Regression test that retry and compaction markers still emit their existing session_info_update payloads unchanged"
+    ],
+    "unknowns": [
+      "Whether maintainers want the replay-time title announcement included in the same change or split out"
+    ],
+    "why": "The issue provides a concrete, reproducible gap: core publishes SessionEvent.Renamed, but the ACP adapter in packages/cli/src/acp/ never forwards it as session_info_update, and session/load replay omits the current title. Code anchors and a scripted ACP client reproduction are supplied, and the bot comment confirms the dev code matches the report. Prior PRs #21111 and #45536 are closed unmerged, so no merged fix covers this."
   },
   "5c2282ffe4ada13c3bbb8430c8a6ef070098a3728539faf9b642f696c78e93b3": {
     "confidence": 0.85,
@@ -90244,6 +90314,41 @@
     ],
     "why": "Issue describes a concrete quantization-dispatch failure (INCConfig rejected by Qwen4ExpPLEEmbeddingMethod.from_quant_config) with traceback and a tested workaround, but the supplied evidence contains a materially blocking unknown: open PR #58977 ('Support BF16 INC PLE embeddings in Qwen4Exp') overlaps the exact code paths (vllm/models/qwen4_exp/common/ngram_embedding.py, nvidia/ngram_embedding.py) and may already cover the root cause. Duplicate/merged-fix coverage is unresolved (status semantic_overlap_requires_review), and the pre-task policy flags an AI disclosure conflict. These determine whether new code work is actionable."
   },
+  "87a7727211ded42bea839c8e9e1a409bfc2fad7bd9b5f2b4f560905953b2b2a1": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "execute_command pre-flight validation/rewrite of known-unsafe CLI forms",
+      "stall/timeout detector for execute_command completion markers",
+      "warning when generated command matches forbidden .clinerules pattern"
+    ],
+    "risks": [
+      "Root cause may be model behavior rather than a code defect, making a code fix only partially effective",
+      "Command rewriting could alter user-intended semantics or break legitimate multi-line usage",
+      "Windows/PowerShell-specific behavior is hard to reproduce in CI"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test that feeds a multi-line `git commit -m` / inline `--body` command through the execute_command validation path and asserts it is rewritten or rejected",
+      "Add a regression test simulating a missing completion marker to verify the stall/timeout detector recovers",
+      "Run targeted vitest suites for the affected package plus static checks"
+    ],
+    "unknowns": [
+      "Exact code location where execute_command completion is awaited is not identified",
+      "Whether maintainers consider command rewriting in scope versus a model/prompt fix"
+    ],
+    "why": "Issue documents a concrete, recurring Windows PowerShell stall tied to shell-integration completion markers and unsafe inline CLI forms; reproduction steps and a plausible root cause are supplied, and no duplicate/merged fix or open PR is found. However, the root cause is partly behavioral (model not following .clinerules) and the code anchors are generic (Node.js, vitest, 'parser waiting'), so the exact code path to fix is not yet pinned down."
+  },
   "87b0c807517b5b23705fabf779b789c344417b8098849661014287d7a3bbc7dd": {
     "confidence": 0.6,
     "contradictions": [
@@ -91861,6 +91966,42 @@
       "Exact implementation details of existing PR #36184"
     ],
     "why": "Issue identifies a concrete, reproducible bug: Codex 0.147 sends a reserved 'functions' namespace that Mantle rejects, breaking all requests. Existing PR #36184 overlaps semantically but lacks explicit issue linkage and has CI failures; a cleaner PR with bidirectional rename and tests is plausible."
+  },
+  "8a4ccf2d3e2159a42335fe3d1b0e2974bc9c1df24c15d4602f3aac09abaa947b": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist/derive lineage so clones are not root entries",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path writes parent_session_id/conversation_id on new session",
+      "History listing dedupes or nests cloned sessions under original",
+      "Usage accounting avoids double-counting inherited context"
+    ],
+    "risks": [
+      "Lineage schema change may affect existing History queries and migrations",
+      "Usage de-duplication semantics could conflict with provider-reported totals",
+      "Scope may overlap with open #12590 and #14840 handlers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test: cancel a task, resume, assert new session row has parent_session_id set and History shows one entry",
+      "Unit test isRootSessionRecord with a cloned session record carrying parentSessionId",
+      "Regression test that inherited usage is not summed into both session totals",
+      "Run targeted core and vscode package tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer lineage persistence vs History-side dedupe",
+      "Whether #12590 already covers the VS Code follow-up path sufficiently"
+    ],
+    "why": "Issue provides a concrete reproduction, measured session/usage data, and code anchors (history.ts isRootSessionRecord, sdk-task-history.ts resume path) establishing that resumed cancelled/failed tasks create a new session with NULL parent_session_id/conversation_id, producing duplicate History roots and re-billed context. No open PR or duplicate coverage found; no assignment or AI-disclosure blocker."
   },
   "8a51f96e99a27a43215269bd28b18f9c3165875d07a2daf1115cc4048ba29a53": {
     "confidence": 0.85,
@@ -95193,6 +95334,41 @@
       "Exact fix details from maintainer; whether existing PR #50514 will be updated or superseded."
     ],
     "why": "Issue reports a clear deadlock in fastsafetensors ParallelLoader due to WORLD-group broadcast during PP-scoped draft loads, with a suggested fix. However, a maintainer is actively investigating and has implemented a fix, and an existing PR (#50514) is related but has failed CI. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with AI disclosure. Thus, wait for maintainer direction."
+  },
+  "8e8682669a3f281ae08e9499fd43ef8b9c52d25f911523816bae89596f6c374d": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "docreader/main.py: read request.file_content once, avoid extra copies, stream frames incrementally",
+      "docreader/parser/pdf_parser.py: stream page render/encode/yield, drop base64 round-trip, release rendered entries",
+      "docreader/parser/pdf_parser.py: _render_pool_init open by path instead of f.read()",
+      "docreader/config.py: reconsider default render parallelism"
+    ],
+    "risks": [
+      "Changing streaming semantics may alter frame ordering or meta-frame contract",
+      "Switching image_data to bytes may break downstream consumers expecting base64 str",
+      "Lowering default parallelism could affect throughput on multi-core hosts",
+      "Reopening pdfium document every N pages may add latency"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided repro.py under official image with DOCREADER_PDF_RENDER_PARALLELISM=1 and assert peak RssAnon stays bounded relative to file size",
+      "Add regression test asserting first frame is yielded before all pages are rendered",
+      "Add test that ImageRef.image_data is bytes not base64 str",
+      "Measure gRPC server cgroup anon peak for 44.7/119.6/196.9 MiB scanned PDFs before and after"
+    ],
+    "unknowns": [
+      "Whether downstream Go app or proto consumers depend on base64 str image_data",
+      "Whether maintainers have a preferred streaming contract for meta vs image frames"
+    ],
+    "why": "Issue provides a concrete, reproducible memory-blowup in docreader's ReadStream path with code anchors (main.py:184, pdf_parser.py:1112/1677, config.py:110), tracemalloc attribution, and an executable repro script. Root cause is well established: full PDF copied, all pages rendered to JPEG dict, then base64 str dict, plus per-worker file copies. Actionable fix with clear validation path."
   },
   "8e935045f9040c42e4a87b307c8d51db86124ed411478a90b6b311324526e974": {
     "confidence": 0.7,
@@ -99761,6 +99937,39 @@
       "Exact code path responsible for the tool syntax change"
     ],
     "why": "Issue reports regression in tool syntax handling for local Ollama models after Cline 4.1.x, but root cause is not clearly identified. Existing PR #11486 overlaps semantically but does not reference the issue, and maintainer has not confirmed design direction. The request for documentation is not actionable code work."
+  },
+  "9623b364a82513047ad80047bb043d22d1375c36162ebd9fa43324a2b3d770c2": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/base_aws_llm.py: only restore incoming Authorization when it is a Bearer token, never a SigV4 signature",
+      "Retry path in llm_http_handler.py: ensure re-signed request carries the fresh signature after body mutation"
+    ],
+    "risks": [
+      "Changing Authorization restore logic could break the AWS_BEARER_TOKEN_BEDROCK bearer-token path if the Bearer check is too narrow",
+      "Header case sensitivity (authorization vs Authorization) must be handled consistently",
+      "Other callers relying on forwarding an incoming Authorization header may be affected"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that calls _sign_request with an incoming SigV4 Authorization header and asserts the outgoing header is the freshly computed signature, not the stale one",
+      "Add a regression test simulating the strip-and-resign retry (attempt 0 returns 400 invalid thinking signature) and assert the retried request's Authorization matches the stripped body",
+      "Add a test that a Bearer-token Authorization (AWS_BEARER_TOKEN_BEDROCK) is still preserved",
+      "Run targeted bedrock unit tests and static checks"
+    ],
+    "unknowns": [
+      "No maintainer design preference recorded for the Authorization restore behavior"
+    ],
+    "why": "Issue pinpoints the root cause in BaseAWSLLM._sign_request: incoming SigV4 Authorization is restored over the fresh signature, so the strip-and-resign retry on /v1/messages sends a stale signature and Bedrock returns InvalidSignatureException. Concrete code anchors, ordered reproduction steps, and a proposed minimal diff with end-to-end verification are supplied; no duplicate or merged-fix coverage found."
   },
   "96296b5e3166e8a14f1a88d3b90da18a4993d38ca3a9f0092ed9a53a350425a7": {
     "confidence": 0.72,
@@ -125798,6 +126007,41 @@
     ],
     "why": "The issue describes three concrete SM120 failure modes for rope-free MLA (qk_rope_head_dim=0), but the supplied evidence shows unresolved duplicate/overlap coverage: PR #15 ('Make the rope-free MLA path work on SM12x', 3 test files, overlapping vllm/platforms/cuda.py) and PR #54929 (Triton sparse-MLA fallback for SM12x) both semantically overlap the issue without referencing it, and the duplicate status is 'semantic_overlap_requires_review'. Additionally, the issue's own ask is ambiguous between two materially different work items (extend SM100 no-rope sparse-MLA support to SM120 vs. document glm5_next as unsupported), and the pre-task evidence flags reproduction_or_validation_missing and policy_or_disclosure_uncertain (ai_disclosure_conflict). These are materially blocking unknowns for deciding whether new code work is actionable."
   },
+  "be16d4be57bd438cad8c7695f275847903efff72bcdb6104c615142570ba39b6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports restart failure on v0.8.1, but maintainer reruns on current main show the project resolves after restart with sidecars present"
+    ],
+    "evidence_ids": [
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "store open/query path in resolve_store (cbm_store_open_path_query)",
+      "WAL/SHM sidecar recovery or cleanup on startup",
+      "project-name-to-DB-file resolution"
+    ],
+    "risks": [
+      "Fix may already be covered by v0.9.0/v0.10.0 changes, making new code redundant",
+      "Issue is labeled awaiting-reporter and stale; no confirmed remaining defect",
+      "Repository policy requires assignment before work"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Rerun the issue's isolated-cache stdio script on v0.11.0 with stdin-EOF and SIGKILL termination, then restart and assert index_status/search_code resolve",
+      "Regression test: index a small fixture, close, restart with same CBM_CACHE_DIR and stale .db-wal/.db-shm present, assert queries succeed without deleting sidecars"
+    ],
+    "unknowns": [
+      "Whether the reporter's repro still fails on v0.11.0",
+      "Exact cache filename and internal project name from sqlite3 projects table needed to compare resolution",
+      "Whether assignment will be granted under needs_assignment policy"
+    ],
+    "why": "Maintainer evidence indicates the reported v0.8.1 symptom is likely already fixed: project-name resolution in v0.9.0 and stale-sidecar handling in v0.10.0, with maintainer reruns on current main showing the project resolves after restart even with WAL/SHM present. The issue is awaiting reporter revalidation on v0.11.0, so whether any code work remains is unresolved."
+  },
   "be1b43c8f89ad87b26ddf654ef99a7cda6d89edf3a890969bda230c37fdcc6a7": {
     "confidence": 0.8,
     "contradictions": [
@@ -127562,6 +127806,41 @@
       "Whether PR #60441 will be merged or superseded, which affects whether any independent contribution is warranted"
     ],
     "why": "Issue is a config cross-field validation bug (convert=classify + runner=generate) that crashes with a bare AssertionError; root cause and reproduction are clear, but this is ordinary CLI/config plumbing, not an LLM algorithm mechanism. Track=llm_algorithm requires a concrete training objective, model mechanism, distributed invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; the matched terms (adapters, bf16, fp16, int8) are incidental and the fix is a ValueError at config-validation time. Additionally, open PR #60441 already directly references the issue and implements the same config rejection with a test file, so the opportunity is covered."
+  },
+  "c1353c55f9391a0999146fb94cdfac63f8abe1b51d61dd61c4dcb46b60e6987d": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "AmazonBedrockModel._prepare_completion_kwargs must forward stop_sequences into inferenceConfig.stopSequences",
+      "AmazonBedrockModel.generate must pass its stop_sequences argument through to _prepare_completion_kwargs",
+      "Add regression test asserting stopSequences appears in the Converse request"
+    ],
+    "risks": [
+      "Interaction with the separate #2351 'tool_calls' KeyError may mask end-to-end behavior until that is fixed",
+      "Must avoid changing behavior for models where supports_stop_parameter is false (local truncation path)",
+      "Potential API-shape change if inferenceConfig is added unconditionally"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's Stubber-based test to confirm it fails on main (sent params lack inferenceConfig.stopSequences)",
+      "After fix, assert sent['inferenceConfig']['stopSequences'] == ['STOP']",
+      "Add a test covering the no-stop-sequences path to ensure inferenceConfig is not spuriously populated",
+      "Run targeted tests in tests/ for models and agents"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer sending stopSequences via inferenceConfig versus local truncation for Bedrock",
+      "Whether #2351 fix (#2352/#2363) lands first and alters the surrounding generate() code path"
+    ],
+    "why": "Issue provides a concrete, self-contained reproduction using botocore Stubber, exact code anchors (models.py:1988, 2030-2036, 2049), and a clear root cause: AmazonBedrockModel drops stop_sequences and never populates inferenceConfig.stopSequences, while supports_stop_parameter=true suppresses local truncation. Fix is a bounded, testable change in the Bedrock request-building path."
   },
   "c1382763dcdd350a724bc57b92c6171a1582ce7f30636ae4a93fe118597e1959": {
     "confidence": 0.82,
@@ -137836,6 +138115,38 @@
       "Whether late status/cancel lookups after release must still be answered"
     ],
     "why": "Issue documents an unbounded, payload-proportional retention in ManagedToolExecutor.entries on the raw path, with code anchors (managed-runtime-tool-executor.ts L168, L213, L314, L416) and independent static confirmation from two collaborators. Root cause is clear: entries Map is append-only, no delete/clear, and JournalEntry holds input, inputJson, and result. Measured RSS growth (~325 KiB per released 200 KiB Session) and provider-route flatness support the claim. Triage notes the proposed eviction point (closeSessionAdmission) is provider-route-only, but this is a design choice between two reasonable fixes, not a blocking unknown."
+  },
+  "cf719525f76e1621f0df78df6a2670f9e8a120d403c1981da657bf6242e13356": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MultiStepAgent.step in src/smolagents/agents.py: unwrap last ActionOutput to return final answer when is_final_answer else None",
+      "Preserve _run_stream behavior that relies on ActionOutput items",
+      "Add regression tests for final and non-final step returns"
+    ],
+    "risks": [
+      "Unwrapping may make final_answer(None) indistinguishable from a non-final step (noted in comment, related to #1457)",
+      "Maintainers may prefer exposing ActionOutput explicitly rather than restoring answer-or-None contract",
+      "Change to public step() return type could affect downstream callers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's two pytest cases (final step returns '42'; non-final step returns None) against base SHA to confirm failure, then after fix to confirm pass",
+      "Run existing tests for CodeAgent/ToolCallingAgent step and _run_stream to ensure no regression",
+      "Verify tutorial memory loop terminates correctly with scripted model"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether step() should return answer-or-None vs ActionOutput is unresolved, but does not block a documented-contract fix"
+    ],
+    "why": "Issue provides a concrete, runnable reproduction with a scripted Model, exact expected-vs-actual assertions, and code anchors showing step() returns the last _step_stream item (ActionOutput) unchanged while docs/tutorial expect answer-or-None. A comment corroborates the contract mismatch via source review. The fix location (step unwrapping) and validation path (the two failing tests) are concrete."
   },
   "cf7272b9c8c29029cb9e9307eb2cccfeffad09493fbec6b5b7d113e3387f59ce": {
     "confidence": 0.8,
@@ -152971,6 +153282,42 @@
     ],
     "why": "Issue provides a minimal, self-contained repro with no external dependencies, clearly isolating the bug to the approval/resume path when a context is supplied. The root cause is likely in approval-key derivation or context handling during resume, and the issue explicitly rules out common red herrings. No competing PR exists, and the maintainer has not yet responded, but the evidence is strong enough to start work."
   },
+  "e520c1e75b9640c6a14efa101c526e61f6e0aebab1596fa4780831ea1e512098": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docreader ReadStream/Read request lifecycle: explicitly drop request and parse-result references",
+      "post-large-request gc.collect() or equivalent to break reference cycle",
+      "investigate native copy of request payload retained in gRPC server path",
+      "add streaming regression test asserting memory release after request completion"
+    ],
+    "risks": [
+      "Native mapping retention may be in grpcio/protobuf internals, not fixable in repo code",
+      "Explicit gc.collect() after large requests could add latency",
+      "Memory measurements are environment-sensitive and hard to assert in CI"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with 120MB scanned PDF via Docker Compose, measure cgroup anon before/after request",
+      "Add unit test calling ReadStream then asserting no retained references / memory returns to baseline",
+      "Verify gc.collect() frees the cycle copy and that native mapping is released after fix",
+      "Run targeted docreader package tests and static checks"
+    ],
+    "unknowns": [
+      "Exact code location in gRPC server path causing native payload retention is not identified",
+      "Whether the native copy is attributable to repo code vs grpcio/protobuf internals"
+    ],
+    "why": "Issue provides a detailed, ordered reproduction with expected/actual memory measurements and isolates the retention to the gRPC server request path (standalone parser call does not leak). Two concrete retention mechanisms are identified: an unreachable reference cycle freed by gc.collect() and a native anonymous mapping matching the uploaded file. This is a user-visible memory bug with a clear validation path (memory measurements before/after fix), though the exact root cause in the gRPC path is not yet pinpointed."
+  },
   "e52afc1c854523f07cd42601163488d8ea23cf9335b144da78b8ef02858caf4d": {
     "confidence": 0.82,
     "contradictions": [],
@@ -166723,6 +167070,40 @@
       "Reporter verification on RC1/current main is pending; maintainer has not confirmed final resolution."
     ],
     "why": "The issue is a well-documented bug with independent reproductions and a confirmed fix in RC1, but the maintainer has explicitly requested verification on RC1/current main and marked it awaiting-reporter. The candidate is not a new clean contribution; it is a regression case already routed for RC. Work should wait for maintainer confirmation and reporter verification."
+  },
+  "f93adf33e10e16e6cd6ba6fb5e1c695972d09432f5106948bda7b230ab233783": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/application/service/wiki_ingest_batch.go: replace single hard slice with ordered overlapping segmentation and merge",
+      "internal/application/service/wiki_ingest.go: adjust maxContentForWiki usage/segment sizing",
+      "internal/application/service/knowledge_process.go: surface skipped/truncated state in parse trace and document status"
+    ],
+    "risks": [
+      "Segment merge may duplicate entities across overlapping windows",
+      "Changing status semantics could affect existing consumers of parse trace",
+      "Maintainer may prefer reusing sampleLongContent-style approach over full segmentation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test feeding >32768-rune content through mapOneDocument and asserting tail entities/slugs are extracted",
+      "Regression test that a successful ingest with any skipped segment reports truncation in trace/status",
+      "Run targeted package tests for internal/application/service and static checks"
+    ],
+    "unknowns": [
+      "Whether #2977's splitContentIntoSegments design is preferred by maintainers",
+      "Exact expected merge/dedup semantics for overlapping segments"
+    ],
+    "why": "Issue pinpoints a concrete input-side truncation: mapOneDocument hard-slices reconstructed content to maxContentForWiki=32768 runes with no segmentation, while summary path already samples head/middle/tail. Code anchors and log signature are supplied; reproduction and validation paths are concrete."
   },
   "f93c96b01a6c8208ef38bac8f51010621cb82b5b91cb71c20ad4dd2b58073128": {
     "confidence": 0.6,
