@@ -39651,6 +39651,40 @@
     ],
     "why": "Issue provides concrete, reproducible regressions with exact measurements, code paths, and a clear root-cause hypothesis for memory regression (transient allocation in chunk_o.py) and a separate worker OOM masking bug. The algorithm track is satisfied with concrete mechanisms (model_architecture, distributed_training, numerics_quantization, evaluation_method) and a validation path via reference-vs-implementation comparison."
   },
+  "3db5f44dee148362e3cb641ae176eab2ba9419ced1868457b7f4bffcc1a31be5": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bound nested-buffer parsing in KVArgsRegisterInfo.from_zmq before materialization",
+      "Add per-message and table-wide limits/expiry for decode_kv_args_table entries in MooncakeKVManager.start_prefill_thread",
+      "Reject or authenticate registrations not bound to a configured Decode worker"
+    ],
+    "risks": [
+      "Tightening registration validation could break legitimate Decode worker registration if identity binding is too strict",
+      "Table limits/expiry may need coordination with existing Mooncake PD protocol semantics",
+      "Open PR #45194 touches related Mooncake registration decoding and may overlap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_oom.py against a memory-limited Prefill cgroup and assert registrations are rejected before nested metadata is materialized",
+      "Regression test that a 100,000-buffer registration does not grow decode_kv_args_table or Prefill PSS",
+      "Latency test comparing baseline completions vs attack run to confirm no 4-5x slowdown",
+      "Post-attack /health and routed completion checks confirm Prefill remains alive"
+    ],
+    "unknowns": [
+      "Whether PR #45194 already covers the same fix and would make this redundant",
+      "Maintainer preference on authentication vs resource-limit approach"
+    ],
+    "why": "Issue provides a concrete, reproducible unauthenticated Mooncake decode-registration path: bootstrap /route exposes the ZMQ rank port, start_prefill_thread stores sender-controlled session IDs in decode_kv_args_table, and KVArgsRegisterInfo.from_zmq materializes unbounded nested buffers. Reproduction includes executable repro_oom.py, cgroup OOM counters, and latency/availability measurements, giving a clear reference-vs-implementation validation path."
+  },
   "3db84fbee4d2fe729438f1634524fe82276d1bbe33298a8b27f63662847b4c23": {
     "confidence": 0.9,
     "contradictions": [],
@@ -43204,6 +43238,37 @@
       "Exact code path/component responsible for the Fit scale cap."
     ],
     "why": "The issue describes a plausible UI bug (Fit caps scale at 1x for small SVGs), and the bot comment points to a likely code location, but the root cause is explicitly unconfirmed and the reporter cannot verify prior behavior. This is a Desktop UI rendering issue, not an algorithm/training/kernel/eval contribution, and the supplied evidence lacks a confirmed code anchor or reproduction in a runnable environment."
+  },
+  "43604f8b54872ff98731adf40fb67b92285a88d0fa9fa4313724dfceb2900003": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "scripts/dev-safe.mjs::buildAgentServerCommand emits a litellm<1.106 constraint via the existing --with mechanism across all four source modes",
+      "__tests__/scripts/dev-safe.test.ts asserts the litellm constraint alongside posthog>=6,<7"
+    ],
+    "risks": [
+      "Constraint could become unsatisfiable if a future openhands-sdk requires litellm>=1.106",
+      "Scope creep into mcp>=2.2 migration or SDK/litellm metadata edits, which are explicit non-goals in other repos",
+      "Primary user-facing breakage already fixed upstream, so value is limited to regression-guarding the launcher"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run __tests__/scripts/dev-safe.test.ts and confirm it fails when the litellm constraint is removed",
+      "Resolve the pinned agent-server version's uvx environment and verify 'from litellm.responses.mcp.chat_completions_handler import acompletion_with_mcp' imports without ImportError",
+      "Verify the emitted constraint intersects openhands-sdk's litellm requirement so uvx resolution succeeds rather than erroring unsatisfiable"
+    ],
+    "unknowns": [
+      "Exact litellm upper bound to emit (e.g. <1.106 vs a narrower pin) is not specified beyond the workaround litellm==1.105.2"
+    ],
+    "why": "Issue provides a concrete, reproduced root cause: litellm>=1.106 eagerly imports MCP-gateway modules requiring mcp>=2.2 types (CacheableResult), while fastmcp's mcp<2 pin forces mcp 1.30, causing ImportError on every tool-calling request. Triage confirms the primary breakage is already fixed upstream via SDK litellm<1.106 cap, but identifies a remaining in-scope launcher gap: buildAgentServerCommand lacks its own litellm constraint, mirroring the existing posthog>=6,<7 mechanism. Acceptance criteria are concrete and testable against __tests__/scripts/dev-safe.test.ts."
   },
   "4362c5ea9c5f7a5374afc6c34ebac81bb0a5606bcdd3797220087e6b5895fe35": {
     "confidence": 0.8,
@@ -58586,6 +58651,41 @@
       "Maintainer stance on the proposed fix and whether PR #35791 is salvageable."
     ],
     "why": "Issue provides a clear root cause and reproduction, but the supplied gate decision is HUMAN_REVIEW and the related issue audit failed (timeout). An existing PR #35791 directly addresses the issue but has failing CI checks, making it a weak competition opportunity. Maintainer confirmation is needed before starting work."
+  },
+  "5880c1b9c3fd2ce62fd6139b47e436bad92b3723ffe26195a51d6761f543f870": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims #5040 does not change the callback-level return, but open_pr_assessment marks root_cause_coverage=false and technical_complete=false without confirming the diff boundary"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/api-workflow/main.go: replace callback-level return on waiting join with per-edge deferral so remaining sibling edges are still evaluated",
+      "Preserve dependency counters and prevent duplicate node dispatch when deferring a join target"
+    ],
+    "risks": [
+      "Open PR #5040 touches the same file and may partially or fully cover the root cause; must compare before implementing",
+      "Changing the return to a continue could cause duplicate dispatch or incorrect dependency decrements if not carefully scoped",
+      "Reproduction is host-emulator only, not real Envoy/proxy-Wasm; behavior under real runtime unverified"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test derived from the issue's round3_probe_test.go asserting C is dispatched after A completes when A->D precedes A->C",
+      "Run the same graph with swapped edge order and swapped callback order to confirm both orderings reach HTTP 200",
+      "Cover joins, conditional branches, and terminal end/continue behavior in the api-workflow module tests"
+    ],
+    "unknowns": [
+      "Whether the issue will be assigned per repository policy (assignmentRequired=true, no assignees)",
+      "Whether PR #5040's diff actually leaves the join-wait return untouched",
+      "Whether maintainers require a Proposal/Design before implementation per stated contribution policy"
+    ],
+    "why": "Issue gives a concrete root-cause anchor (main.go:252-263 returns from the whole callback when a join target is still waiting, skipping sibling edges) and a deterministic host-emulator reproduction with an ordering control. However, the repository policy requires assignment (policy.status=needs_assignment, assignmentRequired=true) and the issue has no assignees, which is a materially blocking unknown for actionability. Additionally, open PR #5040 overlaps the same file/semantics and must be compared before any code work; the issue itself notes #5040 does not change the callback-level return, but this is not independently confirmed."
   },
   "58852c2270002f621b77b3b736e32f5c21559e7bdbdb73cc38633c0540bd3dc0": {
     "confidence": 0.7,
@@ -76975,6 +77075,42 @@
       "Exact file path of FileService implementation; whether existing tests cover this behavior."
     ],
     "why": "Issue clearly identifies a concrete bug in FileService.replaceValuesInFile() where dollar patterns in replacement strings are interpreted by String.prototype.replaceAll, causing silent corruption. Root cause is well-defined and a minimal fix using a replacement callback is proposed. The issue includes a minimal reproduction and expected/actual behavior, making it actionable."
+  },
+  "72d4def1fb2c0d0a7a571cf73a780d857c514a0f9a8fc48689fe8fc4cbdb035e": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: stop trusting client-supplied bootstrap address; derive Prefill endpoint from server-side topology or validate against configured Prefill set",
+      "python/sglang/srt/disaggregation/common/conn.py: avoid synchronous blocking fetch on shared request-processing path",
+      "sgl-model-gateway/src/routers/http/pd_router.rs and grpc/pd_router.rs: confirm bootstrap injection remains authoritative and consistent",
+      "Add regression test asserting client-supplied bootstrap_host/port cannot redirect the Decode worker's /route request"
+    ],
+    "risks": [
+      "Fix may need to preserve legitimate direct-worker bootstrap flows used in tests or non-Gateway deployments",
+      "Changing blocking behavior could affect existing timeout/retry semantics in disaggregation",
+      "Maintainer may prefer validation over removal of client-supplied fields, altering API behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run supplied poc.py with --delay-s 0 against an isolated loopback Prefill/Decode deployment and assert canary receives zero /route requests after fix",
+      "Run poc.py with --delay-s 2 and --gateway-url and assert concurrent normal request latency no longer inflates to ~20s",
+      "Add unit test for try_ensure_parallel_info rejecting or ignoring bootstrap addresses not in the configured Prefill set",
+      "Re-run Gateway negative control to confirm inject_bootstrap_into_value still overwrites client fields"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated for whether to reject or validate client-supplied bootstrap fields",
+      "Current main was source-inspected but not runtime-tested at the newer commit"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and shared-request-blocking bug: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and calls requests.get synchronously. Reproduction script, canary hits, latency measurements, and negative control through the Gateway are all supplied, with code anchors in conn.py and pd_router.rs."
   },
   "72e37e38f55c99ed1cd089a71b6a928653ab6560106f3919a12b79756b03e8de": {
     "confidence": 0.8,
@@ -119032,6 +119168,39 @@
     ],
     "why": "The issue reports a concrete, reproducible greedy-equivalence failure (DFlash2 vs target-only diverging at token 30, K=1, eager, no prefix cache) with a clear reference-vs-implementation validation path, which fits the llm_algorithm track. However, supplied evidence contains materially conflicting root-cause attributions: commenters point to a GDN spec-verify gate-row misalignment fixed by #51812, to BF16 numerical-path differences, and to unrelated kernel defects (#54945/#54948, #54076/#53798, #55122), while the duplicate assessment flags PR #52555 (custom all-reduce max-size override) as semantic overlap and related issues #57016/#57017/#56443/#57014 share only generic stack signatures (clang/gcc/collect_env.py). The pre-task evidence also records an unresolved ai_disclosure_conflict policy status and base_sha_changed, and the duplicate/merged-fix coverage is explicitly 'requires review'. These unresolved facts determine whether code work is actionable and which module to change, so the evidence is too contradictory to proceed."
   },
+  "b326acb2f00466197dba4622e8e595e3ccb687cdf7f6597bc7dda233813867d8": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "rag/svr/task_executor_refactor/dataset_wiki_generator.py: stop forwarding nested MAP local completion as task progress; forward messages and negative failure values only",
+      "rag/advanced_rag/knowlege_compile/_common.py: apply the same ownership rule to the nested wiki_compile_incremental callback before graph/state persistence",
+      "api/apps/services/dataset_api_service.py: verify the already-running guard no longer sees premature terminal progress"
+    ],
+    "risks": [
+      "No live Docker/API/database/search/UI/LLM end-to-end validation was performed",
+      "Changing progress semantics could affect UI progress display or other consumers of set_progress",
+      "The merged PR #19422 touched the same file and its review flagged this risk, so overlap with that change should be checked"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for initial build and incremental update, each with success and failure, asserting the last non-None task progress is not 1.0 while sibling batches remain pending",
+      "Assert negative failure values and cancellation are still forwarded without false success",
+      "Run the targeted task-progress, Wiki incremental, and Wiki MAP-state test suites (the reported 167-test run)"
+    ],
+    "unknowns": [
+      "Whether the proposed patch branch commit 5b1ac84c90dd42746fddec24ab67f5c755420a8a is still based on the current main",
+      "Whether maintainers have a preferred progress-ownership design beyond the proposed patch"
+    ],
+    "why": "Issue pinpoints the premature progress=1.0 forwarding from the MAP callback in dataset_wiki_generator.py through run_chunked_pipeline and set_progress, and the generation guard in dataset_api_service.py that treats progress=1 as terminal. It supplies a concrete two-batch reproduction, a proposed patch commit, and 167 passing targeted tests including four failing-before/passing-after regression cases. The merged PR #19422 is only a related message-forwarding change, not a fix for this issue."
+  },
   "b3286cb47f008178493d13399e5b4686ef5a06fbf7fb9f00947136d8896560ed": {
     "confidence": 0.9,
     "contradictions": [
@@ -132078,6 +132247,43 @@
       "Whether the missing-args bug is the sole root cause of the prefill crash or there are additional deepep_v2 issues."
     ],
     "why": "The issue describes a concrete TypeError from missing positional args in ep_scatter_from_psum, but the supplied evidence shows an open PR #39399 that directly overlaps the same code path and claims to fix the same missing-args problem, plus PR #37211 with a test file. Duplicate/coverage status is explicitly human_review_required, which is a materially blocking unknown for whether independent code work is actionable."
+  },
+  "c66bbf544e80f4cff2ccec5a847c697d212e09e2dd835d0a62d4520bc8ff1c57": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/agent/component/agent.go: allow first-pass citation prompt when references exist instead of withholding all deltas",
+      "internal/agent/component/agent.go: bound grounding call and preserve completed answer with citation-incomplete status on grounding failure",
+      "internal/server/api/server.go: make long Agent HTTP/SSE write budgets configurable",
+      "add stage/progress events and model-call/token/TTFT instrumentation"
+    ],
+    "risks": [
+      "Timing samples are from a modified local branch and are not a controlled benchmark, so the magnitude of the win is unquantified",
+      "Changing first-pass citation behavior could regress citation correctness or marker-only answer handling addressed by #20613/#20685",
+      "Streaming replacement/finalization semantics for already-emitted output need explicit definition to avoid duplicate answer versions",
+      "Scope spans multiple concerns (latency, timeout config, instrumentation) and may need maintainer design preference on single-pass vs two-pass"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: cite=true with pre-retrieved chunks emits first-pass answer deltas rather than buffering until grounding completes",
+      "Test: grounding failure/timeout preserves completed answer with explicit citation-incomplete status; client cancellation still cancels",
+      "Test: emitted citation IDs are validated against retrieved chunk IDs and repair only triggers on invalid markers",
+      "Controlled same-model/same-data comparison of cite=true vs cite=false and Go vs Python v0.27.2 fast path, reporting repeated latency distributions and token counts"
+    ],
+    "unknowns": [
+      "No controlled same-model benchmark quantifying the serial grounding cost",
+      "Maintainer preference between first-pass citation mode and bounded two-pass grounding is not stated"
+    ],
+    "why": "Issue pins exact rc2 source locations for both costs: first-pass suppression in emitAgentModelStreams (agent.go L398-453) and a serial second model call in applyCitationGrounding (L512-598, L1071-1111), plus the 180s API WriteTimeout. Reproduction steps and a concrete validation matrix (stream vs non-stream, cite=false control, empty retrieval, grounding failure) are supplied, and no duplicate open PR/issue covers it."
   },
   "c66e07364d970b4071842e6bfbf786a1bd5c73d7baee03f4217b58869d6c71f1": {
     "confidence": 0.85,
