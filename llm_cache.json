@@ -8326,6 +8326,42 @@
     ],
     "why": "The issue reports a real, reproducible-looking bug (second MCP tool call sends array args as a quoted string), but the supplied evidence does not establish a root cause in this repository. The reporter explicitly names two suspects (Ollama's qwen3coder parser vs. Continue's post-processing), and the only root-cause claim is an unverified comment from a non-maintainer who admits they could not build or run the test suite. No code anchor in the Continue repo is identified, and the candidate's own code_anchors list is polluted with unrelated frontend files and qwen3coder.go (an Ollama file), so the actionable code surface is unknown."
   },
+  "0d198abe0fcba08ba809b10ca1b0835ef8b6f7e6dd29b47945a078c0f902a92e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/pipeline/nodes/sources/base.rs: mint internal request id server-side; make generate() reject duplicate key insertion",
+      "lib/llm/src/http/service/generate.rs: drop x-request-id/body request_id overrides in resolve_generate_request_context",
+      "lib/llm/src/http/service/sglang_generate.rs: drop body request_id/header overrides in resolve_request_context",
+      "lib/runtime/src/logging.rs and openai.rs: remove request-id/x-dynamo-request-id fallbacks in get_or_create_request_id/extract_trace_parent",
+      "Keep x-request-id as correlation-only via attach_x_request_id and response echo"
+    ],
+    "risks": [
+      "Removing header/body id overrides is a client-visible behavior change for callers relying on id passthrough",
+      "vLLM-style routes must still return the client's id in the response body where vLLM semantics require it",
+      "Router request tracker and lifecycle leases also key on the id and must be updated consistently"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Runtime-only test: build ServiceFrontend plus one operator, call generate() three times concurrently with contexts sharing one id, assert each caller gets its own output",
+      "HTTP repro: two concurrent streaming requests to /inference/v1/generate with same x-request-id and different prompts; assert each response matches its own prompt and no DetachedStreamSender/Receiver",
+      "Per-route regression for sglang native generate and OpenAI/Anthropic/Responses routes with duplicate client ids",
+      "Assert duplicate-key insertion in Frontend::generate fails loudly rather than replacing the existing sender"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred placement for the single id-minting point",
+      "Whether any downstream consumer depends on the deprecated request-id header fallback"
+    ],
+    "why": "Issue pinpoints the root cause: client-supplied request ids key internal in-flight state (oneshot sender map in sources/base.rs, router tracker/leases), so concurrent same-id requests collide. It names exact routes, code anchors, a runtime-only reproducer, and a concrete ordered fix plus per-route regression tests. The only open PR (#17004) is an unrelated draft observability change with no direct code overlap and no root-cause coverage, so it does not cover this fix."
+  },
   "0d1ac1b7a6e0363923399fae7b1c58b98641933991a780ca364fb3374a194775": {
     "confidence": 0.82,
     "contradictions": [],
@@ -75634,6 +75670,41 @@
     ],
     "why": "The issue's root cause (capability hooks run in orchestration code, outside the durable unit) is well argued, but supplied comments assert the motivating case is already covered by merged #6696 via @durable_operation, with SpendLimits _read/_accrue now decorated and tests/durable_exec/test_capability_durable_operation.py passing on current main. That unresolved supersession/coverage question determines whether any code work is actionable, and the pre-task evidence also flags assignment_required and reproduction_or_validation_missing."
   },
+  "7093d3ba1cd16fd63bb1453ded0771a8ee9083f94ba4818cefa22729f5a4dd55": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Hosted MCP multi-execute response serialization: stop silently dropping `data` above the size threshold",
+      "Add an explicit truncation/offload marker (e.g. storedInFile-style reference or detectable flag) instead of `successful: true` with missing `data`",
+      "Align MCP transport response shape with CLI full-payload behavior"
+    ],
+    "risks": [
+      "Root-cause location unknown; fix could land in the wrong layer (provider vs MCP server vs response serializer)",
+      "Changing response shape may be a breaking API behavior change needing maintainer design sign-off",
+      "Assignment requirement unmet; repository policy may block unassigned contributions"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with YOUTUBE_LIST_USER_SUBSCRIPTIONS maxResults=50 via hosted MCP and assert `data` presence or explicit truncation marker",
+      "Boundary test around the ~32KB–48KB cutoff to pin the exact threshold and confirm deterministic behavior",
+      "Regression test that a programmatic client reading `response.data` never receives a silent empty success"
+    ],
+    "unknowns": [
+      "Which component performs the size-based truncation/offload (hosted MCP server vs provider response layer)",
+      "Whether the repository requires assignment before contribution and whether one will be granted",
+      "Whether a maintainer has an existing design preference for the offload/reference mechanism"
+    ],
+    "why": "The issue gives a strong behavioral reproduction (CLI vs hosted MCP payload-size cutoff between ~32KB and ~48KB, with a log ID), but the supplied evidence does not establish the root cause in code: no server-side truncation/offload path is identified, and the only code anchors are response field names and tool names. The pre-task evidence also flags reproduction_or_validation_missing and assignment_required, and the issue has no assignee. Without a located truncation mechanism or an assigned owner, the concrete code change is not yet determined."
+  },
   "7095cb254f0fb8286cdfbb1b1082ff8aedd54f4e7f0bd0ec582c3935ac044505": {
     "confidence": 0.7,
     "contradictions": [
@@ -87264,6 +87335,40 @@
       "Root cause not identified"
     ],
     "why": "Issue reports a reproducible bug in NIXL P/D replacement but lacks root cause analysis and maintainer confirmation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. The gate decision is HUMAN_REVIEW, and the track is agent_ai_infra, not llm_algorithm, so no algorithm-specific validation is required."
+  },
+  "8293c75c0b5386061767f170617d09a37813a6d667fcfcaa12207ff1ce1488ad": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Candidate labels this agent/inference/RAG key-path work, but the issue is confined to a CI workflow file"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Rewrite the Read image build defaults step to assign node -p values to shell variables and append to $GITHUB_OUTPUT, mirroring docker.yml",
+      "Preserve step id and output names agent_server_image, agent_server_version, automation_version"
+    ],
+    "risks": [
+      "Duplicate/overlapping work with open maintainer PR #18760",
+      "Low semantic value for an algorithm/infra radar since this is CI YAML plumbing",
+      "No regression test harness exists for workflow shell steps"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run bash -n on the extracted step script to confirm no syntax error",
+      "Run actionlint on the workflow",
+      "Trigger workflow_dispatch and confirm the step exits 0 and emits all three outputs matching config/defaults.json"
+    ],
+    "unknowns": [
+      "Whether maintainers intend PR #18760 to be the sole fix",
+      "Whether any workflow-level test harness is expected"
+    ],
+    "why": "The issue is a CI workflow shell-quoting bug in .github/workflows/update-debian-snapshot.yml, not an agent/inference/RAG algorithm or runtime contribution. Root cause is clear (literal \\\" escapes inside $(node -p ...) leave a bare '('), but the work is YAML/shell plumbing with no training objective, model mechanism, distributed invariant, quantization, kernel, or evaluation methodology. An open maintainer-authored PR #18760 already targets the same step, and the candidate's own evidence shows no root-cause coverage or test files."
   },
   "82d16b8fa538af49fa88ea467d55d8c5d9bc36b9689a2240bb4a9ad0c469df1d": {
     "confidence": 0.7,
@@ -126905,6 +127010,40 @@
     ],
     "why": "The issue's original premise (Flux stream open but silent) was retracted by the reporter's own direct-service replay: Updates continued while EndOfTurn was withheld, so the watchdog proposal would never fire. The remaining candidate work (force_end_turn / turn-duration cap) is already covered by draft PR #5584, and the reporter's latest comment explicitly asks whether that PR is the intended route. Root cause and duplicate coverage are unresolved."
   },
+  "bdee39e326dab68ee44057e5f6cf2a3001427ac3cb8a48bbcbd01c3cc89bd357": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/knowledge_fs/capability_broker.py: reduce lock scope or avoid unconditional updated_at bump on the shared authorization revision row while preserving revocation ordering",
+      "api/controllers/service_api/knowledge_fs/resources.py: bound admission lock/statement/transaction waits within the request deadline",
+      "Add PostgreSQL multi-session tests for concurrent issuance and revocation ordering"
+    ],
+    "risks": [
+      "Removing or narrowing FOR UPDATE without proving the protocol could let revocation miss grants reserved before signing",
+      "Lock ordering across control-space, authorization-revision, reservation, and revocation paths (including FK locking) is not fully audited",
+      "The 138 late HTTP 200 responses cannot be joined one-to-one to the 140 client timeouts, so attribution is cohort-level, not per-request"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a real PostgreSQL multi-session test issuing concurrent admissions for the same space and assert they do not serialize on the revision row",
+      "Test revocation before reservation, between reservation and signing, and after issuance to confirm reserved grants are still revoked",
+      "Re-run the documented 10 RPS / 200 VU / 1000-per-min scenario and report admission vs post-admission latency, original-denominator success rate, late server completions, and DB lock waits"
+    ],
+    "unknowns": [
+      "Original lock-holder transactions and why each critical section stayed slow were not reconstructed",
+      "Whether the 159 timeouts all share this single cause is unconfirmed"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: _lock_authorization_revision() takes FOR UPDATE on a per-(tenant_id, control_space_id) row and updates updated_at on every issuance, serializing same-space admissions. Reproduction is detailed (10 RPS, 200 VUs, observed 90.09% success, 159 timeouts, DB lock waits on the named SQL). No open PR or duplicate issue covers it. Remaining unknowns (original lock-holder transactions, exact per-request reconciliation) are acknowledged and do not block a minimal, testable fix."
+  },
   "be034188441f212d83323e8971f6643b5e846ebce1a4cd54eaaaab64f6d58137": {
     "confidence": 0.85,
     "contradictions": [],
@@ -145985,6 +146124,40 @@
       "Whether maintainers consider the cancel_on_disconnect-gated behavior the intended root cause"
     ],
     "why": "The issue describes a plausible spend-tracking gap, but the only concrete reproduction evidence in the supplied comments shows the bug is NOT reproducible on default config and requires general_settings.cancel_on_disconnect. The issue body's reproduction steps omit that flag, so the actual trigger condition is unresolved. Additionally, three open PRs (#41171, #41169, #41101) semantically overlap on non_streaming spend tracking in litellm/utils.py, and the duplicate status is explicitly 'semantic_overlap_requires_review' with no direct issue linkage, so coverage is unresolved."
+  },
+  "d87a979352716116c4e7abb5679ac703ae98171e58e58b2b80a57f0e6b064fa2": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap_addr against configured prefill set or derive from server-side topology instead of trusting request fields",
+      "python/sglang/srt/disaggregation/common/conn.py: make parallel-info fetch non-blocking or bounded so it cannot stall shared Decode request processing",
+      "sgl-model-gateway/src/routers/http/pd_router.rs: confirm inject_bootstrap_into_value() remains the authoritative overwrite path and add regression coverage"
+    ],
+    "risks": [
+      "Fix must not break legitimate Prefill/Decode bootstrap when the address is genuinely configured",
+      "Changing the synchronous fetch to async may require threading through call sites and could affect timeout semantics",
+      "Scope creep into Gateway behavior that already overwrites client fields"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that calls try_ensure_parallel_info() with an unconfigured bootstrap_addr and asserts no outbound HTTP request is made",
+      "Add a regression test that a request with attacker-controlled bootstrap_host/port is rejected or ignored on the direct Decode API",
+      "Reproduce with the issue's poc.py in an isolated loopback Prefill/Decode deployment: assert canary receives zero hits and normal Gateway latency stays near the zero-delay baseline"
+    ],
+    "unknowns": [
+      "Whether maintainers consider direct Decode worker API access in-scope for hardening versus documented as trusted-internal",
+      "Whether an existing internal auth mechanism for worker-to-worker calls is intended to be reused"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and head-of-line blocking bug: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and issues a synchronous requests.get with a 5s timeout, confirmed by canary hits, HTTP 500, and an 82.88x latency regression with matched zero-delay controls. Code anchors in conn.py and pd_router.rs are supplied, and the Gateway negative control shows the fix boundary is the direct Decode worker path."
   },
   "d8898ac3319240ebd1aad960649b10316da2391693dfda249df71e8fcd56eee1": {
     "confidence": 0.85,
