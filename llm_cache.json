@@ -11181,6 +11181,46 @@
     ],
     "why": "Issue provides a concrete, reproducible root cause: `_format_type` in litellm/litellm_core_utils/token_counter.py directly indexes `props['items']`, raising KeyError for array schemas without `items`, causing HTTP 500 on /utils/token_counter and None-returning router prechecks. Reproduction is executable and includes a control case. Track is agent_ai_infra, not llm_algorithm, so algorithm-specific gating does not apply. Open PRs #40677/#40486 overlap only semantically on `context_window`/router.py and do not cover the token_counter root cause, so they are not blocking duplicates."
   },
+  "11cd0d89d52c68e1c32b45afe7ca1c6117c55b23decae2f9718211fbf0894f93": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Track=llm_algorithm with PEFT/quantization mechanisms conflicts with the issue's SSE streaming/stop_reason subject",
+      "algorithm_evidence matched 'fp4' from a commenter's model name, not an algorithm mechanism",
+      "Duplicate status semantic_overlap_requires_review with PR #47832 unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/streaming_handler.py terminal-chunk handling",
+      "litellm/llms/anthropic/pass_through/adapters/streaming_iterator.py synthetic empty text block",
+      "litellm/llms/anthropic/pass_through/responses_adapters/streaming_iterator.py response.completed with zero actionable output"
+    ],
+    "risks": [
+      "Track mismatch: this is streaming/API plumbing, not an LLM algorithm contribution",
+      "Possible duplicate of open PR #47832",
+      "Retry-in-place semantics could mask genuine upstream errors"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a mocked upstream that emits only reasoning items then response.completed; assert SSE error frame instead of end_turn",
+      "Regression test for 0-token and aborted streams asserting no synthetic empty text block",
+      "Compare against PR #47832 behavior to confirm non-duplication"
+    ],
+    "unknowns": [
+      "Whether PR #47832 already fixes the same root cause",
+      "Whether the issue is in scope for the llm_algorithm track at all",
+      "Whether maintainers consider this a duplicate of #21744/#40477 follow-ups"
+    ],
+    "why": "Issue describes a plausible streaming bridge bug with code anchors, but the supplied evidence is contradictory: the candidate is labeled track=llm_algorithm with PEFT/quantization mechanisms, while the actual issue is SSE streaming/stop_reason plumbing, not an algorithm mechanism. The algorithm_evidence matched terms ('adapters','fp4') are incidental (fp4 appears only in a commenter's model name). Duplicate coverage is unresolved: PR #47832 overlaps on streaming/stop_reason semantics but is not linked to the issue, and the pre-review flagged duplicate_changed/base_sha_changed."
+  },
   "11d6859a58112aa490f491da8c8686e0217382f35bea8742b012184c5e11299f": {
     "confidence": 0.85,
     "contradictions": [
@@ -107231,6 +107271,41 @@
     ],
     "why": "Issue provides a concrete, runtime-reproduced SSRF and head-of-line blocking bug: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and issues a synchronous requests.get, with code anchors in conn.py and pd_router.rs, a working PoC, and measured latency impact. Root cause and validation path are established."
   },
+  "9ea34339ee0eaa72b9027db9860b8b321145fd51bbedd0b4ceadda442f4d2916": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims top-level aliases exist for namespaced MCP tools; maintainer bot states Code Mode creates no such aliases and mem_search is a separate plugin tool",
+      "Issue attributes crash to alias result-unwrap; bot attributes it to plugin execute returning a non-v2 result"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Code Mode tool-result unwrap guard for non-object plugin results",
+      "Clearer error reporting when a plugin tool returns a non-v2 result shape"
+    ],
+    "risks": [
+      "Fixing the wrong layer (alias unwrap) if the real cause is plugin contract violation",
+      "Broadening result normalization could mask genuine plugin errors"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a plugin tool whose execute returns a plain string and confirm the TypeError",
+      "Add regression test asserting a descriptive error instead of raw JSC TypeError",
+      "Verify tools.mem_search disappears from catalog when the plugin is disabled"
+    ],
+    "unknowns": [
+      "The mem_search plugin tool definition and its execute return value",
+      "Whether tools.mem_search disappears when the plugin is disabled",
+      "Whether the crash reproduces without the local plugins"
+    ],
+    "why": "The issue's premise (top-level aliases for namespaced MCP tools) is contradicted by the maintainer bot's analysis: Code Mode does not create such aliases, and tools.mem_search is likely a separate plugin-registered tool whose execute returns a non-v2 result. The actual root cause (plugin tool returning a plain string/undefined) is unconfirmed and depends on the reporter's plugin definition, which is not supplied."
+  },
   "9ed41ee46f2bb9856794228543909cf13d9abe9798db33cee69fb2f18b0d1e50": {
     "confidence": 0.8,
     "contradictions": [],
@@ -109529,6 +109604,34 @@
       "Whether maintainers have already identified a fix or have design preferences"
     ],
     "why": "Issue reports a concrete authentication failure in Azure OpenAI evaluator metrics when using service principal auth, with a clear tenant mismatch error and a minimal repro config. The root cause is likely that evaluator metric calls do not reuse the same Azure AD auth flow as the main providers, leading to a tenant mismatch. This is a bug in the provider integration path, actionable without design changes."
+  },
+  "a1fa63efc8dcca4170ce260adbf079db59bfc3a465dbce472e91e1435b2a2a79": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asserts a security vulnerability; owner states the issue does not exist because the app is local-only"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "PluginServer route registration (auth/Origin checks) — rejected by owner as out of scope"
+    ],
+    "risks": [
+      "Owner has declared the issue non-existent; any PR would likely be closed",
+      "Changing default binding/auth could break intended local workflow"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Would require a failing test asserting 401/403 on unauthenticated GET /rename-class, but owner disputes the trust boundary premise"
+    ],
+    "unknowns": [
+      "Whether owner would accept a loopback-binding-only hardening as a compromise"
+    ],
+    "why": "Issue describes unauthenticated GET refactoring endpoints enabling CSRF, but the repository owner explicitly states the project is local-only and not internet-facing, rejecting the issue as invalid. This is a maintainer-declared out-of-scope/trust-boundary disagreement, making the proposed security hardening low-value for this repo."
   },
   "a1fae642cfc48256d87540e0ca37584f1f4b81d4b68d4a1fa008656185c4af8b": {
     "confidence": 0.8,
@@ -143816,6 +143919,40 @@
       "Whether the merged PR #31962 already resolves the issue in the current codebase"
     ],
     "why": "The issue provides a detailed root cause analysis with code anchors and measured impact, establishing a concrete bug in retract mode's KV release. The suggested fix is actionable and testable, and the existing PRs are incomplete, leaving room for a competitive contribution."
+  },
+  "d4e0e2282338aef8365e95d598e67c6790b032238afb5a2597b7a21f2aaf86b4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/openai/serving_chat.py: _get_reasoning_from_request falls back to envs.SGLANG_DEFAULT_THINKING for explicit_thinking/explicit_enable_thinking modes",
+      "python/sglang/srt/parser/reasoning_parser.py: verify force_reasoning path splits thinking vs content for dsv41 separator",
+      "python/sglang/srt/entrypoints/openai/encoding_dsv41.py: confirm prompt-side thinking opener matches parse-side default"
+    ],
+    "risks": [
+      "Open PRs #45315 and #45340 touch serving_chat.py/protocol.py with reasoning_effort overlap; a fix may conflict or be superseded",
+      "Changing the parse-side default could alter behavior for deployments relying on current leak",
+      "Fix must not break explicit chat_template_kwargs.thinking=false override"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sets SGLANG_DEFAULT_THINKING=1, sends a chat completion without reasoning_effort, and asserts reasoning_content is populated and content excludes the thinking block",
+      "Repeat with reasoning_effort='low' to confirm existing correct split is unchanged",
+      "Repeat with SGLANG_DEFAULT_THINKING unset to confirm CHAT encoding path is unaffected",
+      "Cover both streaming and one-shot detector paths in parser/reasoning_parser.py"
+    ],
+    "unknowns": [
+      "Whether PR #45315 or #45340 already resolves the default-thinking mismatch in serving_chat.py",
+      "Whether maintainers prefer aligning the parse side or the prompt side"
+    ],
+    "why": "Issue pinpoints a concrete prompt/parse default mismatch: _apply_jinja_template honors SGLANG_DEFAULT_THINKING while _get_reasoning_from_request for explicit_thinking parsers does not, so force_reasoning=False and the dsv41 '\\n\\n' separator leaks into content. Reproduction command and code anchors are supplied, and the fix is a small, testable consistency change."
   },
   "d4f0931928b604979f4a10b6d21f1bc2b3ac4f49c3f5b1c8201929408950bb37": {
     "confidence": 0.7,
