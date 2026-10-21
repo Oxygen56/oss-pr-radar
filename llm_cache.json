@@ -5545,6 +5545,39 @@
     ],
     "why": "The issue identifies a concrete root cause: missing ze_ipc transport in UCX and a Level Zero driver bug (ZE_RESULT_ERROR_INVALID_ARGUMENT) on Intel BMG, with a clear reproduction path and measurable performance impact. It is actionable for vLLM maintainers to address the UCX/NEO integration for PCIe P2P KV transfer."
   },
+  "0955aed5953992345f941e709abb08ba45b00d358ecfc7e5d3eb71a621f3a69c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/service_v2.rs: wrap acceptor with NoDelayAcceptor innermost for plaintext and TLS serving paths",
+      "deploy/inference-gateway/ext-proc/src/runner.rs: set TCP_NODELAY on sockets accepted by the TLS ext_proc loop",
+      "Add unit tests asserting TCP_NODELAY on accepted Frontend HTTP/HTTPS connections"
+    ],
+    "risks": [
+      "EPP TLS accept loop lacks a unit seam, so validation relies on packet capture",
+      "Overlapping draft PR #16862 may duplicate the same fix",
+      "Acceptor layering must keep NoDelayAcceptor innermost so it applies below TLS"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: connect to Frontend plaintext listener and assert TCP_NODELAY is set on the accepted socket",
+      "Unit test: connect to Frontend TLS listener and assert TCP_NODELAY is set below TLS",
+      "Packet capture on EPP TLS ext_proc listener to confirm no 40-45 ms held replies",
+      "Re-run gateway A/B (benchmarks/gateway_ab) and confirm the ~40 ms first-token cluster disappears and TTFT p90 gap drops to ~2-3%"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the draft PR #16862 approach over a new test-backed implementation"
+    ],
+    "why": "Issue gives a concrete root cause (Nagle enabled on Frontend axum-server default acceptor and EPP TLS accept loop), code anchors (service_v2.rs, runner.rs, NoDelayAcceptor, TCP_NODELAY), and a controlled A/B with packet-capture evidence isolating the change. Acceptance criteria define unit tests for Frontend sockets and a packet-capture check for EPP. Existing PR #16862 is draft with no tests, so a test-backed fix remains actionable."
+  },
   "095f5f06bfe37a6c8e1687b4bf45d5b707b9021d437cbd22adeff197c82f97e3": {
     "confidence": 0.7,
     "contradictions": [
@@ -65844,6 +65877,46 @@
     ],
     "why": "Issue provides a clear race condition with root cause and reproduction steps, but submission policy conflicts with repository's AI disclosure requirement, and no maintainer approval or design confirmation exists. Existing PRs are closed and lack tests, so a new PR is plausible but requires maintainer guidance."
   },
+  "6335eb057e610e4d67a049b0129890a81d731b81d3aff0c4db1224b93276056c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.actionability_evidence.maintainer_approved=true conflicts with issue body stating proposal status does not represent maintainer approval and SPECs are draft"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/pkg/mcp/server: config parsing/validation for server.passthroughInstructions",
+      "server/discover handler: upstream discover callout, field-isolated merge of instructions, fail-open fallback, cancellation",
+      "plugins/wasm-go/pkg/mcp/validator and extensions/mcp-server docs/README/tests"
+    ],
+    "risks": [
+      "Assignment requirement unmet; implementation may be rejected regardless of technical merit",
+      "Per-request upstream discover adds latency and load; no caching by design",
+      "Tool-level-only auth backends cannot fetch instructions, limiting usefulness",
+      "allowTools filtering may make instructions reference hidden tools"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Config matrix test: default-off produces zero upstream calls and byte-identical baseline response; invalid combos rejected at validation",
+      "Both-modern runtime test on kind/k3s or pinned Higress gateway with mock upstream: instructions passthrough, gateway-owned fields unchanged, exactly one upstream discover per downstream discover",
+      "Failure matrix: timeout, network error, 401/403/429/5xx, invalid JSON, non-string, oversize all fail-open with baseline field set",
+      "Cancellation test: downstream disconnect terminates callout, no late/duplicate response",
+      "Regression: legacy initialize, tools/list, tools/call, auto detection, allowTools filtering unchanged"
+    ],
+    "unknowns": [
+      "Whether a maintainer will assign the issue to satisfy the needs_assignment policy",
+      "Final Design-approved values for instructions size limit, oversize behavior, and timeout cap"
+    ],
+    "why": "The proposal is a well-specified, opt-in, stateless feature with clear code anchors (plugins/wasm-go/pkg/mcp/server/plugin.go) and a concrete validation path (real Envoy/proxy-Wasm evidence, failure matrix, call-count proof). However, the repository policy requires assignment (policy.status=needs_assignment, assignmentRequired=true) and the issue currently has no assignees, which is a materially blocking unknown for whether code work is actionable."
+  },
   "6342118dc49e390bd8674d5407e5b817adf36cead53186ba9095c2255a35284b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -108419,6 +108492,43 @@
     ],
     "why": "Issue describes a real behavioral gap in the auto-opened subscriptions/listen stream lifecycle with a detailed repro script and code anchors, but the submission policy requires assignment (needs_assignment) and the issue has no assignee, no maintainer approval, and no design confirmation. The issue itself offers two alternative acceptable resolutions (auto-reopen with backoff + hook, or surface closure via existing channels + docs), so the concrete implementation target is not yet fixed. This is a materially blocking unknown for actionable code work."
   },
+  "a11b9d4c1362023ac3cbfa6345eb125fffb0162c972ce6ee5c1d39c6c2c34b2a": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "api/services/knowledge_fs/capability_broker.py: reduce or restructure the per-space authorization revision lock so concurrent issuance does not serialize, while preserving ordering against revocation",
+      "api/services/knowledge_fs/capability_broker.py: bound lock/statement/transaction waits within the request deadline",
+      "api/controllers/service_api/knowledge_fs/resources.py: add client/server request correlation ID and sanitized phase timing",
+      "Add PostgreSQL multi-session tests for concurrent issuance and revocation at reservation, signing, and post-issuance boundaries"
+    ],
+    "risks": [
+      "Removing or weakening `FOR UPDATE` without proving the protocol could let revocation miss grants reserved before signing completes",
+      "Lock-ordering changes across control-space, revision, reservation, and revocation paths (including FK locking) could introduce deadlocks",
+      "The 159 timeouts may not all share this cause; a fix here may not fully restore the >=99% success target"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Real PostgreSQL multi-session test: N concurrent `issue_service` calls for the same space must not serialize on the revision row and must all succeed",
+      "Revocation-before-reservation, between-reservation-and-signing, and after-issuance tests confirm revocation covers reserved grants",
+      "Service API disablement and shared interactive/app issuance flows still enforce authorization",
+      "Re-run the 10-RPS/200-VU/1000-per-min scenario and report admission vs post-admission latency, original-denominator success rate, late server completions, and DB lock waits"
+    ],
+    "unknowns": [
+      "Original lock-holder transactions and why each critical section remained slow were not reconstructed",
+      "The 138 late HTTP 200 responses cannot be joined one-to-one to the 140 client admission timeouts",
+      "Whether maintainers have a preferred synchronization protocol for issuance vs revocation"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: `_lock_authorization_revision()` takes `FOR UPDATE` on a per-(tenant_id, control_space_id) row and updates `updated_at` on every issuance, serializing independent query admissions. Reproduction steps, observed metrics, and the exact SQL are supplied, and the acceptance criteria call for real PostgreSQL multi-session concurrency/revocation tests. The remaining unknown (why each critical section stayed slow, exact per-request reconciliation) affects diagnosis depth but not whether a concrete fix and validation path exist."
+  },
   "a1385aedc8238e32c900bf764da72cefb2494149620b5750f0ec374037632f98": {
     "confidence": 0.8,
     "contradictions": [],
@@ -140327,6 +140437,41 @@
       "Whether the fix should be gated by provider predicate or applied universally."
     ],
     "why": "The issue is a well-evidenced provider compatibility bug with a clear root cause (interleaved developer message between function_call and function_call_output) and a proposed fix (ordering normalization in the adapter). However, the maintainer has explicitly stated they will pick it up and requested additional wire-level evidence, indicating active maintainer involvement and a need for design confirmation on blast radius and semantic impact. This is not a clean new candidate for external work."
+  },
+  "d13aa2b2335cf1997e9b9a65c7e0ca4e0bfadf21f3314fbf35f6a5259f09708d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue reports unbounded memory across processChunks and BatchIndex, while PR #4584 claims only the BatchIndex vector-retention portion; overlap is semantic but not direct code overlap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/application/service/retriever/keywords_vector_hybrid_indexer.go: bound embedding/vector retention per window",
+      "internal/application/service/knowledge_process.go: avoid retaining all chunk texts and index info (out of PR #4584 scope)"
+    ],
+    "risks": [
+      "Duplicate effort with open PR #4584 covering the same BatchIndex root cause",
+      "Scope creep into processChunks text retention and retry resumption not covered by the existing fix",
+      "Memory measurements depend on stub embedding server and container limits"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with gen_txt.py at 10/30/80 MiB and sample cgroup anon memory to confirm growth",
+      "Add regression test asserting peak retained vectors are bounded by window size",
+      "Test failure mid-window to confirm partial saves and error propagation"
+    ],
+    "unknowns": [
+      "Whether PR #4584's bounded-window implementation already fully addresses the BatchIndex root cause described in the issue",
+      "Whether maintainers consider the remaining processChunks/retry scope a separate actionable task"
+    ],
+    "why": "Issue gives a strong reproduction and code anchors for unbounded vector retention in BatchIndex, but an open PR #4584 already targets the same root cause (bounded indexing windows in keywords_vector_hybrid_indexer.go) and is not linked to the issue. Whether independent code work is still actionable depends on comparing that PR's implementation boundary, which the supplied evidence does not resolve."
   },
   "d13cdbc463c9e13cbbcf047db065f25039408da07acb1fddd9827f8fc294792d": {
     "confidence": 0.8,
