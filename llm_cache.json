@@ -69461,6 +69461,41 @@
     ],
     "why": "The issue identifies a concrete, reproducible bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool calls. Root cause is partially identified (finish_reason logic) and the enforcement gap is clearly described. The track is llm_algorithm because it involves the tool-calling mechanism and structured output enforcement, with a clear validation path via the provided loop script and payload variations."
   },
+  "696bdd2e870cc888d599e46a52a728caed39923083c0aeb007dd66d344a46efb": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docreader gRPC ReadStream/Read request lifecycle: explicitly drop request and parse-result references and trigger collection after large requests",
+      "Investigate and eliminate the native anonymous mapping retaining the uploaded payload in the server path",
+      "Add streaming regression test asserting memory returns near baseline after a large request"
+    ],
+    "risks": [
+      "Exact source of the native copy is unidentified; fix may require grpcio/protobuf-level investigation",
+      "Explicit gc.collect() after large requests may add latency and is a workaround rather than a root fix",
+      "Memory assertions in tests can be flaky across environments"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a large scanned PDF via Docker Compose and measure cgroup memory.stat anon before/after completion",
+      "Run standalone DocReaderServicer().ReadStream control to confirm parser does not leak",
+      "Add a regression test that issues a large ReadStream and asserts post-request memory returns near idle after gc.collect()",
+      "Inspect /proc/<pid>/smaps to confirm the ~file-sized anonymous mapping is released"
+    ],
+    "unknowns": [
+      "Which specific code path allocates the native anonymous copy of the payload",
+      "Whether maintainers have a preferred fix approach (explicit drop vs. gc tuning vs. grpc config)"
+    ],
+    "why": "Issue provides a detailed, reproducible memory-retention bug in docreader's gRPC ReadStream path, with measured before/after memory, a standalone control experiment isolating the parser from the server path, and two concrete retention mechanisms (Python reference cycle plus a native anonymous mapping). This is a concrete, actionable performance/correctness fix with a clear validation path (memory measurements before/after, gc.collect, smaps inspection). Root cause is partially localized (server request path, not parser) but the exact code anchor for the native copy is not yet identified, which is normal implementation investigation rather than a blocking unknown."
+  },
   "696e02a999f1d011ae915149f892da85ad6d48baaeb77c7118e9f6f1d84d1d0e": {
     "confidence": 0.7,
     "contradictions": [
@@ -92472,6 +92507,42 @@
       "Whether the proposed fix has been implemented in any PR; the open PR #53367 appears to address this but lacks tests."
     ],
     "why": "The issue provides a clear root cause: missing num_speculative_tokens in SpeculativeConfig.compute_hash() causes torch.compile cache collisions. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm with a concrete validation path via numerical regression or runtime assertion test."
+  },
+  "8b1d82c1b5278fea6cf6bde3c2efb475f21d5fb607f70cf3b519c8d271c62481": {
+    "confidence": 0.72,
+    "contradictions": [
+      "open_pr_assessment marks root_cause_coverage false while issue body clearly states the root cause and PR includes tests"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "operator shell-quoting helper for single-layer sh -c",
+      "vLLM Ray leader wrapper argv rendering",
+      "Grove vLLM multiprocessing worker wrapper",
+      "Grove SGLang worker wrapper"
+    ],
+    "risks": [
+      "Existing PR #15167 may already cover the same fix, risking duplicate work",
+      "Changing quoting helper could affect nested-shell paths (#16857/#16858) if not scoped carefully",
+      "No maintainer design confirmation on preferred quoting approach"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test executing generated wrappers with argv-capturing stubs and assert single-quote and empty-string values survive intact",
+      "Verify injected worker-rank expressions still evaluate after quoting change",
+      "Run operator Go module targeted unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to merge #15167 rather than accept a competing fix",
+      "Whether the quoting helper is shared with nested-shell paths that must retain current behavior"
+    ],
+    "why": "Issue identifies a concrete root cause: shellQuoteForBashC() single-quote escaping is applied at a single sh -c layer, causing unterminated commands for values containing single quotes and dropping empty argv values. Reproduction steps and expected/actual behavior are supplied, and an existing open PR (#15167) covers the fix with tests, so the work is technically actionable and well-scoped."
   },
   "8b21f098c9b82c009f57ce68f361aa25dda6684708e86aed0740f0c251ba9dfb": {
     "confidence": 0.85,
@@ -130193,6 +130264,41 @@
       "Whether issue #56815 is a true duplicate or a distinct failure"
     ],
     "why": "The issue describes a plausible draft-KV/prefix-cache corruption mechanism with code anchors and a workaround PR (#47926), but the reporter explicitly states they have not pinned which step registers unwritten draft blocks, and the supplied evidence shows unresolved overlap with open PR #56448 (same dflash/speculator paths) and potential duplicate issue #56815. The root cause is not yet established, so a concrete reference-vs-implementation test cannot be defined."
+  },
+  "c4a474e9e6277c2bd5ce06a98830f871d470fbc90341008a897c32f5b6c313b1": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims mcp<2.0.0 pin; automated check reports pyproject.toml:29 specifies mcp>=2.0.0"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pyproject.toml dependency constraint (only if premise holds)",
+      "MCP client/server integration code for v2.x API compatibility"
+    ],
+    "risks": [
+      "Premise may be false, making the requested change a no-op or regression",
+      "Dependency bump could introduce breaking changes without a validated compatibility test",
+      "Issue body is untrusted pasted content with no minimal repro"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Verify actual pyproject.toml constraint on current main",
+      "Install agentscope and check resolved mcp version",
+      "Exercise server/discover path against MCP SDK v2.x"
+    ],
+    "unknowns": [
+      "Actual current dependency constraint in pyproject.toml",
+      "Whether any real code defect exists beyond a version bump",
+      "Whether maintainers consider v2.x migration in scope"
+    ],
+    "why": "The issue's core premise is contradicted by the automated check: it claims pyproject.toml pins mcp<2.0.0, but main reportedly specifies mcp>=2.0.0, meaning v2.x is already required. The request is also a dependency-version bump (installation/dependency plumbing), not an algorithm or mechanism change, and the issue body is largely pasted chat/HTML noise with no concrete reproduction of a code defect."
   },
   "c4c00397bcf6fdfa382539ccf6318622e25c26cacc8363b8c5cfe6527d677cae": {
     "confidence": 0.7,
