@@ -5953,6 +5953,42 @@
     ],
     "why": "Issue #43412 has a clear root-cause chain (flashinfer JIT of top_k_renorm_probs in eagle_sample fails due to bundled cccl vs pip cu13 toolkit mismatch, and the RuntimeError kills the process tree) and a concrete reproducer. However, the supplied evidence shows PR #43884 already implements exactly the requested blast-radius fix (startup preflight, poisoned-cache clearing, flag-gated triton fallback) and PR #43591 addresses the toolchain pin; the duplicate status is 'semantic_overlap_requires_review' with unresolved coverage. This materially determines whether new code work is actionable."
   },
+  "09948d8dd0ae4614b9afc55e251e59d5fe48421c105ed0759b57fa8b381be649": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims a concrete reproduction (5/5 runs) but pre-task evidence records reproduction_or_validation_missing and probe_ready=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/agents/mcp_client.rs: open subscriptions/listen with toolsListChanged filter when server advertises tools.listChanged",
+      "Handle rmcp Subscription channel notifications to bump tool cache version",
+      "Re-open listen stream on stream end or transport reconnect",
+      "crates/goose/tests/mcp_integration_test.rs: add 2026-07-28 fixture coverage"
+    ],
+    "risks": [
+      "rmcp routes subscription notifications to Subscription channel, not ClientHandler::on_tool_list_changed; naive listen() call would not fix the bug",
+      "Behavior change in MCP client connection lifecycle may affect other extensions",
+      "Repository requires assignment before contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a 2026-07-28 stdio/HTTP fixture server that only emits tools/list_changed to subscribed clients; assert goose refreshes tool cache",
+      "Regression test that 2025-11-25 GET-stream path still works",
+      "Assert stream re-opens after transport reconnect"
+    ],
+    "unknowns": [
+      "Whether maintainers will assign the issue (assignment_required policy)",
+      "Whether the described minimal Node.js repro is available/verifiable in this environment",
+      "Whether rmcp 3.4.1 listen() API semantics match the issue's description"
+    ],
+    "why": "Issue gives a plausible protocol-level root cause (no subscriptions/listen stream opened for 2026-07-28 servers, so tools/list_changed never reaches the #10925 handler) with code anchors and a described reproduction. However, the pre-task evidence marks reproduction_or_validation_missing and the repository policy requires assignment (needs_assignment, assignees empty), which is a materially blocking unknown for actionability."
+  },
   "09b1183f338193d6abf266936fc23c8899c54cb1609b4dedc3150a279a4c41e5": {
     "confidence": 0.8,
     "contradictions": [],
@@ -15532,6 +15568,42 @@
       "Whether maintainers intend to enable safe partial reuse for RotatingKVCache in future"
     ],
     "why": "The issue provides a detailed root-cause analysis of KV-cache corruption in gemma4 models with sliding attention, including a clear mechanism (LCP match against a non-trimmable RotatingKVCache), reproduction steps, expected vs actual behavior, and confirmation that the fix is already on main. The evidence includes code anchors and a concrete validation path via the provided repro script and test matrix."
+  },
+  "19211f54a91b2270c98eec8cd0e03d5ae1df2a687206280bc26b1a2f37fc8910": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue acceptance criteria require persisting repo edits, but the maintainer bot states the automation service PATCH schema currently cannot accept repos, making that criterion impossible without a cross-repo change"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Canvas Edit form: read repositories from preset_metadata.repos instead of top-level repository",
+      "Canvas Edit form: render repositories read-only with explanation when service cannot update them",
+      "Possibly OpenHands/automation UpdateAutomationRequest schema to accept repos (scope-dependent)"
+    ],
+    "risks": [
+      "Scope ambiguity: Canvas-only vs cross-repo change to automation service PATCH contract",
+      "Missing required screenshot/video per bug template",
+      "Unclear semantics for empty list (clear all vs unchanged) and how Edit detects service support"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: create automation with OpenHands/docs, open Edit, assert Repositories row lists OpenHands/docs",
+      "Regression: save an edit that does not change repositories and assert PATCH omits repos and list is unchanged",
+      "Scope-dependent: with a service supporting repo updates, add/remove repo, save, reopen Edit and dashboard card show new list"
+    ],
+    "unknowns": [
+      "Whether the fix is scoped to Canvas-only read-only display or also includes the OpenHands/automation PATCH contract change",
+      "Whether the required screenshot/video will be provided or waived",
+      "Semantics of empty repository list (clear vs unchanged) and how Edit detects update support"
+    ],
+    "why": "The issue gives a clear reproduction and a plausible root cause (the edit form reads a top-level `repository` field while the service stores repos in `preset_metadata.repos`, and the PATCH schema has no `repos` field). However, the maintainer bot explicitly flags two unresolved decisions: a missing screenshot/video required by the bug template, and a cross-repository scope question (Canvas-only read-only display vs. also changing the OpenHands/automation PATCH contract). The scope decision determines whether the code work is a small Canvas display fix or a cross-repo contract change, so actionability is materially blocked."
   },
   "192aa62388bee8676ee3423f30d90f7de494cebffe13454fce3e3f87c1f64bc5": {
     "confidence": 0.85,
@@ -34527,6 +34599,38 @@
       "Exact code path in Rust frontend responsible for tool_choice handling"
     ],
     "why": "The issue reports a user-visible bug in tool_choice='auto' handling on the Rust frontend path, with a clear reproduction and expected behavior. However, the root cause is not identified, and the issue itself asks a design question about whether 'auto' should work without frontend --enable-auto-tool-choice. The deterministic gate is HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The open PRs are not directly competing, but the lack of root cause clarity and design confirmation makes this a WAIT_MAINTAINER."
+  },
+  "35aaeb4b59769f1396b0a4edb766f7c239a21b02447021212941263ac6f2662f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/smolagents/local_python_executor.py: honor sep and end kwargs in the captured print implementation, defaulting to ' ' and '\\n'",
+      "Add regression tests covering sep, end, and their combination against CPython output"
+    ],
+    "risks": [
+      "Behavior change in captured logs could affect downstream agent parsing expectations",
+      "Need to preserve default behavior when sep/end are omitted",
+      "Possible interaction with callback-print fixes in #2946/#2955"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test asserting executor(code).logs == 'name,score\\nAda,42' for the issue's reproduction snippet",
+      "Parametrized tests for sep-only, end-only, and combined sep+end, comparing captured logs to contextlib.redirect_stdout CPython output",
+      "Run targeted unit tests for local_python_executor and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach for sep/end handling"
+    ],
+    "why": "Issue provides a concrete, dependency-free reproduction with expected-vs-actual output, and pinpoints the root cause at the direct print branch in evaluate_call (local_python_executor.py L901-903) that hardcodes ' '.join(...) + '\\n' while ignoring sep/end. A reference-vs-implementation test against CPython is directly constructible, and related issues (#2941/#2946/#2955, #1014) are explicitly distinguished as not covering this behavior."
   },
   "35b27f9b454239649c8a6992225a9580652991ffae07ba482b76f4fa9bcc23a2": {
     "confidence": 0.55,
@@ -86581,6 +86685,41 @@
       "Whether the per-seq-len hook design should be joint (batch, ctx) keying per #48944 or a separate table per #54801"
     ],
     "why": "The issue reports a concrete long-context DFlash slowdown with profiled ~182 ms/cycle drafter attention, but the supplied comment thread materially contradicts the proposed mechanism: the DCP-sharding asymmetry in DFlashSpeculator.propose is shown to be absent on the measured release (capture and runtime paths are symmetric), and the commenter retracts the 'drafter rescans full KV' framing because DFlash is single-pass. The remaining 28.85 ms overhead is unexplained, and the issue's own root cause (full-context cross-attention scan) is not reconciled with the single-pass correction. Direction 1 (per-seq-len disable hook) is also already covered by open PR #48944 and #54801, so the actionable code work is not clearly identified."
+  },
+  "80af4991f85c37fa118582beed2ac54cf4b2943fb6d162df5ee662ee48e62549": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "execute_command pre-flight validation/rewrite of known-unsafe CLI forms (inline --body, multi-line -m, missing --no-browser, un-redirected streaming, non-ASCII args)",
+      "stall/timeout detector around execute_command completion-signal wait",
+      "warning surfacing when generated command matches forbidden .clinerules pattern"
+    ],
+    "risks": [
+      "Root cause spans VS Code shell-integration behavior outside repo control; fix may only mitigate, not eliminate",
+      "Command rewriting could alter user-intended semantics if over-broad",
+      "Intermittent reproduction (context-fill dependent) may make deterministic test hard"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that feeds a multi-line --body / -m command through the execute_command path and asserts a completion sentinel or timeout recovery rather than indefinite hang",
+      "Regression test that safe rewritten forms (--body-file, -F, --no-browser, redirected output) are emitted and complete",
+      "Run targeted package unit tests and static checks for the terminal/execute_command module"
+    ],
+    "unknowns": [
+      "Exact code location of execute_command completion-signal wait not confirmed in supplied evidence",
+      "Whether maintainers prefer rewrite vs timeout-detector approach (design preference, non-blocking)"
+    ],
+    "why": "Issue documents a concrete, reproducible failure mode: unsafe inline CLI forms (multi-line --body/-m) leave PowerShell's arg parser waiting, corrupting VS Code shell-integration completion markers so Cline's execute_command never sees completion and stalls. Root cause is plausibly anchored in the terminal/shell-integration completion path, and a reference-vs-implementation test (emit unsafe form vs safe form, assert completion sentinel/timeout) is feasible. No duplicate PR/issue coverage found; no assignment or AI-use prohibition. Maintainer approval absent but that is not a blocker."
   },
   "80ba71e9caa2c6cda245d685e384837d413c1e3a6493155756d8d6e996a88018": {
     "confidence": 0.8,
