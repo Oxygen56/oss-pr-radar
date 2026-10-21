@@ -3721,6 +3721,44 @@
     ],
     "why": "Issue provides a concrete reproduction with ordered steps and a clear observed/expected behavior. A contributor traced the current code path and identified specific modules and a plausible root cause (token expiry during long-pending approval, with potential retry wiring or credential-store bug). The validation path is clear: retest on latest build and inspect logs to distinguish between retry wiring and credential-store issues."
   },
+  "06958506078f65c4c75d856e3097cae227bbc21331bd22bfcc0b7a5bee061bf6": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims a keyword scan finds no open PR/issue covering this defect, but supplied open_pr_assessment lists PR #5178 titled 'fix(ai-statistics): reject request bodies with a duplicated top-level messages member' touching the same file"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-statistics/main.go: call jsonbody.DuplicateTopLevelMember(body, \"messages\") at start of onHttpRequestBody after skip check, before setAttributeBySource",
+      "plugins/wasm-go/extensions/ai-statistics/go.mod: add require/replace for local pkg/jsonbody module",
+      "plugins/wasm-go/extensions/ai-statistics: regression test for duplicate messages -> 400, single messages unchanged, filtered pass-through, invalid JSON skipped"
+    ],
+    "risks": [
+      "Open PR #5178 appears to implement the same fix in the same file; proceeding could duplicate or conflict with it",
+      "Adding a require/replace for the local pkg/jsonbody module may affect plugin build wiring",
+      "Behavior change rejects previously-forwarded requests with 400, which could surprise clients sending duplicate members"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Plugin test host (go mode and compiled-Wasm mode): body with two top-level messages members returns 400 with 'duplicate \"messages\" member in request body', records no attribute, does not forward",
+      "Body with one messages member: attributes extracted, chat_round metric updated, request forwarded as before",
+      "Request filtered by enable_path_suffixes/content-type: body not read, guard not run, pass-through preserved",
+      "Malformed JSON body: helper returns error, check skipped, existing validation decides",
+      "Run existing ai-statistics test suite to confirm no regressions"
+    ],
+    "unknowns": [
+      "Whether PR #5178 fully covers this issue's root cause and acceptance criteria or leaves a material gap",
+      "Whether the repository's needs_assignment policy is satisfied (no assignee listed)",
+      "Whether maintainers have a design preference on reusing the #5124 helper versus an inline check"
+    ],
+    "why": "The issue gives a clear root cause (gjson reads the first duplicate top-level `messages` while upstream parsers keep the last, so ai-statistics logs a different conversation than is served) and a concrete fix path reusing the #5124 jsonbody helper. However, the supplied evidence shows an open PR #5178 that already implements exactly this change in the same file (plugins/wasm-go/extensions/ai-statistics/main.go) with tests, and the duplicate status is 'semantic_overlap_requires_review'. Whether code work is still actionable depends on comparing #5178's implementation boundary against this issue, which is an unresolved duplicate/coverage question."
+  },
   "069cbb25719f037777e0f07c9be2647a97e7b3840b871dba4d385d9ff9b4c751": {
     "confidence": 0.9,
     "contradictions": [
@@ -5138,6 +5176,41 @@
       "Whether the reported failure persists on current main"
     ],
     "why": "Issue reports a concrete CUDA graph capture crash (cudaErrorStreamCaptureUnsupported) in MRV2 MTP speculative decoding with a full traceback and repro command, but a recent comment states it is already fixed on main by PR #56447 and can be closed. That unresolved duplicate/merged-fix coverage is a materially blocking unknown for whether new code work is actionable."
+  },
+  "0888f056a11ecb787bbf36c264a0c1610f44ed778d37d5d27ad1ff991f5d886e": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "execute_command pre-flight validation/rewrite of known-unsafe CLI forms",
+      "execute_command stall/timeout detection and auto-recovery",
+      "warning surfacing when generated command matches forbidden .clinerules patterns"
+    ],
+    "risks": [
+      "Root cause spans model rule-adherence and terminal integration, so a code-only fix may not fully resolve stalls",
+      "Command rewriting could alter user-intended commands or break legitimate multi-line usage",
+      "Timeout/auto-recovery could mask genuine long-running commands"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that feeds a multi-line `git commit -m` / inline `gh --body` command through the execute_command validation path and asserts it is rewritten or flagged",
+      "Add a regression test simulating a missing shell-integration completion marker and asserting the stall detector times out and recovers",
+      "Run targeted vitest suites for the terminal/execute_command package plus static checks"
+    ],
+    "unknowns": [
+      "Exact code location where execute_command completion is awaited is not confirmed by supplied evidence",
+      "Whether maintainers prefer validation/rewrite vs timeout-detector approach is undecided"
+    ],
+    "why": "Issue documents a concrete, recurring Windows PowerShell stall tied to shell-integration completion markers and unsafe CLI forms; reproduction steps and root-cause hypothesis are supplied, and no duplicate/merged fix or open PR covers it. However, the root cause is partly model-behavior/rule-adherence rather than a single deterministic code defect, and the proposed fixes are broad design choices."
   },
   "088a618f302285b4d2f40c0e4deb64d929bd345ce98c56a6c09cf3a5db773e78": {
     "confidence": 0.6,
@@ -24969,6 +25042,40 @@
       "Whether maintainers accept the amended SPEC-4402001 carve-out or prefer strict fail-closed semantics for local-docker with no kubeconfig"
     ],
     "why": "Maintainer johnlanni verified every current-behavior claim against main: upgrade.go:67 and uninstall.go:66 discard the getAllProfiles error, and getAllProfiles (upgrade.go:138-167) suppresses failures from path discovery, file store, kube client construction, and ConfigMap listing. SPEC-4402001 matches the code, and the maintainer explicitly approved Proposal #4402. The remaining open item is a design/SPEC confirmation on the local-docker no-kubeconfig carve-out, which is normal review sequencing rather than a missing root cause or validation path."
+  },
+  "27a49a9e03f9797bcfe0537a2e3be94f6efd78f1d30b4b2b29c07f133324a038": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/application/service/wiki_ingest_batch.go: replace single hard slice in mapOneDocument with segmented or sampled coverage and merge slugItems",
+      "internal/application/service/wiki_ingest.go: adjust maxContentForWiki usage / segment limits",
+      "internal/application/service/knowledge_process.go: record truncated flag and raw length in wiki parse trace"
+    ],
+    "risks": [
+      "Segmentation increases LLM call count for long documents; may need a segment cap",
+      "Sampling approach still omits middle content unless truncation is surfaced",
+      "Avoid expanding public API behavior beyond trace/status signaling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test feeding >32768-rune content to mapOneDocument and asserting entities appearing only in the tail are extracted",
+      "Regression test asserting parse trace/status marks truncation when any content is skipped",
+      "Run targeted package tests for internal/application/service and static checks"
+    ],
+    "unknowns": [
+      "Maintainer preference between segmentation and sampling is unstated, but either is a reasonable fix and does not block code work"
+    ],
+    "why": "Issue pins a concrete root cause: mapOneDocument hard-slices reconstructed content to maxContentForWiki=32768 before extractCandidateSlugs, with only an info log. Code anchors and log line are supplied, and a contributor comment confirms the slice still exists on main. Two reasonable fix directions (overlapping segmentation vs head/mid/tail sampling plus truncation trace) are normal implementation choices, not blockers."
   },
   "27a84c1135d110235ee7e50984eab653ab37ec7b3da0771aefccf2c66fa2b92c": {
     "confidence": 0.72,
@@ -64517,6 +64624,37 @@
     ],
     "why": "Maintainer ZJY0516 states the degeneration is a known issue caused by tool call / vLLM frontend, and PR #56635 claims a parser fix, but the supplied evidence does not establish a concrete root cause in the parser (no code anchor, no failing test, no reproduction). The issue itself admits synthetic reproduction failed, and the duplicate/coverage status of #56635 is unresolved (root_cause_coverage false, semantic_overlap false)."
   },
+  "61c2cfbaa22d8d44a6c0e6ea659f1bc2a09b9bfe0653d1d377f69bb8b168dce6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: avoid tearing down shared StreamableHTTPSessionManager TaskGroup while concurrent requests are in flight",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools fetches are not cancelled by another request's stateless handler scope"
+    ],
+    "risks": [
+      "Fix may require lifecycle/refcount changes to the shared session manager, risking broader behavior changes",
+      "Recurrence of previously closed #24522 means prior fix may be incomplete; need to confirm current main still reproduces"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two overlapping tools/list requests to POST /mcp against two HTTP streamable upstreams and assert both succeed without MCPServerListError",
+      "Run targeted unit tests for the mcp_server_manager module and static checks"
+    ],
+    "unknowns": [
+      "Whether the bug still reproduces on current main (baseSha 230f653) versus v1.105.0",
+      "Whether maintainers have a preferred lifecycle design for the shared session manager"
+    ],
+    "why": "Issue provides concrete reproduction (two overlapping tools/list requests to POST /mcp), a traceback showing anyio cancel-scope teardown from StreamableHTTPSessionManager._handle_stateless_request cancelling in-flight list_tools, and code anchors in mcp_server_manager.py and experimental_mcp_client/client.py. Root cause is a shared TaskGroup being torn down while concurrent requests are in flight, which is a concrete concurrency/lifecycle bug with a clear validation path."
+  },
   "61ed13928d73102f914ef235c33e54c50fd32a3ea6aa1d0a9b8dfc15d1d3c32d": {
     "confidence": 0.85,
     "contradictions": [
@@ -80801,6 +80939,40 @@
     ],
     "why": "The issue body is truncated mid-sentence ('we can understand when ra...'), so the actual collision mechanism, the offending code path, and the proposed fix are not established. The evidence shows a plausible NVLink one-sided dispatch/combine workspace overlap hypothesis with a concrete reproduction (DP8EP, CUDA graphs, rank 5 acceptance collapse, --enforce-eager removes it), but no root-cause signal (root_cause_signal=false) and no code anchor in the flashinfer dispatch/combine implementation. Related-issue assessment flags potential overlap with #6077/#5996/#6081 based only on shared stack signatures, which is unresolved duplicate coverage."
   },
+  "794d96b17284424ea393d8184aec032a0ad61c0b9e60d4a6835e96fef874c171": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "rome_apps/assistant/skills/routine-from-chat/SKILL.md: add a non-interactive branch permitting system:create_routine under existing permission rules",
+      "packages/core/src/core/mcp-facade.ts: optionally support a non-card propose_routine workflow on messaging surfaces",
+      "packages/core/src/core/mcp-facade.routine-draft.test.ts: add non-interactive scheduling regression coverage"
+    ],
+    "risks": [
+      "Maintainer may prefer the facade-side non-card propose_routine workflow over the skill-branch fix",
+      "Loosening the skill's create-action prohibition could bypass intended confirmation/permission semantics",
+      "Reproduction is derived from source, not executed, so the exact failing surface behavior needs confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting the skill's non-interactive path can complete scheduling via system:create_routine without propose_routine",
+      "Run the existing mcp-facade.routine-draft.test.ts to confirm interactive-surface proposal behavior is unchanged",
+      "Simulate a Discord-like channel descriptor (no interactive cards) and verify a full Friday 09:00 UTC routine is created and activated"
+    ],
+    "unknowns": [
+      "Precise originating channel is unknown, though the cross-surface mismatch is explicit in source",
+      "Maintainer design preference between the two proposed fixes is unstated"
+    ],
+    "why": "Issue pins a concrete cross-surface contract mismatch: the routine-from-chat skill requires propose_routine and forbids create actions, while the shared facade deliberately omits propose_routine on non-interactive messaging surfaces, leaving no compliant scheduling path. Code anchors, an existing test that pins the omission, and a clear reproduction/validation path are supplied; no duplicate or open PR covers it."
+  },
   "7961bfa2c611b105779cfe8d2912ba32de7af3014aaaf313926c3d8ebbf5a3f2": {
     "confidence": 0.8,
     "contradictions": [],
@@ -90702,6 +90874,40 @@
     ],
     "why": "Issue reports a concrete CLI hook-dispatch failure with verbatim error and three reproduction variants; a commenter supplies code anchors (apps/cli/src/utils/hooks.ts, HookEventPayloadSchema, session.hook) and a concrete plan to surface failing field paths with a test in run-handlers.test.ts. The error-message improvement is actionable and testable even though the 'every dispatch fails' claim may already be fixed on main."
   },
+  "87f31ed92e3bbe9cbd2462ed76a9b948fc181e3fe9a64b38097b775faf6d3a4d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/kv_router/scheduler.rs cost formula / overlap credit weighting",
+      "lib/llm/src/kv_router/embedded.rs non_max_overlap observer gating",
+      "router default weights or option to discount soon-to-finish decode load"
+    ],
+    "risks": [
+      "Changing default weights could regress heavier or skewed load where the load term legitimately matters",
+      "Distinguishing intended cost-formula semantics from a bug requires maintainer input on desired defaults",
+      "Floating-point/random variation in routing decisions requires fixed seeds and tolerances"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with two mocker workers, 16 sessions x 12 turns, 8 in flight, seeds 1 and 2; compare moved-turn counts at default weights vs --router-prefill-load-scale 4",
+      "Assert non_max_overlap_selections_total increments in disaggregated prefill routing and stays 0 in aggregated decode routing",
+      "Regression test that a worker holding nearly all prefix blocks is retained when the alternative advantage is only transient decode load"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the overlap-credit-only-offsets-prefill behavior intended vs a bug",
+      "Whether the fix should change defaults or add an option"
+    ],
+    "why": "Issue provides a concrete, reproducible routing-cost mechanism: overlap credit only offsets the prefill term via max(0, raw_prefill - credit), so transient decode load can outweigh prefix locality. A contributor comment confirms CPU reproduction with mocker workers and identifies the counter gating in scheduler.rs/embedded.rs, giving a clear reference-vs-implementation validation path."
+  },
   "88306db1867555542276642382f52aded724336fd11ac879745f43ca10f2efa1": {
     "confidence": 0.85,
     "contradictions": [
@@ -91129,6 +91335,42 @@
       "Whether the maintainers prefer a specific approach among the three expected behaviors listed in the issue."
     ],
     "why": "The issue provides a clear root cause with source-verified code anchors and a reproducible sequence. The expected behavior is actionable and the validation path is concrete. Although a related PR (#18695) has been merged, it does not cover the root cause (silent no-op for Built-in datasets) and the issue remains open, so the contribution is not redundant."
+  },
+  "88de0f7aa2e9242408832dc00dfe8cd84d444a3bd5da942ffe083deab4030287": {
+    "confidence": 0.55,
+    "contradictions": [
+      "issue 指出空模式被后端解释为 all，而 PR #4558 标题称将 legacy 空配置显示为 all，修复方向可能相反或仅改前端"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/application/service/agent_service.go 的 registerMCPTools 空模式处理",
+      "前端 AgentEditorModal.vue 的 initMcpSelectionMode 空配置显示逻辑",
+      "补充空 mcp_selection_mode 与空 mcp_services 的回归测试"
+    ],
+    "risks": [
+      "PR #4558 可能已覆盖同一修复，独立实现会重复",
+      "修改空模式语义可能影响依赖 legacy 全量加载行为的现有智能体",
+      "前后端需同步修改，否则仍存在解释不一致"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "构造 mcp_selection_mode 为空且 mcp_services 为空的智能体，断言 registerMCPTools 不加载任何 MCP 工具",
+      "前端单测断言空配置在编辑页显示为禁用",
+      "端到端复现：新建对话后确认不触发 MCP 工具调用"
+    ],
+    "unknowns": [
+      "PR #4558 是否已完整修复后端 registerMCPTools 的空模式语义",
+      "维护者期望的兼容策略：空配置应视为 none 还是 all",
+      "PR #4558 与 issue 的实际代码重叠范围"
+    ],
+    "why": "Issue 提供了清晰的前后端语义不一致线索（AgentEditorModal.vue 将空模式显示为 none，agent_service.go 的 registerMCPTools 将空模式解释为 all），并有可复现步骤与临时规避方法。但已有开放 PR #4558 直接引用该 issue 且标题指向同一修复方向（legacy empty MCP config 显示为 all），其语义重叠被标记为弱、根因覆盖未确认，构成未解决的重复/覆盖不确定性，影响是否值得独立实现。"
   },
   "88e116d1e40d89563bf6cd60b687214e9aa045d88e0c19bd73ec9b45cab03ee3": {
     "confidence": 0.85,
@@ -93902,6 +94144,40 @@
       "Whether any open PR (#41220, #40030, #41356) actually closes this issue"
     ],
     "why": "Issue provides a precise root cause (callback/args arity mismatch between common_request_processing.py and streaming_iterator.py/streaming_handler.py) and a concrete fix, but a recent comment states the bug is already fixed on main by PR #40869, with only a backport to rc/1.101.0 missing. That unresolved merged-fix coverage directly determines whether new code work is actionable, so this must be resolved before proceeding."
+  },
+  "8cc644ae200d762688f335c47d423e82a9df55c23f39a51532014c81e644bf63": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/service_v2.rs: wrap acceptor with axum-server NoDelayAcceptor innermost so TCP_NODELAY applies below TLS",
+      "deploy/inference-gateway/ext-proc/src/runner.rs: set TCP_NODELAY on sockets accepted by the TLS ext_proc loop",
+      "Add unit tests asserting TCP_NODELAY on accepted plaintext and TLS Frontend connections"
+    ],
+    "risks": [
+      "EPP TLS accept loop has no unit seam, so its fix is only validated by packet capture",
+      "Overlap with draft PR #16862 could cause duplicate work if it lands first",
+      "Broadening the change beyond the two named acceptors risks unintended socket behavior changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: accept a plaintext HTTP connection on the Frontend server and assert TCP_NODELAY is set on the socket",
+      "Unit test: accept a TLS HTTP connection and assert TCP_NODELAY is set on the underlying TCP socket",
+      "Reproduce the gateway A/B (agentgateway -> EPP -> Frontend sidecar) and confirm the ~40 ms first-token cluster disappears in packet capture",
+      "Packet capture on EPP TLS ext_proc replies to confirm no 40-45 ms held replies"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the NoDelayAcceptor approach over manual socket configuration",
+      "Final disposition of draft PR #16862"
+    ],
+    "why": "Issue establishes a concrete root cause (Nagle enabled on Frontend axum-server default acceptor and EPP TLS accept loop), names exact code anchors, and provides a controlled A/B with packet-capture evidence isolating TCP_NODELAY as the only variable. Acceptance criteria define a unit-test seam for the Frontend and a packet-capture validation for the EPP loop. The competing PR #16862 is a draft lacking regression tests, so a fix that adds the missing test coverage is still actionable."
   },
   "8cdd749ac7f701bbaccdd50c692f06abb225ddf9f008fa1e1fc483205b6f8133": {
     "confidence": 0.6,
@@ -97427,6 +97703,40 @@
       "Whether any code change beyond the already-merged #53835 is required"
     ],
     "why": "The issue reports an SM110 GDN prefill warmup illegal memory access, and a commenter proposes a concrete root cause (SM110 missing from FUSED_GDN_DECODE_ARCHS in CMakeLists.txt) with a workaround (VLLM_GDN_DECODE_KERNEL=triton). However, a contributor states the SM110 fused-decode build gap is already addressed by merged PR #53835, and that the v0.29.0 release branch predates that merge, so the released image lacks the build fix. The traceback still points at the prefill warmup path, and the contributor explicitly asks for retest on current main/nightly to determine whether the prefill failure remains. This unresolved duplicate/merged-fix coverage and the pending retest are materially blocking: it is not yet established whether any code work remains actionable beyond the already-merged build fix."
+  },
+  "91c5c7a7f60e88bc57aec260edc78663f1bb82999f3e344904c5d26c3566b731": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist/derive lineage so clones are not root entries",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path writes parent_session_id/conversation_id and avoids double-counting inherited usage",
+      "History listing deduplicates or nests cloned sessions under original"
+    ],
+    "risks": [
+      "Lineage schema/behavior change may affect CLI and Hub consumers",
+      "Usage de-duplication semantics need care to avoid under-counting",
+      "Maintainer may prefer a different lineage representation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test: resume a cancelled session, assert new session row has parent_session_id set and is not listed as root",
+      "Regression test asserting inherited usage is not summed on top of original totals",
+      "Reproduce via VS Code extension: abort turn, continue, verify single History entry and no duplicate billing"
+    ],
+    "unknowns": [
+      "Whether #12590/#14840 overlap enough to require coordination",
+      "Exact intended lineage schema (parent_session_id vs conversation_id)"
+    ],
+    "why": "Issue provides a concrete reproduction, measured session/usage data, and code anchors (history.ts isRootSessionRecord, sdk-task-history.ts resume path) establishing that resume of cancelled/failed tasks creates a new session with NULL parent_session_id/conversation_id, causing duplicate History roots and re-billed context. This is a real agent-runtime state/lineage bug with a clear validation path."
   },
   "91de4e2136c97ace026236affb42c5553d41e27df7b8aaa0a278f4d43e98f7aa": {
     "confidence": 0.6,
@@ -111202,6 +111512,40 @@
     ],
     "why": "Issue #1464 is a resource-cleanup bug report (temp dirs, tracker rows, reader threads, Docker containers, temp files) in a CLI/training-wrapper repository. Although the repo contains LLM training code, the issue itself is ordinary lifecycle/plumbing work with no training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. Under track=llm_algorithm this is out of scope. Additionally, the sweep site is already covered by open PR #1640, and the maintainer has explicitly released the issue and asked for it to be split into small per-site PRs, so a single broad contribution is not the desired shape."
   },
+  "a6906257a0f62f0a3b7da955cc9b89520e3202bc53e5f8034befc8b1a2971a80": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue says #7287 is a draft with conflicts, but open_pr_assessment reports #7287 state MERGED",
+      "Issue claims nothing calls flush() on 1.8.8, yet #7287 enabling manual flushing is listed as merged"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "livekit-plugins-elevenlabs realtime STT commit/flush path",
+      "stt_node turn-boundary flush integration"
+    ],
+    "risks": [
+      "Merged #7287 may already resolve the manual-flush gap, making new work redundant",
+      "server_vad near-silence non-commit may be an upstream ElevenLabs issue outside repo control"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with scribe_v2_realtime + silero VAD + TurnDetector and confirm final transcript arrives at turn boundary",
+      "Regression test for one-word answers committing via local VAD flush",
+      "Verify behavior against merged #7287 manual-flush implementation"
+    ],
+    "unknowns": [
+      "Whether merged #7287 already fixes the reported 1.8.8 behavior",
+      "Whether the server_vad one-word non-commit is fixable in-repo or is upstream"
+    ],
+    "why": "Issue describes a real turn-commit deadlock in ElevenLabs Scribe v2 realtime STT, but the supplied evidence shows the fix is already covered by merged PRs #7287 (manual flushing, maintainer-owned, MERGED) and #7992 (pad short commits, MERGED). The issue's own proposed solution points to #7285/#7287, and #7287 is now merged, so duplicate/merged-fix coverage is unresolved and determines whether new code work is actionable."
+  },
   "a69f5b91ee3f182472aed7fdffe2a0363389dde86de00462a9cdfeaffb4c2c7b": {
     "confidence": 0.8,
     "contradictions": [
@@ -121181,6 +121525,36 @@
       "Whether the duplicate issue #55238 shares the same root cause or only superficial stack signatures"
     ],
     "why": "Issue is a startup hang with multiple conflicting root-cause hypotheses in comments (NCCL P2P/ACS, custom allreduce, flashinfer sampler, HF download). No single confirmed root cause or reproducible minimal case; the py-spy stack points at flashinfer sampling warmup while other reports point at NCCL/custom-allreduce, and one commenter says the proposed workaround did not help. This is an operational/startup hang, not a concrete algorithm mechanism with a reference-vs-implementation test."
+  },
+  "b715466a6c89c136dc4a7deece01e3b1cf54c5f251020289da4c8fef7dfd7122": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/base_aws_llm.py: stop restoring incoming SigV4 Authorization over the fresh signature; only preserve Bearer tokens",
+      "litellm/llms/custom_httpx/llm_http_handler.py: ensure strip-and-resign retry re-signs the mutated body"
+    ],
+    "risks": [
+      "Over-broad header handling change could affect non-SigV4 auth paths",
+      "Existing open PRs touch llm_http_handler.py and may conflict on merge"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that mocks attempt-0 returning 400 invalid thinking signature, then asserts the retried request carries an Authorization signature computed over the stripped body",
+      "Assert AWS_BEARER_TOKEN_BEDROCK bearer Authorization is still preserved",
+      "Run targeted bedrock signing unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix location for the retry re-signing"
+    ],
+    "why": "Issue pinpoints the stale SigV4 Authorization restore in BaseAWSLLM._sign_request, gives a concrete diff, and reports end-to-end verification; the retry path in llm_http_handler.py is a clear code anchor. Open PRs only share the /v1/messages keyword and one overlapping file, with no direct code overlap or root-cause coverage, so they do not cover this fix."
   },
   "b7230c8a5b6a8230b3777455700a5b0c46a759ac575be4dec29d3981dfaecc91": {
     "confidence": 0.55,
@@ -147505,6 +147879,38 @@
       "Maintainer preference between the two suggested shapes"
     ],
     "why": "The bot comment confirms the code path (BrowserConnection.target() throws the never-attached message for every action including tabs.list), but the issue itself flags unresolved reproduction uncertainty: v2.0.25 gates browser tools behind desktop attach (#52309), so it is unexplained how the affected sessions could invoke browser tools at all. The bot points to #54044 (deny bypassed via Code Mode execute) as a possible cause, which is a separate defect. Whether the actionable fix is the error-code/wording change or the tool-exposure bypass is unresolved, and the issue is explicitly treated as a feature request pending maintainer consideration."
+  },
+  "dcc4e1e9b0ebf8fae4eee46dfcfdc70867e4a4ddadc7bf279c32062775e84489": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/llm_cost_calc/utils.py: fall back to bare/base_model provider when provider-prefixed cost lookup misses",
+      "litellm/proxy/utils.py: stop silently swallowing ModelNotMappedError into response_cost=null",
+      "litellm/types/utils.py: surface unpriced condition on spend row"
+    ],
+    "risks": [
+      "Open PR #47715 semantically overlaps on custom_llm_provider/response_cost and cost-calc paths; must compare before duplicating",
+      "Fallback semantics could change pricing for legitimately provider-scoped models",
+      "Avoid broad API behavior changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: completion_cost(model='deepseek/deepseek-v4.1-flash-1017', custom_llm_provider='anthropic', base_model='tencent/deepseek-v4.1-flash') returns non-null cost matching cost_per_token under 'tencent'",
+      "Proxy-path test asserting spend row has non-zero spend and non-null response_cost for mismatched provider/base_model",
+      "Run targeted cost-calc unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #47715 already fixes this exact root cause or only touches adjacent cost-calc code"
+    ],
+    "why": "Issue provides a concrete reproduction, a confirmed root cause (cost lookup keyed by (model, custom_llm_provider) overrides the base_model's provider, raising ModelNotMappedError that is swallowed into response_cost=null/spend=0), and a contributor reproduced it on current main with a proposed fallback fix and regression test. This is a user-visible correctness bug with a clear validation path."
   },
   "dccf5b2881641fe09d9fb27c1f49e437f3141f8c5d031d8abbb9a2da7939301f": {
     "confidence": 0.8,

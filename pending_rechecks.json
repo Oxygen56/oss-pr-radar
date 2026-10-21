@@ -1,38 +1,44 @@
 {
-  "Tencent/WeKnora#4536": {
-    "issueTitle": "[Bug]: docreader keeps a full copy of the last uploaded file in memory after ReadStream completes",
-    "issueUpdated": "2026-10-20T14:37:33Z",
-    "issueUrl": "https://github.com/Tencent/WeKnora/issues/4536",
+  "BerriAI/litellm#46229": {
+    "issueTitle": "[Bug]: Concurrent requests to the proxy /mcp endpoint cancel each other in flight (recurrence of #24522)",
+    "issueUpdated": "2026-10-13T16:21:30Z",
+    "issueUrl": "https://github.com/BerriAI/litellm/issues/46229",
+    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
+  },
+  "BerriAI/litellm#47381": {
+    "issueTitle": "[Bug]: Bedrock /v1/messages: strip-and-resign retry after invalid thinking signature reuses stale SigV4 Authorization (InvalidSignatureException)",
+    "issueUpdated": "2026-10-19T19:14:38Z",
+    "issueUrl": "https://github.com/BerriAI/litellm/issues/47381",
+    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
+  },
+  "BerriAI/litellm#47675": {
+    "issueTitle": "[Bug]: response_cost is null and spend stays $0 when custom_llm_provider=anthropic and the priced row lives under a different provider",
+    "issueUpdated": "2026-10-20T23:28:26Z",
+    "issueUrl": "https://github.com/BerriAI/litellm/issues/47675",
+    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
+  },
+  "ai-dynamo/dynamo#16859": {
+    "issueTitle": "Frontend and EPP leave Nagle on, so a gateway's delayed ACK holds the first token ~40 ms",
+    "issueUpdated": "2026-10-20T01:18:41Z",
+    "issueUrl": "https://github.com/ai-dynamo/dynamo/issues/16859",
     "reasonCode": "EVIDENCE_INCOMPLETE"
   },
-  "Tencent/WeKnora#4537": {
-    "issueTitle": "[Bug]: docreader holds the PDF twice and every page image twice before ReadStream sends its first frame",
-    "issueUpdated": "2026-10-21T02:57:57Z",
-    "issueUrl": "https://github.com/Tencent/WeKnora/issues/4537",
+  "cline/cline#11402": {
+    "issueTitle": "Cline ignores documented .clinerules CLI-safety rules on Windows PowerShell, causing terminal stalls that need a window reload",
+    "issueUpdated": "2026-10-17T16:07:27Z",
+    "issueUrl": "https://github.com/cline/cline/issues/11402",
     "reasonCode": "EVIDENCE_INCOMPLETE"
   },
-  "Tencent/WeKnora#4538": {
-    "issueTitle": "[Bug]: Wiki ingest silently discards everything after the first 32768 characters",
-    "issueUpdated": "2026-10-21T02:57:19Z",
-    "issueUrl": "https://github.com/Tencent/WeKnora/issues/4538",
+  "cline/cline#15229": {
+    "issueTitle": "[VS Code] Resuming a cancelled/failed task clones the conversation into a new session with no lineage, causing duplicate History entries and re-billed context",
+    "issueUpdated": "2026-10-20T22:16:27Z",
+    "issueUrl": "https://github.com/cline/cline/issues/15229",
     "reasonCode": "EVIDENCE_INCOMPLETE"
   },
-  "Tencent/WeKnora#4542": {
-    "issueTitle": "[Bug]: xlsx over anydoc's max_xml_nodes is retried 3 times and reported as \"check the DocReader logs\"",
-    "issueUpdated": "2026-10-21T03:12:13Z",
-    "issueUrl": "https://github.com/Tencent/WeKnora/issues/4542",
-    "reasonCode": "OWNERSHIP_CHANGED"
-  },
-  "Tencent/WeKnora#4543": {
-    "issueTitle": "[Bug]: Slow-query logging prints whole INSERT statements, document text and embedding vectors included",
-    "issueUpdated": "2026-10-21T03:07:00Z",
-    "issueUrl": "https://github.com/Tencent/WeKnora/issues/4543",
-    "reasonCode": "OWNERSHIP_CHANGED"
-  },
-  "huggingface/smolagents#3039": {
-    "issueTitle": "BUG: `agent.step()` returns an `ActionOutput` wrapper instead of the final answer (or `None`)",
-    "issueUpdated": "2026-10-21T03:29:09Z",
-    "issueUrl": "https://github.com/huggingface/smolagents/issues/3039",
-    "reasonCode": "OWNERSHIP_CHANGED"
+  "rome-os/rome#1075": {
+    "issueTitle": "[User Feedback] routines: scheduling skill requires an unavailable tool on messaging channels",
+    "issueUpdated": "2026-10-15T19:06:40Z",
+    "issueUrl": "https://github.com/rome-os/rome/issues/1075",
+    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
   }
 }
