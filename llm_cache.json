@@ -31610,6 +31610,39 @@
     ],
     "why": "Issue provides a concrete reproduction (DGD with replicas:0 on Grove-backed multinode component), the exact admission webhook error, and a specific code anchor (deploy/operator/internal/dynamo/graph.go) where component.Replicas is passed unchecked and minAvailable is hardcoded to 1. This is a user-visible operator bug with a clear reference-vs-implementation validation path (apply the YAML, observe webhook rejection, then verify the fix renders a valid PCS or rejects at admission)."
   },
+  "31294949fdf67dff9726c5b776b7cddbce1a2fd48292da1b5374b4aa42f39997": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while issue body supplies detailed root-cause code anchors and mechanism"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "livekit-plugins-soniox stt.py: raise or signal failure on WSMsgType.ERROR instead of silent break/reconnect",
+      "livekit-plugins-simplismart stt.py: same failure propagation on WSMsgType.ERROR",
+      "Ensure reconnect loop surfaces failure to base stt.SpeechStream so FallbackAdapter can act"
+    ],
+    "risks": [
+      "Maintainer must choose reconnect-bound policy (option 1/2/3) and retry count",
+      "Behavior change could affect legitimate transient reconnects",
+      "Scope limited to server-accepts-then-silent scenario"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run probe/halfopen_probe.py soniox simplismart against a silent local websocket server and assert a failure is raised rather than infinite reconnect",
+      "Add regression test simulating WSMsgType.ERROR with no traffic and assert stream error propagates to FallbackAdapter",
+      "Run targeted plugin unit tests and static checks"
+    ],
+    "unknowns": [
+      "Maintainer preference on which remediation option and retry threshold to adopt"
+    ],
+    "why": "Issue provides a concrete, measured root cause: soniox and simplismart STT plugins detect a half-open websocket via heartbeat but break/return without raising, then reconnect into the same dead socket indefinitely, bypassing the base class retry budget and FallbackAdapter. Code anchors and a public reproduction probe are supplied."
+  },
   "3129d889c1f2dbf6f81168f71b281f9495539a2bcb40899f40e7f7633088ca4c": {
     "confidence": 0.7,
     "contradictions": [
@@ -139553,6 +139586,45 @@
       "Whether maintainers consider this issue already assigned or covered before new code work"
     ],
     "why": "Issue provides a strong reproduction (traceback, ordered steps, executable repro) and a plausible code anchor (weight_updater.py release_memory_occupation assert), but the supplied evidence explicitly reports root_cause_signal=false and the duplicate assessment flags an open maintainer-owned PR #37932 with overlapping paths/semantics and no direct issue link, plus a potential duplicate issue #44745. Whether the root cause is already covered by #37932 materially determines whether new code work is actionable."
+  },
+  "cf078cee1341f43fe5d749fb3f6c32e74ab0d039dcf875aff267f143a9a4d8fd": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate track is llm_algorithm with PEFT/quantization mechanisms, but the issue is ordinary streaming adapter plumbing with no algorithmic mechanism",
+      "algorithm_evidence matched terms 'adapters' and 'fp4' are incidental and do not establish an algorithm contribution"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/streaming_handler.py terminal-chunk handling",
+      "litellm/llms/anthropic/pass_through/adapters/streaming_iterator.py synthetic empty text block",
+      "litellm/llms/anthropic/pass_through/responses_adapters/streaming_iterator.py response.completed with zero actionable output"
+    ],
+    "risks": [
+      "Track mismatch: this is streaming/SSE plumbing, not an LLM algorithm contribution, so it may be out of scope for llm_algorithm",
+      "Open PR #47832 overlaps the same streaming path and may already cover the root cause",
+      "Retry-in-place behavior could duplicate upstream calls or mask genuine upstream errors"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce a /v1/messages stream bridged to a non-Anthropic upstream that emits only reasoning tokens, assert no synthetic empty text block and no end_turn",
+      "Reproduce an upstream error finish reason (e.g. MALFORMED_FUNCTION_CALL) and assert an SSE event: error frame instead of end_turn",
+      "Regression test that normal text/tool_call streams still emit content_block_start and correct stop_reason"
+    ],
+    "unknowns": [
+      "Whether PR #47832 already fixes the same synthetic-empty-block root cause",
+      "Whether the repository accepts streaming/SSE plumbing work under the llm_algorithm track",
+      "Whether the proposed retry-in-place semantics are acceptable to maintainers"
+    ],
+    "why": "The issue describes a concrete streaming-adapter behavior (synthetic empty text block with stop_reason=end_turn) and names code anchors, but the supplied evidence is contradictory about the track: the candidate is labeled llm_algorithm with mechanisms parameter_efficient_finetuning/numerics_quantization, yet the actual issue is ordinary streaming/SSE adapter plumbing with no training objective, model mechanism, quantization method, or numerical evaluation. The algorithm_evidence matched terms ('adapters', 'fp4') are incidental keyword hits, not algorithmic substance. Additionally, open PR #47832 has semantic overlap (score 46) on the same streaming path and is unresolved, so duplicate coverage is materially uncertain."
   },
   "cf1b6bbab27cb94a1283c3a40b0241053000476267768ea3766820b4543d32b6": {
     "confidence": 0.85,
