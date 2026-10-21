@@ -16045,6 +16045,37 @@
     ],
     "why": "Issue provides concrete algorithm-conformance bug with root cause: ReLoRA callback prunes adapter weights without merging, causing function discontinuity; tie-handling strictly-greater mask can zero both factors. Maintainer confirmed both claims with reproducible evidence and clear acceptance criteria."
   },
+  "1a639cf32f27df21ddeafb21b72274b2ad4567de1a70fc8084502a61183aeaf3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while issue body explicitly names parseCron and the 0-6 range as cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/cron/schedule/scheduler.ts: accept 7 as Sunday in day-of-week parsing"
+    ],
+    "risks": [
+      "PR #15246 may already implement the same fix, making a new contribution redundant",
+      "Broadening day-of-week range could affect other validation semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing test asserting parseCron accepts '0 9 * * 7' and '5-7' ranges",
+      "Run targeted core cron scheduler unit tests"
+    ],
+    "unknowns": [
+      "Whether PR #15246 fully resolves the issue or leaves gaps",
+      "Whether maintainers consider the issue already covered by the open PR"
+    ],
+    "why": "Issue clearly identifies the root cause (parseCron day-of-week range 0-6 rejecting 7) and gives reproduction steps, but an open PR #15246 with the same title and overlapping scheduler.ts path likely already covers the fix; duplicate/merged-fix coverage is unresolved and determines whether new code work is actionable."
+  },
   "1a657b419a0ce3c56890b40864d0680bb513e0f8e10abd80be2e890f604e11b6": {
     "confidence": 0.8,
     "contradictions": [],
@@ -67522,6 +67553,40 @@
     ],
     "why": "The issue requests a dependency version bump (XGrammar 0.1.32 -> 0.2.7) plus regression coverage. This is dependency/configuration plumbing, not an LLM algorithm contribution: no training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is proposed. The supplied algorithm_evidence mechanisms (PEFT, distributed_training, numerics_quantization) are keyword matches from unrelated terms (adapter, fp8, tensor parallel) and do not describe the actual requested change. The root cause is already isolated to an upstream XGrammar compiler defect and is fixed by the upstream release, so the actionable work is a version pin update and test additions."
   },
+  "6636874a9f7d7297aa89937e8090a3fa13375e21b214758f45d468f95d13b166": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: stop trusting client-supplied bootstrap address; derive Prefill endpoint from server-side topology or validate against configured Prefill set",
+      "Avoid synchronous blocking fetch in shared Decode request processing path",
+      "sgl-model-gateway pd_router.rs: confirm overwrite behavior remains the only trusted injection path"
+    ],
+    "risks": [
+      "Fix may need to preserve legitimate direct-worker disaggregation flows that rely on bootstrap metadata",
+      "Behavior change could affect Gateway-injected bootstrap path if validation is too strict",
+      "Maintainer may prefer a specific design (auth vs topology-derived) over the minimal fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that a direct Decode request with attacker-controlled bootstrap_host/port does not trigger an outbound request to that address",
+      "Add a test that a slow/unreachable bootstrap endpoint does not block concurrent normal request processing",
+      "Run the issue's loopback PoC with --delay-s 0 and --delay-s 2 against the patched build and confirm zero canary hits and no latency inflation"
+    ],
+    "unknowns": [
+      "Whether maintainers require a specific remediation approach (authenticate internal caller vs derive from topology)",
+      "Whether any non-Gateway deployment legitimately passes client bootstrap fields"
+    ],
+    "why": "Issue provides a concrete, runtime-reproduced SSRF and blocking bug: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and issues a synchronous requests.get, with code anchors, a loopback-only PoC, canary hit evidence, and a matched latency comparison (20.35s vs 0.25s). Root cause and validation path are established."
+  },
   "6646d622b98b27dbbbc920212fe5a4a9ef1119ee0ae232525eae00314a5c1aa0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -107009,6 +107074,44 @@
     ],
     "why": "Issue provides a clear root cause (event_service only uses request payload hook_config, no server-side fallback to workspace hooks) and a concrete fix with code anchors. Acceptance criteria and reproduction steps are explicit, enabling a regression test. The suggested fix is minimal and safe."
   },
+  "9fb553cc679ea3927e9064445ce696b0b20402564c595e7e23f2c09f39c48047": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims regression on 1.18.35 and 1.19.3, but reporter's own v2.1.2 update reports no reproduction and unconfirmed root cause",
+      "Issue asserts 'invalid' is listed as available while also stating it is filtered from activeTools but not the error path — the exact leak location is unverified"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "tool-name resolution / invalid-tool filtering path",
+      "malformed tool-call envelope handling and circuit-breaking",
+      "error reporting of attempted tool name"
+    ],
+    "risks": [
+      "Intermittency means a fix cannot be validated reliably",
+      "v1 is critical-fix-only; maintainers may decline non-critical work",
+      "Possible overlap with #21900, #37297, #54792, #48119 name-resolution paths"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on v2.1.2 with the reported provider/model and plugin disabled; if not reproducible, no actionable regression test exists",
+      "Add a unit test asserting the internal 'invalid' tool never appears in user-facing available-tool lists",
+      "Add a test that a malformed/unresolvable tool call fails once and does not cascade"
+    ],
+    "unknowns": [
+      "Whether the fault reproduces on v2.1.2 with the specific provider/model",
+      "Whether the plugin (@omniroute/opencode-plugin) contributes to the failure",
+      "Which code path emits the 'invalid' fallback and the malformed envelope",
+      "Whether maintainers consider this in scope for v1 or v2"
+    ],
+    "why": "The report describes intermittent, non-deterministic dispatch failures across MCP and plain tools, but supplies no confirmed root cause: the reporter's own latest update says the fault was not reproduced on v2.1.2 and that the root cause is 'not confirmed fixed — it is simply not observed.' The bot reply also notes v1 is in critical-fix-only mode and asks for v2 reproduction with provider/model and plugin-disabled details, which are not supplied. Without a stable reproduction or a located code path, a reference-vs-implementation test cannot be constructed."
+  },
   "9fbb08e40e0079a1f53cdeae1d8c3f8a89c84abe9f42d4cc6c6954c240a28055": {
     "confidence": 0.85,
     "contradictions": [],
@@ -124408,6 +124511,41 @@
       "Whether #22530 already changed the intended unattended approval semantics"
     ],
     "why": "Issue provides an offline, deterministic reproduction with a failing desired-behavior assertion and a concrete root-cause chain: stock factory-plan skill directs factory_transition_work_item(stage: execute) instead of submit_plan, the controller mount does not override the Code SDK default yolo: true, and session.resolveToolApproval returns allow without emitting a human tool_approval_required event, so the plan checkpoint is bypassed. This is a concrete agent/controller/tool-approval behavior bug with a clear validation path, not mere plumbing."
+  },
+  "bb1580cdb573e5e7bf62b400e0c4f80814113e7ade3c2f015de574bc33eeec31": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Open PR #44409 is described as technically complete with tests but also as lacking root-cause coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "web/app/components/workflow/nodes/code/use-config.ts: make signature scanner regex-literal aware so '(' inside /[(]/ does not affect nesting depth",
+      "web/app/components/workflow/nodes/code/panel.tsx: ensure empty parse result does not silently clear inputs/bindings"
+    ],
+    "risks": [
+      "Regex-literal detection in a hand-rolled scanner can mis-handle division operators or nested character classes",
+      "Overlapping open PR #44409 may make this duplicate work",
+      "Changing empty-parse behavior could alter intended input-reset semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test calling extractFunctionParams with 'function main({ pattern: pattern = /[(]/, text }) { return { text } }' expecting ['pattern','text']",
+      "Regression test for existing Python comma-parameter parsing from #44337 to confirm no behavior change",
+      "Run targeted web unit tests and lint for the code node package"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to accept PR #44409 rather than a competing fix",
+      "Exact scanner implementation details beyond the cited anchors"
+    ],
+    "why": "Issue gives a concrete reproduction (extractFunctionParams on a JS signature with a regex default), expected vs actual ([] returned, inputs cleared), and a plausible root cause (scanner counts '(' inside regex character class as nesting). Code anchors in panel.tsx/use-config.ts are supplied. Open PR #44409 covers the same fix but is flagged as lacking root-cause coverage, so a competing fix with a failing test could add value; this is normal implementation uncertainty, not a blocker."
   },
   "bb398b3da805d14da03fcd88e2a3d12fc8d70ee69cf2202cd97a95f6c366ca7d": {
     "confidence": 0.55,
