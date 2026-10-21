@@ -7248,6 +7248,38 @@
     ],
     "why": "Issue provides a concrete reproduction with ordered steps and a clear observed/expected behavior. A contributor traced the current code path and identified plausible root causes (token expiry during long-pending approval, auth-retry wiring, or mid-stream error handling) with specific code anchors. The validation path is a retest on latest build with the same 45-minute wait and log inspection, which is actionable."
   },
+  "0b8fbbd2b80ae3a2fa70f97da00b40f2d38522ff04766d90e7ae2bd7030a809c": {
+    "confidence": 0.9,
+    "contradictions": [
+      "related_issue_assessment reports no related open issues, but the bot comment cites open duplicate #56842"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/cli top-level command parser: accept --agent flag"
+    ],
+    "risks": [
+      "Duplicate of #56842; work would overlap with existing tracking",
+      "CLI plumbing change, not algorithmically valuable for this track",
+      "Behavior/API surface change may need maintainer design preference"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add a failing test that runs `opencode --agent em --prompt hello` and asserts a session starts rather than ShowHelp",
+      "Regression test that `opencode mini --agent ... --prompt ...` and `opencode run --agent ...` still work"
+    ],
+    "unknowns": [
+      "Whether #56842 already has an in-progress fix or PR"
+    ],
+    "why": "The issue is a CLI flag regression: the top-level parser lacks --agent, so v1 launch form fails with ShowHelp. This is ordinary CLI/argument-plumbing work, not an algorithm, training, kernel, quantization, or evaluation contribution. The bot comment also identifies it as a duplicate of open issue #56842, which already tracks the same --agent fix, so the opportunity is covered."
+  },
   "0b9860091bfc1580e8d49bfc26d141f6c7d24d41832ee5939519a058bbd914b7": {
     "confidence": 0.82,
     "contradictions": [],
@@ -49409,6 +49441,43 @@
     ],
     "why": "Issue describes a plausible ordering bug (draft embed/lm_head copies freed only inside draft.alloc_memory_pool, after target pool sizing), but the supplied evidence is internally contradictory: the candidate's own actionability_evidence reports root_cause_signal=false while the issue body asserts a specific root cause and one-hunk fix. More importantly, open PR #42529 ('Skip loading shared draft embedding and head weights') overlaps the same code path (eagle_worker_v2.py) and the same 'checkpoint' semantics, and the duplicate assessment explicitly says semantic_overlap_requires_review with no direct issue link. Whether that PR already covers the root cause determines whether independent code work is actionable, so this is a materially blocking unknown rather than normal implementation uncertainty."
   },
+  "4c5ff57790100ae39cf04e09aec93c0f3592c69a381aaeaf672c2e3e7300a0ef": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/knowledge_fs/capability_broker.py: reduce or restructure the per-space authorization revision lock in issue_service/_lock_authorization_revision so concurrent issuance does not serialize",
+      "Preserve ordering guarantees between issuance reservations and revocation (revocation must cover grants reserved before signing)",
+      "Bound admission lock/statement/transaction waits within the request deadline with a controlled error path",
+      "Add request correlation ID with sanitized phase timing"
+    ],
+    "risks": [
+      "Removing or weakening FOR UPDATE without proving the protocol could let revocation miss reserved grants",
+      "Lock ordering across control-space, authorization-revision, reservation, and revocation paths (including FK locking) is not fully audited",
+      "Not all 159 timeouts are confirmed to share this cause; fix may not fully resolve the observed error rate"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Real PostgreSQL multi-session test: concurrent issuance for the same space should not block on the revision row",
+      "Concurrency test: revocation before reservation, between reservation and signing, and after issuance",
+      "Service API disablement and shared interactive/app issuance flow regression tests",
+      "Re-run the 10-RPS/200-VU scenario and report admission vs post-admission latency, success rate, late completions, and DB lock waits separately"
+    ],
+    "unknowns": [
+      "Original lock-holder transactions and why each critical section remained slow were not reconstructed",
+      "Whether all 159 timeouts share this single cause",
+      "Maintainer design preference for the issuance/revocation synchronization protocol"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: _lock_authorization_revision() takes FOR UPDATE on a per-(tenant_id, control_space_id) row and updates updated_at on every issuance, serializing same-space admissions. Reproduction steps, observed metrics, and the exact SQL are supplied, giving a clear reference-vs-implementation validation path. Remaining unknowns (lock-holder reconstruction, whether all timeouts share this cause) are normal investigation uncertainty, not blockers to actionable code work."
+  },
   "4c706d112421a7cc5b839d5c2bcefd392cb1ad779aa865121e597587d30aba61": {
     "confidence": 0.82,
     "contradictions": [],
@@ -50568,6 +50637,38 @@
       "Exact fix approach not yet confirmed; maintainer request for fuzzing report pending."
     ],
     "why": "Issue provides a minimal reproducer, exact traceback, root-cause analysis, and a proposed fix (skip zero-sized params in reduction). It is a concrete distributed-training bug with clear validation path."
+  },
+  "4dde9bfdff2b2ab999b27ee49b4917618156b455b98f74b30181120e3314562e": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/base_aws_llm.py: stop restoring incoming SigV4 Authorization over a fresh signature; only preserve Bearer-token Authorization",
+      "litellm/llms/custom_httpx/llm_http_handler.py: ensure strip-and-resign retry path re-signs with mutated body"
+    ],
+    "risks": [
+      "Over-broad header handling could drop legitimate forwarded Authorization for non-SigV4 auth modes",
+      "Behavior change for callers relying on incoming Authorization passthrough",
+      "Existing draft PR #47242 touches llm_http_handler.py and should be checked for incidental conflicts"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that calls _sign_request with an incoming stale SigV4 Authorization and asserts the emitted Authorization differs from the input and matches the new body",
+      "Add a regression test simulating attempt-0 400 invalid thinking signature then retry, asserting the retried request carries a signature over the stripped body",
+      "Preserve a test that Bearer-token Authorization (AWS_BEARER_TOKEN_BEDROCK) is still forwarded unchanged"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the Bearer-prefix guard versus always re-signing",
+      "Whether PR #47242's llm_http_handler.py changes conflict textually with the fix"
+    ],
+    "why": "Issue pinpoints the stale SigV4 Authorization restore in BaseAWSLLM._sign_request, explains why the strip-and-resign retry on /v1/messages fails with InvalidSignatureException, and provides a concrete diff plus end-to-end verification. Reproduction steps and code anchors are supplied; the overlapping PRs are unrelated in scope (MCP backport, router tier escalation, strict tool schema retry) and do not cover this root cause."
   },
   "4de8f699f367a226e6328f6e41154aa767e2905cddb4639e68ec06d29c2e1158": {
     "confidence": 0.8,
@@ -61793,6 +61894,43 @@
     ],
     "why": "The issue provides a deterministic reproduction with exact divergence token, controlled experiments isolating the thinking path, and clear expected behavior. It targets a concrete algorithmic bug in DFlash2 speculative decoding with Qwen3.8 thinking, offering a clear validation path via token-level comparison."
   },
+  "5d37c6c78279ca2b2589c59ec8bf3c9a8cefbf6a8147cce295ea94576a066f80": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims OpenCode alters text, but maintainer bot notes character changes often come from model tokenization; not yet disambiguated"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "tool-call serialization path",
+      "tool-output rendering path",
+      "path handling for special characters"
+    ],
+    "risks": [
+      "Corruption may originate in model tokenization rather than OpenCode code, making a code fix inapplicable",
+      "Intermittent reproduction may not yield a reliable failing test",
+      "Fixing the wrong pipeline stage could mask the real cause"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Fresh-session minimal repro: ask agent to run Test-Path -LiteralPath 'C:\\Users\\x}y' and capture raw tool-call input vs executed command",
+      "Export session and compare model-emitted tool input bytes against rendered/executed bytes",
+      "Regression test ensuring } and @opencode-prefixed names round-trip byte-identically through tool-call serialization and output rendering"
+    ],
+    "unknowns": [
+      "Provider and model used in the session",
+      "Raw tool-call input from the model vs executed command",
+      "Whether the path was already wrong in model output before OpenCode processing",
+      "A deterministic minimal reproduction"
+    ],
+    "why": "The issue reports intermittent, invisible character insertion in tool-call/output text, but the maintainer bot explicitly asks for provider/model, raw tool-call input, and a minimal reproduction to distinguish model tokenization from OpenCode text mutation. The supplied evidence has no root-cause signal, no confirmed code anchor, and the reproduction is intermittent and not yet isolated to a specific pipeline stage."
+  },
   "5d39a492a84d1b06be35f4afe8e5345953abe29077f0a3989b8667bfb78da9c7": {
     "confidence": 0.7,
     "contradictions": [],
@@ -67500,6 +67638,39 @@
       "Whether the issue is a release-branch-only artifact of v0.29.0 predating the merged build fix"
     ],
     "why": "The issue reports an SM110 GDN prefill warmup illegal memory access, and a commenter proposes a concrete root cause (SM110 missing from FUSED_GDN_DECODE_ARCHS in CMakeLists.txt, with VLLM_GDN_DECODE_KERNEL=triton as workaround). However, a maintainer-side comment states the SM110 fused GDN build gap is already addressed by merged PR #53835 and that the prefill warmup traceback should be investigated separately, while a follow-up fail-closed dispatch change is being checked. This leaves unresolved duplicate/merged-fix coverage and an open question whether the reported prefill failure is already fixed on main or is a distinct bug, which materially determines whether new code work is actionable."
+  },
+  "654f1d59acd3808bf5711ca30cd6550f754beeb56c5e2a16e8dfce86a1f8259c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request session/task scope so concurrent /mcp requests don't share a torn-down TaskGroup",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools upstream fetch is not cancelled by another request's stateless handler teardown"
+    ],
+    "risks": [
+      "Fix may alter session lifecycle semantics for stateless MCP handling",
+      "Concurrency fix could introduce resource leaks if TaskGroup scoping is widened incorrectly",
+      "Maintainer may have a preferred design for shared session manager lifetime"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two overlapping tools/list requests to POST /mcp against two HTTP streamable MCP servers and assert both succeed",
+      "Reproduce with two near-simultaneous curls and confirm no MCPServerListError(ServerListFault(tag='internal')) in logs",
+      "Run targeted unit tests for mcp_server_manager and experimental_mcp_client"
+    ],
+    "unknowns": [
+      "Whether #24522's prior fix left partial coverage that this recurrence depends on",
+      "Exact intended lifetime semantics of the shared StreamableHTTPSessionManager TaskGroup"
+    ],
+    "why": "Issue provides a concrete concurrency bug with traceback showing anyio cancel-scope teardown in StreamableHTTPSessionManager._handle_stateless_request cancelling in-flight list_tools fetches, ordered repro steps, and a clear expected behavior; code anchors point to mcp_server_manager.py and experimental_mcp_client/client.py. This is a runtime/scheduler concurrency fix in the agent/MCP path, not mere plumbing."
   },
   "655e7c97a42502e4246db131c53d348fd9ce94e2c7888d5d4151d66deccbc818": {
     "confidence": 0.55,
@@ -91434,6 +91605,42 @@
     ],
     "why": "Issue provides a concrete, reproducible routing-cost mechanism: overlap credit only offsets the prefill term via max(0, raw_prefill - credit), so transient decode load can outweigh prefix locality. A contributor comment confirms CPU reproduction with mocker workers and identifies the counter gating in scheduler.rs/embedded.rs, giving a clear reference-vs-implementation validation path."
   },
+  "87f52945ca30ca86d88d364ff69e4aad4e67dd6337fb4829af6614cc21d055f1": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims not covered by existing reports, but open PR #47715 shows semantic overlap on custom_llm_provider/response_cost in the same cost-calc paths"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/llm_cost_calc/utils.py: fall back to base_model's own provider when provider-prefixed lookup misses",
+      "litellm/proxy/utils.py: surface unpriced condition instead of silent $0",
+      "litellm/types/utils.py: cost metadata propagation"
+    ],
+    "risks": [
+      "PR #47715 may already cover the same cost-calc root cause",
+      "Contributor Mrun25 has claimed the fix, creating ownership conflict",
+      "Changing provider precedence could alter pricing for other mismatched-provider deployments"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Regression test: completion_cost(model='deepseek/deepseek-v4.1-flash-1017', custom_llm_provider='anthropic', base_model='tencent/deepseek-v4.1-flash') returns non-null cost",
+      "Proxy-path test asserting spend row response_cost/spend non-zero for mismatched provider vs priced row",
+      "Test that unpriced models emit a warning/error rather than silent $0"
+    ],
+    "unknowns": [
+      "Whether PR #47715 actually fixes this root cause or is unrelated backport noise",
+      "Whether the claiming contributor has an open PR or assignment",
+      "Whether maintainers accept provider-fallback precedence change"
+    ],
+    "why": "Issue gives a concrete root cause (cost lookup keyed by (model, custom_llm_provider) overrides base_model's provider, ModelNotMappedError swallowed → response_cost null/spend 0) and a contributor comment claims reproduction on main and intent to fix. However, the open-PR assessment flags PR #47715 as semantic overlap (custom_llm_provider, response_cost) touching the same cost-calc paths, and the duplicate status is 'semantic_overlap_requires_review' — unresolved coverage that materially determines whether new code work is actionable. Also a contributor has already claimed the fix, which is an ownership/competition unknown."
+  },
   "88306db1867555542276642382f52aded724336fd11ac879745f43ca10f2efa1": {
     "confidence": 0.85,
     "contradictions": [
@@ -111954,6 +112161,44 @@
       "Maintainer design preference for knob shape and default behavior"
     ],
     "why": "Issue provides detailed root cause analysis with code references, live outage evidence, and a concrete policy knob proposal. The proposed change is actionable and testable, with clear validation path via existing router failure machinery."
+  },
+  "a63a9f6f1f1c4e2fb6658e9d2c363ddf4c6a35ad5ed27b72173b7251e521fd85": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured Prefill set or derive from server-side topology",
+      "python/sglang/srt/disaggregation/common/conn.py: avoid synchronous blocking fetch on shared request path",
+      "sgl-model-gateway/src/routers/http/pd_router.rs: confirm server-side bootstrap injection remains authoritative",
+      "Add regression test asserting client-supplied bootstrap_host/port is rejected or ignored"
+    ],
+    "risks": [
+      "Tightening validation may break legitimate direct-worker deployments that rely on client-supplied bootstrap metadata",
+      "Async refactor of the parallel-info fetch could alter error/timeout semantics for existing callers",
+      "Multiple backend conn.py variants (ascend, mooncake, mori, fake) may need consistent handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied loopback PoC with --delay-s 0 and assert the canary receives zero /route requests",
+      "Run the matched blocking check with --delay-s 2 and assert concurrent normal Gateway request latency stays near baseline",
+      "Add a unit test that calls try_ensure_parallel_info with an unconfigured bootstrap_addr and asserts rejection without outbound HTTP",
+      "Verify Gateway-injected bootstrap values still route correctly to the selected Prefill worker"
+    ],
+    "unknowns": [
+      "Whether maintainers require an authenticated internal-caller path versus strict allowlist validation",
+      "Whether direct Decode worker API access is considered in-scope for hardening or out-of-scope by deployment assumption"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and issues a synchronous requests.get, enabling SSRF and blocking shared Decode processing. Reproduction is detailed with a loopback-only PoC, canary hit counts, latency measurements (20.35s vs 0.25s), and a Gateway negative control. Code anchors in conn.py and pd_router.rs are supplied, and no duplicate PR/issue coverage is reported."
   },
   "a6432aa8b2541a57ab7b796fe67b5bec50f24bcb713a4ae4301bdf327fd8582a": {
     "confidence": 0.85,
@@ -133944,6 +134189,41 @@
     ],
     "why": "The issue provides a precise root cause: Supabase._preprocess_filters() incorrectly wraps comparison operators in $eq and mishandles logical operators, with a concrete reproduction script and expected/actual SQL output. The fix is localized to the Supabase adapter and is actionable."
   },
+  "c7ba6a9dcafeba25cfe27a9ff0396b5fdc00eccbdd025e8939f58bd9a54d9e38": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist/derive parent_session_id or conversation_id for resumed clones and stop treating them as root entries",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path should write lineage when creating a new physical session",
+      "usage accounting: avoid double-counting inherited context tokens/cost across lineage-linked sessions"
+    ],
+    "risks": [
+      "Maintainer may prefer a different lineage field (conversation_id vs parent_session_id) or a History-side dedup approach",
+      "Changing root-session filtering could affect subagent/History pagination behavior (cf. #14840)",
+      "Usage de-duplication semantics need care to avoid under-counting genuinely new tokens"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test for isRootSessionRecord/manifestToSessionRecord where a resumed clone with parentSessionId set is excluded from root History entries",
+      "Add a regression test that resuming a cancelled/failed task creates a new session with non-null parent_session_id/conversation_id",
+      "Add a usage-accounting test asserting inherited context is not added on top of the original session totals",
+      "Run targeted package unit tests and static checks for sdk/packages/core and apps/vscode"
+    ],
+    "unknowns": [
+      "Whether #12590 (open, stale) already covers the VS Code follow-up path and would make this a duplicate",
+      "Exact intended lineage schema (parent_session_id vs conversation_id) per maintainer design"
+    ],
+    "why": "Issue provides ordered reproduction, concrete code anchors (history.ts isRootSessionRecord, manifestToSessionRecord hardcoding isSubagent:false, sdk-task-history.ts resume path), and measured session/usage evidence showing the clone lacks lineage and is listed as a root entry. This is a concrete, testable behavioral defect in the agent runtime/history path, not mere plumbing."
+  },
   "c7c1358212b35db2acdd661439794bb0cb407f4bd7c8aea16a8b55e59fa08ec9": {
     "confidence": 0.7,
     "contradictions": [
@@ -149842,6 +150122,44 @@
     ],
     "why": "The issue reports an OOM during vLLM serving of a Qwen3.8-Flash-Next FP8 model with tensor parallelism and expert parallelism. The error is a CUDA OOM, but the root cause is not clearly identified; it could be a memory allocation bug, a configuration issue, or a kernel problem. The issue includes a reproduction command and environment details, and there is a related PR (#54129) that touches overlapping code paths, but the root cause is not confirmed."
   },
+  "de957863ea9dd62afd360b5295bfccb5b59282124a3777ecc6b5682c3d5065cb": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/agent/component/agent.go: allow first-pass citation when references exist, gate second-pass grounding",
+      "internal/agent/component/agent.go: stop withholding first-pass content/reasoning deltas when cite=true",
+      "internal/server/api/server.go: make Agent HTTP/SSE write budget configurable",
+      "citation grounding: bounded budget with explicit citation-incomplete status on failure"
+    ],
+    "risks": [
+      "Citation quality regression if first-pass citing replaces validated grounding",
+      "Streamed partial answer plus later grounding creates duplicate/replacement answer semantics",
+      "Timing evidence is non-stream and self-admittedly not a controlled benchmark, so speedup claims are unquantified",
+      "Overlap with #20852 streaming visibility work could cause conflicting changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: cite=true with pre-retrieved chunks emits first-pass answer deltas instead of buffering",
+      "Unit test: no_chunks path does not delay first visible output",
+      "Regression test: grounding failure preserves completed answer with citation-incomplete status; cancellation still cancels",
+      "Integration: non-stream and SSE requests record model-call count, per-call duration, first visible answer vs final completion"
+    ],
+    "unknowns": [
+      "No controlled same-model Python-vs-Go benchmark to quantify the serial-pass cost",
+      "Whether maintainers prefer first-pass citing vs bounded second pass is undecided",
+      "Exact overlap boundary with #20852 is not specified"
+    ],
+    "why": "Issue pins concrete Go source anchors (agent.go first-pass suppression at L398-453, serial applyCitationGrounding at L512-598/L1071-1111, API WriteTimeout at server.go L378-391) and contrasts them with Python v0.27.2 fast paths, giving a clear architectural root cause: cite=true forces a second full model pass and withholds first-pass deltas. Reproduction steps and a validation matrix are supplied, though the timing table is non-stream only and the author explicitly disclaims a controlled benchmark."
+  },
   "de9b264ca13723ba6bba3488ae94aecd3cab1a9ec9a603ffa2a15dbd2f1dddf9": {
     "confidence": 0.82,
     "contradictions": [],
@@ -162205,6 +162523,46 @@
       "Whether the V1 fix is already covered by any other open PR"
     ],
     "why": "Issue provides a concrete root cause in ThinkingBudgetStateHolder._update_think_state (single-position forcing, advancing on draft rather than accepted tokens) and a reproduction, but the supplied evidence contains a materially blocking unresolved coverage/duplicate question: PR #52677 previously carried the exact fix df93fe6c67 and was narrowed to V2-only, and maintainer njhill's 'Please use MRV2' plus the author's open question about whether V1 fixes are acceptable leave the disposition unresolved. Whether the V1 fix is wanted at all determines whether code work is actionable."
+  },
+  "ef61dbe191540744222ca83f2377af2afcc3f1bb8ee36ae09e729dea26e7ee88": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate labeled llm_algorithm with PEFT/quantization mechanisms, but issue is about streaming adapter event translation",
+      "algorithm_evidence matched terms 'adapters'/'fp4' are incidental to the actual streaming bug",
+      "Duplicate status semantic_overlap_requires_review with PR #47832 but direct_code_overlap=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/streaming_handler.py: terminal finish_reason handling for 0 actionable output",
+      "litellm/llms/anthropic/pass_through/adapters/streaming_iterator.py: suppress synthetic empty text block",
+      "litellm/llms/anthropic/pass_through/responses_adapters/streaming_iterator.py: emit error frame on reasoning-only completion"
+    ],
+    "risks": [
+      "Track mismatch: this is streaming/API plumbing, not an llm_algorithm contribution",
+      "Open PR #47832 may already cover the same root cause",
+      "Changing terminal behavior could break legitimate empty completions or clients relying on end_turn"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a mocked upstream stream that emits only reasoning/thinking then finish_reason=stop; assert no synthetic empty text block and no end_turn",
+      "Regression test that a genuine empty-but-valid completion still terminates cleanly",
+      "Test aborted/truncated tool-call stream surfaces an SSE error event rather than 200 OK end_turn"
+    ],
+    "unknowns": [
+      "Whether PR #47832 actually fixes the same synthetic-empty-block root cause",
+      "Whether maintainers consider this in-scope for a code contribution vs. already tracked",
+      "Whether the issue's proposed retry/InternalServerError behavior is acceptable to maintainers"
+    ],
+    "why": "The issue describes a concrete streaming-adapter behavior (synthetic empty text block, stop_reason=end_turn on 0-output/thinking-only/aborted streams) with named code anchors, but the supplied evidence is contradictory about track fit and coverage: the candidate is labeled llm_algorithm yet the work is ordinary streaming/API plumbing (adapter event translation), not a training objective, model mechanism, quantization/numerical method, kernel, or evaluation methodology. Additionally, open PR #47832 has semantic overlap (end_turn, stop_reason, v1_messages) with unclear direct code overlap, and the duplicate status is 'semantic_overlap_requires_review', so whether the root cause is already covered is unresolved."
   },
   "ef77f8295c787bf49e33f63bad38fb6def781bb5c23f4d175598a105d026949d": {
     "confidence": 0.7,
