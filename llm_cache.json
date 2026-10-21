@@ -19339,6 +19339,40 @@
     ],
     "why": "The issue's own reporter retracted the QSA kernel bounds root cause and now hypothesizes an overlap-scheduler race between host sequence_lengths snapshot and device row offsets; a later commenter reports the merged #38346 clamp (compress gather past token_k) as the matching fix, and also reports --disable-overlap-schedule was NOT sufficient. Supplied evidence therefore contains contradictory root causes and unresolved duplicate/merged-fix coverage, so it is not established whether any code work remains actionable."
   },
+  "200d226e58cac693ea9373aeb0632ba90430ff68dfad013fa9312eed126c64ec": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/application/service/wiki_ingest_batch.go: replace single head slice in mapOneDocument with ordered overlapping segmentation and merge of extraction results",
+      "internal/application/service/wiki_ingest.go: adjust maxContentForWiki usage / segment sizing constants",
+      "internal/application/service/knowledge_process.go: surface skipped/partial coverage in parse trace and document status instead of silent success"
+    ],
+    "risks": [
+      "Segmented extraction may duplicate entities across overlapping segments; merge/dedup logic needed",
+      "Multiple LLM calls increase ingest cost/latency and may hit rate limits",
+      "Changing document status semantics could affect downstream consumers expecting success"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test feeding mapOneDocument content well above 32768 runes with a unique entity only in the tail; assert it appears in extracted slugs/pages",
+      "Regression test asserting no silent truncation: partial coverage must set a non-success status or trace marker",
+      "Run targeted package tests for internal/application/service and static checks"
+    ],
+    "unknowns": [
+      "No maintainer design preference on segmentation vs. sampling approach (non-blocking)",
+      "Exact merge/dedup expectations for overlapping segments not specified"
+    ],
+    "why": "Issue pinpoints a concrete input-side truncation: mapOneDocument hard-slices reconstructed content to maxContentForWiki=32768 runes with no segmentation, so tail entities never reach extraction. Code anchors, expected/actual pair, ordered repro, and log signature are supplied; #2604 (output budget) and #2977 (unmerged proposal) are distinguished, and no open PR/issue covers it."
+  },
   "2016309cb9bc8a8c799c72b4d7f71f11a2772a8224ccd4611d9509e8e1611114": {
     "confidence": 0.8,
     "contradictions": [],
@@ -26788,6 +26822,41 @@
       "Exact maintainer preference on implementation location (adapter vs shared merge code) is not yet confirmed, but the issue and comments provide sufficient technical direction for a contributor to proceed."
     ],
     "why": "Issue provides a concrete, reproducible bug with root cause identified: OpenAIResponsesStreamedResponse retains the requested router alias instead of the served model from the terminal event. Evidence includes a runnable repro, public Logfire trace, and detailed analysis of the code path and merge-mode interaction. The proposed fix is localized and testable, with clear regression tests specified."
+  },
+  "2a0b7ded456a38cc209cf6ab4dff2540284ae09a5974afcd92a4d2ccbe65f8e2": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist/derive lineage so clones are not root entries",
+      "apps/vscode/src/sdk/sdk-task-history.ts: write parent_session_id/conversation_id on resume-created sessions",
+      "History listing: collapse clone into single conversation entry",
+      "Usage accounting: avoid double-counting inherited context tokens"
+    ],
+    "risks": [
+      "Maintainer may prefer a different lineage schema or conversation_id vs parent_session_id approach",
+      "Usage de-duplication could affect legitimate multi-session billing semantics",
+      "Scope creep into CLI/Hub paths already fixed by #12500"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test: cancel a task, resume, assert new session row has non-null parent_session_id/conversation_id",
+      "Assert History returns one root entry for the logical conversation",
+      "Assert clone usage does not add inherited context on top of original totals",
+      "Run targeted unit tests for history.ts and sdk-task-history.ts plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for lineage field (parent_session_id vs conversation_id)"
+    ],
+    "why": "Issue provides ordered reproduction, measured session/usage data, and concrete code anchors (history.ts isRootSessionRecord, sdk-task-history.ts resume path) establishing that resume of cancelled/failed tasks creates a new session with NULL parent_session_id/conversation_id, causing duplicate History roots and re-billed context. No open PR or duplicate coverage found; no assignment or AI-use prohibition."
   },
   "2a1e8b8b09990cef81ba381da8a91c897d908d99d612c1826a36375ee4d431e1": {
     "confidence": 0.85,
@@ -48310,6 +48379,38 @@
       "Whether a per-download size cap is in scope"
     ],
     "why": "The issue describes a plausible failure mode in downloadAssetsFromMessages/downloadFromUrl, but the supplied evidence marks root_cause_signal=false, reproductionPathPlan=false, probe_ready=false, and needs_confirmation/design_confirmation=true. The issue itself proposes three alternative fixes (placeholder replacement, processor hook, size cap), so the intended behavior is not settled. The only recent comment is a bot triage notice explicitly asking contributors to wait for maintainer triage before opening a PR."
+  },
+  "4b51dbff7673c1a9f397517ad1874a347e56c4cc55be328c71980fe64242048d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bound nested-buffer parsing in KVArgsRegisterInfo.from_zmq before materialization",
+      "Add per-message and table-wide size/entry limits plus expiry for decode_kv_args_table entries",
+      "Reject or authenticate registrations not bound to a configured Decode worker"
+    ],
+    "risks": [
+      "Tightening registration validation could break legitimate Decode registration if limits are too strict",
+      "Authentication changes may require coordinated router/Decode protocol updates",
+      "Cross-host repro needs isolated network and cgroup setup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_oom.py against a memory-limited Prefill cgroup and assert registrations are rejected before nested metadata is materialized",
+      "Regression test that a 100,000-buffer registration is rejected and decode_kv_args_table does not grow",
+      "Verify baseline completion latency and Prefill /health remain stable under the attack script"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer authentication vs. resource-bounding as the primary fix"
+    ],
+    "why": "Issue provides a concrete, reproducible unauthenticated ZMQ registration path in MooncakeKVManager.start_prefill_thread that materializes unbounded nested buffers into decode_kv_args_table, with code anchors, an executable repro script, cgroup OOM evidence, and a clear expected-vs-observed validation path. No duplicate or merged fix covers it; the closest PRs are keyword-only overlaps."
   },
   "4b5a2b1a61fb2828789d1c7d0600d08166f62d1d030b9b007f2d8e3aba84bafa": {
     "confidence": 0.8,
@@ -115020,6 +115121,42 @@
     ],
     "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with concrete expected fields and reproduction shape. No competing PR or duplicate issue found. Root cause is evident from code path and API docs."
   },
+  "ae9417c00d971400d693561ee19452d8caf87d1c120428473e2846659553316e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate or derive bootstrap address from server-side Prefill topology instead of trusting client input",
+      "python/sglang/srt/disaggregation/common/conn.py: avoid synchronous blocking fetch in shared request processing path",
+      "sgl-model-gateway/src/routers/http/pd_router.rs and grpc/pd_router.rs: confirm bootstrap injection remains authoritative and consistent",
+      "disaggregation backend conn.py variants (ascend, base, fake, mooncake, mori): ensure consistent bootstrap handling"
+    ],
+    "risks": [
+      "Fix may require a design decision on how Decode workers learn the authorized Prefill set (config vs. gateway-provided metadata)",
+      "Changing bootstrap validation could break legitimate direct-worker deployments that rely on client-supplied bootstrap fields",
+      "Async refactor of the parallel-info fetch may have broader concurrency implications"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sends a direct Decode request with attacker-controlled bootstrap_host/port and asserts the canary endpoint receives no request",
+      "Add a test that a slow/unreachable bootstrap endpoint does not block concurrent normal Decode requests",
+      "Run the provided poc.py with --delay-s 0 and --delay-s 2 against an isolated loopback Prefill/Decode deployment to confirm the fix",
+      "Run targeted unit tests for the disaggregation common module and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer strict rejection of client-supplied bootstrap fields versus authenticated internal-caller validation",
+      "Whether the async/non-blocking refactor is in scope for the same fix or should be separate"
+    ],
+    "why": "Issue provides a concrete, reproducible SSRF and head-of-line blocking bug: client-supplied bootstrap_host/port/room are used to build an HTTP URL in CommonKVManager.try_ensure_parallel_info without validating against configured Prefill workers. Reproduction includes an executable PoC, canary hit evidence, latency measurements, and a negative control through the Gateway. Code anchors in conn.py and pd_router.rs are supplied, and no duplicate PR/issue coverage is reported."
+  },
   "ae9e6d74cad4cad4f7d58b3c118d437629d5fc78e21091e5e28a7303cd70141a": {
     "confidence": 0.85,
     "contradictions": [
@@ -142577,6 +142714,32 @@
       "Whether a 0.32.2-built manifest loads end-to-end on 0.34.x"
     ],
     "why": "The issue is a well-evidenced upstream regression report: Ollama v0.34.1+ removed LoRA-adapter GGUF creation (ollama/ollama#14969), breaking test/scripts/build_ollama_uncertainty_adapter.sh and the uncertainty_ollama.py example. Root cause is clear and verified against Ollama source, but the actionable code work is not yet determined: maintainer gabe-l-hart redirects effort to llama.app for compositional adapters, and the issue itself lists open design decisions (whether a provisioning path is needed now, merge_and_unload vs Granite Switch, whether aLoRA activation fires on Ollama). No concrete mellea-side code change is specified, and the candidate's own pre-review flagged no_code_surface."
+  },
+  "d64c85493945415bc296ea4f6e81fb135c57ec388fc632969af0c7bb0e60486a": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue body presents the fix as unsubmitted, but recent_comments states PR #57148 already merged the identical { global: true } change."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Submitting a duplicate patch would conflict with the already-merged fix and waste review effort."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new work needed; verify on v2.1.1 that a refresh in one Location reaches subscribers in another (already covered by #57148's test)."
+    ],
+    "unknowns": [
+      "Whether the reporter can demonstrate the bug persists on v2.1.1, which would reopen it as distinct."
+    ],
+    "why": "The issue's own root cause and proposed one-line fix (publish with { global: true }) are already covered by merged PR #57148, which the maintainer bot identifies as the duplicate fix shipping in v2.1.1. The candidate is therefore a covered opportunity, not new actionable code work."
   },
   "d65d2c20228d464ca496a99a976084fbb0ed47817ef59c40a175a8b097f606d1": {
     "confidence": 0.6,
