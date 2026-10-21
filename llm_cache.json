@@ -38640,6 +38640,43 @@
     ],
     "why": "Issue provides a concrete, reproducible bug with a clear root-cause hypothesis (head_dim mismatch in Mistral3) and a validation path via backend comparison and numerical regression. The evidence includes ordered repro steps, environment details, and code anchors, satisfying the llm_algorithm track requirements."
   },
+  "3cb37046eb3e0bef595129d556412b0c7e2b81b12e2dc6f1887c8aa661fa7e98": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while the issue body supplies a specific root cause and code anchors",
+      "actionability_evidence.reproductionPathPlan=false while the issue body contains an executable failing test"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "crates/goose/src/providers/bedrock.rs: converse() returns stop_reason",
+      "stream_via_converse() sets message.metadata.output_token_limit_reached and ProviderUsage.finish_reasons",
+      "regression tests for max_tokens vs end_turn on the non-streaming Converse path"
+    ],
+    "risks": [
+      "Unverified behavior for toolUse blocks truncated by maxTokens; partial tool input could be surfaced as a tool request",
+      "Changing converse() return signature touches internal callers",
+      "Broadening finish_reasons semantics may affect ACP/CLI consumers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "cargo test -p goose --features aws-providers --lib providers::bedrock::tests::test_converse (wiremock Converse body with stopReason=max_tokens and end_turn)",
+      "cargo fmt --check and cargo clippy -p goose --features aws-providers --all-targets -- -D warnings"
+    ],
+    "unknowns": [
+      "Whether the repository assignment requirement is satisfied or waived",
+      "Whether the issue has reached Ready state as the author requests",
+      "Whether truncated toolUse blocks need rejection on the blocking path"
+    ],
+    "why": "Issue gives a concrete root cause (converse() drops response.stop_reason, stream_via_converse never sets output_token_limit_reached/finish_reasons) plus a wiremock reproduction and a proposed diff. However, the repository policy requires assignment (policy=needs_assignment, assignmentRequired=true, no assignees), and the author explicitly asks to pick it up only once it reaches Ready. That unmet assignment/readiness requirement is a materially blocking unknown for actionability."
+  },
   "3cb5e4cf8dce02f0852dacc15971d33942b72a4b7ebb6d6cb5fcacd6c05d16b8": {
     "confidence": 0.8,
     "contradictions": [],
@@ -126485,6 +126522,41 @@
     ],
     "why": "Issue provides a concrete, code-anchored root cause chain: 5s DYN_TCP_REQUEST_TIMEOUT ack timeout in tcp_client.rs is classified as instance-down via is_inhibited in push_router.rs, and client.rs unconditionally removes the only encode instance from the routable set for DYN_RUNTIME_INHIBITED_DURATION_SECS, yielding 'No workers available'. A verified workaround (DYN_TCP_REQUEST_TIMEOUT=600, DYN_RUNTIME_INHIBITED_DURATION_SECS=0) and a suggested minimal reproduction (GIL-bound Python handler + round_robin with ~32 concurrent requests) give a concrete validation path. No open PR or duplicate issue covers it."
   },
+  "bff9611b8db8d9c717b9bb361f20f49874c632ab6a982245471e2502394a43a5": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist lineage (parent_session_id/conversation_id) on resume-created sessions and/or filter clones from root listing",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path should link new session to prior session instead of starting an unlinked clone",
+      "Usage aggregation: avoid double-counting inherited context tokens/cost across linked sessions"
+    ],
+    "risks": [
+      "Changing root-session filtering could hide legitimately independent sessions if lineage is mis-set",
+      "Usage de-duplication semantics may conflict with existing cost accounting expectations",
+      "Maintainer may prefer a different lineage schema (conversation_id vs parent_session_id)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test for isRootSessionRecord/manifestToSessionRecord asserting a resumed clone with parent_session_id is not a root entry",
+      "Integration test: cancel a task, resume, assert single History entry and lineage fields populated",
+      "Regression test asserting usage totals are not summed across parent and clone sessions"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for lineage schema (conversation_id vs parent_session_id)",
+      "Whether #12590 (open, stale) already claims the VS Code follow-up path and would overlap"
+    ],
+    "why": "Issue provides a concrete, measured reproduction (two session rows, same pid, 147ms apart, identical message prefix, NULL lineage) and names specific code anchors (history.ts isRootSessionRecord, manifestToSessionRecord hardcoding isSubagent:false, sdk-task-history.ts resume path). Root cause is well-supported: resume of cancelled/failed sessions creates a new session without parent_session_id/conversation_id, so History lists it as a root entry and usage is double-counted. No open PR or duplicate issue covers the VS Code path; #12500 only fixed apps/cli."
+  },
   "c00b852711549918b0249cb1fb320f462430076bc74f790fa41b53dd46e22239": {
     "confidence": 0.6,
     "contradictions": [],
@@ -150533,6 +150605,39 @@
     ],
     "why": "Issue reports two defects: (A) missing response_format propagation in omni_handler.py with a concrete one-line diff, and (B) bundled FFmpeg MMXEXT color corruption. Defect A is actionable, but defect B's root cause is attributed to an upstream FFmpeg build/guard issue outside this repo, and the supplied evidence does not establish whether the fix belongs in dynamo or in the runtime image build. Additionally, open PR #13707 overlaps the same omni_handler.py/output_formatter.py paths and 'base64' semantics but is not linked to this issue, so duplicate coverage is unresolved."
   },
+  "e298baf89d800cdfdd95bb3c5c1ffdb3dcaa80991713a61a38d99f025b59702f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bound nested-buffer parsing in KVArgsRegisterInfo.from_zmq before materialization",
+      "Add per-message and table-wide limits plus expiry for decode_kv_args_table entries",
+      "Reject or authenticate registrations not bound to a configured Decode worker"
+    ],
+    "risks": [
+      "Tightening registration validation could break legitimate Decode worker registration if identity binding is too strict",
+      "Table expiry or size limits may interact with slow or reconnecting Decode workers",
+      "Cross-host reproduction requires an isolated network and memory-limited cgroup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_oom.py against a memory-limited Prefill cgroup and assert registrations are rejected before nested metadata is materialized",
+      "Regression test that oversized nested-buffer frames are rejected without allocating child lists",
+      "Test that decode_kv_args_table does not grow unbounded under unique fake session IDs and that entries expire"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer authentication, rate limiting, or parser bounds as the primary fix",
+      "Whether PR #45194 already covers the same registration-decoding bound despite being marked keyword-only overlap"
+    ],
+    "why": "Issue provides a concrete, reproducible unauthenticated Mooncake decode-registration path: bootstrap /route exposes the ZMQ rank port, start_prefill_thread stores sender-controlled session IDs in decode_kv_args_table, and KVArgsRegisterInfo.from_zmq materializes unbounded nested buffers. Reproduction includes executable repro_oom.py, cgroup OOM counters, and latency/availability measurements, giving a clear reference-vs-implementation validation path."
+  },
   "e298f691ab711ab2092f3bf271b512a46327e8ff1ff4878f3114854615d6fa08": {
     "confidence": 0.55,
     "contradictions": [
@@ -157475,6 +157580,40 @@
       "Whether maintainers have a preferred fix location or design for converting ModelResponse to streaming chunks"
     ],
     "why": "Issue provides a concrete reproduction, traceback, and a tested workaround for a streaming crash in ResponsesIDSecurity.async_post_call_streaming_iterator_hook. However, the supplied duplicate assessment reports three open PRs with semantic overlap on websearch_interception, including PR #38562 titled 'fix: streamed /v1/responses 500s when websearch interception is enabled' and PR #35571 overlapping litellm/proxy/proxy_server.py. The duplicate status is 'semantic_overlap_requires_review' and no PR is confirmed to cover this exact root cause, so whether independent code work is actionable is unresolved."
+  },
+  "ebf5547bd46b6f0831bbdbf008c0ca739bc408827d7948dafb4074dcb02e82f6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/conn.py: validate bootstrap address against configured Prefill set or derive from server-side topology",
+      "Avoid synchronous blocking HTTP fetch in shared request processing path (timeout/async/caching)",
+      "Possibly mirror validation in ascend/mooncake/mori/base conn variants and gateway pd_router paths"
+    ],
+    "risks": [
+      "Behavior change for deployments relying on direct worker API with client-supplied bootstrap metadata",
+      "Need to confirm intended trust boundary and whether internal caller authentication is required",
+      "Multiple backend conn.py variants may need consistent handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test that a client-supplied bootstrap_host/port not in prefill_info_table is rejected and no outbound request is made",
+      "Unit test try_ensure_parallel_info rejects unconfigured addresses and accepts configured Prefill endpoints",
+      "Reproduce with provided loopback PoC: canary receives zero hits and concurrent normal request latency is unaffected"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer address allowlisting vs. removing client-supplied bootstrap fields entirely",
+      "Whether direct worker API is considered a supported trust boundary"
+    ],
+    "why": "Issue provides a concrete root cause: CommonKVManager.try_ensure_parallel_info trusts client-supplied bootstrap_host/port and issues a synchronous requests.get to it, with code anchors, a loopback-only PoC, canary hit evidence, latency measurements, and a negative control showing the Gateway overwrites the fields. This is a specific, actionable SSRF plus blocking-call fix in the disaggregation path."
   },
   "ebf8284ce21821bc9e8f10aa538a9a2693ff66fb87a33b5f76b13afc0d51fffd": {
     "confidence": 0.85,
