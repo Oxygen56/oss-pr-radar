@@ -2348,6 +2348,44 @@
     "wait_reason": null,
     "why": "Issue describes a concrete, user-visible bug with a clear root cause: plugin tool input decoding uses the server's effect instance on a foreign schema, causing version drift failures. The issue provides a minimal reproduction, expected vs actual behavior, and multiple suggested fix directions. No competing PR or issue exists, and the gate allows work."
   },
+  "047ec271c2d6cda44121ed3a143cd0bb0808a02921d86ccd390319f5d3cb07e1": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue asserts positions are emitted in normalized 0-1000 space while also noting the space is unconfirmed and may be 0-1 or source pixels"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/ingestion/component/pdf_vision_dispatch.go: rescale MinerU bbox to PDF page space before emitting positions/_pdf_positions",
+      "reuse pdfium.PageSizes as in internal/parser/parser/pdf_parser_paddleocr.go",
+      "warn instead of silently emitting unconverted coordinates when bbox space is undetermined",
+      "regression test with known page size and known MinerU bbox"
+    ],
+    "risks": [
+      "Actual bbox space of content_list.json varies by MinerU version; wrong assumption produces a different offset bug",
+      "PR #21228 may already restructure this post-processing path, causing conflict or duplication",
+      "Changing position semantics could affect downstream consumers (chunk thumbnails, crop region in pdfcrop_cgo.go)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test mineruBBoxPosition with a known A4 page size (595x842) and a 0-1000 normalized bbox, asserting output in PDF points",
+      "Unit test the 0-1 normalized and source-pixel variants with explicit fallbacks",
+      "End-to-end: parse a large-table PDF via MinerU and assert position_int values fall within page bounds",
+      "Compare against PR #21228 to confirm no duplicate/conflicting implementation"
+    ],
+    "unknowns": [
+      "Confirmed coordinate space of MinerU content_list.json bbox for the MinerU version in use",
+      "Whether PR #21228 already fixes or supersedes this conversion",
+      "Whether maintainers accept pdfium.PageSizes reuse on the MinerU path"
+    ],
+    "why": "Issue identifies a plausible coordinate-space mismatch in mineruBBoxPosition (no rescaling to PDF points, unlike Python's _content_bbox_to_page_space), but the reporter explicitly states the root cause was established by source inspection only, not by running MinerU, and asks maintainers to confirm the actual bbox space of content_list.json for the MinerU version in use. That missing fact determines whether the fix is a 0-1000 rescale, a 0-1 rescale, or a source-pixel passthrough, so actionability is not yet established. Additionally, open PR #21228 (maintainer-owned, 22 files, 9 test files) semantically overlaps the same parser paths and must be compared before any code work."
+  },
   "048d240efdc66e1091957c300e766d4d29f74442f41a96e3794eb4b0fac7d5ab": {
     "confidence": 0.85,
     "contradictions": [],
@@ -67610,6 +67648,44 @@
     ],
     "why": "Issue clearly identifies a high-impact bug with a concrete root cause and MRE, but the fix is already implemented in PR #4783 (backport of #4659) which is closed pending maintainer action. The deterministic gate requires HUMAN_REVIEW, and the existing PR appears technically complete, so the appropriate action is to wait for maintainer review/merge rather than start new work."
   },
+  "66499f6f15bb502f5df833b619956951f0f48673102a50f2def037409e1d336f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Commenter choksi2212 reports the per-request credential is honored at discovery on main and cannot reproduce the 500; reporter morganrowse reports the BYOK gate still rejects on v1.106.0-rc.4",
+      "PR #47804 overlaps the same code paths and semantics but does not reference this issue, leaving duplicate coverage unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py: honor per-request x-mcp-{alias}-authorization in the tools/list static-credential gate",
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: align BYOK discovery auth resolution with tool-call egress",
+      "Add regression test for BYOK tools/list with only a per-request header and no stored credential"
+    ],
+    "risks": [
+      "Open PR #47804 may already cover the same root cause on stable/1.105.x",
+      "Contradictory reproduction evidence: one commenter cannot reproduce on main, reporter says it persists on v1.106.0-rc.4",
+      "Fix could broaden auth behavior if per-request header is accepted too liberally"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on v1.106.0-rc.4: create BYOK bearer_token server via POST /v1/mcp/server, grant virtual key with no stored credential, POST /{server}/mcp tools/list with x-mcp-{alias}-authorization, assert non-empty tool list",
+      "Repeat via aggregate /mcp virtual tool-search path",
+      "Control: same request with stored credential succeeds; direct upstream curl with same token lists tools",
+      "Run targeted MCP proxy unit tests and compare against PR #47804 behavior"
+    ],
+    "unknowns": [
+      "Whether the BYOK-specific gate failure still reproduces on current main tip",
+      "Whether PR #47804 already fixes the exact BYOK discovery path or only the stable backport",
+      "Exact code state of _resolve_byok_mcp_auth_header and prepare_upstream_client on main"
+    ],
+    "why": "Issue reports a concrete BYOK tools/list credential-gate bug with reproduction steps and code anchors, but a commenter's empirical matrix on main could not reproduce the gate failure, and the reporter's later retest narrows it to BYOK servers on v1.106.0-rc.4. The supplied evidence is contradictory about whether the root cause still exists on main, and open PR #47804 semantically overlaps the same paths (mcp_server_manager.py, outbound_credentials/adapter.py) without referencing the issue, so duplicate coverage is unresolved."
+  },
   "664a57986350bfe66ff7e55e540a6769cb5788017889e130b7c17992b0999b4a": {
     "confidence": 0.85,
     "contradictions": [],
@@ -114561,6 +114637,38 @@
       "Whether maintainers have already started work on this issue, but no open PRs were found."
     ],
     "why": "The issue provides a precise root cause: when reasoning and tool parsers share the same engine, ParserManager.get_parser returns the engine class directly, bypassing the DelegatingParser that attaches structural tags. The bug is isolated to the frontend attachment, with engine-side functionality verified working. A minimal CPU-only reproduction and expected vs actual output are provided, making the fix actionable."
+  },
+  "abd89095c3e17214bd6d0bbf5a5f3e9d1454ed66f3f6d94f8eb7e57ef0f5978d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bound nested-buffer count/size in KVArgsRegisterInfo.from_zmq before materialization",
+      "Add per-message and table-wide limits plus expiry for decode_kv_args_table entries",
+      "Reject or authenticate registrations not bound to a configured Decode worker"
+    ],
+    "risks": [
+      "Auth/identity binding may require maintainer design preference on Mooncake protocol changes",
+      "Overly strict limits could break legitimate large registrations",
+      "Cross-host repro needs isolated network and cgroup setup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_oom.py against a memory-limited Prefill cgroup and assert no oom_kill and bounded PSS growth",
+      "Regression test that oversized nested-buffer frames are rejected before list materialization",
+      "Verify normal 1P1D completions still succeed and latency stays near baseline under benign registration traffic"
+    ],
+    "unknowns": [
+      "Whether PR #45194 already fixes this exact path (not confirmed as referencing the issue)"
+    ],
+    "why": "Issue provides a concrete, executable two-host reproduction (repro_oom.py) and code-anchored root cause: unauthenticated ZMQ PULL registration path in MooncakeKVManager.start_prefill_thread parses KVArgsRegisterInfo.from_zmq nested buffers without bounds and retains entries in decode_kv_args_table keyed by attacker-supplied session ID, leading to OOM. Validation path is concrete (cgroup memory.events oom_kill, health timeout, completion latency). No directly overlapping open PR; #45194 is keyword-adjacent but not confirmed as covering this issue."
   },
   "abe619337c4746698c86629090e62ad52d03058731db42e5b30622465b76ee8f": {
     "confidence": 0.7,
