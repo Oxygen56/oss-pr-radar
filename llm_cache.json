@@ -56073,6 +56073,43 @@
     ],
     "why": "Issue #14762 describes a model-card ownership defect in ThunderAgent proxy registration, but the supplied evidence shows an open PR #14845 that explicitly references this issue, is technically complete, includes 3 test files, and has passing CI. The issue's own proposed direction (remove public model registration, route via pluggable router) is a large architectural refactor, while the concrete minimal fix (inherit backend runtime_config) is already covered by #14845. No distinctive gap remains for a competing contribution."
   },
+  "549ac7a6a06bbde105f6628f4541b7e65cc7749c562449f161e8b1c304f88399": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue proposes fixing the window-layer finish_reason/[DONE] path, while collaborator note says #5209 already covers that half and this work should narrow to the denial path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-rust/extensions/ai-data-masking/src/msg_win_openai.rs: capture finish_reason before empty-delta early return",
+      "plugins/wasm-rust/extensions/ai-data-masking/src/msg_win_openai.rs: emit exactly one data: [DONE] from outer OpenAI stream finish",
+      "plugins/wasm-rust/extensions/ai-data-masking/src/ai_data_masking.rs: append [DONE] to synthetic OpenAI-stream denial body"
+    ],
+    "risks": [
+      "Overlap with open PR #5209 may make the window-layer portion redundant",
+      "Overlap with PR #5086 in ai_data_masking.rs call sites requires rebase",
+      "Duplicate sentinel emission if upstream [DONE] handling is not centralized"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Regression test: terminal chunk with delta {} and finish_reason stop is forwarded with finish_reason preserved",
+      "Regression test: normal and multi-choice streams each end with exactly one data: [DONE]",
+      "Regression test: deny_code 200 streaming denial body is valid SSE ending in exactly one [DONE]",
+      "Regression test: non-streaming and non-OpenAI paths emit no sentinel"
+    ],
+    "unknowns": [
+      "Whether #5209 has merged or will merge, which determines if the window-layer changes are still needed",
+      "Exact remaining scope after #5209 lands",
+      "Whether repository assignment requirement is satisfied"
+    ],
+    "why": "The issue body gives a detailed, code-anchored root cause (finish_reason lost on empty-delta early return, [DONE] filtered and never re-emitted, synthetic denial body unterminated) and a concrete validation path, so the technical work is actionable. However, a collaborator coordination note states PR #5209 covers the window-layer half (terminal finish_reason, single [DONE], guards) and directs that #5209 land first, with this work narrowed to the denial-path termination as a follow-up. That unresolved sequencing/coverage fact determines whether the proposed window-layer changes are still actionable, and the open-PR assessment also flags semantic overlap requiring review."
+  },
   "54a4adaa3bd12391180eb230ee6c9abf4942de0351acbf3312e10ab8ae5f2a64": {
     "confidence": 0.8,
     "contradictions": [
