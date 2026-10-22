@@ -28214,6 +28214,39 @@
     ],
     "why": "Issue pinpoints the exact seam: @mastra/inngest never calls runDurableFinishSideEffects (1.8.5) or wraps it in a nested step.run (>=1.8.6), so output processors and finish-time memory persistence are skipped. Concrete grep evidence, version matrix, and a minimal probe are supplied; the fix shape (call helper directly) is well-defined."
   },
+  "2ae0eb68e0cfed8560752cbeb287978d382424c7a2f96d255aaab47281491d1c": {
+    "confidence": 0.72,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while issue body and code anchors suggest a clear gating cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/protocols/openai/tools.rs: keep tool-call parsing active when request has no `tools` field",
+      "MiniMax-M3 parser path: emit `tool_calls` and `finish_reason: tool_calls` instead of raw text in `content`"
+    ],
+    "risks": [
+      "Behavior change could affect requests that legitimately expect raw text when no tools are declared",
+      "Overlap with open PR #17074 may cause duplicate work if not coordinated",
+      "Exact gating condition (request `tools` vs conversation history) is not confirmed by supplied evidence"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test replaying the issue's exact message sequence without `tools` and assert `tool_calls` contains `list_skills` with `finish_reason: tool_calls`",
+      "Run targeted unit tests for the openai tools protocol module and the minimax_m3 parser"
+    ],
+    "unknowns": [
+      "Whether the parser gate is on request `tools` or on conversation history",
+      "Whether maintainers prefer the approach in PR #17074"
+    ],
+    "why": "Issue gives a concrete reproduction (MiniMax-M3 with --dyn-tool-call-parser minimax_m3, request without `tools`), expected vs actual output, and code anchors (`tools`, `content`, `tool_calls`, parser minimax_m3). Root cause is plausibly that the tool-call jail/parser is gated on presence of `tools`, but the supplied evidence does not confirm the exact code path. An open PR #17074 covers the same area but lacks regression tests, leaving a concrete gap (add a failing-then-passing test) that makes the work actionable."
+  },
   "2ae1fc100b155f229917521d5791817ed46a71e9c42f22956865aa64072cc011": {
     "confidence": 0.55,
     "contradictions": [
@@ -81662,6 +81695,41 @@
     ],
     "why": "The issue provides a precise root cause (duplicate check before trimming in InMemorySessionService), a minimal repro, and a concrete fix with tests. The behavior is a data-loss bug on a critical path, and the proposed contract tests are actionable."
   },
+  "776444b7e143ffb3429aa38b9a5c793b5e1af63285b5c9a0a4b312a0ac7f47ef": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Widen Usage/MessageUsage token fields from i32 to i64 in crates/goose-provider-types/src/conversation/token_usage.rs and message.rs",
+      "Replace saturating_add/i32::try_from clamping with i64 arithmetic in token_usage.rs and session_manager.rs",
+      "Make session-list decoding degrade per-row instead of failing the whole result set",
+      "Update ui/desktop/src/types/message.ts token types to match"
+    ],
+    "risks": [
+      "Widening public token types is a breaking API change for downstream consumers",
+      "Per-row decode degradation could silently mask other data corruption",
+      "Historical saturated rows need recomputation from usage_ledger, which is out of scope for the code fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test inserting a session row with accumulated_total_tokens > 2,147,483,647 and assert session-list enumeration still returns all sessions",
+      "Unit test Usage Add impl and cache-token folding with values above i32::MAX to confirm no saturation",
+      "Verify task re-run succeeds after an oversized historical row exists"
+    ],
+    "unknowns": [
+      "No assignee on the issue while repository policy requires assignment before work",
+      "Whether maintainers accept the i64 widening as the preferred design versus per-row clamping only"
+    ],
+    "why": "The issue gives a clear root cause (i32 token fields in token_usage.rs/message.rs plus i32::try_from saturation in session_manager.rs) and a concrete reproduction, but the repository policy requires assignment (policy.status=needs_assignment, assignmentRequired=true) and the issue currently has no assignees. That unmet assignment requirement is a materially blocking unknown for whether code work is actionable."
+  },
   "776e3e37232ee9882b8360ee90ce50901b12550f206ac2844183780882901e9e": {
     "confidence": 0.9,
     "contradictions": [
@@ -118590,6 +118658,34 @@
       "Whether 'send' is already stable via useCallback, which affects the best fix approach"
     ],
     "why": "The issue identifies a clear stale closure bug in a React hook, with a concrete failure scenario and a minimal fix. It is a user-visible bug in a critical path (agent state handling) and is actionable without requiring design confirmation."
+  },
+  "ae406cdf0a364f98a0457d40707e2d303c05ab92e4848a7074f251d33806c2a0": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels the issue as a high-impact agent/inference code fix, but the evidence shows an upstream endpoint outage reproduced outside the app."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Any code change would be speculative since the failure is server-side and not reproducible against repository code.",
+      "Duplicate coverage in #57851 means work here would be redundant."
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No repository-level regression test is applicable; the failure reproduces via plain API calls outside the app, confirming an upstream service issue rather than a code path."
+    ],
+    "unknowns": [
+      "Whether maintainers intend any client-side handling change for unavailable endpoints, which is not established by the supplied evidence."
+    ],
+    "why": "The report describes a hosted upstream/gateway outage for a single promotional model endpoint, not a code defect in the repository. A bot comment identifies it as a duplicate of #57851, with the same error reproduced outside the OpenCode app via plain API calls, indicating the hosted Go gateway/upstream is at fault. No code surface or root cause in the repo is established."
   },
   "ae5841585ce6e1f648a203913ce6a20911d34f6c9f855023e8553450f23109a4": {
     "confidence": 0.8,
@@ -170676,6 +170772,43 @@
       "Exact runtime path where token usage is available"
     ],
     "why": "The issue requests exposing LLM token usage from the new Agent node output. It identifies a clear gap but lacks a concrete root cause or design confirmation. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. However, the issue is a feature request with no maintainer approval or design confirmation, and the submission policy indicates a conflict with AI disclosure requirements. The expected changes are plausible but require maintainer input on API design and scope."
+  },
+  "f7b1cbae7465b1b051b964348ac0a9a609ba03370f14d0e37a7ca2fb39824fef": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/logits_processor.py: unify lm_head output precision between decode buffer path and prefill scoring path",
+      "test/registered/core/test_basic_sanity_dspark.py / python/sglang/test/kits/spec_server_kits.py: keep top-logprob delta assertion as numerical regression"
+    ],
+    "risks": [
+      "Culprit not bisected; #45682 (DSPARK prefill read-done ordering) is not fully ruled out",
+      "Fix could regress the #45631 performance gain if fp32 buffer output is removed",
+      "Loosening logprob_match_delta would mask a real precision mismatch",
+      "Requires H100 hardware to validate"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `python3 test/registered/core/test_basic_sanity_dspark.py TestBasicSanityDSpark.test_logprob_decode_match_prefill` on one H100 at c64886f9e3 to reproduce the 0.5297 delta",
+      "Rerun the same test with f1e26dc658 reverted to confirm the culprit",
+      "After the fix, verify decode vs prefill top-logprob max_diff returns to the ~0.06-0.08 range seen on passing main runs",
+      "Add/keep a numerical regression asserting decode and prefill lm_head precision paths agree"
+    ],
+    "unknowns": [
+      "Which of #45631 or #45682 is the actual culprit (bisect not performed)",
+      "Whether the precision divergence is intended behavior or a regression"
+    ],
+    "why": "Deterministic, bit-identical failure across three unrelated PRs and two hosts, with a concrete suspect commit (#45631, f1e26dc658) that changes lm_head output precision on the decode buffer path while prefill scoring keeps bf16, plausibly explaining the ~0.53 tail top-logprob delta. A concrete reference-vs-implementation validation path exists (run the single test at c64886f9e3 with and without f1e26dc658 reverted). Root cause is suspected but not bisected, which is normal implementation uncertainty rather than a blocking unknown."
   },
   "f7c0fccaa0d4ec3a8de1c66c557875df837297c446ce9c5501dcb7736bb49e75": {
     "confidence": 0.7,
