@@ -26831,6 +26831,41 @@
     ],
     "why": "The issue provides a clear root cause (token underestimation in count_tokens), a reproducible benchmark with concrete numbers, and a specific code path. The proposed fix (improving token estimation) is actionable and testable against actual model usage."
   },
+  "291a746caf49e8d0158f6b676094b0c101b7cd0e7eb3a63f8ad3ab9ca4470fb1": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports unbounded memory across processChunks and BatchIndex, while PR #4584 claims to fix only BatchIndex vector retention and explicitly leaves processChunks text retention unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "internal/application/service/retriever/keywords_vector_hybrid_indexer.go: bound embedding/vector retention to a fixed window instead of all chunks",
+      "internal/application/service/knowledge_process.go: avoid retaining all chunk texts and index info simultaneously (separate scope)"
+    ],
+    "risks": [
+      "PR #4584 may already cover the same root cause, making a new fix duplicative",
+      "Scope creep into processChunks text retention and retry resumption beyond the vector-retention fix",
+      "Behavioral changes to batching could affect embedding cost and error handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with gen_txt.py at 10/30/80 MiB and measure container anon memory to confirm growth",
+      "Add regression test asserting peak retained vectors are bounded by window size for a multi-window chunk set",
+      "Verify SourceID-to-vector mapping and error propagation/cancellation across windows"
+    ],
+    "unknowns": [
+      "Whether PR #4584's bounded-window implementation fully addresses the reported root cause or leaves a materially distinct gap",
+      "Whether maintainers consider the remaining processChunks text-retention scope a separate actionable task"
+    ],
+    "why": "Issue provides a strong reproduction, memory measurements, and code anchors for unbounded vector retention in BatchIndex. However, an open PR (#4584) already targets the same BatchIndex memory amplification with a bounded-window fix and regression tests, and the duplicate status is 'semantic_overlap_requires_review'. Whether new code work is actionable depends on comparing that PR's implementation boundary, which is a materially blocking unknown."
+  },
   "292ae5fceb5569eaa8bea6d23dcb153a649c4ff46bc76cfecfd1302e61c545e7": {
     "confidence": 0.6,
     "contradictions": [
@@ -54081,6 +54116,42 @@
     ],
     "why": "The issue is an auto-generated upgrade-check failure report with no identified failing job, no root cause, and no concrete code surface. The body only lists generic possible causes (ty, ruff, MCP SDK) and generic remediation steps. Pre-task evidence confirms no code paths plan, no reproduction path, and probe_ready=false, so the actual failing dependency and code location are unknown."
   },
+  "51bb0289e100c1b00727498dadd5d0c5a1e887a195c5e84f571bbc4f97b5dc38": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states no focused fix exists, but open PR #5230 has overlapping path and semantics"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/plugin/build/build.go: track invocation-owned staging and restrict cleanup to owned resources",
+      "Add regression tests for failure/interrupt cleanup preserving pre-existing files"
+    ],
+    "risks": [
+      "Open PR #5230 may already implement the same fix, creating duplicate work",
+      "Staging/publication redesign could alter existing output semantics or compatibility",
+      "Cleanup idempotency and interrupt handling edge cases"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce baseline: create t.TempDir output with sentinel, call Builder.CleanupForError, assert sentinel removed on baseline",
+      "After fix: assert sentinel and directory preserved on failure and interrupt",
+      "Verify successful files build publishes artifacts without touching unrelated files",
+      "Run go test ./pkg/plugin/build and a real hgctl invocation comparison"
+    ],
+    "unknowns": [
+      "Whether PR #5230 already resolves the root cause and should be preferred",
+      "Whether maintainer assignment/approval has been granted",
+      "Whether the local diagnostic hashes are reproducible by reviewers"
+    ],
+    "why": "Issue documents a plausible root cause (removeOutputDest calls os.RemoveAll on caller-owned output path) with a baseline diagnostic, but the diagnostic is a temporary local test not committed, and an open PR #5230 with overlapping path and semantics may already cover the fix. Repository policy requires assignment (needs_assignment) and the issue explicitly requests maintainer approval before implementation."
+  },
   "51bb3503794af88215e5f291ff2684d8213da6229ee3269c2979696c5308e7d3": {
     "confidence": 0.55,
     "contradictions": [
@@ -76200,6 +76271,43 @@
       "Whether maintainers consider the issue already covered"
     ],
     "why": "Issue is a concrete, well-scoped bug in DEFAULT_ROUTER_FLASH_META_PROFILE_PROMPT (truncated anti-pattern bullet and missing {{ model_table }} placeholder), but open PR #17860 already directly covers the same file and code identifiers, and the duplicate status is human_review_required. Coverage by an existing open PR is a materially blocking unknown for independent contribution value."
+  },
+  "701843a06fbe0f4e260f74d67ab14d8edd5f7749917a5698678176f9ac312874": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/agent/component/agent.go: allow first-pass citation prompt when chunks exist instead of suppressing all deltas",
+      "internal/agent/component/agent.go: bound or make optional the serial applyCitationGrounding second model call",
+      "internal/server/api/server.go: make Agent HTTP/SSE write budget configurable",
+      "Add stage/progress events during genuine buffering"
+    ],
+    "risks": [
+      "Citation quality regression if first-pass citing replaces grounding without ID validation",
+      "Streamed partial answers complicate replacement/finalization semantics",
+      "Timing samples are from a modified local branch, not a controlled benchmark",
+      "Scope spans agent component, API server, and config; risk of broad behavior change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: cite=true with pre-retrieved chunks emits first-pass deltas rather than buffering",
+      "Unit test: cite=true with empty retrieval takes no_chunks path without withholding output",
+      "Regression test: grounding failure preserves completed answer with citation-incomplete status; cancellation still cancels",
+      "Integration test: non-stream and SSE requests under a slow mock provider record model-call count and first-visible-answer latency",
+      "Config test: configurable write timeout honored across API writer"
+    ],
+    "unknowns": [
+      "No maintainer design preference on first-pass citation vs bounded grounding",
+      "No controlled same-model Python-vs-Go benchmark to quantify expected gain"
+    ],
+    "why": "Issue pins exact Go source locations for two concrete costs: first-pass delta suppression in emitAgentModelStreams (agent.go L398-453) and a serial second full-answer grounding call in invokeNow/applyCitationGrounding (L512-598, L1071-1111), plus the 180s API WriteTimeout. Python v0.27.2 fast paths are cited as the reference behavior, giving a reference-vs-implementation comparison. Reproduction steps and a validation matrix are supplied; no competing PR covers these paths."
   },
   "7033f3b5166d07f0e32629832bc6ea669218a9f7a2e60490a4f8661747c3d4b0": {
     "confidence": 0.8,
@@ -153366,6 +153474,42 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue describes a reproducible degenerate output on DeepSeek-V4-Flash with SM120, but the root cause is not identified. Existing PR #49636 and #50455 overlap semantically with the issue's code paths and may already address the bug, requiring manual comparison before creating a new task."
+  },
+  "e15e9105cae71821f505a955faf1134beefa6df368d7005090641664d57c3142": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/routes/agent-settings.tsx: gate behaviorInitialValues on schema readiness or pass undefined instead of {}",
+      "src/components/features/settings/sdk-settings/sdk-section-page.tsx: allow re-hydration from updated initialValueOverrides when hideSaveButton",
+      "src/components/features/settings/agent-profiles/profile-behavior-form.ts: distinguish unready schema from empty overrides",
+      "Save path: persist only user-changed condenser/verification fields"
+    ],
+    "risks": [
+      "Re-hydration change could clobber user edits made before schema resolves",
+      "Over-broad save diffing could break #18679's untouched-section semantics",
+      "Global condenser/verification pages must remain unaffected"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Render profile editor with conversation-schema resolving before agent-schema; assert condenser max_size 120 and critic on, Save disabled",
+      "Repeat reload-then-Edit loop ~10x; assert stored 120/critic-on every time and GET /api/agent-profiles returns max_size 120",
+      "Edit Keep First Events 2->3 and save; assert stored max_size remains 120",
+      "Edit only a skill; assert stored condenser unchanged",
+      "Create new profile; assert condenser/verification seeded from default profile",
+      "Run npm run lint, npm test, npm run build"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated for re-hydration vs schema-gating approach (not blocking)"
+    ],
+    "why": "Issue provides a concrete, traced root cause: agent-settings.tsx passes `{}` overrides from toBehaviorFormValues before the editor's agent-schema resolves, and SdkSectionPage's hydrate-once guard (hideSaveButton && hasHydratedViewRef.current) then ignores the profile's real overrides when conversation-schema resolves first. Reproduction is documented with request-order correlation (4/4 stale vs 0/30 other orders), a regression origin (#18679), and explicit acceptance criteria including a controlled schema-resolution-order regression test."
   },
   "e15f81b80d3b0519e5b73c0f888ef3a6030ce30d4228b7216a5377012cd0378e": {
     "confidence": 0.55,
