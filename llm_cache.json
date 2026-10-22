@@ -33578,6 +33578,41 @@
     ],
     "why": "Issue clearly describes a user-visible bug with a concrete reproduction and root cause analysis, but the deterministic gate requires HUMAN_REVIEW and the issue requests design confirmation. The suggested fix is plausible but needs maintainer input to avoid unintended API changes."
   },
+  "33c54fa47817acb5fc7c2de0152dff69c4e75adaeb87897d42d4aecab5e44c16": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/prompt_templates/factory.py: emit sibling inline_data parts for pre-Gemini-3 models instead of nesting in function_response.parts",
+      "Preserve nested parts for Gemini 3+ via forward_function_call_id gating"
+    ],
+    "risks": [
+      "Vertex path untested by reporter (2.5 retired on Vertex)",
+      "PDF/other file blocks share inline_data_list path and are untested",
+      "gemini-2.5-computer-use-preview behavior unverified (503 for both shapes)",
+      "Must not revert #29325 since gemini-3.6-flash rejects sibling shape"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test for convert_to_gemini_tool_call_result with image tool result on gemini-2.5-flash-lite asserting sibling inline_data shape",
+      "Add regression test asserting nested parts for gemini-3.x models",
+      "Run the issue's curl repro against local proxy for 2.5-flash-lite (expect 200) and 3.8-flash (expect unchanged 200)",
+      "Run targeted unit tests for vertex_ai/gemini transformation and prompt_templates factory"
+    ],
+    "unknowns": [
+      "Whether Vertex 2.5 path needs the same gating (reporter notes retirement)",
+      "Behavior for PDF/file blocks in tool results"
+    ],
+    "why": "Issue provides a concrete regression (v1.88.2 works, v1.89.0+ fails), exact code anchor in convert_to_gemini_tool_call_result, a minimal diff gated on forward_function_call_id, and a direct-to-Google control confirming nested vs sibling shape behavior on 2.5 vs 3.x. Reproduction is executable and validation path is clear."
+  },
   "33cbaa8719b5922862b771d01e50ad0259abbcc405ade3c1296a2092141a60ef": {
     "confidence": 0.55,
     "contradictions": [
@@ -62730,6 +62765,39 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue describes a plausible access-control bug in @mastra/factory where non-creator orchestrators cannot read/write bound sessions between runs. Root cause is localized to ownership checks in workspace.js, but the desired access model (honoring project scope vs explicit grant) is an open design question. No public repro, no maintainer approval, and the issue is explicitly awaiting triage."
+  },
+  "5e016d8ae8090c4ed46f72584a426e59f6406b6249447adcdd771697036a8acf": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "frontend/src/views/knowledge/KnowledgeBase.vue: replace full-list reload loop with polling of submitted ids only",
+      "stop reflection loop on folder change / make it cancellable",
+      "avoid toggling docListLoading for background refreshes"
+    ],
+    "risks": [
+      "Maintainer may prefer a different polling design",
+      "Status poller may not cover all in-flight rows, requiring careful id tracking",
+      "Folder-switch cancellation must not drop legitimate status updates"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing component test asserting loadKnowledgeFiles is not called repeatedly after confirmBatchReparse",
+      "Playwright repro: 165-row folder, submit rebuild, assert row count and scrollTop preserved and no page=1 reload storm",
+      "Regression: counter does not blink and only submitted rows change status"
+    ],
+    "unknowns": [
+      "Whether updateStatus/batchQueryKnowledge reliably covers all submitted rows without the full reload"
+    ],
+    "why": "Issue pins the root cause to awaitBatchReparseReflection looping loadKnowledgeFiles up to 30 times, resetting page/scroll and toggling docListLoading, with concrete code anchors, ordered repro steps, and measured Playwright evidence; a reference-vs-implementation test is feasible."
   },
   "5e0b2c668aadb61a082ef458e5761ce6dcc15c10becdbe7d3c2afd0249b9b8cd": {
     "confidence": 0.85,
@@ -110258,6 +110326,42 @@
       "Whether Z.AI API truly rejects `[1m]` suffix or LiteLLM mishandles it"
     ],
     "why": "The issue reports a user-facing bug where the documented model name `glm-5.2[1m]` is rejected by the Z.AI API. However, comments indicate the `[1m]` suffix is a documentation convention and the API expects the plain model name, suggesting the fix may be documentation or config guidance rather than a code change. The deterministic gate is HUMAN_REVIEW, and maintainer confirmation is needed to decide between code fix and docs update."
+  },
+  "a228d7dc21f1a20b19de14a331d6a9b6977998a648c2a194a77b0c166cc613c3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/router/routes_knowledge.go: register POST /knowledge-bases/:id/rebuild-index",
+      "internal/application/service/knowledge_post_process.go: enqueue TypeKnowledgeListReparse for all KB documents with optional process_config",
+      "frontend/src/api/knowledge-base/index.ts: align rebuildKBIndex call with implemented route or remove dead call",
+      "KnowledgeBaseEditorModal.vue: wire rebuild-all action or remove unreachable prompt"
+    ],
+    "risks": [
+      "Scope ambiguity: maintainer may prefer removing the dead frontend call over adding a new API route",
+      "New route could bypass the 200-id batch limit and cause load spikes; needs batching/queueing design",
+      "Wiki backfill behavior described in docs is unverified and may expand scope beyond the route fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test asserting POST /api/v1/knowledge-bases/:id/rebuild-index returns non-404 and enqueues reparse tasks for all documents",
+      "Reproduce with curl against running instance using random id to confirm current 404 router response",
+      "Run targeted Go unit tests for the knowledge-base route group and post-process service",
+      "Verify batch-reparse TypeKnowledgeListReparse path still works and respects 200-id limit semantics"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer adding the route vs removing the frontend call",
+      "Whether Wiki backfill for pre-existing documents is in scope"
+    ],
+    "why": "Issue provides concrete reproduction (curl against running instance, grep showing rebuild-index/RebuildKBIndex only in frontend), code anchors in frontend API, router, and post-process service, and a clear expected behavior: either add a backend route enqueuing TypeKnowledgeListReparse for all KB documents or remove the dead frontend call. This is actionable agent_ai_infra work with a defined validation path."
   },
   "a22e945711d65d24dfcd284409b0c4556ec1cce02f81ccb5fe9b633892a1ead9": {
     "confidence": 0.7,
