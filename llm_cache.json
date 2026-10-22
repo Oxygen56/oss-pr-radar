@@ -46714,6 +46714,42 @@
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP children, breaking external Python interpreters. Reporter supplied a minimal repro, /proc environ evidence, and a working workaround. Triage bot disputed the AppImage attribution, but the reporter rebutted with binary-level string evidence and a live /proc mount-prefix match, so the root cause is plausibly established. Code anchors (mcp-client.ts, sanitize-child-env.ts, shared-env-keys.ts) point to a concrete fix location. No open PR or duplicate issue covers it."
   },
+  "4798f7aa1f9d8b2899b2a89d278ff5e1312ad4ff6ad5d3bf90e2dedbe0c7d657": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Open PR assessment reports PR #21228 as MERGED with semantic overlap on parser paths, while duplicate status is 'none' and it does not reference the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/parser/parser/pdf_parser_paddleocr.go: classify layout labels to doc_type_kwd image/table/text and preserve layout",
+      "internal/parser/parser/pdf_parser_remote_common.go: populate File[\"outline\"] via pdfium.ExtractOutlines",
+      "pdf_parser_paddleocr.go: honor output_format and flatten_media_to_text like other PDF paths",
+      "internal/ingestion/component/parser.go: consider vision-enhancement dispatch for dispatcher-handled engines"
+    ],
+    "risks": [
+      "Merged PR #21228 refactored PDF JSON post-processing and may have partially changed these paths; must re-verify against current main",
+      "Avoid inlining image bytes at parse time to prevent reintroducing parser-phase memory peak",
+      "Scope creep across three distinct gaps may warrant splitting"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a Go unit test feeding a PaddleOCR JSON fixture with a figure block and assert an item with doc_type_kwd:image is produced",
+      "Add a test asserting file.outline is populated from a PDF with an outline",
+      "Add a test setting output_format:markdown and flatten_media_to_text and asserting they are honored",
+      "Run targeted package tests for internal/parser/parser and internal/ingestion/component"
+    ],
+    "unknowns": [
+      "Whether merged PR #21228 already altered the exact lines cited (pdf_parser_paddleocr.go:45/:93/:27) on current main"
+    ],
+    "why": "Issue gives concrete code anchors and expected-vs-actual behavior for three gaps on the Go PaddleOCR PDF path: figure/image blocks never get doc_type_kwd:image, outline is hard-coded empty, and output_format/flatten_media_to_text are ignored. Reproduction is code-level and validation via targeted Go tests is feasible. Related merged PR #21228 is a broad refactor with only semantic overlap and no direct code overlap, so it does not clearly cover these gaps."
+  },
   "479b1aeb8346be40607ef3a90698f8b8926c1424bcd53b494ec4f5077bc43e60": {
     "confidence": 0.6,
     "contradictions": [
@@ -58943,6 +58979,46 @@
       "Whether PR #12835 already addresses this exact issue"
     ],
     "why": "Issue clearly identifies a silent data-corruption bug in tool-call repair path with concrete repro and root cause. However, existing PR #12835 has semantic overlap and is still draft; maintainer design preference is unconfirmed. Gate requires HUMAN_REVIEW."
+  },
+  "57938b15ae11a7cbe5da34f6cd6523ee9bbcb915f4a8f4a2e3486848777ffdd7": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Contributor traced concrete amplification path on current main, but pre-task evidence marks root_cause_signal=false and reproduction_or_validation_missing",
+      "Open PR #14092 overlaps code paths and semantics yet is not linked to the issue, leaving duplicate coverage unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/utils/hooks.ts: filter onEvent to message-added before requestCapability",
+      "sdk/packages/core/src/hub/server/hub-client-contributions.ts: optional event-type subscription on onEvent contribution",
+      "streaming regression test measuring capability request count and serialized payload bytes"
+    ],
+    "risks": [
+      "PR #14092 may already cover the same root cause; new work could be duplicate",
+      "Filtering could drop events needed for replay or other hook consumers",
+      "Reported Linux memory peak not reproduced; proxy measurement only",
+      "base_sha_changed may invalidate code anchors"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Synthetic 1,000 reasoning deltas with 200KB history: assert capability request count drops from 1,000 to ~0 for filtered hook",
+      "Verify exactly-once prompt submission and reasoning completion/redaction still work",
+      "Reconnect replay test confirming durable events are not lost by filtering",
+      "Measure persisted hub-event volume and payload bytes before/after"
+    ],
+    "unknowns": [
+      "Whether PR #14092 already fixes the same root cause and should be preferred",
+      "Whether the base_sha_changed invalidates the cited code anchors",
+      "Whether maintainers require design approval before this hook-subscription change"
+    ],
+    "why": "Issue reports a severe memory/IO amplification with a plausible mechanism (full-snapshot hook dispatch per reasoning delta) and a contributor traced a concrete amplification path with a proxy measurement, but the pre-task evidence flags reproduction_or_validation_missing and base_sha_changed, and an open PR #14092 already targets the same streaming amplification with overlapping code paths. The duplicate/coverage status is unresolved (semantic_overlap_requires_review), which materially determines whether new code work is actionable."
   },
   "5798055f3d755702ec2d1226ec35b090cfe1254fe3e10c3764aae343dd940b39": {
     "confidence": 0.55,
@@ -150386,6 +150462,41 @@
       "Whether existing storage adapters can support CAS without breaking changes"
     ],
     "why": "The issue is a well-documented concurrency bug with a public minimal reproduction and real production impact. The root cause is clearly identified: lack of atomic claim/CAS in the resume path. However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has not yet confirmed the preferred design (in-process vs storage-backed). The existing PR #20512 is closed and incomplete for multi-instance scenarios. Thus, maintainer guidance is needed before implementation."
+  },
+  "dbb0756765d6eae47d66eb18a6c3b0cc08e4ba07adaf4930ba19522eaa5c2d35": {
+    "confidence": 0.55,
+    "contradictions": [
+      "codePathsPlan points to packages/server/src/ext/skills/node.ts, which does not match the StdioClientTransport location described in the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/client/src/stdio.ts: remove/unpipe listeners in close()",
+      "packages/client/src/stdio.ts: ensure start() listener registration is symmetric with close() cleanup"
+    ],
+    "risks": [
+      "Proposed removeAllListeners() may strip listeners owned by other consumers of the same streams",
+      "setMaxListeners(20) masks rather than fixes the leak",
+      "Behavior change in close() could affect in-flight writes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a unit test that starts a StdioClientTransport against a stub child process emitting stderr, calls close(), and asserts listener counts on stdin/stdout/stderr return to baseline",
+      "Run the client package's targeted unit tests and typecheck"
+    ],
+    "unknowns": [
+      "No deterministic minimal reproduction or failing test is supplied",
+      "Repository requires assignment and the issue has no assignee",
+      "Actual file path of StdioClientTransport in this repo is unconfirmed"
+    ],
+    "why": "Issue describes a plausible listener-leak in StdioClientTransport.close() with a root-cause sketch and a proposed fix, but the reproduction is only a manual scenario (launch a client, observe a warning) with no minimal deterministic test, and the pre-task policy requires assignment (assignees empty) before code work is actionable."
   },
   "dbce229bedf4093408cd7c84802f7646ff58c42f41bc92e6d557f4987d296ca8": {
     "confidence": 0.55,
