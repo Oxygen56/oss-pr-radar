@@ -86647,6 +86647,40 @@
     ],
     "why": "Issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' does not enforce tool call generation, and finish_reason is incorrectly set to 'tool_calls' with empty tool_calls. Root cause is partially known (translation layer in #53255) and the enforcement gap is clearly described. The issue provides a reproduction methodology (loop script, payload variations) and a validation path (compare behavior under load, check finish_reason and tool_calls). This is a legitimate LLM algorithm bug in tool-calling logic, not mere plumbing."
   },
+  "7f800e16b9df56a32b1339cc4a10062c9b64d201a88dc75948e77fe338c00e4c": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: select Responses API when tools and reasoning are enabled, or permit explicit reasoning_effort none",
+      "Add pre-execution validation for unsupported model/endpoint/reasoning combinations with actionable error",
+      "Adapt response parsing, streaming, and tool-call continuation for Responses API path"
+    ],
+    "risks": [
+      "Responses API adaptation touches request construction, response parsing, streaming, and tool-call continuation, expanding blast radius",
+      "Successful execution with reasoning_effort none was not confirmed in the reporter's deployment",
+      "Maintainer may prefer validation-only over full Responses API support"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: gpt-6-luna with tools and reasoning enabled routes through Responses API and completes tool call",
+      "Regression test: gpt-6-luna with tools and explicit reasoning_effort none succeeds via Chat Completions",
+      "Validation test: unsupported combination returns clear pre-execution error instead of HTTP 400 passthrough"
+    ],
+    "unknowns": [
+      "Exact effective reasoning_effort value in the failing deployment was not captured",
+      "Whether reasoning_effort none actually succeeds was not confirmed"
+    ],
+    "why": "Issue provides a concrete HTTP 400 reproduction with the exact OpenAI error, a named code anchor (internal/entity/models/openai.go), and a clear expected behavior: route tool+reasoning calls to the Responses API or allow explicit reasoning_effort none, with pre-execution validation. Root cause is well localized to the OpenAI adapter's request construction/endpoint selection, though the exact effective reasoning setting was not captured."
+  },
   "7f8336d23b8fa28d3401ce25b8f1a7a2f693336085a65b07016fa1606e6dcfe4": {
     "confidence": 0.85,
     "contradictions": [],
