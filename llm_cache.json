@@ -107909,6 +107909,40 @@
     ],
     "why": "Issue #430 provides a concrete SM120 kernel root cause (missing tensormap drain before GMEM publish in sm120_fp8_fp4_gemm_1d1d.cuh) with a validated fix and numerical regression path, but the supplied evidence shows an open PR #431 that directly covers the same code identifier and root cause, and the duplicate status is human_review_required. That unresolved coverage question materially determines whether independent code work is actionable."
   },
+  "9cef2ef11dfd61d6cf3a92d11baf5639c4cb1851ce4fcd1b44cea2a161628063": {
+    "confidence": 0.55,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "crates/goose-provider-types/src/conversation/token_usage.rs: widen Usage token fields to i64",
+      "crates/goose-provider-types/src/conversation/message.rs: widen MessageUsage token fields to i64",
+      "crates/goose/src/session/session_manager.rs: remove i32::try_from saturation and make per-row decode degrade",
+      "ui/desktop/src/types/message.ts: align TS types if serialized as i32"
+    ],
+    "risks": [
+      "Widening to i64 may ripple through serialized API/TS types and downstream consumers",
+      "Per-row decode degradation could silently mask genuine data corruption",
+      "Repository requires assignment before work; no assignee present"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Insert a sessions row with accumulated_total_tokens > 2^31-1 and assert session-list query returns all rows without error",
+      "Unit test Usage Add impl and cache-token folding no longer saturate at i32::MAX",
+      "Regression test that a single out-of-range row does not fail enumeration of other sessions"
+    ],
+    "unknowns": [
+      "No assignee despite needs_assignment policy",
+      "No maintainer confirmation of preferred fix scope (widen vs per-row clamp)",
+      "No algorithm-track evidence; track fit for agent_ai_infra unclear"
+    ],
+    "why": "Issue gives a plausible root cause (i32 token fields and saturating decode in session_manager) with code anchors and a real-world reproduction, but the repository policy requires assignment (needs_assignment, assignees empty), which is a materially blocking unknown for actionability. No algorithm-track evidence is supplied and the work is ordinary type-widening/plumbing, not an algorithm contribution."
+  },
   "9cf55d96d0d6ef56f1b0866da54e70052dbacf2bb4098551110b33218b27bfaa": {
     "confidence": 0.8,
     "contradictions": [
@@ -170940,6 +170974,40 @@
       "Whether PR #56635 already resolves the reported symptom"
     ],
     "why": "Issue reports a concrete, reproducible-in-production degeneration on GLM-5.3-Flash FP8 with a build A/B delta, and a maintainer (ZJY0516) explicitly attributes it to tool-call/vLLM frontend parsing. That is a concrete mechanism (frontend tool-call parsing) with code anchors in the parser (glm45.rs) and a plausible reference-vs-implementation validation path. However, the reporter could not produce a standalone synthetic repro, and the open PR #56635 already targets the same frontend tool-call parsing with no tests, so the marginal value depends on adding root-cause coverage or regression tests."
+  },
+  "f7e2770c9547c7d8d9f378e2ef7aab41a28a2862dd467c907040d1206c3ae140": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate scored 10/actionable while actionability_evidence reports root_cause_signal=false and open PR #17074 already addresses the same behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/protocols/openai/tools.rs: keep tool-call parsing/jail active when request has no `tools`",
+      "Add regression test for no-tools request with prior tool_calls history"
+    ],
+    "risks": [
+      "Duplicate of open PR #17074",
+      "Behavior change could affect requests legitimately expecting raw content",
+      "No confirmed root cause in supplied evidence"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's exact 4-message request against MiniMax-M3 with --dyn-tool-call-parser minimax_m3 and assert tool_calls + finish_reason=tool_calls",
+      "Add unit test in tools.rs covering empty/absent tools with prior tool_calls history"
+    ],
+    "unknowns": [
+      "Whether PR #17074's 83-line change already fixes the no-tools parsing path",
+      "Exact code location of the tools-gated parsing condition",
+      "Maintainer preference on jail behavior when tools absent"
+    ],
+    "why": "Issue gives a concrete reproduction and expected/actual behavior for MiniMax-M3 tool-call parsing when no `tools` field is present, but supplied evidence explicitly lacks root-cause coverage and there is an open PR #17074 already targeting the same behavior with no tests. Whether that PR already covers the fix is unresolved, which materially determines whether independent code work is actionable."
   },
   "f7e3f9d6a9f0be4e6395135f2d7b0fd83ead41d9a0fb4aafafd5eede91ebcad6": {
     "confidence": 0.85,
