@@ -102518,6 +102518,47 @@
     ],
     "why": "The issue gives a clear root cause (Watsonx pass-through body key model_id is never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied duplicate assessment shows an open PR #41470 that directly references this issue, overlaps the same code path (litellm/proxy/auth/auth_utils.py), and matches the distinctive terms model_id and virtual_key. That unresolved coverage question determines whether independent code work is actionable, so the evidence is materially incomplete."
   },
+  "967f00d50fb69d35b46d3014cd217dca1af343cc2c11578951c3464d83306206": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body says 'I did not run anything to confirm the allocation' while presenting detailed measurements as evidence",
+      "Author on macOS where failure passes, so cannot reproduce the refusal"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "build_meta_skeleton: build fused expert parameters directly on meta",
+      "errors.py: add DefaultCPUAllocator / not enough memory entry",
+      "optional early refusal with commit/RAM-plus-swap check"
+    ],
+    "risks": [
+      "Root cause asserted from code reading, not reproduced by author",
+      "Open maintainer PR #2107 touches same files; overlap boundary unclear",
+      "include_buffers redirect could move large buffers to meta and break runtime materialization",
+      "No hardware to reproduce the actual refusal"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "CPU-only tiny deepseek_v3 twin with one fused tensor >= 1 MiB; wrap torch factory calls to record shape/dtype/device",
+      "Assert no CPU request >= threshold, all expert params is_meta, rotary/e_score_correction buffers not meta",
+      "Run build_streamed_model on twin",
+      "Mutation check: revert fix, test must fail naming (num_experts, 2*intermediate, hidden)",
+      "errors.py exact-text test for DefaultCPUAllocator plus CUDA still mapping to GPU entry"
+    ],
+    "unknowns": [
+      "Whether PR #2107 already fixes or covers the fused-expert CPU allocation",
+      "Whether the allocation actually occurs on the target hardware (no reproduction by author)",
+      "Maintainer preference on rebuild-vs-refuse for large buffers"
+    ],
+    "why": "Issue describes a concrete mechanism (fused MoE expert tensors allocated on CPU before init_empty_weights moves them to meta) with code anchors and a detailed acceptance test, but the author explicitly states they did not run anything to confirm the allocation, and the reporter is on macOS where the failure does not reproduce. The only measurements come from a #2107 reviewer's scaled twins, not from the issue author. Additionally, an open maintainer-owned PR #2107 overlaps the same code paths (stream_setup.py, layer_stream_runtime.py) and its coverage boundary versus this issue is unresolved."
+  },
   "967f118ac58cd696a5b5385d141ce15de766b77a24b8704c59d4c2ce98d12f1a": {
     "confidence": 0.7,
     "contradictions": [
@@ -148452,6 +148493,43 @@
       "Whether the fix belongs in vLLM or upstream flashinfer."
     ],
     "why": "Issue describes a plausible rank-0-only autotune cache deadlock with logs and code anchors, but a contributor comment claims it is likely covered by PR #55671, and the supplied duplicate assessment reports no related PRs. This unresolved coverage contradiction determines whether independent code work is actionable."
+  },
+  "d8ecd83448f68aa2c81d2809de41951ae729c07842c6e4f067d3f0cc813e3b28": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Bot comment labels the report as feature/usage question, while the issue body supplies a concrete bug reproduction with root-cause anchors"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/agentscope/app/_service/_index_worker.py: bounded retry/backoff for recognized transient DB errors or recoverable lease state",
+      "src/agentscope/app/storage/_sql/_storage.py: recovery scan predicates or retry/reindex storage support",
+      "src/agentscope/app/_router/_knowledge_base.py: optional explicit retry/reindex endpoint"
+    ],
+    "risks": [
+      "Overlap with open PRs #3171 and #3397 on _index_worker.py may cause merge conflicts or duplicated effort",
+      "Retry policy could mask persistent errors or loop indefinitely if not bounded",
+      "Maintainers may prefer explicit retry API over automatic retry, or vice versa"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's fault-injection script: competing 7s write transaction, assert document ends in recoverable state or is retried rather than terminal error",
+      "Regression test that sweeper enqueues a document after transient lock recovery",
+      "Test that malformed files and persistent config errors still terminate without infinite retry",
+      "Test that lease ownership checks are preserved during retry"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer automatic bounded retry versus an explicit retry/reindex API",
+      "Whether PR #3171 or #3397 already covers the transient-lock recovery path in their implementations"
+    ],
+    "why": "Issue provides a deterministic reproduction with real SQLite storage, worker, and sweeper, showing a transient lock error is persisted as terminal 'error' and excluded from both recovery scans; code anchors identify the worker error sink and sweeper predicates. Two open PRs (#3171, #3397) overlap the worker path but address different triggers (shutdown lease clearing, stale-worker overwrite), and the issue explicitly distinguishes them, so no confirmed duplicate coverage exists."
   },
   "d8fe1f2dee8fff039b5141099e4385475dd8b8715adec67c1149ef6b94b5a2f3": {
     "confidence": 0.8,
