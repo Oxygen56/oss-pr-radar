@@ -1974,6 +1974,40 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug in the SGLang streaming detokenizer. However, multiple open PRs (e.g., #10344, #12562, #12820) overlap semantically with the same code path, and the deterministic gate requires HUMAN_REVIEW. The issue itself is a bug report with a proposed fix, not a PR, and the maintainer has not confirmed assignment or design preference. Given the overlapping PRs and the need to compare implementation boundaries, a new clean candidate cannot be confidently started without maintainer input."
   },
+  "03d24ce791b9312407c2790e0bbe216dffba48f196afe2b48dc8d38b2ba1b5e5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Bot comment says duplicate of #49895 with PR #57470 as the fix, while open_pr_assessment marks #57470 as keyword-overlap-only and non-blocking"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "TUI clipboard image paste path on WSL (fallback to Windows clipboard via powershell.exe)",
+      "Error/toast surfacing instead of silent failure"
+    ],
+    "risks": [
+      "Work duplicates open PR #57470 and open issue #49895",
+      "Two distinct causes (WSLg Wayland socket vs missing Windows interop fallback) may be conflated",
+      "No confirmed code anchor in the paste path"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on WSL2 Debian: screenshot to Windows clipboard, Ctrl+V in TUI, assert image attachment appears",
+      "Regression test for clipboard backend selection when XDG_RUNTIME_DIR/Wayland socket is unavailable"
+    ],
+    "unknowns": [
+      "Whether #49895/#57470 already fully cover this exact regression",
+      "Which code path in the TUI handles clipboard image paste and where it regressed between 1.3.x and 2.1.2",
+      "Whether the WSLg Wayland socket failure is the actual root cause or a separate issue"
+    ],
+    "why": "The issue reports a WSL2 clipboard image paste regression, but the bot comment identifies it as a likely duplicate of open issue #49895, which is already covered by open PR #57470 proposing the same WSL powershell.exe fallback fix. The candidate's own duplicate assessment scored that PR as keyword-overlap-only, contradicting the bot's direct duplicate claim. Root cause is also unestablished: the report itself notes the WSLg/Wayland socket failure may be a separate factor, and no code anchor in the TUI paste path is identified."
+  },
   "03e6b398ffaf18ec0c8c58a07397a3af2d829f329758c3a15834aaa5630d52a7": {
     "confidence": 0.8,
     "contradictions": [
