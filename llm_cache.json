@@ -5550,6 +5550,42 @@
     ],
     "why": "Issue describes a concrete race in DynamicSubscriber::start_zmq cleanup, but an open PR #15768 already directly overlaps the same file and code identifiers with a fix, and the supplied evidence marks duplicate status as human_review_required. Whether independent implementation space remains is unresolved, which materially affects actionability."
   },
+  "08e733899842768b408d44da7fa6bbb90426059d2875b87087fe5e30d55d9ea7": {
+    "confidence": 0.72,
+    "contradictions": [
+      "open_pr_assessment lists PR #50346 as MERGED but also as a dependency/wait reason; the issue explicitly frames this as the next increment after that merge, so it is a base dependency rather than a covering fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/commands/handlers/upgrade.ts: map curl exit code 23 / ENOSPC stderr to a plain-language disk-full message naming $TMPDIR",
+      "optional preflight free-space check before download",
+      "packages/cli/test/fixture/upgrade.ts: regression fixture for exit-23 stderr"
+    ],
+    "risks": [
+      "Maintainers may prefer preflight-only or message-only approach",
+      "Over-broad error translation could mask genuine permission/network failures",
+      "Merged PR #50346 already changed this path; must build on it without regressing stderr surfacing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that feeds curl exit 23 / 'Failure writing output to destination' stderr and asserts the translated disk-full message",
+      "Run targeted CLI upgrade unit tests and static checks",
+      "Manual repro: fill /tmp tmpfs, run `opencode upgrade`, confirm actionable message; free space and confirm success"
+    ],
+    "unknowns": [
+      "Whether maintainers want a preflight disk-space check in addition to error translation",
+      "Exact free-space threshold to require for the ~200 MB tarball"
+    ],
+    "why": "The issue provides a deterministic reproduction (fill /tmp tmpfs, run `opencode upgrade`), a concrete expected-vs-actual pair, and code anchors (upgrade.ts, curl exit 23 / ENOSPC). The prior merged PR #50346 only surfaced raw stderr; this issue targets the remaining gap of translating curl exit 23/ENOSPC into an actionable message and optionally a disk-space preflight. This is a CLI/UX error-translation change, not an algorithm contribution, but the track is agent_ai_infra, so the algorithm-evidence requirement does not apply. Root cause and validation path are established."
+  },
   "08f8b7524ea516cc25e70a6be92e7d4dc8998e15d1ad0a3ee4625c5cee7bee70": {
     "confidence": 0.8,
     "contradictions": [],
@@ -20275,6 +20311,41 @@
       "Whether the private Ink layout-listener dependency is acceptable to maintainers"
     ],
     "why": "The issue reports a real commit-phase layout feedback loop in VirtualizedList, and the reporter supplies a deterministic unique-key regression that still fails with #11743 applied and passes with the proposed fix. However, the supplied evidence leaves the duplicate/coverage question unresolved: triage states this is 'very likely the same defect as #11500' whose confirmed driver is duplicate history-item keys, and the reporter explicitly concedes the fixture 'does not by itself prove that the original field crash was initiated independently of the duplicate-ID driver.' PR #11761 (draft, same VirtualizedList paths) is flagged as semantic_overlap_requires_review with no direct issue link, and #11565 has already merged as Ink-level defense in depth. Whether a distinct, still-actionable code change remains is therefore not settled by the supplied facts."
+  },
+  "208ddca10930266d928ed14f287cc33970e67707bb3af04425934eba9a14079f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body cites workflow run #917 while recent comments cite runs up to #926, indicating recurring failures without a single identified cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pyproject.toml dependency/version constraints",
+      "type-check or lint fixes in affected modules"
+    ],
+    "risks": [
+      "Fixing the wrong job without workflow logs",
+      "Duplicating open PR #5815 which already addresses static checks",
+      "Broad dependency bumps causing unrelated breakage"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto to reproduce the failing job",
+      "Add a targeted regression test once the specific failing check is identified"
+    ],
+    "unknowns": [
+      "Which specific job (static analysis vs tests) failed and its error output",
+      "Whether PR #5815 already resolves the current failure",
+      "Whether the failure is a dependency-version issue or a code issue"
+    ],
+    "why": "The issue is an auto-generated 'upgrade checks failing' report with no identified failing job, no specific error, and no root cause. It only lists generic possible causes (ty, ruff, MCP SDK). No concrete code surface or reproduction is established, and an open PR #5815 already covers the static-check fix with 24 test files, so the actionable gap is unclear."
   },
   "209261a28295224232514f4a4b5d16bb2fc2bac8e32a169f6453b9a9e11a6fea": {
     "confidence": 0.85,
@@ -51127,6 +51198,41 @@
     ],
     "why": "Issue provides a precise, reproducible bug with clear root cause: LiteLLM's Bedrock streaming path swallows upstream ValidationException, causing infinite zero-byte hang. Expected behavior is well-defined: translate thinking format for adaptive-only models and surface upstream errors. No competing PR addresses this; existing PRs are unrelated."
   },
+  "4d948c274db6b42efe6ffa8b7f65b6fc22d779b8221f73bc1794f419ae3a487b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims top-level aliases exist for namespaced MCP tools; maintainer bot states Code Mode does not create such aliases",
+      "Issue attributes crash to core alias unwrap; bot attributes it to the local plugin returning a non-v2 result object"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Code Mode tool-result unwrap guard (only if alias path is confirmed to exist)",
+      "Plugin tool execute contract validation/error messaging"
+    ],
+    "risks": [
+      "Fixing a non-existent alias path would add dead code",
+      "Changing result-unwrap semantics could break legitimate plugin tools",
+      "The real defect may be in the user's local plugin, not the repository"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reporter's mnemonic-memory.ts plugin disabled to confirm whether tools.mem_search disappears from the catalog",
+      "Add a failing test for a plugin tool whose execute returns a plain string vs { content, output, metadata }"
+    ],
+    "unknowns": [
+      "Whether tools.mem_search is registered by the local plugin or by core",
+      "The plugin's execute return value and schema definitions",
+      "Whether the alias path exists at all in v2.0.28"
+    ],
+    "why": "The issue's central premise (that Code Mode creates top-level aliases for namespaced MCP tools) is contradicted by the maintainer bot's analysis and a MEMBER's clarifying question; the crash is more likely caused by the reporter's local plugin returning a non-v2 result. The root cause and even the existence of the claimed code path are unresolved."
+  },
   "4d98bd92f5a78f7d873d29efefb9f0a086b25cf0d45c56d72492f1748e3e9cc3": {
     "confidence": 0.85,
     "contradictions": [
@@ -78861,6 +78967,40 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports an AttributeError in ParallelLMHead but lacks a minimal reproduction script, model config, or stack trace beyond the error line. The algorithm relevance is inferred from environment variables and model type, but the root cause is not clearly identified. Potential duplicate issue #52407 shares stack signatures but not the specific error, so overlap is uncertain."
   },
+  "7344e9d040d9e059fccbd8008d47a56f459630832cf34054b1c5bf5214d1b7e5": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims sync silently skipped/swallowed; bot suggests sync succeeded and models were filtered out"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Copilot model sync/filtering path (model_picker_enabled handling)",
+      "Possibly add github-copilot/auto model support"
+    ],
+    "risks": [
+      "May duplicate existing work in #55960/#34644",
+      "Root cause could be plan-specific filtering rather than a code bug",
+      "Fix may require product decision on exposing auto-only models"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with an auto-only Copilot account and confirm zero models exposed",
+      "Add regression test asserting models with model_picker_enabled:false are surfaced or an auto model is offered"
+    ],
+    "unknowns": [
+      "Reporter's Copilot plan type",
+      "Count of models with model_picker_enabled:true in the account's /models response",
+      "Whether #55960 already covers the fix"
+    ],
+    "why": "The issue reports a silent Copilot model sync failure, but the maintainer bot's reply identifies a likely cause (all models filtered out via model_picker_enabled:false on auto-only plans) and explicitly asks the reporter for plan type and model_picker_enabled counts. The root cause is not yet established, and the candidate's own actionability evidence shows root_cause_signal=false. Related issues #57955/#34644/#51928 suggest this may be a known/covered problem."
+  },
   "7348b4e46b752491b196c5bb4379f7ea13473611641530e3b39914b450bf0184": {
     "confidence": 0.82,
     "contradictions": [],
@@ -83890,6 +84030,35 @@
       "Exact code path causing unbounded allocation not yet identified"
     ],
     "why": "Issue provides a detailed, reproducible memory leak with clear root-cause hypothesis (auto agent-team initialization) and concrete validation path (reproduce with --no-teams flag). No competing open PR or duplicate found."
+  },
+  "7aeef35d8ecd4bfa0cbb38aeb95bb403098759b7f72824c2c023b3c0193d7885": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate scored 10 and labeled WAIT_MAINTAINER, but evidence shows a docs-only example fix with an existing open PR, not an algorithm/infra contribution"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "content/cookbook/05-node/80-local-caching-middleware.mdx: make getCachedResult/updateCache async, await safeParseJSON, await helpers in wrapGenerate/wrapStream, async flush"
+    ],
+    "risks": [
+      "Open PR #23855 already targets the same docs fix, risking duplicate work",
+      "Scope is documentation only; no SDK runtime behavior change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the issue's safeParseJSON Promise assertion snippet to confirm sync misuse",
+      "Extract and transpile the Middleware block, isolate file cache in temp dir, assert 1 underlying generate and 1 stream call for two identical requests after fix"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the docs fix via PR #23855 over a competing submission"
+    ],
+    "why": "The issue is a documentation cookbook example bug (missing await on safeParseJSON in a .mdx recipe), not an algorithm or runtime defect. Track is agent_ai_infra, but the change is a docs/example fix with no training objective, model mechanism, kernel, quantization, or evaluation methodology. Root cause is clear and a reproduction exists, but the contribution is low-value docs plumbing already covered by open PR #23855."
   },
   "7b139cd5e7bb7794c8fc144a33a692fa55819fdcd19521830e7840ad0463a684": {
     "confidence": 0.55,
@@ -108685,6 +108854,38 @@
       "Whether PR #16685 will be merged and affect the same code paths"
     ],
     "why": "Issue provides exact root cause: #16657 changed default model but missed i18n string in all locales. Acceptance criteria include a drift-prevention test. Clear repro steps and code anchors."
+  },
+  "9e8abe668e2eed7fee033de47962afb82d4db4393227daf5dfa7d4629b775f20": {
+    "confidence": 0.72,
+    "contradictions": [
+      "open_pr_assessment marks root_cause_coverage false while PR title targets the same MiniMax-M3 jail behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/protocols/openai/tools.rs: keep tool-call parsing active when request omits `tools`",
+      "MiniMax-M3 parser path: emit `tool_calls` and `finish_reason: tool_calls` instead of raw text in `content`"
+    ],
+    "risks": [
+      "Overlapping open PR #17074 may already implement the fix; must diff before duplicating",
+      "Broadening parsing when `tools` absent could alter behavior for models that legitimately emit raw text",
+      "Maintainer design preference on the jail/parser gating not confirmed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test replaying the issue's 4-message request without `tools` and assert `tool_calls` contains `list_skills` with `finish_reason: tool_calls`",
+      "Run targeted unit tests for the openai tools protocol module and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #17074's implementation is correct and mergeable, or whether a competing test-backed fix is needed"
+    ],
+    "why": "Issue gives a concrete expected/actual pair and ordered reproduction for MiniMax-M3 tool-call parsing when no `tools` field is present; code anchors (`tools`, `content`, `tool_calls`, minimax_m3 parser) point to a plausible parsing gate. Open PR #17074 covers the same area but lacks regression tests, leaving a concrete gap (add failing test + fix). No blocking unknown: reproduction and validation path exist."
   },
   "9e99a7ccf2ecd474e269d58fd860cbd4572c43fbbc9a39224cc6c45a584d2bff": {
     "confidence": 0.85,
