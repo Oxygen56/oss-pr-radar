@@ -36268,6 +36268,46 @@
     ],
     "why": "Issue reports a real commit-phase layout feedback loop in VirtualizedList (measure -> heights -> offsets -> window/anchor -> remount -> measure), and the reporter supplies a deterministic unique-key regression that still fails with #11743 applied and passes with the proposed fix. However, the triage bot identifies this as very likely the same defect as #11500 whose confirmed driver is duplicate history-item keys, and the reporter explicitly concedes the regression is not a replay of the production notification/history pipeline and does not prove the field crash was initiated independently of the duplicate-ID driver. Duplicate/merged-fix coverage is therefore unresolved, and the candidate's own duplicate status is semantic_overlap_requires_review against open PR #11761 (draft, same VirtualizedList paths) plus maintainer-owned #11743 and #9466."
   },
+  "374466a579d4184e7a2620e35984dbc70dff0997d6673c3353bd3a2dd6e0f787": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue states no controlled Python-vs-Go benchmark yet frames the change as restoring lost fast paths, so the performance delta is asserted from source comparison rather than measurement"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/agent/component/agent.go: allow first-pass citation when chunks exist instead of unconditionally withholding deltas",
+      "internal/agent/component/agent.go: bound or conditionally skip the serial applyCitationGrounding second call",
+      "internal/server/api/server.go: make Agent HTTP/SSE write budgets configurable",
+      "citation prompt/validation: emit and validate retrieved IDs, repair only on failure"
+    ],
+    "risks": [
+      "Changing first-pass citation semantics may alter citation correctness or marker format",
+      "Streamed output replacement/finalization semantics are undefined if grounding runs after partial output",
+      "Performance claims are from two historical samples without controlled benchmark, so speedup magnitude is unproven",
+      "Overlap with #20852 streaming visibility work could cause duplicate or conflicting changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: cite=true with pre-retrieved chunks emits first-pass deltas rather than buffering",
+      "Unit test: cite=true with empty retrieval takes no_chunks path without suppressing output",
+      "Regression test: grounding failure preserves completed answer with citation-incomplete status; cancellation still cancels",
+      "Integration test: non-stream and SSE requests record model-call count, per-call duration, first visible answer, final completion",
+      "Citation-quality test: emitted IDs map to retrieved evidence; invalid citations trigger repair only"
+    ],
+    "unknowns": [
+      "Whether #20852 already covers the first-pass suppression change",
+      "Maintainer preference between first-pass citation and bounded second-pass grounding"
+    ],
+    "why": "Issue pins concrete Go source anchors for two distinct costs: first-pass delta suppression in emitAgentModelStreams when cite=true, and a serial second model call in applyCitationGrounding after generation. It also contrasts with Python v0.27.2 fast paths that cite during first generation. Reproduction shape (Begin->Retrieval->Agent->Message, cite=true, no tools) and validation path (latency plus citation-quality regression, empty retrieval, grounding failure, disconnect) are concrete. Root cause is identified at code level, though the issue itself notes no controlled same-model benchmark, so the performance magnitude is not fully quantified."
+  },
   "3745213ee29fded825c8fbbe4465a4933d6fec506ebad659bb3f01d354e7e0cf": {
     "confidence": 0.8,
     "contradictions": [],
@@ -59784,6 +59824,41 @@
     ],
     "why": "The issue provides a detailed root cause analysis with code anchors and a concrete reproduction path. The recent comments indicate that the primary bug (Bug 1) may already be fixed in the current staging branch, but the issue also contains additional distinct bugs (Bug 2 and Bug 3) that remain unaddressed and are actionable. The evidence supports a clear validation path for these remaining bugs."
   },
+  "58ca735b334bb802c15b0e2df8362854a4fb968a3252ceb75eca7581faee7478": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: request construction to select Responses API when tools+reasoning enabled, or pass reasoning_effort none",
+      "response parsing and streaming/tool-call continuation for Responses API",
+      "pre-execution validation of unsupported model/endpoint/reasoning combinations with actionable error"
+    ],
+    "risks": [
+      "Responses API adaptation touches request construction, response parsing, streaming, and tool-call continuation, widening blast radius",
+      "Exact effective reasoning_effort in the report was not captured, so the triggering configuration must be confirmed",
+      "Successful execution with reasoning_effort none is unconfirmed in the reporter's deployment"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: gpt-6-luna with tools and reasoning enabled routed through Responses API succeeds",
+      "Regression test: gpt-6-luna with tools and explicit reasoning_effort none through Chat Completions succeeds",
+      "Unit test: unsupported combination is rejected before execution with actionable guidance",
+      "Reproduce original HTTP 400 against a mocked OpenAI chat endpoint to confirm failure then fix"
+    ],
+    "unknowns": [
+      "Exact effective reasoning_effort value used in the failing run",
+      "Whether reasoning_effort none actually resolves the failure in this deployment"
+    ],
+    "why": "Issue provides a concrete HTTP 400 error from OpenAI, an expected/actual pair, a named Go adapter anchor (internal/entity/models/openai.go), and a clear incompatibility between function tools and reasoning_effort on /v1/chat/completions for gpt-6-luna. The fix path (Responses API adaptation or explicit reasoning_effort none plus pre-validation) is actionable, though the exact effective reasoning configuration was not captured."
+  },
   "58e1888f242d7bbcfb971818bbcbc5e16d939d47b07dfd94e8a6090bb70a2161": {
     "confidence": 0.85,
     "contradictions": [],
@@ -68700,6 +68775,45 @@
       "Whether PR #8241 already fixes the Ulysses global or only AutoTP's; need to inspect PR changes to confirm coverage."
     ],
     "why": "Issue identifies a concrete distributed-training invariant violation: process-wide global for Ulysses KV head count causes silent corruption when multiple models with different head counts run in the same process. Root cause is clearly located in deepspeed/sequence/layer.py, with a suggested fix mirroring an existing per-model fix in PR #8241. Validation path includes a specific regression test with two DistributedAttention instances."
+  },
+  "660e11b77dfde714d9f2eb235261f8523012a3ad69adf026a5e72b41fac02276": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/services/chatCompressionService.ts: replace raw usesMainModel equality at the cache gate with the existing sideQueryOnMainRoute predicate",
+      "chatCompressionService.ts: update the 'distinct compaction model' diagnostic reason to follow the normalized predicate",
+      "Add regression tests covering bare ID, qualified same-route ID, same-endpoint pin, and genuinely different model/auth/endpoint"
+    ],
+    "risks": [
+      "No live provider or interactive E2E run was performed; cache-hit/latency/cost savings are unmeasured and should not be claimed",
+      "Must not broaden URL normalization or malformed-selector handling beyond the existing predicate",
+      "Must not treat a distinct route's failure fallback as cache-sharing eligibility",
+      "Maintainer design preference on gate-vs-picker fix location is unconfirmed, though triage bot endorsed the gate fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test: same-route qualified selector (openai:test-model) with provider-reported prompt-token anchor should take the shared getBaseLlmClient().generateText path, not runSideQuery",
+      "Add a failing test: same-route with matching NUL endpoint pin should share cache",
+      "Regression: different endpoint pin (openai:test-model\\0https://other.invalid/v1) must remain cold",
+      "Regression: different auth type (anthropic:test-model) must remain cold",
+      "Regression: genuinely different model ID must remain cold",
+      "Preserve existing estimated/missing-usage, insufficient-headroom, disabled-cache, payload-overflow, and shared-request-fallback cases"
+    ],
+    "unknowns": [
+      "No maintainer pre-approval or design confirmation, though triage bot marked status/ready-for-agent and endorsed the minimal scope",
+      "Live-provider cache behavior unverified, but the issue explicitly scopes the claim to request-path eligibility rather than provider cache guarantees"
+    ],
+    "why": "Issue provides a concrete, source-anchored root cause: the cache gate at chatCompressionService.ts:925 uses raw equality (effectiveCompactionModel === config.getModel()) while the same file already has a normalized sideQueryOnMainRoute predicate that correctly resolves qualified selectors like openai:test-model to the same route. Triage bot statically confirmed every source link, the coverage gap, and the contained blast radius (usesMainModel has three references, all in this gate). A source-level reproduction with a control matrix is supplied, and the fix direction (reuse existing predicate) is minimal and well-scoped."
   },
   "663105daae545fdc073b22a568967854a05c696c4f4c186bb8ce250f6f2de458": {
     "confidence": 0.82,
@@ -106227,6 +106341,40 @@
       "Maintainer design preferences or existing plans for the wake mechanism."
     ],
     "why": "The issue provides a detailed, evidence-backed performance bug with clear root cause (missing event-driven wake) and concrete reproduction steps. It identifies specific code anchors and suggests actionable fixes (event-driven wake, server-side wait primitive, compact kanban_show mode). The track is agent_ai_infra, which is appropriate for infrastructure-level improvements."
+  },
+  "9bd9f5f6f8aa4394bf01f069082eaf0dbbfd217b11683097f740a5ef52124e68": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims no workaround exists, but maintainer comment says pricing_provider field resolves it and a commenter confirms working on main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "cost lookup fallback to base_model provider when provider-prefixed lookup misses",
+      "surface unpriced condition instead of silent null response_cost"
+    ],
+    "risks": [
+      "Fix may already be covered by shipped pricing_provider field",
+      "Open PR #47715 semantic overlap could duplicate work",
+      "Changing provider precedence could alter existing pricing behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Regression test: completion_cost with custom_llm_provider=anthropic and base_model under tencent resolves priced row",
+      "Assert spend row response_cost non-null and spend > 0 for the reported deployment config"
+    ],
+    "unknowns": [
+      "Whether pricing_provider fully covers the reported path or only a subset",
+      "Whether PR #47715 already implements the same fix",
+      "Whether the issue remains open and unfixed on current main"
+    ],
+    "why": "Issue gives a concrete root cause (custom_llm_provider overriding base_model provider in cost lookup, ModelNotMappedError swallowed to null cost) and a reproduction, but a maintainer comment states a configurable pricing_provider field was added and a later commenter confirms it resolves the root cause on main. This materially affects whether code work is still actionable, and the open PR #47715 is only semantic overlap requiring manual comparison."
   },
   "9bebe47865b5c79cb42d0eeac8eb1ae7d9d1a737d3a484322379ff1a02df1375": {
     "confidence": 0.8,
