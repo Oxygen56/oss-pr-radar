@@ -29957,6 +29957,41 @@
     ],
     "why": "Issue reports a severe 100% tool-call failure in Claude Desktop after server-filesystem update, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed; a maintainer fix in Claude Desktop 1.24012.9 is reported, and the issue is in modelcontextprotocol/servers repo, not the client. The candidate lacks a clear code path in this repo and requires maintainer direction."
   },
+  "2d4af80e7cc1fe5c1e2f958438df2e5d4196dc90322e9c4d4aaa5b5a8e8bb7bf": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/agent/component/agent.go: allow first-pass citation when references exist instead of unconditionally withholding deltas",
+      "internal/agent/component/agent.go: bound/repair-only citation grounding rather than always regenerating the full answer",
+      "internal/server/api/server.go: make Agent HTTP/SSE write budget configurable and consistent",
+      "Add stage/progress events and model-call/token/TTFT instrumentation"
+    ],
+    "risks": [
+      "Citation quality regression if grounding is dropped rather than validated",
+      "Streaming replacement/finalization semantics when output already emitted",
+      "Absolute timings in the issue are from a modified local branch and are not a controlled benchmark"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test emitAgentModelStreams with cite=true and no chunks: assert first-pass deltas are not withheld",
+      "Unit test applyCitationGrounding: assert no second full-generation call when first-pass citations validate",
+      "Regression test that grounding failure preserves completed answer with citation-incomplete status while cancellation still cancels",
+      "Controlled same-model/same-data run comparing cite=true vs cite=false and Go vs Python fast path, reporting repeated distributions"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated for single-pass vs bounded-grounding approach",
+      "Whether #20852 already covers the streaming-visibility portion of this report"
+    ],
+    "why": "Issue pins exact rc2 source locations for both costs: first-pass suppression in emitAgentModelStreams (agent.go L398-453) and the serial second grounding call in invokeNow/applyCitationGrounding (L512-598, L1071-1111), plus the 180s API WriteTimeout. It contrasts these with concrete Python v0.27.2 fast paths (agent_with_tools.py L226-358, llm.py L364-367). Reproduction steps and a controlled regression matrix are supplied, and the only overlapping PR (#21313, parser feature) has no code-path or mechanism overlap."
+  },
   "2d57064ed9bdbe11c1d2fa64e89830206b36435c7899e45afee14f23ea594fa5": {
     "confidence": 0.55,
     "contradictions": [
@@ -38568,6 +38603,43 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports a user-visible bug in ACP child process spawning, but maintainer triage and collaborator analysis indicate the reported failure cannot originate from the installed version's own entry; the root cause is likely environment skew (stale entry, QWEN_CLI_ENTRY, or managed update pointer). The reporter's latest comment provides environment details but does not resolve the discrepancy between QWEN_CODE_CLI and actual execution path. The maintainer has requested more information and the issue is labeled status/need-information. The gate decision is HUMAN_REVIEW, and there is no maintainer approval or active investigation. The candidate is not yet actionable without further diagnosis."
+  },
+  "3b0afa576ce4357714360f813e7e2d3f2688ef1b139f9c8fa578a1b96647f9b9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter traces a reproducible 500 at validate_static_credential on v1.105.0 and v1.106.0-rc.4, but commenter choksi2212 reports the per-request credential is honored at every layer on main and cannot reproduce the gate failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py: honor per-request x-mcp-{alias}-authorization in the tools/list static-credential gate",
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: align _resolve_byok_mcp_auth_header with discovery path",
+      "litellm/proxy/_experimental/mcp_server/operations.py: thread per-request header through discovery fan-out"
+    ],
+    "risks": [
+      "Open PR #47866 overlaps the same files and tools_list semantics; a new fix may duplicate or conflict",
+      "Commenter could not reproduce on main, so the fix may target a stale or version-specific path",
+      "Broadening the discovery credential gate could weaken auth checks if not scoped to BYOK/per-request header only"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test: BYOK server (is_byok: true, auth_type bearer_token, no stored credential) with x-mcp-{alias}-authorization header on tools/list returns upstream tools instead of empty list",
+      "Regression test that tools/call by name succeeds after discovery with only a per-request credential",
+      "Confirm the same test passes for plain static-auth servers to isolate the BYOK-specific gap"
+    ],
+    "unknowns": [
+      "Whether the BYOK-specific gate failure still reproduces on current main tip",
+      "Whether PR #47866 already fixes this exact BYOK discovery path",
+      "Exact code state of _resolve_byok_mcp_auth_header vs prepare_mcp_client on main"
+    ],
+    "why": "The issue reports a concrete BYOK tools/list credential-gate failure with reproduction steps and code anchors, but a commenter's empirical matrix on main could not reproduce the gate failure, and the reporter's later retest narrows it to BYOK servers specifically. The supplied evidence is contradictory about whether the root cause still exists on current main, and open PR #47866 overlaps the same code paths (mcp_server_manager.py, operations.py) with semantic overlap on tools_list, so duplicate coverage is unresolved."
   },
   "3b0d6c5b85ec0310546ba349f84c3a6bd39bb579c0205fb8d10efcf6a2aa48a9": {
     "confidence": 0.55,
