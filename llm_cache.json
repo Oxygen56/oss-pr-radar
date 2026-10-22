@@ -140528,6 +140528,40 @@
     ],
     "why": "Issue provides a strong reproduction (traceback, ordered steps, executable repro) and a plausible code anchor (weight_updater.py release_memory_occupation assert), but the supplied evidence explicitly reports root_cause_signal=false and the duplicate assessment flags an open maintainer-owned PR #37932 with overlapping paths/semantics and no direct issue link, plus a potential duplicate issue #44745. Whether the root cause is already covered by #37932 materially determines whether new code work is actionable."
   },
+  "cf061401b95ceb6ebffb44bc6b9b966a23d9c310c94f4d80799f5fbcf6a82c72": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "chat-input-llm-profile-picker.tsx: add Escape keydown handling to close popover and restore focus to trigger",
+      "chat-input-profile-picker.tsx: same Escape handling for agent profile pill",
+      "use-click-outside-element.ts or shared popover hook: optionally centralize Escape-to-close behavior"
+    ],
+    "risks": [
+      "Escape handler may conflict with nested menus or global key handlers",
+      "Focus restoration could misbehave if trigger unmounts",
+      "Scope creep into broader popover refactor"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing component test: open agent profile popover, dispatch Escape, assert popover unmounted, aria-expanded=false, focus on chat-input-agent-profile",
+      "Same test for chat-input-llm-profile popover",
+      "Test Escape while focus is on an option inside the popover",
+      "Regression tests: outside click, trigger toggle, option selection, and Manage agent profiles / LLM Profiles navigation still work"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a shared popover Escape hook vs per-component handlers"
+    ],
+    "why": "Issue gives a concrete, twice-reproduced UI bug with exact testids, expected/actual behavior, and code anchors showing both pill pickers only close via useClickOutsideElement and never handle Escape. Acceptance criteria define a clear reference-vs-implementation validation path (Escape closes popover, aria-expanded false, focus returns to trigger). No open PR or duplicate issue covers it."
+  },
   "cf078cee1341f43fe5d749fb3f6c32e74ab0d039dcf875aff267f143a9a4d8fd": {
     "confidence": 0.55,
     "contradictions": [
@@ -157144,6 +157178,44 @@
     ],
     "why": "The proposal is well-scoped and maintainer-verified: hgctl/pkg/upgrade.go:67 and uninstall.go:66 discard getAllProfiles errors, and getAllProfiles suppresses six discovery failure sites. However, the supplied evidence shows the SPEC is still 'draft' and the maintainer explicitly stated 'Implementation may begin only after Design #4403 is revised and approved', with the workflow blocked on 'SPEC-4402001 must be confirmed or done'. The contributor's latest comment asks maintainers to confirm the amended SPEC and notes implementation is still pending Design/SPEC approval and TASK authorization. This is a materially blocking unknown: whether the carve-out semantics are accepted determines the exact code behavior to implement."
   },
+  "e660293bb0ac26c66adf9074de828e63d6c4df5968af339d528ae70a2ec8323d": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Candidate labels this llm_algorithm with formula/experiment signals, but the issue body describes CLI/config validation and backend wiring only",
+      "Candidate claims root_cause_signal false while issue body provides detailed line-level root causes"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "config/schema.py refusal for eval_gate on mlx/prm/unlearn/moe_lora_routing",
+      "trainer/mlx_optim.py Adafactor relative_step/scale_parameter wiring",
+      "commands/serve.py flag refusal for vllm/sglang/mii",
+      "commands/bench.py backend refusal"
+    ],
+    "risks": [
+      "Overlap with open PRs #2031 and #2030 on serve/bench paths",
+      "Potential duplicate with issue #1884 on train.py flag dropping",
+      "Work is plumbing/validation, not algorithm mechanism, so out of track scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Regression test asserting eval_gate is refused at config load for task=prm",
+      "Recording mlx.optimizers stand-in asserting relative_step=False for adafactor",
+      "CLI test asserting serve exits non-zero naming dropped flags on vllm"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the remaining two sites in scope for algorithm-track contribution",
+      "Whether #1884 already covers the train.py flag-dropping path"
+    ],
+    "why": "Issue #1811 is a multi-site CLI/config plumbing bug (serve flags, bench backend labels, unsloth quantization, Liger gating, eval_gate wiring, MLX Adafactor defaults). Despite the llm_algorithm track label, the work is config/CLI validation and backend wiring, not a training objective, kernel, quantization method, or evaluation methodology. Two of six sites are already fixed (#1946, #1947), two have open PRs (#2031, #2030), and the remaining two are ordinary config-refusal/wiring tasks. This is covered or low-value for the algorithm track."
+  },
   "e6651c0605472c2f2dfda08111e5e00e0fcb562259be8183715b0a60b9e242d1": {
     "confidence": 0.85,
     "contradictions": [
@@ -158581,6 +158653,39 @@
       "Whether maintainers prefer the proper fix (A) or defensive fix (B/C); whether existing PRs already address the root cause."
     ],
     "why": "Issue provides a detailed root cause analysis with specific code anchors and a clear reproduction path. The bug is user-visible (trace mislabeling) and affects a critical path (durable agents). The suggested fix is concrete and testable. No material unknowns block actionability."
+  },
+  "e876f5da55f6c6ca922fe7fdde8b945d501a268dfb2fd30a2f940a6e9ee8a640": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/utils/parse-git-remote-url.ts: decode percent-encoded path segments for the display label while preserving encoded URL construction",
+      "src/hooks/query/use-local-git-info.ts: pass decoded label through without altering link fields",
+      "src/components/features/chat/git-control-bar-repo-button.tsx and conversation-overview-git-section.tsx: render decoded label, keep links encoded once"
+    ],
+    "risks": [
+      "Decoding must not alter link construction or introduce double-encoding",
+      "Malformed percent sequences must be handled defensively to avoid URIError",
+      "Decoding behavior for SSH-style remotes may differ from URL-based parsing and needs coverage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test for parse-git-remote-url.ts with origin https://dev.azure.com/qa-org/Web%20Apps/_git/qa-azure-repo asserting label 'qa-org/Web Apps/qa-azure-repo' and link unchanged",
+      "Add regression test asserting no double-encoding (%2520) in repository and branch links",
+      "Add test for malformed escape (%E0%A4%A) falling back to raw text without throwing",
+      "Add tests for Azure SSH remote and GitHub/GitLab remotes with encoded characters",
+      "Run targeted package unit tests and static checks"
+    ],
+    "unknowns": [],
+    "why": "Issue pinpoints the root cause: parse-git-remote-url.ts derives the repository label from WHATWG URL.pathname, which remains percent-encoded, and the encoded string is passed unchanged to the git control bar and Overview components. Concrete reproduction, expected/actual pair, code anchors, and acceptance criteria (including malformed-escape fallback and link-stays-encoded-once) are supplied, giving a clear reference-vs-implementation validation path."
   },
   "e88773b4a2ceee557ef860584fa4b49bfc2c7d13d8491fb9d609aecda8c34086": {
     "confidence": 0.85,
