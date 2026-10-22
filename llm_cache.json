@@ -9329,6 +9329,43 @@
     ],
     "why": "Issue provides a clear user-visible bug with detailed reproduction steps, expected vs actual behavior, and a specific root cause: cancellation state is not propagated from the original HTTP context to the remote Prefill context, and the SGLang cancellation monitor cannot abort before the first output. The proposed lifecycle fix is concrete and testable."
   },
+  "0ed214c2698beaa8d9cfe4e98f1a07b01118257f3d51f5d5fe4d2f744dea6f33": {
+    "confidence": 0.72,
+    "contradictions": [
+      "preTaskEvidence.codePathsPlan lists web/i18n/resources.ts and RBAC resources.py, which do not match the issue's KnowledgeFS capability_broker.py/resources.py anchors"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/knowledge_fs/capability_broker.py: reduce or restructure the authorization-revision row lock in issue_service()/_lock_authorization_revision() while preserving revocation ordering",
+      "api/controllers/service_api/knowledge_fs/resources.py: bound admission lock/statement/transaction waits within the request deadline and add request correlation ID",
+      "Add real PostgreSQL multi-session tests for concurrent issuance and revocation at reservation/signing boundaries"
+    ],
+    "risks": [
+      "Removing or weakening FOR UPDATE without proving the revocation protocol could allow revocation to miss reserved grants",
+      "Lock ordering changes may introduce deadlocks with control-space, reservation, or foreign-key locks",
+      "The 19 post-admission SSE timeouts are a separate cause and must not be conflated with this fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Multi-session PostgreSQL test: concurrent issue_service() calls for the same space must not serialize on the revision row while still validating authorization",
+      "Revocation test: revoke before reservation, between reservation and signing, and after issuance; assert reserved grants are covered",
+      "Service API disablement test: disablement during in-flight admission must invalidate the grant",
+      "Re-run the 10-RPS/200-VU scenario and report admission vs post-admission latency, original-denominator success rate, late completions, and DB lock waits"
+    ],
+    "unknowns": [
+      "Original lock-holder transactions and why each critical section remained slow are not reconstructed",
+      "Exact one-to-one mapping between the 140 client admission timeouts and 138 late server 200s is unavailable (no request IDs)"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: _lock_authorization_revision() takes FOR UPDATE on a per-(tenant_id, control_space_id) row and updates updated_at on every issuance, serializing same-space admissions. Reproduction steps, observed DB lock waits, and the exact SQL are supplied. Remaining unknowns (original lock-holder transactions, exact per-request reconciliation) are acknowledged and do not block a minimal, protocol-preserving fix plus multi-session PostgreSQL tests."
+  },
   "0edf564f1c6a4fce4d3a0107c0cffac21cad7ba4e8c722c2fbbe008b82e19536": {
     "confidence": 0.8,
     "contradictions": [],
@@ -57161,6 +57198,40 @@
     ],
     "why": "Issue provides a detailed root cause and reproducible bug, but the supplied gate requires HUMAN_REVIEW and the existing PR #36250 has semantic overlap that needs maintainer comparison. The issue explicitly asks for design confirmation on intended behavior, making it premature to start work without maintainer input."
   },
+  "55027fd0e12355103b5161a2d6a0b37fabbcd224aacd7e2ae3d03ff5a035b046": {
+    "confidence": 0.72,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while issue body implies a clear gating cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/protocols/openai/tools.rs: keep tool-call parsing active when request has no `tools` but history contains tool_calls",
+      "Add regression test for no-`tools` request with prior tool_calls returning parsed tool_calls and finish_reason tool_calls"
+    ],
+    "risks": [
+      "Open PR #17074 may already implement the fix; competing work risks duplication",
+      "Behavior change could affect requests that intentionally omit tools",
+      "Root cause location not explicitly confirmed in issue"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's exact request payload against minimax_m3 parser; assert tool_calls populated and finish_reason=tool_calls",
+      "Add unit test in tools.rs covering no-`tools` request with assistant tool_calls history",
+      "Run targeted package tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #17074 will be merged, making independent work redundant",
+      "Exact code path where `tools` presence gates parsing"
+    ],
+    "why": "Issue provides a concrete reproduction (MiniMax-M3 with --dyn-tool-call-parser minimax_m3, request without `tools`), expected vs actual behavior, and code anchors (`tools`, `content`, `tool_calls`, parser minimax_m3). Root cause is plausibly that the tool-call jail/parser is gated on presence of `tools`, but the issue does not explicitly confirm the code location. An open PR #17074 covers the same fix but lacks regression tests, leaving a concrete gap (add tests) that is actionable."
+  },
   "5509783c801535270987c3b304e3690fde1b69a9792ab8e5b5c91949974be88e": {
     "confidence": 0.6,
     "contradictions": [
@@ -104553,6 +104624,42 @@
     ],
     "why": "Issue identifies a deterministic contract mismatch in a live smoke script, with detailed evidence and proposed fixes. However, the gate decision is HUMAN_REVIEW and open PR lookup failed, so duplicate work cannot be excluded. Maintainer approval is absent, and the issue is a bug report rather than a direct code contribution."
   },
+  "988ac8c4d817b81f75d7b99f0e69c1921a113bebd991dbcd6ab747f52d620b6a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body says v2.1.2 row shows only '[Task <description>]' with no agent name; maintainer bot says v2.1.2 renders '<Agent> Subagent — <description>'",
+      "Issue frames it as a regression; bot reframes the model display as a feature request"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "TUI subagent task row rendering to include agent name and effective model",
+      "model resolution path for agent-config-pinned models surfaced to the transcript row"
+    ],
+    "risks": [
+      "Fixing a non-existent agent-name regression if v2 already renders it",
+      "Scope creep into a feature request maintainers have not accepted",
+      "TUI plugin API cannot alter tool-row rendering, so change must be in core TUI"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with two custom subagents pinned to different models and capture the actual v2.1.2 row format",
+      "Add a rendering test asserting the row includes agent name and resolved model for config-pinned agents",
+      "Regression test for explicit model override still showing the model"
+    ],
+    "unknowns": [
+      "Actual rendered row format on v2.1.2 (screenshot/version output requested but not supplied)",
+      "Whether maintainers accept the model-display feature request",
+      "Concrete TUI source location for the task row rendering"
+    ],
+    "why": "The issue claims the v2 TUI row shows only '[Task <description>]' with no agent name, but the maintainer bot's comment states v2.1.2 already renders '<Agent> Subagent — <description>'. The two supplied facts directly contradict each other on the core symptom, and the bot reframes the remaining gap as a feature request (show config-pinned model) rather than a confirmed regression. No root-cause signal is present in the actionability evidence, and the code-path plan lists generic model.ts files unrelated to TUI task-row rendering."
+  },
   "989cb495333f93b52e4bd462d22c5350d280da0735716cbece119eaebfd53907": {
     "confidence": 0.8,
     "contradictions": [
@@ -136123,6 +136230,41 @@
       "Exact plugin-daemon version that should be paired with Dify 1.2.0"
     ],
     "why": "The issue is a user-facing bug caused by a version mismatch between Dify API and plugin-daemon, where the Pydantic enum in the API does not recognize 'structured-output'. The root cause is clear (missing enum value in the API's ModelFeature), but the fix requires updating the enum and ensuring compatibility with the daemon version. The repository has a policy requiring AI disclosure, which conflicts with automated public actions, and the deterministic gate is ALLOW_PRIVATE_WORK, not a full green light. No maintainer confirmation or design approval exists, and the fix may involve cross-component version alignment."
+  },
+  "c7973102c5b3b19f8ed80ede8305c5f3c5cf0b648508f18c3d2ea4946ddba056": {
+    "confidence": 0.55,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Widen Usage/MessageUsage token fields from i32 to i64 in goose-provider-types",
+      "Update session_manager accumulated-token decode to i64 and make per-row decode failures non-fatal",
+      "Adjust saturating_add/Add impls and cache-token folding for i64",
+      "Update desktop message types if they mirror i32 token fields"
+    ],
+    "risks": [
+      "Widening types may ripple into serialization/API contracts and desktop TS types",
+      "Per-row decode degradation could mask genuine data corruption if not logged",
+      "No maintainer design confirmation on i64 vs clamping approach"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test inserting a session row with accumulated_total_tokens > i32::MAX and assert session-list enumeration still returns all rows",
+      "Unit test that Usage/MessageUsage arithmetic no longer saturates at i32::MAX",
+      "Test that a single out-of-range row does not fail the whole session-list query (per-row degradation)"
+    ],
+    "unknowns": [
+      "Repository requires assignment but issue has no assignee, so code work is not yet authorized",
+      "No maintainer confirmation of preferred fix (i64 widening vs per-row clamping)"
+    ],
+    "why": "Issue gives a plausible root cause (i32 token fields and i32::try_from saturation in session_manager) and a concrete reproduction narrative, but the repository policy requires assignment (assignmentRequired=true, policy=needs_assignment) and the issue has no assignees. That unmet assignment requirement is a materially blocking unknown for whether code work is authorized/actionable."
   },
   "c7af80128effde3d6b36a4af9c5ed448b703b5c6d9cca4880fa1c1a64d43259d": {
     "confidence": 0.85,
