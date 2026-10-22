@@ -117504,6 +117504,37 @@
     ],
     "why": "Issue provides a clear root cause (retract only decrements lock refs for radix-owned prefix, leaving KV resident), measured impact (old-weight KV reuse causing logprob difference), and a concrete validation path (instrument prefix matching, compare logprobs). The suggested fix is actionable and aligns with documented retract semantics."
   },
+  "ad8df3bd31f7850003099959403296da7f963ab706cd87c54cd36c275f28b03e": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "scripts/dev-safe.mjs::buildAgentServerCommand emits a litellm constraint through the existing --with mechanism in all four source modes",
+      "__tests__/scripts/dev-safe.test.ts asserts the litellm constraint alongside posthog>=6,<7"
+    ],
+    "risks": [
+      "Constraint must remain compatible with openhands-sdk's litellm>=1.93.0 to avoid unsatisfiable resolution",
+      "Future agent-server/SDK bumps could drop the SDK-side cap and silently re-break tool calling if the launcher guard is not maintained",
+      "Scope creep into mcp>=2.2 migration or litellm/SDK metadata edits is out of scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run __tests__/scripts/dev-safe.test.ts and confirm the new litellm constraint assertion fails when the constraint is removed",
+      "Resolve the pinned agent-server env via uvx and verify `from litellm.responses.mcp.chat_completions_handler import acompletion_with_mcp` imports without ImportError",
+      "Confirm the emitted litellm constraint intersects openhands-sdk's litellm requirement so uvx resolution succeeds"
+    ],
+    "unknowns": [
+      "Exact litellm upper-bound value the maintainers prefer (e.g. <1.106) is not explicitly fixed, though the issue suggests it"
+    ],
+    "why": "Issue body and AI triage establish a concrete root cause: litellm>=1.106 eagerly imports litellm's MCP-gateway path which needs mcp.types.CacheableResult (mcp>=2), but fastmcp's mcp<2 pin forces an incompatible resolution, so every tool-calling request fails with ImportError. Triage narrows the in-scope fix to the launcher: add a litellm constraint via the existing --with mechanism in buildAgentServerCommand, mirroring posthog>=6,<7, with a test assertion in __tests__/scripts/dev-safe.test.ts. A verified workaround (litellm==1.105.2) and a concrete validation path (import litellm's MCP handler under the resolved env) are supplied. No duplicate or merged-fix coverage; the only related PR is keyword-overlap-only and unrelated."
+  },
   "adbae76bb3e4d18d5d698aa9d0fa389dda347f24d2fe1e4cc586c225b92c9802": {
     "confidence": 0.55,
     "contradictions": [
