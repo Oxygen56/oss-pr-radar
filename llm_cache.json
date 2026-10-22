@@ -12981,6 +12981,43 @@
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and host-cache load-back. The reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "14bcc050c819c84b5ff4e3cfd0d287356f3e17aca31bd69c15d9954baadd3862": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports deterministic persistence for hours until reload; maintainer bot reports files picked up within 5-10 seconds without reload in every attempt"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "location build/cache invalidation for skill, command, and config registries",
+      "watcher subscription for late-created .opencode/ and opencode.jsonc paths",
+      "warning when a git-worktree location has zero project-local sources"
+    ],
+    "risks": [
+      "Non-reproducible in maintainer environment; fix may target a setup-specific watcher failure rather than a general cache bug",
+      "inotify watch exhaustion or WSL /mnt filesystem semantics could be the actual cause",
+      "Over-broad cache invalidation could change API behavior beyond the reported symptom"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a linked worktree whose location is built before .opencode/ exists, then write .opencode/commands, .opencode/skills, and opencode.jsonc and query /api/command, /api/skill, /api/config without reload",
+      "Capture /api/debug/location and watcher subscribe/started log lines before and after writing files",
+      "Test on both WSL ext4 and /mnt paths and with low inotify max_user_watches to isolate watcher failure"
+    ],
+    "unknowns": [
+      "Output of /api/debug/location while stuck",
+      "Watcher subscribe/started log lines and WARN/ERROR entries",
+      "Filesystem type (ext4 vs /mnt) and inotify max_user_watches",
+      "Whether the failure persists when the session is opened after checkout completes"
+    ],
+    "why": "The issue gives a detailed expected/actual pair and a concrete recovery path (POST /api/location/reload), but the maintainer bot could not reproduce it across multiple worktree, timing, and filesystem scenarios and explicitly asks for debug/location output, watcher log lines, filesystem type, and inotify limits. Root cause is not established; the report's own control shows discovery works when files exist at build time, but the caching/staleness mechanism is unverified."
+  },
   "14dd75fb9555b0a6fd9d61e49f426c94909025181e841d4da9df64c51bdc0546": {
     "confidence": 0.8,
     "contradictions": [
@@ -41836,6 +41873,39 @@
     ],
     "why": "Issue reports a concrete, reproducible startup OOM: FP8 KV cache sizing omits CUDA graph capture memory (~0.80 GiB), so an accepted config exceeds gpu_memory_utilization. Root cause is localized to profile_cudagraph_memory()/KV cache budget accounting, with a clear validation path (same config with/without fp8, memory accounting before/after graph capture). No duplicate or merged fix found; open PRs are keyword-only overlaps with no code-path or mechanism overlap."
   },
+  "4053ec4802f4b30e74318f4333b1f5f189b909a4253538b311541e922201e225": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/desktop/src-tauri/src/main.rs: stop_runtime before update.download_and_install in install_update and check_updates_silently",
+      "packages/desktop/src-tauri/src/main.rs: wait for daemon and ACP children to exit before installer handoff",
+      "confirmation dialog copy noting open sessions will close"
+    ],
+    "risks": [
+      "Stopping runtime may interrupt active sessions; dialog must warn user",
+      "Orphaned daemon whose parent exited may still hold lock, requiring job-object or startup reaping as follow-up",
+      "Windows-only behavior; macOS/Linux paths must not regress"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on Windows: launch desktop, accept update prompt, confirm installer no longer blocks on node.exe",
+      "Regression: verify stop_runtime is invoked on both update paths and runtime restarts cleanly after update",
+      "Verify no orphaned serve/ACP processes remain after update completes"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fix option 1 vs job-object approach (option 2)"
+    ],
+    "why": "Issue provides ordered reproduction, exact code anchors (main.rs:353-364, 510-517, 871-888, stop_runtime at 647), and a verbatim file-lock reproduction confirming the bundled node.exe is held by live serve/ACP processes during NSIS install. Concrete small fix (stop runtime before download_and_install in both paths) is actionable."
+  },
   "4080e87964de44830c8e58e19321d250df25391ba3df8f1e0216c6133ec8ae5d": {
     "confidence": 0.82,
     "contradictions": [
@@ -69338,6 +69408,43 @@
       "Whether maintainers want LD_LIBRARY_PATH included in the scrub set or only PYTHON*"
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP servers, breaking external Python interpreters. Reporter supplies a minimal reproduction, /proc environ evidence, and a working workaround. Triage bot disputes the AppImage attribution, but the reporter's follow-up provides live /proc evidence and a mount-prefix argument tying the mount to the Qwen AppImage, plus a second leak channel (LD_LIBRARY_PATH) with a reproduction matrix. The underlying request — scrubbing these vars in the MCP child env — is a concrete, testable change in packages/core/src/tools/mcp-client.ts and sanitize-child-env.ts. The remaining dispute is about attribution, not about whether the code change is actionable."
+  },
+  "66b302949961fda3b13027aa1da40cd1124a605e76a002045f6bec3560190986": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue attributes root cause to full-snapshot hook dispatch plus synchronous=FULL SQLite writes, while contributor comment narrows amplification to discarded reasoning-delta hook round-trips; neither is confirmed as the cause of the 5GB/11GB peak"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/utils/hooks.ts: filter onEvent subscription to message-added before requestCapability",
+      "sdk/packages/core/src/hub/server/hub-client-contributions.ts: optional event-type subscription on onEvent contribution",
+      "Reduce per-delta full-snapshot serialization and SQLite event persistence for reasoning deltas"
+    ],
+    "risks": [
+      "PR #14092 may already cover the same root cause, making a new contribution duplicative",
+      "Changing onEvent subscription semantics could break hooks relying on current full-event delivery",
+      "Synthetic proxy measurement does not reproduce the reported Linux memory peak, so fix efficacy is unproven"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Synthetic long reasoning stream: assert capability request count and serialized payload bytes are bounded",
+      "Regression test that filtered hooks still receive message-added exactly once and unfiltered hooks retain behavior",
+      "Reconnect replay and reasoning completion/redaction tests",
+      "Measure hub-events DB growth and log volume over a synthetic stream"
+    ],
+    "unknowns": [
+      "Whether PR #14092 already implements the same fix and should be the vehicle",
+      "Whether maintainers have a preferred design for event-type subscription",
+      "Whether the hook amplification alone explains the reported memory peak or additional leaks exist"
+    ],
+    "why": "Issue reports a real, high-impact memory/IO amplification in the CLI streaming path, and a contributor comment anchors a concrete amplification source (CLI onEvent hook receives full-snapshot reasoning deltas it discards) with a synthetic proxy measurement. However, the supplied evidence does not establish a confirmed root cause for the reported 5GB/11GB peak, and open PR #14092 ('stop streaming events from amplifying memory and SQLite writes') semantically overlaps the same code paths and fix direction without referencing the issue, leaving unresolved duplicate/coverage ambiguity that determines whether new code work is actionable."
   },
   "66bd3ec78ea6a81110625f07ea359ebed173a02dadae328a5b1765dc8e897ff6": {
     "confidence": 0.9,
@@ -140001,6 +140108,39 @@
     ],
     "why": "Issue provides a concrete, ordered reproduction on a two-node heterogeneous cluster, expected-vs-actual behavior, and a clear root cause: tensor-parallel placement splits layers evenly without per-device memory weighting, so the 36 GB node's shard exceeds its usable working set and its runner SIGABRTs in a retry loop while the peer reports misleading JACCL errors. No open PR or duplicate covers it, and the fix surface (placement/sharding weighting plus OOM error classification) is concrete and testable."
   },
+  "cd2b16a9b52674b3ac6b0c823a2ffdf1bf67bab6fbcfa42dcd0fe42fb45699b2": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels this agent/inference/RAG critical path, but the issue is purely a CI/dependency-upgrade failure with no algorithm content"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pyproject.toml dependency constraints (ty/ruff/mcp) or targeted type/lint fixes in affected modules, pending identification of the failing job"
+    ],
+    "risks": [
+      "Broad dependency bump could mask real type errors",
+      "Overlaps with open PR #5815 which already touches 56 files",
+      "Fixing the wrong cause without logs wastes effort"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run `uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto` to reproduce and isolate the failing job before any change"
+    ],
+    "unknowns": [
+      "Which workflow job actually failed (static analysis vs tests)",
+      "The specific error output from the failing run",
+      "Whether PR #5815 already resolves the current failure"
+    ],
+    "why": "The issue is an auto-generated scheduled 'upgrade checks failed' report with no identified failing job, no specific error, and no root cause. It only lists generic candidate causes (ty, ruff, MCP SDK). An open PR #5815 already attempts a broad fix (56 files) but lacks root-cause coverage. Without knowing which check failed and why, code work is not concretely actionable."
+  },
   "cd2e22d30bb162a3c9666d434695f05a564f25ca75a907a0c8e93166b88e46ab": {
     "confidence": 0.9,
     "contradictions": [
@@ -159023,6 +159163,44 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies a runtime crash caused by langgraph-api injecting a private runtime object into factory-visible config, with a minimal repro and three suggested fixes. However, the proposed fix approach (reusing foreign-runtime coercion) needs maintainer confirmation, and the issue is not assigned. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment."
+  },
+  "e818aba89f17f619d61e0fe1edc072df3ebf09ea01bce72c87f6ca160f106d72": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "build_meta_skeleton: redirect large CPU factory requests to meta during from_config, keeping small buffers real",
+      "post-build invariant check: all params on meta, no buffers on meta, with fallback rebuild naming offending buffer",
+      "utils/errors.py: add DefaultCPUAllocator / not enough memory entry after GPU entries",
+      "tests: deepseek_v3 twin factory recorder, build_streamed_model, errors exact-text, mutation check"
+    ],
+    "risks": [
+      "Threshold-based redirect could move a legitimately large buffer to meta; mitigated by post-build invariant and fallback",
+      "Behavioral drift in parameter set, quantised_layer_suffixes, or name_or_path stamp",
+      "Reporter is on macOS and cannot reproduce the refusal; evidence is factory-recorder based",
+      "Open maintainer PR #2152 touches same stream files and may conflict"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "CPU-only tiny deepseek_v3 twin with one fused tensor >= 1 MiB; wrap torch.empty/zeros/ones/full to record shape/dtype/device; assert no CPU request >= 1 MiB under quant=none and nf4",
+      "Assert every expert parameter is_meta and rotary/e_score_correction buffers are not",
+      "Run build_streamed_model on the twin",
+      "Mutation check: revert fix, test fails naming (num_experts, 2*intermediate, hidden)",
+      "errors.py test: format_friendly_error on DefaultCPUAllocator message yields new entry; CUDA OOM still maps to GPU entry",
+      "Fallback test: twin registering a >=1 MiB buffer triggers rebuild-without-redirect and one-line notice"
+    ],
+    "unknowns": [
+      "Whether qwen4_exp or other fused-expert families still require large CPU requests after the fix (explicitly deferred to a new issue)"
+    ],
+    "why": "Issue pins a concrete mechanism: init_empty_weights() only patches factories when include_buffers is true, so fused-expert nn.Parameter(torch.empty(...)) tensors are allocated on CPU before being moved to meta; code anchors (layer_stream_runtime.py build_meta_skeleton, stream_setup.py, modeling_deepseek_v3.py, errors.py) and a factory-recorder validation path are supplied. Maintainer confirmed the plan and ownership, and the open PR #2152 overlaps only semantically (stream_recompute) without direct code overlap, so it does not cover this root cause."
   },
   "e81d18c0ff31fa299bfd98be67cc38ee75971616fc0e4583a2c8f64bc84a7151": {
     "confidence": 0.8,
