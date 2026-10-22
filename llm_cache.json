@@ -21291,6 +21291,40 @@
     ],
     "why": "Issue reports a concrete regression in Buzz's SDK-ts harness where permissionMode defaults to 'dontAsk', overriding the CLI flag and denying all tool calls. Multiple users confirm the symptom. However, the root cause is inferred from user analysis, not confirmed by maintainers, and the open PR/related issue lookup timed out, so duplicate work cannot be excluded. The deterministic gate is HUMAN_REVIEW, and the track is agent_ai_infra, not llm_algorithm, so the algorithm evidence requirement does not apply."
   },
+  "21c283fc830e290906052e7caba6028ebd2fe9b4beb769993d5bf0ee4b6d272b": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body proposes a specific root cause in _replay_interceptor.py and _resume.py"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/google/adk/workflow/utils/_replay_interceptor.py: preserve unresolved interrupt ids when rerunning a partially resolved node",
+      "src/google/adk/flows/llm_flows/core/_resume.py: make partial-pause waiting behavior consistent between resumable and non-resumable runs"
+    ],
+    "risks": [
+      "Changing replay/interrupt handling could alter workflow node rerun semantics for other partial-interrupt cases",
+      "Fixing non-resumable decide_resume behavior may broaden API behavior beyond the reported bug"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test using the issue's scripted BaseLlm repro with two require_confirmation tool calls answered one per message, asserting the model is consulted only after both are answered and report runs exactly once",
+      "Run the same scenario with ResumabilityConfig(is_resumable=True) and assert report receives the final answer once, not None",
+      "Run targeted unit tests for flows/llm_flows/core and workflow/utils plus static checks"
+    ],
+    "unknowns": [
+      "Whether a maintainer will assign the issue, since policy status is needs_assignment and assignees are empty",
+      "Whether the proposed _replay_interceptor.py root cause is confirmed by maintainers or a failing test at the cited lines"
+    ],
+    "why": "The issue gives a strong reproduction and a plausible root-cause hypothesis in _replay_interceptor.py and _resume.py, but the repository policy requires assignment (needs_assignment) and the issue has no assignees, which is a materially blocking unknown for actionability. The root-cause signal is also marked false in the supplied actionability evidence, so the code-level fix location is not yet confirmed."
+  },
   "21ddc00c74dd67e072d25248122891dbfda961e09a7e19f184658719df838057": {
     "confidence": 0.8,
     "contradictions": [],
@@ -23695,6 +23729,38 @@
       "Whether maintainers prefer hyphen-free ID generation over regex widening (design preference, not a blocker)"
     ],
     "why": "Issue provides a concrete, code-anchored root cause: remapSnippetGraph in use-insert-snippet.ts generates hyphenated node IDs, while the backend template regexes (prompt_template_parser, workflow_variable_reference_validator, app_config variables manager, generator runner) only accept [a-zA-Z0-9_] in the node-ID segment, so {{#id.var#}} passes through unsubstituted. A minimal backend repro (VARIABLE_PATTERN.search on hyphenated vs non-hyphenated selector) and a clear validation path exist. No open PR or duplicate coverage found; no assignment or AI-disclosure blocker."
+  },
+  "253fb29b18958ea11d7e3931e510cb6ca1ec5cc937cd41e4e9c5fa6db2778421": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Ollama provider stream stall-timeout logic (per-chunk vs. post-content timeout)",
+      "Error message wording for stall aborts"
+    ],
+    "risks": [
+      "Timeout semantics change could mask genuinely hung connections",
+      "No confirmed code anchor means the fix location is speculative",
+      "Unassigned issue with board 'Ready' gate blocks actionable implementation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a large single tool-call generation against a local Ollama and confirm the 120s stall abort",
+      "Add a regression test simulating a long silent generation gap that should not abort",
+      "Verify OLLAMA_STREAM_TIMEOUT override still behaves as documented"
+    ],
+    "unknowns": [
+      "Which code path implements the 120s per-chunk stall timeout",
+      "Whether maintainers have a preferred fix (larger timeout vs. generation-status check)",
+      "Whether the issue has reached 'Ready' on the project board and been assigned"
+    ],
+    "why": "Issue describes a plausible Ollama stall-timeout bug with ordered reproduction steps and a workaround, but no root-cause evidence (no code anchor in the timeout path, no confirmation the 120s per-chunk timer is the actual trigger), and the issue explicitly requires reaching 'Ready' on the project board before implementation. Repository policy is needs_assignment with no assignee."
   },
   "254c2495fcb7783b97f21f4a45c65dec5497b58b0f6e65fba88e8fbf6b7e6d19": {
     "confidence": 0.55,
