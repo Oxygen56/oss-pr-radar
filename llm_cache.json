@@ -21817,6 +21817,38 @@
     ],
     "why": "Issue describes a concrete converter guard bug with a reproduction and diagnostic probe, but an open PR #43474 already directly covers the same code path and issue, and the submission policy is flagged as ai_disclosure_conflict. The duplicate/coverage status is explicitly human_review_required, which is a materially blocking unknown for independent code work."
   },
+  "22ab269f20bf7195fc37534679a6f47682de1685c52640302ae8eb2333aa8fc8": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue claims TLS/ALPN fingerprint mismatch as root cause, but maintainer evidence identifies a User-Agent redirect loop fixed in v2",
+      "Issue says failure is GFE-domain-specific, while a commenter reports timeouts on any address"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code change justified on v1; v2 already sends a non-browser User-Agent for webfetch"
+    ],
+    "risks": [
+      "Fingerprint-mismatch hypothesis is unverified and may misdirect effort",
+      "Second commenter reports timeouts on all addresses, which may be a separate generic connectivity issue"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "On v2, fetch a developer.android.com URL via webfetch and confirm HTTP 200 without redirect loop",
+      "Compare webfetch result against curl for the same GFE-fronted URL"
+    ],
+    "unknowns": [
+      "Whether the reporter reproduced on v2 with a specific failing URL",
+      "Whether the all-address timeout comment reflects a distinct bug"
+    ],
+    "why": "Maintainer bot evidence attributes the symptom to a User-Agent redirect loop already fixed in v2 (webfetch now sends OpenCode-User/1.0), and v1 only receives critical fixes; the TLS/JA3 fingerprint theory is speculative and contradicted by the supplied comment. The remaining report is a version-specific, already-covered behavior rather than a new actionable code contribution."
+  },
   "22bc58af1de3779e4e8f58253e1fa0ba42f0419b36bb3fe52e67ba066ea5beae": {
     "confidence": 0.7,
     "contradictions": [
@@ -33612,6 +33644,37 @@
       "Behavior for PDF/file blocks in tool results"
     ],
     "why": "Issue provides a concrete regression (v1.88.2 works, v1.89.0+ fails), exact code anchor in convert_to_gemini_tool_call_result, a minimal diff gated on forward_function_call_id, and a direct-to-Google control confirming nested vs sibling shape behavior on 2.5 vs 3.x. Reproduction is executable and validation path is clear."
+  },
+  "33cb70bc4e984aa61f92352fead5dfc05b1b4f72efc58fdca3cf27883c21236a": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/mcp/src/tool/mcp-client.ts: add null/typeof object guard before `in` check in mcpToModelOutput"
+    ],
+    "risks": [
+      "Maintainer may prefer fixing the subagent wrapper producer rather than the guard",
+      "Prior PR #22690 closed unmerged — approach acceptability unconfirmed",
+      "undefined handling must avoid emitting {type:'json', value: undefined}"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test calling mcpToModelOutput with a primitive (e.g. 7), null, and undefined, asserting it returns {type:'json', value:...} instead of throwing",
+      "Regression test with a valid CallToolResult object to confirm behavior-identical output",
+      "Run targeted package tests for packages/mcp"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the defensive guard in scope given #22690 was closed unmerged"
+    ],
+    "why": "Issue pinpoints an unsafe `in` guard in mcpToModelOutput that throws TypeError on non-object inputs, with a concrete defensive-guard fix, cross-server reproduction, and a control (main agent works, subagent fails). Prior related PR #22690 was closed unmerged but no open duplicate exists."
   },
   "33cbaa8719b5922862b771d01e50ad0259abbcc405ade3c1296a2092141a60ef": {
     "confidence": 0.55,
@@ -97167,6 +97230,39 @@
     ],
     "why": "Issue identifies a concrete LLM algorithm bug: tool_choice='required' not enforced in gemma4 parser, producing prose-only responses with finish_reason='tool_calls' and empty tool_calls. Root cause partially identified (#53255) and reproduction evidence provided (loop script, failure counts). Validation path exists via targeted tests on parser behavior."
   },
+  "8eab6f60b93cfe7e56bd32ab0b2c14487c62cefe09b7e98aa891e3aaac42b844": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "rome_apps/assistant/skills/routine-from-chat/SKILL.md: add non-interactive branch permitting system:create_routine with prose confirmation",
+      "packages/core/src/core/mcp-facade.ts: optionally support non-card propose_routine path on messaging surfaces",
+      "packages/core/src/core/mcp-facade.routine-draft.test.ts: add non-interactive scheduling regression test"
+    ],
+    "risks": [
+      "Skill change may conflict with maintainer design preference for card-only proposals",
+      "Allowing direct create on messaging surfaces could bypass intended confirmation UX",
+      "Originating channel is unknown, so the exact surface contract may need maintainer confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting the skill's non-interactive path can complete scheduling via system:create_routine without propose_routine",
+      "Run targeted facade tests (mcp-facade.routine-draft.test.ts) to confirm interactive-surface proposal behavior is unchanged",
+      "Verify read_action('system:propose_routine') still returns Unknown action and that no card-delivery claim is made on messaging surfaces"
+    ],
+    "unknowns": [
+      "Maintainer preference between skill-branch fix vs non-card propose_routine workflow"
+    ],
+    "why": "Issue pins a concrete cross-surface contract mismatch: the routine-from-chat skill requires propose_routine and forbids create actions, while the shared facade intentionally omits propose_routine on non-interactive messaging surfaces, leaving no compliant scheduling path. Code anchors, an existing test that pins the omission, and a clear reproduction/validation path are supplied; no duplicate or open PR covers it."
+  },
   "8eb22418c372fec773b2ab9633fe83c4f795012068179ff56d23d47d44d938f7": {
     "confidence": 0.9,
     "contradictions": [
@@ -144799,6 +144895,43 @@
     ],
     "why": "Issue pinpoints a concrete prompt/parse default mismatch: _apply_jinja_template honors SGLANG_DEFAULT_THINKING while _get_reasoning_from_request for explicit_thinking parsers does not, so force_reasoning=False and the dsv41 '\\n\\n' separator leaks into content. Reproduction command and code anchors are supplied, and the fix is a small, testable consistency change."
   },
+  "d4ef50fdcdce272b37d295efce1668d023debe1938c099e877d6ae5fc2f9f0d2": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/agent/component/agent.go: allow first-pass citation when references exist, validate emitted IDs, repair only on failure",
+      "internal/agent/component/agent.go: bound grounding budget and preserve completed answer with citation-incomplete status on grounding failure",
+      "internal/agent/component/agent.go: emit stage/progress events instead of withholding all first-pass deltas",
+      "internal/server/api/server.go: make Agent HTTP/SSE write budgets configurable and consistent"
+    ],
+    "risks": [
+      "Timing samples are from a modified local branch, not a controlled benchmark; absolute speedup is unquantified",
+      "Changing citation semantics could regress marker correctness addressed by #20613/#20685",
+      "Streaming replacement/finalization semantics for already-streamed output need explicit definition",
+      "Scope spans agent component, API server, and provider budgets; risk of over-broad change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test asserting first-pass answer deltas are emitted when cite=true and chunks exist",
+      "Regression test that grounding failure preserves the completed answer with citation-incomplete status while cancellation still cancels",
+      "Controlled same-model/same-data comparison of cite=true single-pass vs two-pass latency and citation quality",
+      "Test empty retrieval, long answers/history, invalid citations, and disconnects against the new grounding budget"
+    ],
+    "unknowns": [
+      "No maintainer design preference recorded for single-pass citation vs bounded two-pass",
+      "Whether #20852 already changes streaming visibility in a way that overlaps this fix"
+    ],
+    "why": "Issue pins concrete Go code paths (agent.go first-pass suppression at L398-453, serial applyCitationGrounding at L512-598/L1071-1111, API WriteTimeout at server.go L378-391) and contrasts them with Python v0.27.2 fast paths, giving a clear root cause: cite=true forces a second full model pass and withholds first-pass deltas. Reproduction steps and a validation matrix are supplied; no competing PR or duplicate covers this path."
+  },
   "d4f0931928b604979f4a10b6d21f1bc2b3ac4f49c3f5b1c8201929408950bb37": {
     "confidence": 0.7,
     "contradictions": [],
@@ -151360,6 +151493,42 @@
       "No explicit maintainer design confirmation, but issue is labeled for trio-tb and acknowledged; absence of assignment is not blocking"
     ],
     "why": "The issue precisely identifies a user-visible bug: oversized Inngest Realtime events are truncated, causing durable agent streams to hang indefinitely. Root cause is clearly traced to InngestPubSub's handling of oversized messages and the stream adapter's reliance on terminal events. The proposed fix (reduce live event payload, salvage truncated terminal events) is concrete and testable."
+  },
+  "def297feafd7c56724c7153a6b8d86f28dcd347dbe292948c5206b86b8e82540": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/agent/finalize.go: add input-budget guard or bounded overflow recovery for final synthesis",
+      "internal/agent/finalize.go: propagate final-synthesis error to caller instead of swallowing it",
+      "internal/agent/const.go: ensure completion budget clamping does not mask oversized requests",
+      "internal/agent/think.go: align final-synthesis path with normal-round overflow recovery"
+    ],
+    "risks": [
+      "Changing IsComplete semantics could affect callers that rely on it meaning turn-ended; issue explicitly allows keeping its semantics and expressing failure via error or separate state",
+      "Overflow recovery in final synthesis may need a compression strategy consistent with callLLMWithRetry; avoid unbounded retries",
+      "No real-model end-to-end validation was performed; conclusions are limited to function/call-chain behavior on the official baseline"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied repro: go test ./internal/agent -run '^Test(Issue4606_|ClampCompletionBudgetToContext$|ExecuteLoop_NonEmptyContentWithStop_ShouldComplete$)' -count=2 -v and confirm the two new tests fail before the fix",
+      "After fix, confirm TestIssue4606_FinalSynthesisBoundsInput passes (oversized input rejected before send or recovered after provider rejection)",
+      "After fix, confirm TestIssue4606_MaxIterationsPropagatesSynthesisError passes (error observable via returned error or explicit failure state)",
+      "Confirm upstream controls TestClampCompletionBudgetToContext and TestExecuteLoop_NonEmptyContentWithStop_ShouldComplete still pass",
+      "Run go vet / static checks on internal/agent"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer pre-send rejection versus post-rejection recovery for final synthesis (issue accepts either, so not blocking)",
+      "Whether any existing internal helper already provides a reusable input-budget guard for final synthesis"
+    ],
+    "why": "Issue provides a concrete, mock-based reproduction on an official commit with two failing regression tests and two passing upstream controls. It identifies two specific code paths: final synthesis bypasses callLLMWithRetry context-overflow recovery, and handleMaxIterations swallows the synthesis error while setting IsComplete=true. Code anchors in finalize.go, const.go, and think.go are supplied. The merged PR #3449 covers a different path (finish_reason=length in normal ReAct rounds) and does not overlap semantically or directly with this issue's final-synthesis budget/error-propagation path."
   },
   "def8ccb2461c2b68cb3f102e6e851a3f46c59f71d28f246e6ab02bb0357c766b": {
     "confidence": 0.8,
