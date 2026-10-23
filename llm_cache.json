@@ -64361,6 +64361,41 @@
     ],
     "why": "Issue provides concrete reproduction steps, expected/actual behavior, and exact error messages showing varchar(1000) overflow when base64 file content is written to audit/memory fields, plus a secondary logging leak of base64 and system prompts. Root cause is clear and fix is localized (truncate/redact before persistence and logging)."
   },
+  "5ec540170faed6fbe70b2714ae12249d99cc82696ee940318f04499ee19d2187": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/components/features/automations/setup/automation-setup-panel.tsx: render the LLM profile control for the custom kind",
+      "src/utils/automation-edit-draft.ts: carry selected model through buildCustomBody() (and confirm buildExistingAutomationBody() behavior)",
+      "src/components/features/automations/setup/automation-setup-prompt-stack.tsx: reuse SetupModelPill for custom kind",
+      "__tests__/components/automations/automation-setup-panel.test.tsx: replace absence assertion with presence and body assertions"
+    ],
+    "risks": [
+      "Interaction with stored agent_profile_id could trigger backend 422 if both fields are sent",
+      "Switching kinds must not drop a selected profile",
+      "Existing custom automations with no model must round-trip unchanged (tarball_path, entrypoint, setup_script_path)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Update panel unit test to assert automation-setup-model is present for the custom kind at create and edit",
+      "Add unit assertions that custom create body includes model and custom edit PATCH includes model when a profile is selected",
+      "Assert model is null/omitted when no profile selected and that agent_profile_id is never sent alongside model",
+      "Run npm run lint and npm test; optionally verify AUTOMATION_MODEL is exported on a run with a saved profile"
+    ],
+    "unknowns": [
+      "Whether the Slack channel monitor script itself reads AUTOMATION_MODEL is out of scope per triage; run-level honoring is only verifiable via a test tarball"
+    ],
+    "why": "Triage evidence pins the gap to concrete code: automation-setup-panel.tsx renders AutomationSetupPromptStack (with SetupModelPill / automation-setup-model) only when kind !== 'custom', and buildCustomBody() omits the model field while the API already accepts it. Reproduction steps and acceptance criteria are concrete, and the fix is bounded to UI wiring plus request-body plumbing."
+  },
   "5eca0334d6ee40043c2701508a9255982f8ce5d0428eb69c8b25d880b807bf30": {
     "confidence": 0.8,
     "contradictions": [
@@ -93727,6 +93762,39 @@
       "Whether maintainers accept provider-fallback precedence change"
     ],
     "why": "Issue gives a concrete root cause (cost lookup keyed by (model, custom_llm_provider) overrides base_model's provider, ModelNotMappedError swallowed → response_cost null/spend 0) and a contributor comment claims reproduction on main and intent to fix. However, the open-PR assessment flags PR #47715 as semantic overlap (custom_llm_provider, response_cost) touching the same cost-calc paths, and the duplicate status is 'semantic_overlap_requires_review' — unresolved coverage that materially determines whether new code work is actionable. Also a contributor has already claimed the fix, which is an ownership/competition unknown."
+  },
+  "880b4423e6961419c6e9e1b7a9f23d520e0a4eda8b8e8f7acb0e2f60f076f933": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "cli/python/src/mem0_cli/commands/memory.py: use re.fullmatch for format and catch ValueError from calendar parsing in _validate_expires",
+      "Preserve existing future-date check and print_error/typer.Exit(1) behavior",
+      "Add regression tests for impossible dates, leap-year rules, malformed strings, and agent JSON error envelope"
+    ],
+    "risks": [
+      "Behavior change scope should stay limited to validation; avoid altering accepted-date semantics",
+      "Unrelated pre-existing Windows telemetry test failure must not be conflated with this fix",
+      "Maintainer may prefer a different error message wording"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's CliRunner reproduction with mocked backend for both human and --agent modes; assert exit_code=1, no uncaught ValueError, and JSON error envelope in agent mode",
+      "Add command-level tests for add --expires and update --expires covering 2099-02-30, leap-year boundaries, malformed strings, past/today dates, and valid future dates",
+      "Run existing Python CLI command tests and Ruff lint on changed files"
+    ],
+    "unknowns": [
+      "Whether maintainer will accept the fix (not blocking; normal review uncertainty)"
+    ],
+    "why": "Issue provides a concrete offline reproduction against a pinned commit, a clear root cause (date.fromisoformat ValueError uncaught in _validate_expires, plus regex $ anchor allowing trailing newline), and a minimal Python-only fix path with regression tests. This is a user-visible input-validation bug in the CLI error path, not mere plumbing, and no open duplicate PR covers it."
   },
   "88306db1867555542276642382f52aded724336fd11ac879745f43ca10f2efa1": {
     "confidence": 0.85,
@@ -173808,6 +173876,41 @@
       "Repository AI-disclosure policy conflict flagged in preTaskEvidence"
     ],
     "why": "Issue provides a detailed two-step root cause (meta-tensor torch.nonzero in ExpertMapManager.get_compressed_map_string, plus fallback rebuild hitting Duplicate layer name) and a concrete repro, but the supplied evidence contains a materially blocking unknown: PR #58581 is flagged as semantic_overlap_requires_review with no direct code overlap, and the issue itself cites three related PRs (#55490, #43928, #58876) that may already cover step 2. Whether the fix is already covered determines whether new code work is actionable."
+  },
+  "fa7c0ad5792ae3d89eb9d4a1557a5ca4e1a2f229826f495cbddccaa798ed7f1b": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: request construction to select Responses API when reasoning+tools enabled, or allow explicit reasoning_effort=none",
+      "response parsing / streaming / tool-call continuation for Responses API",
+      "pre-execution validation for unsupported model/endpoint/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API adaptation touches request, response, streaming, and tool-call continuation — larger surface than a one-line fix",
+      "Maintainer may prefer validation-only over full Responses API support",
+      "Successful execution with reasoning_effort=none unconfirmed in reporter's deployment"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: gpt-6-luna with tools + reasoning routes to Responses API and parses tool calls",
+      "Unit test: gpt-6-luna with tools + reasoning_effort=none uses Chat Completions successfully",
+      "Unit test: unsupported combination returns actionable validation error before HTTP call",
+      "Regression: existing Chat Completions tool-calling path unchanged for models without reasoning"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Responses API support vs. validation-only guidance",
+      "Whether reasoning_effort=none path actually succeeds against the live API"
+    ],
+    "why": "Issue provides a concrete HTTP 400 error, expected/actual pair, reproduction steps, and a named code anchor (internal/entity/models/openai.go) where the chat-completions adapter builds requests. Root cause is well-scoped: the adapter does not support the Responses API or reasoning_effort=none for tool calling. No open PR or duplicate issue covers it. Actionable as a provider-adapter fix with a clear validation path."
   },
   "fa8c7c8729aadfc645244ce94fb51a645005dc545ad351be08bd0f4ca0817182": {
     "confidence": 0.85,
