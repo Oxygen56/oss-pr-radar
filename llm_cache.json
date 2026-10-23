@@ -3527,6 +3527,42 @@
     ],
     "why": "The issue reports a user-visible behavior change in DeepSeek-V4-Pro default reasoning effort caused by a merged PR. The root cause is identified (PR #50580 changed default behavior), but the desired fix is ambiguous: whether to revert, add a warning, or make the behavior configurable. No maintainer input or design confirmation exists, and the issue is a bug report without a clear code path."
   },
+  "063e9a1b10678a4d012094bab04a81cb582280b2678162c430a2b5270059e57a": {
+    "confidence": 0.55,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Widen Usage/MessageUsage token fields from i32 to i64 in goose-provider-types",
+      "Update saturating_add and cache-token folding arithmetic to i64",
+      "Replace i32::try_from(...).unwrap_or(i32::MAX) clamping in session_manager.rs with i64 handling",
+      "Make session-list row decoding degrade per-row instead of failing the whole result set"
+    ],
+    "risks": [
+      "Widening public struct fields to i64 may be a breaking API change for downstream consumers",
+      "Per-row decode degradation could silently mask genuine data corruption",
+      "Historical saturated rows need recomputation from usage_ledger, which is a data-repair step outside the code fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test inserting a session row with accumulated_total_tokens > 2,147,483,647 and assert session-list enumeration still returns all sessions",
+      "Unit test Usage/MessageUsage Add impl and cache-token folding with values above i32::MAX",
+      "Test that a single out-of-range row does not fail decoding of other rows",
+      "Verify task re-run succeeds after the oversized row is present"
+    ],
+    "unknowns": [
+      "Repository requires assignment (assignmentRequired=true) and the issue has no assignees, so it is unresolved whether implementation work is permitted",
+      "No maintainer confirmation on preferred approach (widen to i64 vs per-row clamping)"
+    ],
+    "why": "The issue gives a clear root cause (i32 token fields and saturating conversions in token_usage.rs, message.rs, session_manager.rs) and a concrete reproduction/validation path, so the technical work is actionable. However, the supplied policy evidence marks this repository as needs_assignment with assignmentRequired=true and no assignees, which is a materially blocking unknown for whether code work may proceed."
+  },
   "06472ca69c77059bd0696bd00e010dd972e6540821f96f93d651fe057a140628": {
     "confidence": 0.8,
     "contradictions": [
@@ -146454,6 +146490,41 @@
       "Exact code path in Dify Cloud that differs from self-hosted; maintainer confirmation of fix approach not yet provided"
     ],
     "why": "Issue provides a clear regression with exact error message, reproduction steps, and a confirmed root cause from maintainer bot: SQLAlchemy session management in MCP controller (api/controllers/mcp/mcp.py) using sessionmaker().begin() conflicts with internal commits in AppGenerateService. The fix pattern is known (use plain Session with expire_on_commit=False), and the issue is user-visible and affects a critical path."
+  },
+  "d526aa4a51a713f067386f92d3a1d29ea396d554766cc8f8f6f7f678dbc15466": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate score 10 / category WAIT_MAINTAINER vs gate_decision HUMAN_REVIEW and root_cause_signal=false",
+      "Open PR #17074 references the issue but semantic_overlap=false and root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/protocols/openai/tools.rs: tool-call parsing gating on presence of `tools`",
+      "MiniMax-M3 parser activation when request has no `tools` field"
+    ],
+    "risks": [
+      "Overlapping with open PR #17074 risks duplicate work",
+      "Broadening parser activation could change behavior for requests that legitimately expect raw content",
+      "No confirmed root cause means the fix location may be wrong"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test replaying the issue's 4-message request without `tools` and asserting `tool_calls` contains `list_skills` with finish_reason `tool_calls`",
+      "Run targeted unit tests for the openai tools protocol module"
+    ],
+    "unknowns": [
+      "Actual code path where tool parsing is gated on `tools` presence",
+      "Whether PR #17074 already fixes the reported behavior",
+      "Whether maintainers consider the existing PR sufficient"
+    ],
+    "why": "Issue gives a concrete reproduction and expected/actual behavior, but no root-cause evidence: the candidate's own actionability evidence sets root_cause_signal=false and rootCauseCoverage=false. An open PR #17074 already targets the same behavior (keeping the MiniMax-M3 tool jail active when no tools are present) but lacks tests and root-cause coverage, so duplicate/coverage status is unresolved. Track is agent_ai_infra, not llm_algorithm, so the algorithm gate does not apply, but the missing root cause plus unresolved competing PR make actionability uncertain."
   },
   "d52ace46a124558a03645a031d05d0451816631fb033f482b24c24e70edaafdb": {
     "confidence": 0.85,
