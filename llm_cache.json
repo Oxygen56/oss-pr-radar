@@ -65933,6 +65933,41 @@
     ],
     "why": "Issue is a config cross-field validation bug (convert=classify + runner=generate) that crashes with a bare AssertionError; root cause and reproduction are clear, but this is ordinary CLI/config plumbing, not an LLM algorithm mechanism. Track=llm_algorithm requires a concrete training objective, model mechanism, distributed invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; the matched terms (adapters, bf16/fp16/int8) are incidental and the fix is a config-time ValueError. Additionally, open PR #60441 already directly covers this issue with a test file, making the opportunity largely covered."
   },
+  "60c9147f89b7401819dade9de59745e15add19d97d939addb7eb52c015a0a1cc": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims root cause and verification, but actionability_evidence root_cause_signal=false and open_pr_assessment rootCauseCoverage=false",
+      "Open PR #44675 titled 'encode empty app inputs as JSON objects' appears to cover the same fix yet is marked semantic_overlap=false and direct_code_overlap=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "PHP SDK ChatClient/CompletionClient/WorkflowClient request constructors: normalize empty top-level inputs array to empty object",
+      "Add request-boundary regression tests for empty and populated input maps"
+    ],
+    "risks": [
+      "Existing PR #44675 may already implement the same fix, making this redundant",
+      "Global JSON_FORCE_OBJECT would be an over-broad change; must scope to top-level empty inputs only",
+      "Behavior change in SDK request serialization could affect callers relying on current array encoding"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: send create_chat_message([], ...) and assert outgoing JSON body has inputs as {} not []",
+      "Regression: populated input map with nested arrays preserved; stdClass object preserved",
+      "Local HTTP fixture validating received field with Pydantic TypeAdapter(dict[str, Any])"
+    ],
+    "unknowns": [
+      "Whether PR #44675 already fully resolves the issue or has gaps that a competing change would fill",
+      "Whether maintainers require design confirmation before accepting the normalization approach"
+    ],
+    "why": "The issue describes a concrete PHP SDK serialization bug (empty array encoded as JSON array instead of object) with a plausible root cause and a proposed minimal fix, but the supplied evidence shows an open PR #44675 that already directly addresses the same fix with tests and passing CI. The duplicate/coverage status is 'weak_pr_competition_possible' with rootCauseCoverage=false, leaving unresolved whether the existing PR already covers the work."
+  },
   "60db7e9ebbb158fa1b2ca22794d408d3d164446105e58368dd2296303df8fd08": {
     "confidence": 0.8,
     "contradictions": [],
@@ -89856,6 +89891,36 @@
       "No maintainer confirmation of preferred fix approach (TTL bump vs. configurable vs. per-flow isolation)"
     ],
     "why": "Issue describes a concrete multi-connector OAuth cascade failure in the dcr_bridge path with ordered reproduction steps and named code anchors (_OAUTH_STATE_COOKIE_TTL_SECONDS=600, _EPHEMERAL_DCR_CLIENT_CACHE, mcp_oauth_state_* cookies). The proposed TTL/configurability and stale-cookie-cleanup fixes are actionable and testable, and no open PR or issue covers the same mechanism (best match #36818 is keyword-only, no code-path overlap). Root cause remains a hypothesis rather than confirmed, but a concrete validation path exists."
+  },
+  "82e56fdc72b69f57e94ae5e628e70200d135f01f2bf5f0f9d458e97b6a26759c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request upstream fetch from shared stateless session TaskGroup teardown",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools cancellation scope is not shared across concurrent requests"
+    ],
+    "risks": [
+      "Fix may alter session lifecycle semantics for stateless MCP requests",
+      "Upstream anyio/mcp behavior may require version-specific handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two overlapping tools/list requests to POST /mcp against two HTTP streamable upstreams and assert neither is cancelled",
+      "Run targeted mcp_server_manager unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred session-lifecycle design for the stateless handler"
+    ],
+    "why": "Issue provides a concrete concurrency bug with traceback evidence pointing to shared TaskGroup teardown in StreamableHTTPSessionManager._handle_stateless_request cancelling in-flight list_tools fetches, plus ordered reproduction steps and a clear expected behavior. This is a runtime/scheduler-path fix in an agent infra repo, not mere plumbing."
   },
   "830611cd7ee96b3115428debb174dc65ea194c3fee09b47af81272898cf4d15b": {
     "confidence": 0.8,
