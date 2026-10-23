@@ -12372,6 +12372,36 @@
     ],
     "why": "The issue describes a user-visible bug where manually added fields in Model Info are not persisted, with multiple user confirmations. However, the root cause is unclear (possible caching/race condition) and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups failed, so duplicate work cannot be excluded. Maintainer design preference is unknown."
   },
+  "139330306de481a10f8a36b2e8f42b60abca68e7661e8fb0b377068a34f2f8a4": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/amazon-bedrock/src/amazon-bedrock-chat-language-model.ts: forward thinking {type:'disabled'} for Anthropic models when reasoningConfig is disabled",
+      "Align disabled handling with @ai-sdk/anthropic (models rejecting disabled, between_tools, effort lowering)"
+    ],
+    "risks": [
+      "Scope creep into model-specific disabled handling (between_tools, effort lowering) may expand the change",
+      "Behavior change for models that reject disabled thinking must be guarded"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test with stub fetch asserting additionalModelRequestFields.thinking === {type:'disabled'} for reasoning:'none' and explicit reasoningConfig disabled",
+      "Regression test that reasoning:'high' still emits thinking adaptive plus output_config effort",
+      "Run targeted amazon-bedrock package tests and typecheck"
+    ],
+    "unknowns": [
+      "Whether maintainers want the full anthropic-parity disabled handling in this fix or a minimal forwarding change"
+    ],
+    "why": "Issue pinpoints the exact code path: reasoning 'none' resolves to reasoningConfig {type:'disabled'} at L1705-L1706, but additionalModelRequestFields.thinking is only written inside the isAnthropicThinkingEnabled branch (L429-L452), so 'disabled' is silently dropped. A stub-fetch reproduction demonstrates the missing field and a working manual workaround, and the anthropic provider already implements the expected behavior as a reference."
+  },
   "139df31f1ef71ca40e4d6bd03325e2f170d36d2d76ede960a0807cf112d39424": {
     "confidence": 0.8,
     "contradictions": [
@@ -75522,6 +75552,39 @@
     ],
     "why": "The issue's own reproduction is a hand-constructed ModelRequest(parts=[NativeToolSearchReturnPart(...)]) graph, and the bot status comment reports a producer census finding only two construction sites, both response-side (models/openai.py, models/anthropic.py), with zero references in ui/, durable_exec/, or clai/. That directly contradicts the issue's Impact claims (Temporal payloads, persisted-history reload, message_history re-feed). The same defect chain was reportedly filed four times with prior fixes closed unmerged on substantive review objections, and the proposed one-line union arm is described as a maintainer design call. This is a materially blocking unknown: whether any supported path can produce the failing shape, which determines whether code work is actionable at all."
   },
+  "6d7e1395cd93c3b7c909ca6dcf72fbe9e19546cd84f40ab6d93971ccd60e9480": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/session-ui/src/timeline/session-timeline-row.tsx: give user-initiated shell messages an expanded default independent of agent shell collapse setting",
+      "packages/session-ui/src/timeline/detail.ts: optionally add a distinct `userShell` timeline category/preset entry",
+      "packages/session-ui/src/tools/tool-renderer.tsx: render user shell messages without inheriting agent tool-call collapse policy",
+      "packages/app/src/session/timeline/controller.tsx: ensure shellToolDefaultOpen does not drive user shell rows"
+    ],
+    "risks": [
+      "Maintainers may prefer a settings toggle or dedicated terminal-style component rather than a default change",
+      "Changing the shared `shell` category could unintentionally expand agent shell tool calls",
+      "Related issues (#55089, #45538) request the opposite collapse preference, so design must reconcile conflicting user preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing component test: render a user shell message under the compact preset and assert output is visible without interaction",
+      "Regression test: agent `shell` tool parts still collapse under compact preset",
+      "Manual repro: run `!echo hello` in web/desktop session and confirm output visible by default"
+    ],
+    "unknowns": [
+      "No maintainer decision on which of the three suggested approaches (separate default, new category, dedicated component) is preferred"
+    ],
+    "why": "Issue gives a concrete reproduction (type `!echo hello`, observe collapsed row) and names the exact code path: user shell messages reuse the `shell` timeline category, so `timelineDetail().shell.details === \"collapsed\"` under the compact preset. The bot reply confirms this is intentional current behavior, making it a scoped UX/feature change with a clear, testable expected outcome (user shell output expanded by default, agent shell collapse unchanged)."
+  },
   "6d95875e7a42a68b4b749d4df17d12ff5ae59c83c4f87a6b5ea8b5177d1b0cbd": {
     "confidence": 0.6,
     "contradictions": [],
@@ -122525,6 +122588,41 @@
     "unknowns": [],
     "why": "Issue provides a minimal executable reproduction, full traceback, and a concrete root cause: GradioToolWrapper.__init__ never initializes the base Tool state (is_initialized), so Tool.__call__ raises AttributeError before reaching forward. This is a clear, actionable bug in the agent tooling path with a straightforward reference-vs-implementation validation."
   },
+  "b3d0a7233689311fbc2d2d8b8e238c0dab6dc1d76609b15ca6d3e57c697d2523": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims no implementation written and requests maintainer approval, while preTask policy status is needs_assignment with empty assignees"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-proxy/provider/qwen.go: use origRequest.getMaxTokens() in qwenTextGenParameters",
+      "plugins/wasm-go/extensions/ai-proxy/provider/gemini.go and minimax.go: same one-line fix if in scope",
+      "plugins/wasm-go/extensions/ai-proxy/test/qwen.go: regression test for max_completion_tokens-only request"
+    ],
+    "risks": [
+      "PR #5013 may already cover the same qwen.go non-compatible transformation, making this duplicate work",
+      "Repository requires assignment before implementation; no assignee present",
+      "Extending fix to gemini/minimax broadens scope beyond the reported Qwen defect"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: chatCompletionRequest{MaxCompletionTokens:50, MaxTokens:0} marshaled through qwenTextGenParameters must emit max_tokens:50",
+      "Capture-upstream test asserting transformed DashScope request contains max_tokens when only max_completion_tokens is sent",
+      "Run targeted ai-proxy provider package tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #5013 already fixes the max_completion_tokens drop in qwen.go",
+      "Whether a maintainer will assign the issue to authorize implementation"
+    ],
+    "why": "Issue gives a precise root cause (qwen.go:294 uses origRequest.MaxTokens instead of getMaxTokens()), a real-API reproduction with token-cost deltas, and a concrete unit test. However, the repository policy is needs_assignment with assignmentRequired=true and no assignee, and open PR #5013 overlaps the same qwen.go non-compatible path, so duplicate coverage is unresolved. These are materially blocking unknowns for actionability."
+  },
   "b3e2e92851db034a879006923f6f53df535e28e68fcd2fda9c1433279330732e": {
     "confidence": 0.7,
     "contradictions": [
@@ -151765,6 +151863,39 @@
       "Whether the reported environment (main-stable image) is outdated relative to the fix."
     ],
     "why": "The issue provides a detailed root cause analysis with code anchors and a concrete reproduction path. However, recent comments indicate the reported bug may already be fixed on the default branch by merged PR #26871, which hydrates persisted credentials. This creates uncertainty about whether a new PR is needed, but the issue remains actionable for verification and potential additional fixes (e.g., env var resolution, scope handling)."
+  },
+  "dc6a2b0a54b6b44dc844392926cb428bc7f32a3fa8b23bcf8f2ee31032bfcb7c": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist and honor parent_session_id/conversation_id lineage for resumed sessions",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path should link new session to prior session instead of creating an unlinked root",
+      "History listing: exclude lineage-linked clones from root entries",
+      "Usage accounting: avoid double-counting inherited context in clone totals"
+    ],
+    "risks": [
+      "Changing lineage semantics may affect existing History pagination/filtering behavior",
+      "Usage de-duplication logic could conflict with legitimate multi-session accounting",
+      "Maintainer may prefer a different lineage field (conversation_id vs parent_session_id)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: resume a cancelled session and assert new session row has parent_session_id set and is not listed as a root History entry",
+      "Regression test: assert clone usage does not add inherited context on top of original totals",
+      "Integration test reproducing abort-then-continue flow and verifying single History entry with correct lineage"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred lineage schema (parent_session_id vs conversation_id) for the VS Code path",
+      "Whether #12590 already covers this VS Code symptom sufficiently to make this a duplicate"
+    ],
+    "why": "Issue provides a concrete, measured reproduction (two session rows, same pid, 147ms apart, identical message prefix, duplicated usage) and names specific code anchors: history.ts isRootSessionRecord filtering on parentSessionId, manifestToSessionRecord hardcoding isSubagent:false, and sdk-task-history.ts resume path creating a new session with initialMessages. This is a real state/lineage bug in the agent runtime history path, not plumbing."
   },
   "dc6c685ff68af960bbd65329af4e8968087170c3c10986013a4b8fb233fb4964": {
     "confidence": 0.8,
