@@ -25534,6 +25534,43 @@
     ],
     "why": "Issue provides a concrete root cause: the provider-prefix repair guard in both copies of _execute_chat_completion_agentic_plan keys on slash presence, so org-style engine ids like zai-org/GLM-5.3-Flash never get hosted_vllm/ re-attached, causing BadRequestError that is swallowed into an unbounded retry and a dangling litellm_web_search call. The suggested provider-keyed fix is specific and testable."
   },
+  "273b66e128ff93011a78ce73cca87e66bbc936bb067e1216462580925e9eb4ca": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "api/services/knowledge/dataset_service.py: set the indexing lock before dispatching the task, or otherwise make lock creation/removal ordering race-free",
+      "api/services/knowledge/dataset_service.py: avoid leaving the lock when .delay() submission fails",
+      "api/tasks/remove_document_from_index_task.py and add_document_to_index_task.py: ensure lock cleanup semantics match the new ordering",
+      "Cover archive/unarchive path that uses the same add/remove tasks with set_cache=True"
+    ],
+    "risks": [
+      "Changing lock ordering could introduce a window where concurrent enable/disable requests are not blocked",
+      "Lock TTL semantics may need adjustment to avoid premature expiry during long indexing",
+      "Scope creep into archive/unarchive behavior beyond the reported bug"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that simulates worker completion (key deletion) before .delay() returns and asserts no stale lock remains and enable succeeds",
+      "Add a test where .delay() raises and assert no indexing lock is left behind",
+      "Regression test for archive/unarchive of enabled documents using the same task path",
+      "Run targeted knowledge dataset service and task unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred lock-ordering or TTL design",
+      "Whether the archive/unarchive path is confirmed affected in practice"
+    ],
+    "why": "Issue provides a concrete, code-anchored race: DocumentService dispatches task_func.delay() before redis_client.setex(..., 600, 1), so a fast worker deletes the lock key before the request recreates it, leaving a stale 600s lock. Reproduction steps, HTTP 400 evidence, worker timing logs, and exact code paths are supplied; a deterministic regression test (simulate worker completion before .delay() returns) is described."
+  },
   "273e3333aef4f0d6181d99892022fde8c3d0cbeaeae7cad8135023a78e071063": {
     "confidence": 0.55,
     "contradictions": [
@@ -107640,6 +107677,38 @@
     ],
     "why": "The issue describes a user-visible regression in Mastra Studio's Schedules tab for dynamically created workflows, with clear reproduction steps and expected behavior. The bot's triage provides a detailed analysis of the likely code paths and identifies the missing information (exact versions and dynamic workflow construction snippet) needed for a definitive root cause. The candidate is actionable because the reproduction path is clear and the fix likely involves adding schedule persistence/rehydration for dynamic workflows, with a concrete test plan."
   },
+  "9c55d8a465edef7a8b2139808df3c39a867e523675a9641f388713903b6421b7": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "web/features/skills/detail/sidebar-actions.tsx: flush/await pending draft save before triggering export, or disable export while unsaved",
+      "web/features/skills/detail/file-editor.tsx: expose pending-save state/flush hook to export action"
+    ],
+    "risks": [
+      "Choosing between flush-and-await vs disable-export is a design preference; either is reasonable",
+      "Must not alter unrelated export API behavior",
+      "Debounce timing tests may be flaky without fake timers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test: edit SKILL.md, trigger export before debounce fires, assert exported content matches editor",
+      "Regression test: export after autosave completes still returns latest content",
+      "Verify export disabled or blocked while save is pending if that approach is chosen"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated between flush-and-await and disable-export, but this is normal implementation choice, not blocking"
+    ],
+    "why": "Issue provides a concrete, reproducible pending-autosave race: file-editor.tsx debounces saves ~1s while sidebar-actions.tsx export fetches the archive independently without awaiting the save, yielding stale ZIP content. Expected/actual markers, timing table, and code anchors establish root cause and a clear validation path (export before vs after autosave)."
+  },
   "9c5c00cfb7ce1dd5e4c0aba731c5a1b164cfa4691f2c41e1514e2417f720bad5": {
     "confidence": 0.6,
     "contradictions": [
@@ -155557,6 +155626,39 @@
       "Whether maintainers prefer option 1, 2, or 3; whether the fix should also address the samplingParams passthrough issue raised in comments"
     ],
     "why": "Issue provides a clear root cause (clampReasoningEffort fallback includes 'max', and OpenAI-compatible path bypasses clamp), a concrete reproduction, and a preferred fix direction. The triage comment confirms the root cause and extends it to the OpenAI pipeline. Although PR #9478 exists and is closed with changes requested, it is not merged and does not fully cover the root cause (root_cause_coverage false). The issue remains actionable."
+  },
+  "e21e6c3fd95ebd8cd0517462ab897abcb6364639eaef07fc69d463589993ae1b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/types/vectorstore.go: change hard-coded postgres engine display name to 'PostgreSQL (pgvector + ParadeDB)'",
+      "internal/types/vectorstore_test.go: update assertion at L143 to the new name",
+      "README.md and README_CN.md line 328: align wording with docs"
+    ],
+    "risks": [
+      "Maintainers may prefer a different exact wording than the docs phrasing",
+      "Frontend may have other hard-coded references to the 'PostgreSQL' label that need updating",
+      "Changing a user-visible string could affect snapshot or i18n tests"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run go test ./internal/types/... to confirm the updated name assertion passes",
+      "Start stock docker-compose deployment with RETRIEVE_DRIVER=postgres and verify Settings > Vector database engine card shows the new name",
+      "Verify API response 'name' field for the postgres engine reflects the new label while engine_type remains 'postgres'"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred exact label wording",
+      "Whether any frontend tests assert the current 'PostgreSQL' string"
+    ],
+    "why": "Issue pins the hard-coded display name in internal/types/vectorstore.go (L835-845) and the UI rendering in VectorStoreSettings.vue, with a concrete expected/actual pair and an existing test at vectorstore_test.go#L143. The fix is a small, well-scoped naming change (engine_type stays 'postgres'), with a clear regression test path. Open PR #4546 is a draft feature adding pg_textsearch BM25 retrieval and does not overlap the code path or mechanism, so it is not a duplicate blocker."
   },
   "e232997a7c90f76a8b8810c43a449c7a6e1bd3497a8a1f0cbdfdebe3c0740886": {
     "confidence": 0.7,
