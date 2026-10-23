@@ -17587,6 +17587,40 @@
     ],
     "why": "Issue pinpoints a concrete regression in encode_arguments_to_dsml() on the b12x-vision branch: unconditional json.loads() on an already-normalized dict raises TypeError, which is swallowed and re-wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. The #28035 reference behavior and a minimal reproduction with expected vs actual DSML output are supplied, and code anchors (encoding_dsv4.py, serving_chat.py) are identified. This is a runtime encoding bug on the agent/inference path, not mere plumbing."
   },
+  "1b5165df7fa6f81711e1e90e551c86fa13a398f7261744ead683e7123398c9df": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist/consume lineage so clones are not root entries",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path writes parent_session_id/conversation_id on new session",
+      "usage accounting: avoid double-counting inherited context in History totals"
+    ],
+    "risks": [
+      "Lineage schema change may affect existing NULL-lineage rows and migration",
+      "Usage de-duplication could alter reported cost semantics for legitimate multi-session flows",
+      "Maintainer may prefer a different lineage field (conversation_id vs parent_session_id)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test: cancel a session then resume, assert new session row has parent_session_id set and History returns one root entry",
+      "Regression test asserting inherited usage is not summed on top of original session totals",
+      "Run targeted unit tests for history.ts and sdk-task-history.ts plus static checks"
+    ],
+    "unknowns": [
+      "Whether #12590/#14840 overlap enough to be the same fix target",
+      "Exact intended lineage field semantics (parent_session_id vs conversation_id) not confirmed by maintainer"
+    ],
+    "why": "Issue provides a concrete reproduction, measured session/usage data, and code anchors (history.ts isRootSessionRecord, sdk-task-history.ts resume path) establishing that resume-after-cancel creates a new session with NULL parent_session_id/conversation_id, so History lists it as a root and context is re-billed. This is an actionable runtime/history-lineage fix with a clear validation path."
+  },
   "1b5208b9298175ab6b9bcae33cbd95ed81beafa492accd98e9c37fe2dc5f3bf7": {
     "confidence": 0.85,
     "contradictions": [],
@@ -64307,6 +64341,40 @@
       "Whether the non_max_overlap_selections_total counter is actually inconsistent or the reporter misread it"
     ],
     "why": "Issue provides a concrete, reproducible KV-router locality regression with a plausible mechanism: overlap credit only offsets the prefill term, so transient decode load on the cache-holding worker can outweigh resident prefix overlap. Evidence includes per-request router formula logs, worker placement, and recompute counters. No open PR or duplicate issue covers it. However, the issue is framed as questions about intended defaults rather than a confirmed defect, and the fix could be a default-weight change, a new option, or documentation, so the exact code change is not yet pinned down."
+  },
+  "5e646470622582d763731cad9372b17abe6a0e0e5ae616a70c3e82ebed9a1f67": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "execute_command pre-flight validation/rewrite of known-unsafe CLI forms",
+      "stall/timeout detector for execute_command to auto-recover from missing completion markers",
+      "warning surfacing when generated command matches forbidden .clinerules pattern"
+    ],
+    "risks": [
+      "Root cause is reporter-supplied analysis, not confirmed by maintainer or code trace",
+      "Fix scope may span terminal integration and command generation, risking broad behavior change",
+      "Some unsafe forms intermittently succeed, complicating deterministic test design"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce stall with multi-line git commit -m or gh pr create --body on pwsh in VS Code integrated terminal",
+      "Add regression test asserting unsafe forms are rewritten or flagged before execution",
+      "Add test that a missing EXIT sentinel triggers timeout recovery rather than indefinite hang"
+    ],
+    "unknowns": [
+      "No confirmed code anchor in Cline's execute_command/terminal integration path",
+      "Whether maintainers consider this a rules-adherence vs. runtime-timeout problem",
+      "Whether a stall timeout already exists and is misconfigured"
+    ],
+    "why": "Issue documents a concrete, recurring Windows PowerShell stall tied to VS Code shell-integration completion markers being corrupted by unsafe CLI forms (inline --body, multi-line -m, un-redirected streaming). Root cause is plausibly identified and a validation path exists (reproduce stall, then verify timeout/rewrite prevents hang). However, the 'root cause' is largely the reporter's own analysis, and the exact code path in Cline's execute_command handling is not anchored to specific files."
   },
   "5e8b87bd8aa4105fa794a58dfcea902303f7276ba1d655bb3368fb913212aa92": {
     "confidence": 0.85,
