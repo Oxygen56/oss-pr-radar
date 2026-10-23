@@ -3988,6 +3988,41 @@
     ],
     "why": "The issue provides a clear root cause: workflow watch events spread prior step results into start/result payloads, causing duplicate state and OOM on Cloudflare Workers. Existing PR #20661 is open but has failing CI and lacks comprehensive tests, leaving room for a materially better PR with focused watch-payload tests and a minimal fix."
   },
+  "06ae2eb2ba459c4fef56b6a55c5e0a83e8d48dcc128b7e9994b251a43699811b": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate summary says an existing PR may already cover the root cause, while the issue body argues this is a separate defect from #8438/#8439"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crewai/flow/runtime/__init__.py: persist and restore _completed_methods (and method outputs/counts) across save_pending_feedback/from_pending",
+      "crewai/flow/persistence: extend pending-feedback payload to carry completed-method bookkeeping"
+    ],
+    "risks": [
+      "Overlap with open PR #7374 on the same runtime/persistence files may duplicate in-flight work",
+      "Related checkpoint issues #8438/#8437 may share the same underlying fix boundary",
+      "Changing pending-feedback payload shape may affect persistence backends"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the issue snippet: reserve -> review(human_feedback pause) -> charge(fails once), resume via from_pending, then kickoff(from_checkpoint=latest); assert runs == ['reserve','review','charge','charge']",
+      "Regression test asserting the checkpoint written after resume lists reserve and review as completed",
+      "Run targeted flow runtime/persistence unit tests"
+    ],
+    "unknowns": [
+      "Whether PR #7374 or the related checkpoint issues already fix or subsume this _completed_methods loss",
+      "Whether maintainers consider this distinct from #8438/#8437"
+    ],
+    "why": "Issue gives a concrete repro and a plausible root cause (from_pending leaves _completed_methods empty), but supplied evidence flags unresolved duplicate/overlap coverage: related issues #8438/#8437/#8440 share the checkpoint/from_pending path, and open PR #7374 touches the same runtime/persistence files with 'from_pending' overlap. Whether the defect is already covered or is a distinct defect is not established by the supplied evidence."
+  },
   "06af7dc2b44564739d7fd0c444cfec210c4e72a2db1a18e569b4c804bd6dbea9": {
     "confidence": 0.72,
     "contradictions": [
@@ -30807,6 +30842,39 @@
     ],
     "why": "Issue identifies a concrete packaging defect: plugin-sandbox-bootstrap.js is only shipped in the npm CLI package, so Cline.app (code-sidecar) and the VS Code extension (dist/extension.js) fall back to require(\"jiti\") on a .ts path and no plugins load. The resolver search locations and the workaround (CLINE_WRAPPER_PATH + CLINE_JS_RUNTIME_PATH) are specified, and the IPC protocol is stated to be stable across core 0.0.38-0.0.87, giving a clear root cause and a concrete validation path (bundle bootstrap + @cline/shared + jiti beside code-sidecar and dist/extension.js, then verify plugins load on both hosts)."
   },
+  "2e0b4b2a91d37c0a40546aa6ce85974901991880428654287e7fc77370c48ed9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crewai/state/checkpoint_listener.py: take a consistent state snapshot before serialization or serialize on the emitting thread",
+      "crewai/state/checkpoint_listener.py: broaden _on_any_event (and is_call_handler_safe) to treat BaseException/PanicException as a logged best-effort failure"
+    ],
+    "risks": [
+      "Broadening to BaseException could mask genuine cancellation (e.g. asyncio.CancelledError) if not scoped carefully",
+      "Snapshot-on-emit may change checkpoint payload semantics or add copy overhead",
+      "Related checkpoint issues #8437/#8438/#8441 share only the 'checkpoint' keyword and appear to describe distinct behaviors, but overlap should be re-checked before implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test reproducing the ScanFlow scenario with checkpoint on_events=['method_execution_finished'] and concurrent async state writes; assert kickoff completes without PanicException",
+      "Assert a failed automatic checkpoint write is logged and the run continues rather than raising",
+      "Run targeted checkpoint/flow unit tests and static checks on the changed module"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the snapshot-on-emit approach or the best-effort catch approach",
+      "Whether the related checkpoint issues (#8437/#8438/#8441) are truly independent or share a root cause"
+    ],
+    "why": "Issue supplies a concrete reproduction (async listeners mutating flow state while the checkpoint handler serializes it on a worker thread), a specific code anchor (crewai/state/checkpoint_listener.py, _do_checkpoint, state.model_dump(mode=\"json\")), and a clear mechanism: pydantic-core PanicException derives from BaseException and escapes both except Exception clauses, propagating through the event future into kickoff_async. Two reasonable fixes are proposed (snapshot on emitting thread, or catch BaseException as best-effort), which is normal implementation choice, not a blocker."
+  },
   "2e187b328f561d6825c5d57d2432e1afd121e8cbba7b56365c1fa26ee8282fb7": {
     "confidence": 0.7,
     "contradictions": [],
@@ -34701,6 +34769,36 @@
       "Whether the first relora_steps interval after initialization actually hits the all-zero lora_B tie in practice"
     ],
     "why": "Issue identifies two concrete, independently verified defects in src/soup_cli/utils/relora.py: (A) _prune_and_reset never merges B@A into the frozen base before pruning, so the learned adapter contribution is discarded (base weight delta = 0, effective-map MSE 142.12 vs 8.77e-13 for a merge-then-reset control); (B) magnitude_prune_tensor uses a strict `abs(t) > threshold` mask, so tied magnitudes wipe every entry even when prune_ratio < 1, zeroing both lora_A and lora_B and producing zero gradient norm on both factors. Owner confirmed both halves with a real peft LoRA model and a kernel-level reproduction. This is a genuine algorithm-conformance and numerical-correctness problem with a clear reference-vs-implementation test path."
+  },
+  "34942540b30e2e7ff7d62c05104353264797ab9847b77ce9105f598a747bec45": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims qualified=true with formula/experiment signals, but issue body describes CLI/config/backend plumbing with no training objective or numerical method"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "No algorithm-level change; work is CLI flag refusal, config validation, and backend wiring"
+    ],
+    "risks": [
+      "Misclassifying CLI/config plumbing as algorithm work",
+      "Overlap with open PRs #2031 and #2030 and merged fixes #1946/#1947"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Not applicable for llm_algorithm track; existing reproductions are CLI/config behavior tests"
+    ],
+    "unknowns": [
+      "Whether any remaining site (MLX adafactor, eval_gate wiring) would require a genuine numerical/algorithmic fix rather than config refusal"
+    ],
+    "why": "The issue is a broad multi-site 'silently dropped settings' bug report spanning serve CLI flags, bench backend relabeling, config validation, MLX optimizer wiring, Liger kernel detection, and unsloth quantization. These are CLI/config/plumbing and integration defects, not an LLM algorithm mechanism (no training objective, model mechanism, distributed invariant, quantization method, kernel algorithm, or evaluation methodology). Two of six sites are already fixed (#1946, #1947), two have open PRs (#2031, #2030), and the remaining two are unclaimed but still config/trainer wiring rather than algorithmic work. Track=llm_algorithm is not satisfied."
   },
   "3494a7d6202d76735a5029c270f56ab78785292a33abecc5bc09353c6da0493d": {
     "confidence": 0.82,
@@ -158452,6 +158550,37 @@
       "Maintainer preference on whether to fix in get_model_config_by_id or task_handler"
     ],
     "why": "Issue clearly identifies a stale tenant_embd_id causing empty api_key in queued tasks, with a concrete code path and suggested fix. However, open PR lookup failed due to rate limit, and existing merged PRs (#17176, #14923) partially address related tenant_embd_id resolution but not execution-time fallback. Need to confirm no competing implementation and maintainer design preference before starting work."
+  },
+  "e5a18da48f911ba2515c567e1f1e1dde09b5e8313e6ca8daf06b7ea47a3b0716": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "crewai/flow/runtime/__init__.py: Flow.from_checkpoint should set the restored instance as the runtime state entity and select the entity matching the flow being restored",
+      "Checkpoint serialization should capture the actual running flow's state and completed methods"
+    ],
+    "risks": [
+      "Related checkpoint issues #8437, #8440, #8441 may share runtime code and require coordinated fixes",
+      "Entity selection change could affect Crew/Agent entity handling in checkpoints",
+      "Avoid broad API behavior changes beyond the resume path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test mirroring the issue's reserve->charge->ship flow with one-time failures, asserting runs == ['reserve','charge','charge','ship','ship'] and final state {'order': 42, 'reserved': True}",
+      "Assert the checkpoint written after the first resume restores non-empty state and completed methods",
+      "Run targeted flow runtime unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether related issues #8437/#8440/#8441 stem from the same root cause and should be fixed together"
+    ],
+    "why": "Issue provides a concrete ordered reproduction, observed vs expected output, and a specific root-cause hypothesis in Flow.from_checkpoint: the deserialized plain Flow entity is set as runtime state root instead of the restored instance, so subsequent checkpoints serialize a blank flow. This is a user-visible correctness bug on the checkpoint/resume path with a clear validation path."
   },
   "e5a20736d1d556e0f7e86faf9189f83cf7e2ebc03882573e71427d42d496bd8e": {
     "confidence": 0.85,
