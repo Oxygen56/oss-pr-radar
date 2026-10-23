@@ -8023,6 +8023,42 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >=4, with strong evidence of a mixed-batch indexing bug. However, the supplied evidence indicates a potential duplicate issue #50427 sharing stack failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not fully confirmed, and maintainer investigation is not active."
   },
+  "0c89cfa22b813afa274620b1cd371f0d3d698f176571171bbeb4866a9bfa83db": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels track=llm_algorithm and cites PEFT/model_architecture mechanisms, but the issue describes parser option wiring with no algorithmic content",
+      "algorithm_evidence marks qualified=true on generic term matches ('adapter', 'normalization') that are parser adapters, not model adapters"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/ingestion/component/pdf_vision_dispatch.go: populate file.outline and apply header/footer filtering for dispatched results",
+      "internal/parser/parser/pdf_parser_remote_common.go: stop hard-coding empty outline",
+      "web/src/pages/agent/form/parser-form/pdf-form-fields.tsx: conditionally render options per parse method"
+    ],
+    "risks": [
+      "Overlaps merged PRs #21228 and #19779 which already touch the same post-processing paths",
+      "Scope creep into image memory budgeting (#21213/#21214) and page-range handling",
+      "UI/backend option divergence may be resolved by maintainers via UI removal rather than backend wiring"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Parse a PDF with printed TOC and running headers via mineru/plain_text and assert file.outline is populated and header/footer blocks are dropped when options enabled",
+      "Regression test that toggling remove_toc/remove_header_footer changes output for remote parsers, matching DeepDoc behavior"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to wire the options or remove them from the UI for unsupported methods",
+      "Whether merged PR #21228 already covers part of the remaining outline/header-footer gap"
+    ],
+    "why": "Issue is a Go ingestion/parser wiring bug: remove_toc and remove_header_footer options are not consumed on remote PDF parser paths. Despite the llm_algorithm track label, the matched 'adapter'/'normalization' terms are parser plumbing, not a training objective, model mechanism, quantization/kernel method, or evaluation methodology. No algorithm-level contribution is actionable here."
+  },
   "0c9208174bdac6dcfb4e3e83fb81954e6d2a7b1febf44e2f3fbc725e7cd5260d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -19193,6 +19229,38 @@
       "Exact fix approach (e.g., skip tracing ignored modules vs. patching rot_pos_emb) is not specified, but this is normal implementation uncertainty."
     ],
     "why": "The issue identifies a concrete root cause: the sequential pipeline FX-traces the vision tower even when it is excluded from quantization, and Qwen3-VL's rot_pos_emb is not FX-traceable, causing a CUDA driver error. It provides a minimal reproduction script and environment details, and confirms RTN works, isolating the calibration/tracing path. This is a valid LLM quantization algorithm bug with a clear validation path."
+  },
+  "1e12e35b2d0f6377ae98700e4c41978484c89cc087d231f047a2fb0bcf293b26": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bound nested-buffer parsing in KVArgsRegisterInfo.from_zmq before materialization",
+      "Add per-message and table-wide limits/expiry for decode_kv_args_table entries",
+      "Bind or authenticate Decode registrations to configured workers in MooncakeKVManager.start_prefill_thread"
+    ],
+    "risks": [
+      "Security fix may require maintainer design preference on auth vs resource-limit approach",
+      "Overly strict limits could reject legitimate large Decode registrations",
+      "Cross-host repro needs isolated network and cgroup setup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_oom.py against a memory-limited Prefill cgroup and assert registrations are rejected before nested metadata is materialized",
+      "Regression test that decode_kv_args_table does not grow unbounded under unique fake session IDs",
+      "Latency regression: baseline vs attack completions stay within control bounds"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer authentication/binding versus resource bounding as the primary fix"
+    ],
+    "why": "Issue provides a concrete, executable cross-host reproduction (repro_oom.py) and code-anchored root cause: unauthenticated ZMQ PULL registrations parsed via KVArgsRegisterInfo.from_zmq materialize unbounded nested buffers and are retained in decode_kv_args_table with no sender binding, size limit, or expiry, leading to Prefill OOM. Validation path is concrete (cgroup memory.events oom_kill, health timeout, routed completion latency). No direct duplicate PR covers the code path; #45194 is keyword-only overlap."
   },
   "1e41f8cdda3a655395b14f2b3be58dae87d677fbc358d75317125176530f583d": {
     "confidence": 0.9,
@@ -46787,6 +46855,42 @@
       "Whether any residual defect remains on current main after #12100."
     ],
     "why": "The issue is a release-qualification/backport report for stock 1.4.2, not a defect on current main. The reporter explicitly states PR #12100 already merged speech-streaming work and is present on the tested example branch but not an ancestor of tag v1.4.2, so the actionable work is a backport/support-boundary decision rather than a new code fix. The supplied open-PR assessment shows #12100 MERGED with semantic overlap on lib/llm/src/http/service/openai.rs, and the issue itself frames the fix as 'include the appropriate frontend and worker changes in matched images, then rerun this case.'"
+  },
+  "472884d68328e2760f32fbf6fd2edd28818591ee1f3e2238c5e7983dc53b0c33": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue body states strict validation was intentionally introduced and backported, while candidate marks design_confirmation as a wait reason; the issue itself specifies the desired migration option, reducing design ambiguity"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "frontend strict function-schema preflight gated behind an explicit opt-in compatibility flag",
+      "apply flag consistently to Chat Completions, flat/namespaced Responses, and /v1/messages strict client tools for streaming and unary",
+      "preserve function-name, object-shaped-parameters, max-tool-count, and body-limit validation when compatibility mode is enabled"
+    ],
+    "risks": [
+      "Compatibility mode may allow schemas downstream processors/backends cannot compile or enforce",
+      "Scope creep into broader API behavior changes beyond the admission boundary",
+      "Overlap with open PR #17163 may cause duplicate effort if maintainers prefer that implementation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test reproducing the issue's request payload returning HTTP 400 under default strict validation",
+      "Add a test asserting the same payload is admitted when compatibility mode is enabled",
+      "Regression tests across Chat Completions, Responses (flat and namespaced), and /v1/messages strict client tools for both streaming and unary",
+      "Verify basic validation (name, object-shaped parameters, max tool count, body limits) still rejects malformed requests in compatibility mode"
+    ],
+    "unknowns": [
+      "Exact frontend code location of the strict-schema preflight is not confirmed by supplied evidence",
+      "Whether maintainers prefer the opt-in flag approach in PR #17163 over an alternative implementation"
+    ],
+    "why": "Issue provides a concrete reproduction (strict function schema with optional property absent from required, tool_choice none) and a clear expected behavior: an opt-in frontend compatibility mode that skips the newly introduced strict-schema preflight while preserving basic validation. Root cause is localized to frontend admission validation, though the exact code anchor is not confirmed. Open PR #17163 covers the same feature but lacks root-cause coverage, so independent work can still add value."
   },
   "475812994174c58ec6729cc99a7961a87454b0b8d2f72c4a1e1c016b0e509615": {
     "confidence": 0.8,
@@ -161437,6 +161541,38 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue is a clear bug with root cause and repro, but a maintainer comment confirms the fix already landed on main via PR #35738 and is released in 1.97.0. The issue is effectively resolved for current versions; only a backport to 1.96.x remains, which is a maintainer decision. Existing PR #32605 also overlaps semantically, requiring duplicate review."
+  },
+  "ea330d4fc96bb39336dd9aeca7e3c751c316a20a2652a997c16e8efaf4aa3ce1": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body/triage permits quarantine as acceptable, but maintainer comment explicitly rejects quarantine as a resolution",
+      "Candidate category is WAIT_MAINTAINER/HUMAN_REVIEW while maintainer has already given a decision and sequencing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No standalone code change is defined for this aggregate tracker; fixes live in #17555, #17636, #17886, #17884, #15485, #16205/#17716"
+    ],
+    "risks": [
+      "Duplicating work already owned by open PRs #17555/#17636/#17876",
+      "Quarantine is explicitly rejected by maintainer as a resolution",
+      "Multiple PRs conflict in mock-llm-server.py, requiring defined merge sequencing"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Re-run Mock-LLM E2E Tests via workflow_dispatch after each underlying fix lands and confirm a green main run"
+    ],
+    "unknowns": [
+      "Whether any single code change is in scope for this issue versus the linked root-cause issues",
+      "Resolution status of overlapping PR #17555 and whether it fully covers the bash-oracle failure"
+    ],
+    "why": "The issue is an aggregate 'main is red' tracker for the Mock-LLM E2E suite, not a single actionable code fix. Maintainer comment explicitly states the individual root causes are owned by other issues/PRs (#17555, #17636, #17886, #17884, #15485, #16205/#17716) and that this issue's scope is the aggregate green signal. The candidate's own open-PR assessment flags semantic overlap with PR #17555 requiring human comparison, and the maintainer forbids quarantine as a resolution. No single concrete code change is defined for this issue itself."
   },
   "ea3ffc20c93271cdcb866f8388b7e1d8c1e9eec0172096f7b5476133e38a5458": {
     "confidence": 0.8,
