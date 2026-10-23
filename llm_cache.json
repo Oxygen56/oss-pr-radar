@@ -11961,6 +11961,36 @@
     ],
     "why": "Issue provides a precise root cause and a concrete fix (route split + frontend update). Existing PR #40029 is weak: no tests, minimal changes, and lacks regression coverage. A materially better PR with tests and complete frontend changes is plausible."
   },
+  "12b3a843e6f8b58170e3b09302731fe5e55ef20dc0e708c3aac1248eaceedf99": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "llama-index-core/llama_index/core/retrievers/recursive_retriever.py: _deduplicate_nodes retains highest-scoring duplicate while preserving first output position, first-on-tie"
+    ],
+    "risks": [
+      "Score comparability across heterogeneous retrievers may need maintainer guidance",
+      "Behavior change could affect downstream ranking consumers",
+      "Open PR #23690 may be preferred by maintainers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using the issue's Leaf/Root retrievers asserting both traversal orders yield [('shared', 0.9)]",
+      "Add tie-case test asserting equal scores keep the first occurrence and position",
+      "Run targeted recursive_retriever unit tests plus ruff lint/format"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer PR #23690's implementation over an independent fix"
+    ],
+    "why": "Issue provides a concrete, self-contained reproduction (two leaf retrievers returning the same TextNode with scores 0.2 and 0.9 via IndexNode paths) and pins the root cause to RecursiveRetriever._deduplicate_nodes retaining the first occurrence instead of the highest-scoring one, contradicting its own docstring. A reference-vs-implementation test (order-independent retained score) is directly derivable. Open PR #23690 covers the same fix but is not merged and lacks root-cause coverage evidence, so it does not close the opportunity."
+  },
   "12bdcdb5b1a3f27b3363b26a11ff3e473ae84754cf9930ca7e9d89249556e873": {
     "confidence": 0.7,
     "contradictions": [],
@@ -23452,6 +23482,42 @@
     ],
     "why": "The issue provides a detailed, reproducible bug with a clear root cause hypothesis (TurboQuant KV cache combined with MTP speculative decoding on sm120), concrete reproduction steps, and a validation path via comparing fp8 vs turboquant KV dtypes. The algorithm evidence confirms mechanisms in model_architecture, numerics_quantization, and kernel_algorithm, satisfying the llm_algorithm track requirements. The presence of related PRs does not block actionability as they lack root cause coverage and tests, leaving independent implementation space."
   },
+  "244eb4c3b3d643da2de45b3c843926a58851f41878606ea7fa67fdf40c8128fb": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue asserts a concrete root cause and fix, but actionability evidence records root_cause_signal=false and rootCauseCoverage=false",
+      "Issue says the fix relies on vLLM #59703 classification, yet states Dynamo pins vLLM 0.31.0 which lacks it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/kv_router/publisher/state_agent.rs: classify KV group before block-geometry validation and filter non-main-attention placeholder events",
+      "Preserve fail-closed behavior for unclassified or genuinely incompatible full-attention events"
+    ],
+    "risks": [
+      "Fix depends on vLLM #59703 group classification not present in pinned vLLM 0.31.0, so the filter may have no signal to key on",
+      "Open PR #15535 already targets the same file and behavior with no tests; duplicate/competing implementation risk",
+      "Over-broad filtering could mask real geometry incompatibilities"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test feeding a recurrent/sliding-window placeholder BlockStored event (block_size=0) plus a valid full-attention event and assert the cache owner is not withdrawn",
+      "Add a negative test asserting a genuinely incompatible full-attention event still fails closed",
+      "Run targeted kv_router publisher tests and cargo check on the dynamo-llm crate"
+    ],
+    "unknowns": [
+      "Whether kv_cache_spec_kind is actually available on placeholder events in the pinned vLLM version",
+      "Whether PR #15535 already resolves the issue or is stalled/incorrect",
+      "No concrete failing test, log, or trace confirming the quarantine path"
+    ],
+    "why": "The issue describes a plausible failure mode (placeholder BlockStored events with block_size=0 from recurrent/sliding-window groups tripping the geometry check in state_agent.rs), but the supplied evidence explicitly records root_cause_signal=false and rootCauseCoverage=false, and the only reproduction is a prose scenario with no concrete failing test or log. The fix also depends on vLLM PR #59703 attaching kv_cache_spec_kind to placeholder events, which the issue states is merged but not released and not in the pinned vLLM 0.31.0 — so the classification input the fix relies on may not exist in the current dependency."
+  },
   "2453089755f203e513bce13a510ff1a3198f7a4383958ddfa0136f95c69c8d20": {
     "confidence": 0.85,
     "contradictions": [
@@ -25332,6 +25398,42 @@
       "No existing PR or maintainer feedback; need to confirm maintainer acceptance of backgrounding approach"
     ],
     "why": "Issue identifies a concrete race condition in Cursor's sessionStart hook, with official Cursor confirmation and a clear mitigation: return essential context immediately and defer non-critical work. This is a user-visible bug with a reproducible scenario and a minimal code path in the plugin scripts."
+  },
+  "26d0f70cec91848ba4f81994700e5ad6e97cf4029afcd2748aca00515d8b48cd": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ConversationNameContextMenu: add Unarchive item for explicitly archived open thread",
+      "Sidebar conversation card menu: offer Unarchive for every explicitly archived row, including missing-runtime rows",
+      "Reuse archived-conversations store removal (removeArchivedConversation) and existing COMMON$UNARCHIVE_CONVERSATION i18n key",
+      "Ensure unarchive does not trigger runtime start/resume or mutate title/messages/tags"
+    ],
+    "risks": [
+      "Overlap with open maintainer PRs #18721/#18697/#18738 on missing-runtime and archive-state presentation could cause merge conflicts or duplicate UX direction",
+      "Scope creep into server-side archive migration (#16765) which is explicitly a non-goal",
+      "Behavioral divergence between local and Cloud backends if archive store keying is not handled per backend"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: open an archived thread, assert Unarchive appears in its overflow menu, activate it, assert id removed from archived-conversations store and thread appears in active list without Show archived",
+      "Regression test: explicitly archived sidebar row with sandbox_status MISSING (and local can_resume false) shows Unarchive and activation restores default list visibility",
+      "Assert restored row shows no Archived chip and no dimmed title",
+      "Assert unarchive does not call runtime start/resume and leaves title/messages/tags unchanged",
+      "Run targeted frontend unit tests and static checks for the conversation components"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the open-thread Unarchive to live in the header overflow menu versus another surface",
+      "Whether the in-flight archive-state PRs (#18697, #18738) will change the store/menu structure before this lands"
+    ],
+    "why": "Issue and AI triage pin the root cause to the browser-local archived-conversations store and the ConversationNameContextMenu/sidebar card menu: the open thread has no Unarchive action, and explicitly archived rows with missing runtime are excluded from the menu. Concrete code anchors (removeArchivedConversation, ConversationNameContextMenu, sandbox_status MISSING) and a clear validation path (regression tests for header Unarchive, missing-runtime sidebar row, list visibility and Archived chip) are supplied. No duplicate PR directly covers this; PR #18721 only overlaps on missing-runtime presentation and is keyword-level."
   },
   "26d7e932b790370427704ce6d1440bcf805139127edc6c7762e655fcdc0c33f9": {
     "confidence": 0.7,
@@ -101917,6 +102019,41 @@
       "Whether existing PR #13650 already addresses the root cause"
     ],
     "why": "Issue provides a clear root cause (flashinfer-jit-cache version skew), a concrete reproduction command, and a verified workaround. The suggested fix is actionable and the maintainer triage indicates engagement. The structural hazard remains latent even though the original skew no longer reproduces on 1.4.x, so the issue is still relevant for a durable fix."
+  },
+  "93842a1a99cfed4f1e2bfb691187327a28d1d1f508da5a6abd9cc5cfdeb3aef1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/azure/common_utils.py: _get_base_azure_url v1 Responses route construction",
+      "Azure Responses URL building to append openai/v1 unless already present, then /responses",
+      "Preserve standard host behavior (https://<resource>.openai.azure.com -> /openai/v1/responses)"
+    ],
+    "risks": [
+      "Changing URL construction could regress standard Azure hosts or non-v1 api_version paths",
+      "Overlap with main's _LAST_OPENAI_PATH_SEGMENT rewrite may need reconciliation",
+      "Gateway path-prefix semantics are environment-specific; fix must not hardcode gateway assumptions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit test calling BaseAzureLLM._get_base_azure_url with api_base='https://gateway.example.com/foundry/openai', api_version='v1', route='/openai/responses' and assert '.../foundry/openai/openai/v1/responses'",
+      "Regression test that chat completions URL on the same api_base remains '.../foundry/openai/openai/v1/chat/completions'",
+      "Regression test for standard host producing '/openai/v1/responses'",
+      "Table-driven test over the api_base variants listed in the issue to confirm no double-prefix or missing segment"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the ensure_api_route approach vs. a narrower patch",
+      "Exact current main behavior of _LAST_OPENAI_PATH_SEGMENT beyond the issue's description"
+    ],
+    "why": "Issue provides a concrete, network-free reproduction of the URL construction bug in BaseAzureLLM._get_base_azure_url, names the exact code anchors (_get_base_azure_url, add_path_to_api_base, _LAST_OPENAI_PATH_SEGMENT), and proposes a specific fix (build the v1 Responses route via ensure_api_route(api_base, \"openai/v1\") like the chat client). The expected behavior is well-defined and testable against a reference URL."
   },
   "93919a7400f327dac017fdab818ec3c66503b7cae0336660a726c80c24bf0ac5": {
     "confidence": 0.7,
