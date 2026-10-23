@@ -120515,6 +120515,37 @@
     ],
     "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter all assume string-only or specific key), a concrete reproduction (object command with alias key fails with 'Invalid input' and preview shows '[object Object]'), and a proposed three-seam fix. Existing PR #13438 is open but lacks root-cause coverage, leaving room for a more complete contribution."
   },
+  "b001a9bb02f8e5f3a9e0c34eb79a565a2f65fc9b8ed9778d18f7bf35bf5bab40": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue states the fix is outside the figure-bound/native-text preservation change, while merged PR #21390 'preserve complete PDF figures' overlaps merge_captions.go and is marked MERGED but not root-cause-covering"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/deepdoc/parser/pdf/table/merge_captions.go: nearestFigureIn parent selection to weigh adjacency and equation identity"
+    ],
+    "risks": [
+      "Merged PR #21390 may already alter nearestFigureIn or figure-bound logic, making the reported defect stale or partially fixed",
+      "Changing parent selection could regress legitimate caption-to-figure attachment for other layouts"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a Go unit test constructing the three pdf.Section values from the issue table with PageNumbers []int{10} and asserting the caption attaches to the bus diagram section",
+      "Run targeted go test for internal/deepdoc/parser/pdf/table"
+    ],
+    "unknowns": [
+      "Whether merged PR #21390 already modified nearestFigureIn or otherwise changed the reported behavior",
+      "Current state of merge_captions.go at base SHA 1dcb0d7 relative to the merged PR"
+    ],
+    "why": "The issue gives a concrete geometry reproduction and names nearestFigureIn, but the only overlapping PR (#21390) is already MERGED and touches the same file merge_captions.go. The issue itself says the fix is 'intentionally outside' that PR's scope, yet the supplied duplicate assessment marks status 'none' and does not resolve whether #21390 already changed nearestFigureIn behavior. This unresolved merged-fix coverage is a materially blocking unknown."
+  },
   "b006be82bfa5e9bd8370a587678e468a237b5e70b04a5fe122617ee8a1451896": {
     "confidence": 0.7,
     "contradictions": [
@@ -166681,6 +166712,43 @@
       "Whether the hold by SatvikMishra08 is released, affecting claimability"
     ],
     "why": "Issue identifies two concrete, independently verified defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the base, so the learned effective linear map is discarded (base weight delta = 0, MSE 142.12 vs merge-control 8.77e-13); (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both lora_A and lora_B and producing zero gradients (measured 0.0), permanently killing the branch. Owner confirmed both halves with real peft LoRA runs and a kernel-level repro (ones(10), prune_ratio=0.9 -> 0 kept vs expected 1). This is a genuine algorithm-conformance and numerical-correctness defect in a PEFT/training-optimization mechanism, with a clear reference-vs-implementation validation path."
+  },
+  "f0071fe78d52cda9c736a12817121f3a65ff3c8b7bf7de8904cdb18e5b1a6ab0": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims no automatic title trigger, but bot and commenter evidence show the title request is sent automatically and fails at the free-tier gate"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/session/title.ts: surface/log provider errors and early-return branches instead of silent undefined",
+      "packages/core/src/session/runner/llm.ts: observe title fiber failures",
+      "title request body shape (tools/max_completion_tokens) or free-tier gate handling for title/summary agents"
+    ],
+    "risks": [
+      "PR #57624 may already cover the first-prompt fallback fix, causing duplicate work",
+      "Changing title request body shape may conflict with free-tier server-side policy",
+      "Scope creep into Model.small paid-model selection (#52004/#56761)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with repro.sh on 2.1.3: confirm title agent 403 FreeTierError and session_v2.title NULL",
+      "Add regression test asserting title generation failure is logged/observable",
+      "Add test that a successful title request persists session_v2.title",
+      "Compare against PR #57624 to avoid duplicate coverage"
+    ],
+    "unknowns": [
+      "Whether PR #57624's fallback approach is the maintainer-preferred fix versus fixing the free-tier rejection",
+      "Whether the free-tier gate is server-side policy that cannot be fixed client-side",
+      "Whether the silent-failure logging fix alone is considered sufficient by maintainers"
+    ],
+    "why": "Issue reports v2 session titles never generated; comments converge on free-tier gate rejecting tool-less title requests plus silent error swallowing in SessionTitle.attempt. However, the original 'no auto trigger' claim is contradicted by reproduced evidence that the trigger exists, and open PR #57624 overlaps the title-generation code paths with unresolved duplicate/coverage status, leaving the actionable fix boundary uncertain."
   },
   "f00e55cd59697d2757b174f11a4e58a5519b9b2f80dbb0a49514132326a38eff": {
     "confidence": 0.7,
