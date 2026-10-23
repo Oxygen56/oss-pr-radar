@@ -130597,6 +130597,39 @@
     ],
     "why": "Issue provides a concrete user-visible performance bug with reproduction steps, isolation tests, logs, and static code anchors pointing to 120s waits in runAndWait()/streamOutput() and completion-event handling. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply. No open PR or duplicate issue covers it. Root cause is suspected rather than confirmed, but the evidence supports a concrete reference-vs-implementation validation path (native Codex ~5s vs Ekko ~120s) and targeted code investigation."
   },
+  "be6faf25f7403ec434994e8d08e752d5c0cd3ec19dca4bfdd562a4d29373c481": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Merged PR #1124 semantically overlaps rrf_vector_weight/rrf_keyword_weight and overlapping paths, but is marked direct_code_overlap=false and references_issue=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "frontend/src/api/retrieval.ts: add rrf_k, rrf_vector_weight, rrf_keyword_weight to RetrievalConfig type",
+      "frontend/src/views/settings/RetrievalSettings.vue: render RRF weight/smoothing controls and include them in save payload",
+      "Preserve existing backend RRF values on partial frontend saves"
+    ],
+    "risks": [
+      "Merged PR #1124 touched overlapping files and RRF weight fields; verify current main state before implementing",
+      "Avoid unintended API behavior changes beyond preserving/submitting RRF fields"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Set custom RRF weights via PUT /api/v1/tenants/kv/retrieval-config, then save from frontend and GET to confirm weights persist",
+      "Unit test RetrievalConfig serialization includes all three RRF fields",
+      "Component test that RetrievalSettings loads and submits RRF fields with defaults 60/0.7/0.3"
+    ],
+    "unknowns": [
+      "Whether merged PR #1124 already added RRF fields to frontend on current main"
+    ],
+    "why": "Issue provides a concrete, reproducible frontend/backend config mismatch: RetrievalConfig type and RetrievalSettings.vue omit rrf_k/rrf_vector_weight/rrf_keyword_weight, so a frontend save overwrites backend-configured RRF weights. Root cause is anchored to specific files and a curl-based reproduction with expected/actual behavior."
+  },
   "be72e5ed70b5db940444bf630f4e6e22c4320ae7c1cf8387fb9adcb9f0e09468": {
     "confidence": 0.8,
     "contradictions": [],
