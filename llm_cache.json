@@ -73596,6 +73596,35 @@
     ],
     "why": "Issue clearly identifies a root cause (resolved_model gating) and proposes a concrete fix with a test plan. However, the deterministic gate is HUMAN_REVIEW and existing PRs (#10621, #10462) overlap semantically, requiring maintainer comparison before new work."
   },
+  "6ac4e8c8d4df10c97da9329f849e5059276a38ab396adc151bcb6a2274a92c1b": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/react/src/mcp-apps/sandbox.ts: getMCPAppCSP must include resourceDomains in script-src, style-src, img-src, font-src, and media-src per MCP Apps spec"
+    ],
+    "risks": [
+      "Broadening CSP directives could weaken sandbox security if resourceDomains is untrusted; ensure only declared origins are added",
+      "Maintainer may prefer a different directive ordering or 'self' inclusion; minor implementation choice, not blocking"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test asserting getMCPAppCSP with resourceDomains=['https://esm.sh'] produces script-src/style-src/media-src entries containing https://esm.sh",
+      "Regression test that default (no resourceDomains) CSP remains unchanged",
+      "Run targeted package tests for @ai-sdk/react mcp-apps"
+    ],
+    "unknowns": [
+      "No maintainer design preference stated, but root cause and validation path are already concrete"
+    ],
+    "why": "Issue pinpoints a concrete CSP generation defect: getMCPAppCSP maps resourceDomains only into img-src/font-src, omitting script-src/style-src/media-src, with a code anchor (sandbox.ts L88-89) and a concrete expected CSP output. This is a well-scoped, testable fix with a clear reference-vs-implementation validation path."
+  },
   "6ad6c596fe1a0c9829e2d0bcd964846970d450ebbb64de0b75b2f8fca46c5391": {
     "confidence": 0.7,
     "contradictions": [],
