@@ -13505,6 +13505,43 @@
     ],
     "why": "Issue describes a concrete gateway header/body priority drop with reproduction steps, but the supplied evidence shows an open PR #42740 that directly overlaps the same code path (sgl-model-gateway/src/routers/header_utils.rs) and distinctive identifier x-override-priority, with duplicate status human_review_required. Whether independent implementation space exists is unresolved, which materially determines actionability."
   },
+  "15583e9c107631b45dff4d685e85c511d0ee6fbda0507328b492a76569297371": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while the issue body provides a detailed root-cause analysis",
+      "candidate.category is WAIT_MAINTAINER but wait_reasons is empty and maintainer_approved is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "HttpClientStreamableHttpTransport.handleException/handleExceptionSafely: compare-and-set on the failed transport session instead of unconditionally replacing activeSession",
+      "Call sites in sendMessage/reconnect pass the captured transportSession to handleException",
+      "LifecycleInitializer.handleException should not tear down a healthy current initialization for a stale session's 404/400"
+    ],
+    "risks": [
+      "Behavior change in session invalidation could affect legitimate re-initialization paths",
+      "Concurrent 404s on the same old session need idempotent handling",
+      "Maintainer may prefer a different fix shape (e.g., tracking session generation) than the proposed CAS"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add StaleSessionNotFoundTest-style regression: hold A on s1, expire s1, get 404 on B and re-init to s2, hold C on s2, release A with late 404 for s1, assert C succeeds and no DELETE for s2 is sent",
+      "Run targeted mcp-core transport unit tests and static checks"
+    ],
+    "unknowns": [
+      "Repository requires assignment (assignmentRequired=true, no assignees) — whether an assignment can be obtained is unresolved",
+      "Issue body is truncated in the suggested-fix section, so the full proposed change is not fully visible",
+      "Whether maintainers have an existing design preference for this invalidation path"
+    ],
+    "why": "The issue gives a detailed, plausible root-cause analysis (handleException invalidates whatever session is active rather than the session the failed request carried) and a concrete reproduction. However, the supplied issue body is truncated mid-sentence in the 'Suggested fix' section, and the repository policy is 'needs_assignment' with assignmentRequired=true and no assignees. The assignment requirement is a materially blocking unknown for actionability."
+  },
   "156012b1cbd5d5cd1109260ce88c3d4ea583a85328dc7628668a53deae0627ba": {
     "confidence": 0.55,
     "contradictions": [
@@ -41930,6 +41967,38 @@
     ],
     "why": "Issue provides a precise root cause (has_custom branch bypasses chunk_token_num, bare chars leak into split pattern), a concrete reproduction with expected/actual outputs, and a clear minimal fix (Option A). The bug is user-visible and severe (429k chunks vs 1.4k)."
   },
+  "3ea6365c5edefe7df88fda32ea2979ae1c94fde4bc9f7c972d2c86c14464f76b": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/application/service/knowledge_process.go: 将问题生成补全预算改为可配置并提高默认值",
+      "internal/types/knowledge_process.go: 新增/复用预算配置字段",
+      "空补全路径增加应用日志告警而非仅 tracing 计数"
+    ],
+    "risks": [
+      "需与 PR #4690 对比避免重复实现",
+      "提高默认预算可能增加推理成本，需确认默认值取舍",
+      "避免扩大 API 行为变更"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "新增单测捕获 generateQuestionsWithContext 的 ChatOptions，断言配置 8192 时 MaxTokens=8192",
+      "回归测试：空补全返回 0 问题时产生告警日志且不静默",
+      "运行目标 package 定向单测与静态检查"
+    ],
+    "unknowns": [
+      "PR #4690 是否已完整覆盖根因与测试，需对比其 diff"
+    ],
+    "why": "Issue 提供了具体的代码锚点（generateQuestionsWithContext 中硬编码 MaxTokens:512）、可复现的预期/实际对照（配置 Summary.MaxCompletionTokens=8192 仍发 512）、有序复现步骤，以及与描述路径 #4230 的不对称对比，根因和验证路径清晰。已有 PR #4690 覆盖同一路径但根因覆盖证据不足，仍存在补足空间，不构成阻断。"
+  },
   "3ead6289916ff150161b6570262df231a5c4607aa88e4cb428e67a93beca8db2": {
     "confidence": 0.82,
     "contradictions": [],
@@ -59369,6 +59438,43 @@
       "Whether in-container vLLM upgrades are a supported workflow; maintainer decision pending."
     ],
     "why": "Issue identifies a clear root cause: baked flashinfer-jit-cache version skew with flashinfer-python causes serve-time registry failure. Evidence includes reproduction command, observed error, and verified workaround. Maintainer triage confirms engagement and a pending contract decision, but the structural hazard remains latent. The issue is actionable: either document unsupported workflow or couple package versions, with a concrete validation path (serve-time test or build-time assert)."
+  },
+  "56bf1fe7d105268efaa9b909d466a4fb54e183a70c9a3a3edbb6c49fb6f86c08": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue traceback shows _control_branch iterating None goto, but latest comment shows map_command already skips None goto and tests pass on unchanged code",
+      "Reporter states issue may no longer exist after upgrade and suspects JS SDK, contradicting a Python-side root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "libs/langgraph/langgraph/pregel/_io.py map_command goto handling",
+      "libs/langgraph/langgraph/graph/state.py _control_branch goto iteration",
+      "possibly langgraph-api/server or JS SDK resume command serialization"
+    ],
+    "risks": [
+      "Root cause may be in JS SDK or server, not the Python pregel code",
+      "Bug may already be fixed in current versions",
+      "Fixing _control_branch directly could mask a different control-output path issue"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce via the exact HTTP request body/endpoint against current langgraph + langgraph-api + JS SDK versions",
+      "Parameterize test_interrupt_multiple with goto=None/() across memory, SQLite, encrypted SQLite checkpointers",
+      "Add regression test for Command(resume=...) without goto through the SDK/server path"
+    ],
+    "unknowns": [
+      "Exact current langgraph, langgraph-api/server, and JS SDK versions where failure occurs",
+      "Failing HTTP request body and endpoint",
+      "Whether the bug reproduces on current main at all"
+    ],
+    "why": "The issue reports a TypeError in _control_branch when goto is None, but the latest comment shows the current Python resume-input path (map_command) already guards with `if cmd.goto:` and passes tests with goto=None/(). The reporter is unsure whether the bug persists after upgrade and suspects the JS SDK/server path, so the actual failing code path and root cause are unresolved."
   },
   "56c0d7f636721b29310053584018b5c41714f433fc856b58f5c0b9726b83719c": {
     "confidence": 0.6,
@@ -90141,6 +90247,41 @@
       "Maintainer confirmation of the bug and desired fix approach"
     ],
     "why": "The issue describes a reproducible MTP speculative decoding corruption at concurrency >= 4, with strong evidence of a mixed-batch indexing bug in the V1 engine. However, the deterministic gate is HUMAN_REVIEW, and the repository requires AI disclosure which conflicts with automated public actions. Additionally, there is potential overlap with issue #50427 and other related issues, and the root cause is not definitively identified."
+  },
+  "82d2caa36d2d57cce781bef917ca68016dbf326af2f166065bf68a039e3cf89b": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Open PR #4689 is marked technical_complete with tests but root_cause_coverage=false and semantic_overlap=false, while its title targets the same OCR-to-auto-tag behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/application/service/knowledge_auto_tag.go: query text+image_ocr+image_caption chunks in Handle",
+      "buildAutoTagDocumentContent: ensure OCR/caption text is included in classifier document content",
+      "Add regression test asserting OCR text appears in the auto-tag prompt"
+    ],
+    "risks": [
+      "Overlap with open PR #4689 may cause duplicate work",
+      "Broadening chunk types could change token budget or prompt size for large scanned docs",
+      "Maintainer may prefer a shared OCR-enrichment helper over a local query change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test on KnowledgeAutoTagService.Handle with recording fake model and scanned-PDF-shaped chunks; assert OCR text appears in prompt",
+      "Regression test that text-only documents still classify unchanged",
+      "Run targeted package tests and static checks for internal/application/service"
+    ],
+    "unknowns": [
+      "Whether PR #4689 already fixes the same root cause despite weak keyword overlap",
+      "Whether maintainers require a shared enrichment helper rather than a local query change"
+    ],
+    "why": "Issue pinpoints the root cause: auto-tag's Handle uses text-only ListChunksByKnowledgeID, so image_ocr/image_caption chunks never reach buildAutoTagDocumentContent, whose OCR filter branch is dead code. Concrete file/line anchors, a unit-test reproduction (recording fake model, OCR text appears 0 times), and a clear expected behavior are supplied. Open PR #4689 overlaps knowledge_auto_tag.go but lacks root-cause coverage evidence, leaving room for a better-tested fix."
   },
   "82d51f0c2402a9f1541fde907f9fc3c7823e5d704338c68f9b2e3b2940f4a902": {
     "confidence": 0.85,
@@ -157278,6 +157419,39 @@
       "Whether open PR #52244 already covers this root cause"
     ],
     "why": "The issue reports a concrete cross-rank KV-spec assert on 2-node TP with prefix caching, and the reporter supplies an instrumented diff showing rank 0 mamba_cache_mode='align' vs rank 1 'none'. However, the maintainer-side comment explicitly states the static config flow should re-derive 'align' on the remote node and asks for rank 1's enable_prefix_caching/mamba_cache_mode or the exact node-2 launch command; the two candidate explanations (flag dropped on headless path vs. config bypassing __post_init__) are unresolved. Without that datum the actionable code path is not determined."
+  },
+  "e299b7257b19a45461dca60fb7d5ad1bfebef1dbda4895a3050a5f2bd8018a01": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Anthropic provider request builder: attach cache_control ephemeral breakpoints to latest tool-result messages in the Next engine autonomous loop",
+      "Cache breakpoint advancement logic during multi-turn tool-call sequences"
+    ],
+    "risks": [
+      "Maintainer may prefer a different breakpoint placement strategy (e.g., number of breakpoints, sliding window)",
+      "Avoid broad API behavior changes beyond cache_control attachment",
+      "Anthropic cache_control limits (max breakpoints) must be respected"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build a failing test that simulates a multi-tool-call loop and asserts cache_control is present on the latest tool-result message",
+      "Regression test comparing cacheReadTokens/cacheWriteTokens progression across sequential tool calls against expected advancing behavior",
+      "Run targeted provider/runtime unit tests and static checks for the affected package"
+    ],
+    "unknowns": [
+      "Exact code location of the Next engine Anthropic request builder is not pinned in supplied evidence",
+      "Whether maintainers have an existing design preference for breakpoint placement"
+    ],
+    "why": "Issue provides a concrete expected-vs-actual comparison (Legacy v4.0.12 vs Next v4.1.25), ordered reproduction steps, and a specific mechanism: cache_control ephemeral breakpoints are only attached to literal user messages, not tool results, so cacheReadTokens flatlines and cacheWriteTokens stays 0 during autonomous loops. This is a concrete provider-runtime caching defect with a clear validation path via token metrics."
   },
   "e29d8c9cea5577e1eeab5a533673e8069891f767a32d654aa4d9fa750dc2adab": {
     "confidence": 0.85,
