@@ -79362,6 +79362,44 @@
     ],
     "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with concrete expected fields and a reproducible request shape. No duplicate PR or issue found, and the issue remains open with recent confirmation that it is still broken."
   },
+  "72522fff759ca5be709ecbc5c4e37593316188a735cd2c52c880355c6d864f1f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims consistent repeatability, yet no ERROR appears in logs and the bot lists several unrelated candidate causes",
+      "Candidate scored as agent/inference critical path, but described symptoms point to git snapshot/runtime plumbing rather than model inference"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/worktree/git.ts (snapshot/git add stall path)",
+      "packages/core/src/session/error.ts (surfacing turn failure instead of silent hang)",
+      "packages/cli/src/util/error.ts (error propagation)"
+    ],
+    "risks": [
+      "Fixing the wrong layer (provider vs snapshot vs runtime) wastes effort and may mask the real hang",
+      "Windows/Bun-specific behavior may not reproduce in CI",
+      "Overlapping open issues #48657/#58685 may already cover the actual defect"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce in a small empty folder vs a large untracked tree to discriminate snapshot stall from provider hang",
+      "Capture full opencode.log for one hung turn including any 'Failed to drain Session' stack",
+      "Add a regression test that a failed git spawn during snapshot ends the turn with a visible error rather than staying in Working"
+    ],
+    "unknowns": [
+      "Whether the hang occurs in a small empty folder (isolates snapshot vs provider)",
+      "Full log/stack for one hung turn, including 'Failed to drain Session'",
+      "Whether CLI or another provider reproduces the hang",
+      "Whether #48657 or #58685 already covers this exact failure mode"
+    ],
+    "why": "Issue reports a Windows desktop session hang after a Bun runtime update, but supplies no root-cause evidence: logs show only INFO lines, no ERROR, and the bot itself lists multiple plausible causes (git snapshot stall on large untracked tree #48657, git spawn failure #58685, provider/free-limit errors). The candidate's own actionability evidence sets root_cause_signal=false, and the code anchors are log strings rather than a located defect. Without a narrowed cause or a discriminating reproduction, the fix target is undetermined."
+  },
   "72595925fda90429c7e9b37e6e266c8fa62ea27984ef9010378b4a2662db84d8": {
     "confidence": 0.85,
     "contradictions": [
@@ -80238,6 +80276,34 @@
       "Whether assignment and AI-disclosure requirements are satisfied"
     ],
     "why": "The issue is a planning-only Proposal that explicitly forbids implementation until maintainer approval of the Proposal and a subsequent Design Issue; the exact error-response mapping and test seam are deferred to that Design. The supplied evidence also shows assignmentRequired=true and an aiDisclosureConflict, and the candidate's own pre-review failed with duplicate_changed, policy_or_disclosure_uncertain, assignment_required, and no_code_surface. These are materially blocking unknowns for actionable code work, not ordinary implementation uncertainty."
+  },
+  "736a5b3662bcde16a546ba932dfc7846a0db8df00fba7eceece647a91012a625": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unclear: likely hosted auth/token-refresh service, not necessarily this repo's code"
+    ],
+    "risks": [
+      "May be a hosted-service/account issue outside the repository codebase",
+      "No code surface identified, so any patch would be speculative"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "No concrete reproduction available; would need maintainer confirmation of the failing component before a regression test can be defined"
+    ],
+    "unknowns": [
+      "Whether the failure originates in Qwen-Agent code or the hosted coder.qwen.ai service",
+      "No reproduction steps or logs",
+      "No identified code path for the auth/token-refresh logic"
+    ],
+    "why": "Issue describes a hosted-service GitHub OAuth/token-refresh failure on coder.qwen.ai with no reproduction, no code anchors, and no root-cause evidence; pre-review also flagged no_code_surface and reproduction_or_validation_missing."
   },
   "7372012f7ca3664a8e96c6d3d7519b76bf5018245fd9abb1a59da525b25eb634": {
     "confidence": 0.85,
@@ -90310,6 +90376,36 @@
       "Whether any workflow-level test harness is expected"
     ],
     "why": "The issue is a CI workflow shell-quoting bug in .github/workflows/update-debian-snapshot.yml, not an agent/inference/RAG algorithm or runtime contribution. Root cause is clear (literal \\\" escapes inside $(node -p ...) leave a bare '('), but the work is YAML/shell plumbing with no training objective, model mechanism, distributed invariant, quantization, kernel, or evaluation methodology. An open maintainer-authored PR #18760 already targets the same step, and the candidate's own evidence shows no root-cause coverage or test files."
+  },
+  "82b52fc011509a530e023a7b9fbf3d0da80a8d109161851a053a26e917833f07": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request upstream fetch from shared stateless session TaskGroup teardown",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools cancellation scope is not tied to another request's handler"
+    ],
+    "risks": [
+      "Fix may alter session manager lifecycle semantics and affect single-request latency",
+      "Upstream anyio/mcp behavior may vary across versions, complicating a stable test"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test issuing two overlapping tools/list requests to POST /mcp with two HTTP streamable upstreams and assert both succeed without MCPServerListError",
+      "Run targeted mcp_server_manager unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether #24522's prior fix attempt left partial coverage that constrains the correct implementation approach"
+    ],
+    "why": "Issue provides a concrete concurrency bug with traceback evidence pointing to shared StreamableHTTPSessionManager TaskGroup teardown cancelling in-flight upstream list_tools fetches, ordered reproduction steps, and a clear expected behavior; a reference-vs-implementation regression test is feasible."
   },
   "82d16b8fa538af49fa88ea467d55d8c5d9bc36b9689a2240bb4a9ad0c469df1d": {
     "confidence": 0.7,
@@ -159667,6 +159763,44 @@
     ],
     "why": "Issue provides a clear root cause: missing num_speculative_tokens in SpeculativeConfig.compute_hash() causes torch.compile cache collisions. Includes minimal reproduction steps and a concrete proposed fix. Although an open PR #53367 exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "e4fe1314489d150841cf5166611f4d044d8cad7cd233516a4c23d67dd005e837": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/application/service/wiki_ingest_batch.go: stop passing full ExistingContent for full replacement; scope updates to changed contribution",
+      "internal/application/service/wiki_ingest.go: bound LLM output to changed contribution plus bounded summary; retain continuation as safety guard",
+      "internal/agent/prompts_wiki.go: adjust WikiPageModifyUserPrompt to emit only changed contribution",
+      "persistence layer: contributions keyed by (knowledge_base_id, slug, knowledge_id) with idempotent replace/retract and migration for existing pages"
+    ],
+    "risks": [
+      "Migration/data-consistency design for existing pages and manual edits is non-trivial and not yet validated",
+      "Retraction semantics currently rely on remaining-source summaries; append-only contributions could break them",
+      "Coordinated page/citation/index publication needed to avoid stale contributions on failed publish or source deletion",
+      "Scope may be large enough to warrant maintainer design confirmation before a full PR"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test that ingests N sources into one slug, updates one source, and asserts the modify prompt/output scales with the changed contribution, not total page size",
+      "Regression test that retraction still reconstructs correct remaining-source content",
+      "Test that continuation guard still rejects truncated output for ordinary pages",
+      "Migration test: existing synthesized page plus manual edits survive contribution backfill"
+    ],
+    "unknowns": [
+      "No maintainer design preference recorded for the contribution-store architecture",
+      "Production-scale reproduction not independently validated; only code-inspection confirmation supplied"
+    ],
+    "why": "Issue provides concrete code anchors (reduceSlugUpdates, WikiPageModifyUserPrompt, wikiLLMMaxTokens) and a contributor traced the same reduce path at the base SHA, confirming full-page re-synthesis. Reproduction is described at production scale but the mechanism is verifiable by code inspection and a bounded synthetic test. The only prior PR (#2489) is CLOSED and explicitly described as partial caps, not a fix, so no merged-fix coverage blocks work."
+  },
   "e50476dd7fb544c08c3afe3c784235163af4ce54291601de1140082a58905f91": {
     "confidence": 0.85,
     "contradictions": [],
@@ -171320,6 +171454,39 @@
       "Which of the two coherent contracts (full ReLoRA restart vs rename) maintainers will accept for Claim A"
     ],
     "why": "Issue identifies two concrete, separable algorithm defects in ReLoRA callback: (A) _prune_and_reset never merges B@A into base weight before pruning, contradicting the module docstring's ReLoRA conformance claim; (B) strict > threshold mask zeroes all entries on ties, killing both LoRA factors and their gradients. Maintainer independently reproduced both with real peft LoRA model, measured base weight delta = 0, effective-map MSE 142.12 vs control 8.77e-13, and zero gradient norms. Code anchors and pinned SHA provided."
+  },
+  "f54ed5ae62161ca0a4997c941ae04f21628d0364bb4a9e0111abe1801969c057": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/base_aws_llm.py: stop restoring incoming SigV4 Authorization over the fresh signature; only preserve Bearer tokens",
+      "litellm/llms/custom_httpx/llm_http_handler.py: retry path passes attempt-0 headers into sign_request, so the fix must ensure re-signing uses the mutated body"
+    ],
+    "risks": [
+      "Broadening the change to other header-restore behavior could alter forwarded-header handling",
+      "Bearer-token detection via string prefix may miss other auth schemes",
+      "Open PR #48150 has semantic overlap (sigv4, v1_messages) but no direct code overlap and does not reference this issue; must compare before duplicating"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that calls _sign_request with an incoming stale SigV4 Authorization and a mutated body, asserting the emitted Authorization matches the new body hash",
+      "Add a regression test for the strip-and-resign retry in _async_post_anthropic_messages_with_http_error_retry asserting the retried request is re-signed over the stripped body",
+      "Add a test that AWS_BEARER_TOKEN_BEDROCK Bearer Authorization is still preserved",
+      "Reproduce end to end with the issue's multi-turn thinking-block body against a SigV4 Bedrock model and confirm HTTP 200 on retry"
+    ],
+    "unknowns": [
+      "Whether PR #48150 actually touches the same _sign_request restore logic or only shares keywords",
+      "Whether maintainers have a preferred fix location (sign_request vs retry loop)"
+    ],
+    "why": "Issue pinpoints the stale SigV4 Authorization restore in BaseAWSLLM._sign_request, provides instrumented payload-hash evidence, a concrete reproduction, and a minimal verified patch; the strip-and-resign retry path is a real correctness bug with a clear reference-vs-implementation test."
   },
   "f551dd24ae243eb964acd68ee0a0dfe64fd2656d30fcfb4e52bf5f9bf02db0fc": {
     "confidence": 0.9,
