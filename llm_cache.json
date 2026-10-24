@@ -92527,6 +92527,40 @@
     ],
     "why": "Issue clearly identifies a shallow update in get_config causing recursive override failure, with a concrete reproduction. However, an existing PR #33525 directly addresses this but lacks tests and has failing CI, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed."
   },
+  "85c78d54e89b50ced0c7cc6fa8eea540ac79cadae05f7f30a624c72689239f40": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims verified failing regression on main, but candidate rootCauseCoverage is false and open PR #44675 is marked technical_complete with tests yet root_cause_coverage false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "PHP SDK ChatClient/CompletionClient/WorkflowClient request constructors: normalize empty top-level inputs array to empty JSON object",
+      "Add request-boundary regression tests for empty, populated, and nested input maps"
+    ],
+    "risks": [
+      "Open PR #44675 may already resolve the issue, making a competing fix redundant",
+      "Global JSON_FORCE_OBJECT would incorrectly alter nested arrays; fix must be scoped to top-level empty inputs",
+      "No executed deployed backend/model run, only a local field-contract fixture"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Request-boundary test asserting outgoing JSON body has \"inputs\": {} for empty PHP array across ChatClient, CompletionClient, WorkflowClient",
+      "Regression test preserving populated maps and nested arrays",
+      "Local HTTP fixture validating received field with Pydantic TypeAdapter(dict[str, Any])"
+    ],
+    "unknowns": [
+      "Whether PR #44675 fully and correctly resolves the issue or leaves a gap worth competing on",
+      "Whether maintainers have a preferred implementation for the empty-inputs normalization"
+    ],
+    "why": "The issue describes a concrete PHP SDK serialization bug (empty array encoded as [] instead of {}) with an expected/actual pair and a proposed minimal fix, but the supplied evidence shows an open PR #44675 that already directly covers this exact fix with tests, and the candidate's own root-cause coverage is marked false. The duplicate/coverage status is unresolved, which materially determines whether independent code work is actionable."
+  },
   "85cb4e46a6a396b301c31cf30a0add5c22aa11f0b1129ab8471b10d951264f74": {
     "confidence": 0.82,
     "contradictions": [],
@@ -145711,6 +145745,37 @@
     ],
     "why": "The issue clearly identifies a missing MCP tool enumeration in the CLI, with a concrete code path and proposed design. However, the triage bot's comment indicates an implementation is already in progress, and the issue lacks explicit maintainer approval or design confirmation. The proposed change is a user-facing feature enhancement, not a critical bug fix, and the existing PR may already address it."
   },
+  "d256de57b86b08e29dcc1b0e08fb8983b390a3556fc46457f2551c6cd8a10a52": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims citations are missing, but supplied source verification says the direct-binding path preserves citations on main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "No confirmed code change; possibly documentation or a guard for string-context citation behavior in api/core/workflow/nodes/llm/node.py"
+    ],
+    "risks": [
+      "Fixing a non-bug could change intended citation semantics",
+      "The reporter's binding configuration may make this a usage issue rather than a code defect"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with Context bound directly to Knowledge Retrieval -> result and confirm citations appear",
+      "Reproduce with Context bound to a Template/Code node output and confirm empty retriever_resources by design"
+    ],
+    "unknowns": [
+      "Whether the reporter's LLM Context is bound directly to Knowledge Retrieval result or to a Template/Code node output",
+      "Exact 1.13.x patch version used by the reporter"
+    ],
+    "why": "The issue reports missing citations, but the supplied evidence shows the direct Knowledge Retrieval -> LLM context path already preserves retriever_resources on main, and a string context yields empty resources by design. The decisive fact—whether the reporter's Context is bound directly to Knowledge Retrieval result or to a Template/Code node output—is still unknown, so it is unclear whether any code fix is warranted versus a configuration/usage explanation."
+  },
   "d263202a3e9e5df804fd39db9530ac59585d0321d052cfb57691402c5845a076": {
     "confidence": 0.7,
     "contradictions": [],
@@ -146204,6 +146269,40 @@
       "Maintainer preference on whether input_tokens should become total or remain remainder"
     ],
     "why": "Issue clearly identifies a real bug in native Anthropic provider token accounting with a concrete reproduction and suggested fix. However, an open PR #6770 already addresses the same code path and semantics, and a duplicate issue #6768 exists. The deterministic gate requires HUMAN_REVIEW, and the existing PR may already cover the fix, so starting new work without maintainer confirmation risks duplication."
+  },
+  "d2a5803a4bd4702a881e098bec569ad6ac7d555f957b6c97514601dfb8da9460": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: route tool+reasoning requests to Responses API or force reasoning_effort none",
+      "request construction and response/streaming/tool-call parsing for Responses API",
+      "pre-execution validation with actionable error for unsupported model/endpoint/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API adaptation touches streaming and tool-call continuation, larger blast radius than a one-line fix",
+      "Exact effective reasoning_effort not captured, so the triggering configuration is inferred",
+      "Successful execution with reasoning_effort none unconfirmed in reporter's deployment"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: gpt-6-luna with tools and reasoning enabled via Responses API completes tool call",
+      "Regression test: gpt-6-luna with tools and explicit reasoning_effort none via Chat Completions succeeds",
+      "Unit test: unsupported combination yields clear validation error before HTTP call"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Responses API migration vs reasoning_effort none fallback",
+      "Whether gpt-6-luna is a real/available model in the target environment for validation"
+    ],
+    "why": "Issue provides a concrete HTTP 400 error, expected/actual pair, reproduction steps, and a named code anchor (internal/entity/models/openai.go) where the chat-completions adapter builds requests. Root cause is partially established: the adapter uses /v1/chat/completions with reasoning_effort while function tools are enabled, which the provider rejects. A reference-vs-implementation test (Responses API path vs reasoning_effort:none path) is feasible."
   },
   "d2b4b8dc3238325aba1016fee4886d236adc9f06352c9b022c4e588f05e96334": {
     "confidence": 0.6,
@@ -155288,6 +155387,43 @@
       "Maintainer design preferences unknown"
     ],
     "why": "Issue reports a watchdog timeout in sglang with a complex configuration, but lacks a minimal reproducer and root cause analysis. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Actionability is low without maintainer guidance or a clear code path."
+  },
+  "dfae40683821571f5796a569ea42edc7f1b10d6835a8fa1d4c1cef7fc45b2b40": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence reports root_cause_signal=false while the issue body provides a detailed code-anchored root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "HttpClientStreamableHttpTransport.handleException/handleExceptionSafely: compare-and-set the failed transport session instead of unconditionally replacing activeSession",
+      "Pass the captured transportSession from sendMessage/reconnect call sites (413, 593, 609) into the exception handler",
+      "Avoid forwarding stale session-not-found to LifecycleInitializer.handleException so the healthy session's initialization is not closed"
+    ],
+    "risks": [
+      "Behavior change in session invalidation could affect legitimate re-initialization paths",
+      "Truncated suggested fix leaves the exact exception-forwarding semantics ambiguous",
+      "Maintainer comment indicates low priority given ongoing modern-protocol work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Port the supplied StaleSessionNotFoundTest fake-server reproduction as a failing regression test",
+      "Assert that a late 404 for s1 does not fail in-flight request C on s2 and does not send DELETE for s2",
+      "Run targeted mcp-core transport tests plus the new regression test"
+    ],
+    "unknowns": [
+      "Repository requires assignment (assignmentRequired=true) and the issue has no assignee",
+      "Full text of the suggested fix is truncated in the supplied issue body"
+    ],
+    "why": "The issue gives a strong, code-anchored root cause (handleException replaces whatever session is active instead of the session the failed request carried) and a concrete reproduction. However, the supplied pre-task policy is needs_assignment with assignmentRequired=true and no assignees, which is a materially blocking unknown for actionability. The issue body is also truncated mid-sentence in the suggested fix, so the full proposed change is not fully visible."
   },
   "dfb1504fbb652f47ef522a783bdb20b08e8a345654096543541f58b02abc2b36": {
     "confidence": 0.85,
