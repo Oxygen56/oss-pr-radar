@@ -121402,6 +121402,45 @@
     ],
     "why": "Issue reports a concrete user-visible bug: isLoading stays true after stream completion because StreamManager.enqueue awaits the success handler, which in useStreamLGP awaits history.mutate(). A commenter supplies code anchors (manager.ts L1117-L1145, stream.lgp.tsx L656-L677), a proposed isStreaming flag, and a reference implementation with unit-test validation. This is a concrete, actionable fix on the agent/inference UI path."
   },
+  "afdea37240958caa7c7a2bc5ee579f709794b657a783325b7dca8c336b4c18c7": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment marks PR #37999 as semantic_overlap_requires_review while also reporting semantic_overlap=true with overlapping base.py path but root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "libs/core/langchain_core/messages/ai.py: map invalid_tool_calls ids to invalid_tool_call blocks in init_tool_calls chunk_position=last replacement",
+      "libs/partners/openai/langchain_openai/chat_models/_compat.py: drop tool_call_chunk/server_tool_call_chunk in _convert_from_v1_to_chat_completions",
+      "streaming regression test for v1 output_version with non-JSON tool-call arguments"
+    ],
+    "risks": [
+      "PR #37999 may already implement the same content-block streaming fix, making this duplicate work",
+      "Repository requires assignment before contribution; issue has no assignee",
+      "Changing init_tool_calls block replacement could affect other providers' v1 streaming paths",
+      "Other integrations' v1 converters (groq, mistralai per #40932) may need the same filter, expanding scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's MockTransport script with output_version='v1' and assert AIMessage.content[1] is an invalid_tool_call block, not tool_call_chunk",
+      "Assert the second request's assistant message content contains no tool-call parts and tool_calls lists call_A, call_C, call_B",
+      "Add a unit test in libs/core for AIMessageChunk.init_tool_calls with an unparseable call at chunk_position='last'",
+      "Add a langchain_openai test for _convert_from_v1_to_chat_completions dropping tool_call_chunk blocks"
+    ],
+    "unknowns": [
+      "Whether PR #37999 already fixes the tool_call_chunk leak or only adds native content-block streaming",
+      "Whether a maintainer will assign the issue given assignmentRequired=true",
+      "Whether related issue #40826 (re-parsing per chunk) shares the same root cause or is distinct"
+    ],
+    "why": "Issue gives a self-contained MockTransport reproduction, exact code anchors (ai.py init_tool_calls id_to_tc built only from tool_calls; _compat.py forwards tool_call_chunk), and a concrete two-part fix. However, the repository policy is needs_assignment with no assignee, and open PR #37999 (native content-block streaming for OpenAI chat completions, overlapping base.py) may already cover the root cause; both are materially blocking unknowns for actionability."
+  },
   "afe8ba7789d4bad3784087063d5f793e051477c42f71789fc2e5ab87135ab6c9": {
     "confidence": 0.85,
     "contradictions": [
@@ -144727,6 +144766,41 @@
       "Whether maintainers have a preferred design for step identity/backward compatibility"
     ],
     "why": "Issue #2647 describes a concrete, reproducible state-restoration bug in SOPEngine: persisted SOPStepRunState is mapped by list index, so same-length reordered steps silently receive the wrong progress. The issue supplies expected/actual behavior, ordered reproduction steps, and code anchors (SOPEngine, SOPStepRunState, SOPRunState). A directly related open PR #2648 exists but is assessed as weak competition with missing root-cause coverage, so a minimal fix plus regression test remains actionable."
+  },
+  "d0b4bbee10e60a50cd948bd4dba1623529908a2d16b038f258fbf4d81001d365": {
+    "confidence": 0.72,
+    "contradictions": [
+      "open_pr_assessment marks technical_complete true but root_cause_coverage false for PR #48205"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add authenticated model-list route under /claude_code_gateway/v1/models reusing existing listing grants and response format",
+      "Gate the route on enable_claude_code_gateway and preserve discovery budget and enterprise route exemptions"
+    ],
+    "risks": [
+      "Route may need to share auth middleware with existing gateway endpoints; incorrect wiring could bypass auth",
+      "Discovery budget and enterprise exemption logic must be reused, not duplicated",
+      "Draft PR #48205 may later cover the same fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's config and curl: assert /claude_code_gateway/v1/models returns 200 with the configured model",
+      "Regression test that /v1/models behavior is unchanged",
+      "Test that the gateway route is absent/disabled when enable_claude_code_gateway is false",
+      "Test auth rejection for missing/invalid bearer token on the gateway route"
+    ],
+    "unknowns": [
+      "Exact code location of existing model-list route and gateway route registration not confirmed",
+      "Whether maintainers prefer extending the draft PR rather than a competing implementation"
+    ],
+    "why": "Issue gives a concrete live-proxy reproduction: gateway-prefixed /v1/models returns 404 while /v1/models returns 200, with config and curl commands. Root cause is not explicitly identified but the missing gateway-prefixed route is a narrow, testable gap. Existing PR #48205 is a draft with no root-cause coverage, so competition space remains."
   },
   "d0c84a2ac81835b27354bec3a1625d87d13382c59c012ac073a1e139a36071f3": {
     "confidence": 0.85,
