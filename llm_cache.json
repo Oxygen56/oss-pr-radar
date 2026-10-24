@@ -18690,6 +18690,39 @@
     ],
     "why": "Issue provides a clear root cause (missing bounds guard for logical_expert_id when shared-experts fusion is disabled) and a concrete reproduction command with traceback. The fix is actionable: add a guard or route shared-expert weights correctly. Existing PRs overlap semantically but do not directly address this issue, so the contribution remains valuable."
   },
+  "1cb4ac0c14c43550bcfc6ba525c4b451c916f78278009f799a85bafd164f2866": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate marks root_cause_signal=false and maintainer_approved=false, yet gate_decision is ALLOW_TO_WORK with high score; the comment's hypothesis is unconfirmed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/core/workflow/nodes/llm/node.py context/retriever_resources handoff",
+      "citation display path in workflow run output"
+    ],
+    "risks": [
+      "Root cause may be a display-layer issue rather than the LLM node handoff, leading to a wrong fix location",
+      "Reporter's exact 1.13.x patch version and Context binding are unknown, so the failure may not reproduce on main"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a minimal chatflow: knowledge retrieval node bound directly to LLM Context, citations enabled, and assert retriever_resources is populated in the response",
+      "Add regression test comparing direct structured retrieval binding vs string/template-mediated context to confirm metadata survival"
+    ],
+    "unknowns": [
+      "Reporter's exact Context binding (direct retrieval result vs template/code string)",
+      "Exact 1.13.x patch version",
+      "Whether the bug reproduces on current main baseSha 2b35144"
+    ],
+    "why": "Issue reports missing citations after LLM response in a chatflow with knowledge retrieval, but the supplied evidence lacks a confirmed root cause. The only comment (from a non-maintainer) hypothesizes that a string context path yields empty retriever_resources, but this is unverified and the reporter's Context binding and exact patch version are still unknown. No reproduction has been confirmed and no code anchor is validated."
+  },
   "1cb520a0da20015c273476f39250fdc465af8c79a0979e16ead04d518d187991": {
     "confidence": 0.8,
     "contradictions": [
@@ -90606,6 +90639,42 @@
     ],
     "why": "Issue provides ordered reproduction, code anchors in message_sender.py, and maintainer-confirmed DOM probe evidence showing the top card is not reachable via main.children (h1Count 0, composeHrefs 0 in that section, 4 compose links elsewhere). This establishes a concrete root cause and a reference-vs-implementation validation path for the recipient resolution logic."
   },
+  "83a35ff1f5ab29f55b8595bfe9f95e89b4ba386b054d788ea17895c3c3c4bb77": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Responses API stream event Zod schema/whitelist to tolerate or skip unknown/extended event types",
+      "Provider error payload handling so InvalidParameter JSON is surfaced as provider error, not re-validated as stream event",
+      "Streaming state propagation to preserve partial text/reasoning on abort",
+      "Regression tests for reasoning_summary_text.delta, response.created, output_item.added function_call, and UUID msg-id errors"
+    ],
+    "risks": [
+      "Broadening the schema could mask genuinely malformed events",
+      "Overlapping open PR #22339 may conflict on the same provider path",
+      "Behavior change scope should stay limited to tolerant parsing, not new API semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test feeding response.reasoning_summary_text.delta payload and assert no AI_TypeValidationError",
+      "Add test for response.output_item.added function_call event being accepted/skipped safely",
+      "Add test that InvalidParameter provider error JSON is surfaced as provider error rather than Zod union failure",
+      "Run targeted package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer ignore-vs-map for unknown events",
+      "Exact code location of the Zod whitelist not confirmed from supplied evidence"
+    ],
+    "why": "Issue provides concrete reproduction steps, exact failing payloads (response.reasoning_summary_text.delta, response.output_item.added function_call, InvalidParameter with UUID msg id), and clear acceptance criteria. Root cause is a client-side Zod whitelist rejecting extended Responses API events; a reference-vs-implementation regression test is straightforward. Related PRs are either merged/closed partial fixes or an open PR without root-cause coverage, so competition is weak but not blocking."
+  },
   "83baa694c7212751bcd83b7edfd27578ff95b2856700a17ae21f6128961e8621": {
     "confidence": 0.85,
     "contradictions": [],
@@ -95038,6 +95107,42 @@
       "Any repository code path involved in the failing exchange."
     ],
     "why": "Issue reports a server-side HTTP 500 during device-auth token exchange, with no code anchors, no reproduction path in the repository, and the reporter themselves suspects an account-specific server-side billing mis-flag. No actionable client-side code change is identified."
+  },
+  "89654c365b6c4976e5f6b7686253f6d9775cb966eaf4872f299479a545926da6": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body says gemini/minimax reported separately or in Design, while comment confirms vertex.go:1119 also affected, expanding scope beyond the stated one-line qwen fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-proxy/provider/qwen.go: use origRequest.getMaxTokens() for MaxTokens in qwenTextGenParameters",
+      "Add regression unit test for max_completion_tokens-only request in qwen provider test file"
+    ],
+    "risks": [
+      "Open PR #5013 touches qwen.go and non-compatible mode; may already cover or conflict with this fix",
+      "Scope creep to gemini/minimax/vertex providers if maintainer approves broader fix",
+      "Behavior change in native DashScope request transformation could affect existing clients relying on omitted max_tokens"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: chatCompletionRequest{MaxCompletionTokens:50, MaxTokens:0} marshaled through qwenTextGenParameters must include max_tokens:50",
+      "Capture-upstream integration test asserting transformed DashScope request contains parameters.max_tokens when only max_completion_tokens is sent",
+      "Replay captured bytes against DashScope and assert output_tokens<=50 and finish_reason=length"
+    ],
+    "unknowns": [
+      "Whether maintainer will assign the issue, as repository policy requires assignment before implementation",
+      "Whether PR #5013 already fixes the max_completion_tokens drop in qwen.go non-compatible mode",
+      "Whether maintainer approves extending scope to gemini, minimax, and vertex providers"
+    ],
+    "why": "Issue provides a concrete root cause (qwen.go:294 uses origRequest.MaxTokens instead of getMaxTokens()), a real-API reproduction with token counts, and a one-line fix path. However, the repository policy requires assignment (policy.status=needs_assignment, assignmentRequired=true) and the issue has no assignees, which is a materially blocking unknown for actionability. Additionally, open PR #5013 overlaps the same qwen.go provider path and non-compatible mode semantics, and its coverage of this exact root cause is unresolved."
   },
   "8966a9a4bfb6cee0ec7e95ea4edd22560894fe6e94dfcfbb0e1b2b2340d5cf4d": {
     "confidence": 0.8,
@@ -120403,6 +120508,40 @@
     ],
     "why": "Issue identifies a concrete root cause: cleanupOrphanedWorkflows in tests/integration/n8n-api/utils/cleanup-helpers.ts:25 performs an instance-wide sweep of workflows matching the shared cleanup prefix/tag, and 18 test files call it from afterAll while Vitest runs files in parallel, so the first finisher deletes in-flight workflows of other files. Observed 404/N8nNotFoundError failures across three runs in different files, each passing in isolation, support the race. Suggested fix (move sweep to globalSetup, optional age guard) is concrete and testable."
   },
+  "aef286d0dd61deb8eaa1ccada8ceed027c0b8afae4af01eafdc42afe8d593cf1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Anthropic provider request construction: attach cache_control ephemeral breakpoints to the latest tool-result/conversation-tail messages in the Next engine",
+      "Cache breakpoint advancement logic across autonomous tool-call turns",
+      "Token accounting for cacheWriteTokens/cacheReadTokens in the Next engine"
+    ],
+    "risks": [
+      "Anthropic cache_control placement rules (max breakpoints, ordering) could be violated by a naive fix",
+      "Behavior change may affect other providers sharing the request-building path",
+      "Maintainer may have a preferred design for breakpoint management"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test asserting cache_control is present on the latest tool-result message after a multi-turn tool-call loop",
+      "Regression test comparing cacheReadTokens growth across sequential tool calls against expected monotonic increase",
+      "Run targeted provider/runtime package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact code location of Next engine cache_control attachment not confirmed from supplied evidence",
+      "Whether the reported model name 'claude-sonnet-5' is valid/representative"
+    ],
+    "why": "Issue gives a concrete expected-vs-actual comparison (Legacy v4.0.12 vs Next v4.1.25), ordered reproduction steps, and a specific mechanism: cache_control ephemeral breakpoints are not advanced to tool-result messages during autonomous loops, so cacheReadTokens flatlines and cacheWriteTokens stays 0. This is a well-scoped provider/runtime caching bug with a clear validation path via token metrics."
+  },
   "aeff937e0dc69d3806b2e354e86584814f111bf74bf36d48fb25061ca44f2c92": {
     "confidence": 0.8,
     "contradictions": [],
@@ -122310,6 +122449,52 @@
       "Exact interaction between connector presence and mamba spec-verify rollback that causes corruption."
     ],
     "why": "Issue provides a detailed experiment matrix isolating the corruption to speculative decoding with any KV connector attached, even with zero token transfer, and identifies a suspected code path. Maintainer comment confirms a relevant fix (#50344) but reporter's backport test shows corruption persists, narrowing the root cause to connector presence effects beyond the lookup branch. This is a concrete, reproducible bug with clear validation path."
+  },
+  "b24869dc318bcc4a0636031b3fab317db887793b695b52b21ef9393b519d9e1c": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Early hypothesis blamed stale module-global DeepEP buffer; later evidence falsifies buffer reuse as necessary",
+      "Early hypothesis blamed DeepEP combine corruption; later evidence shows standard alltoall dropless reproduces and combine is not the corruption source",
+      "Initial module-level harness did not reproduce; later true single-MoELayer isolation does reproduce"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "MCore expert compute: add post-dispatch fixed-shape padding (moe_expert_padding_multiple=64) independent of capacity/drop semantics, reusing Fp8Padding/Fp8Unpadding in TEGroupedMLP and SequentialMLP",
+      "Preserve exact tokens_per_expert and dropless dispatch; strip dummy rows before combine",
+      "Optionally expose TE cuBLAS workspace restriction as a documented correctness WAR"
+    ],
+    "risks": [
+      "Pad-to-64 adds compute overhead that is large at small per-expert load (mu=16 ~75% padding) though small at realistic training mu",
+      "Rounded-M=64 single grouped GEMM may select a different kernel when an expert exceeds 64 tokens; fixed M=64 chunks are safer but cost more launches",
+      "Split-K isolation not fully proven since TE does not expose CUBLASLT_ALGO_CONFIG_SPLITK_NUM on this path",
+      "Backward, zero-token experts, TP/EP combos, FP8, and CUDA-graph coverage still need production validation",
+      "Related Megatron-LM #4871 DeepGEMM batch-invariant path did not fix this training reproducer"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run single-MoELayer reproducer with real GPT-OSS layer-2 weights/activations: baseline delta 4.88e-4, pad64 delta 0",
+      "Full GPT-OSS 20B E2E: baseline final-logit delta 0.25, pad64 delta 0",
+      "Backward parity: target input grad and parameter grad delta 0",
+      "Heterogeneous-neighbor sweep 1..7 EP peers all delta 0",
+      "Direct real-expert cross-shape probe M=16..1024 confirming M=64 boundary",
+      "Validate on other GPU generations, TE versions, dtypes (FP8), expert hidden sizes, and CUDA-graph coverage"
+    ],
+    "unknowns": [
+      "Whether pad-to-64 invariance holds on other GPU generations, TE versions, dtypes, and expert hidden sizes",
+      "Whether the rounded-M=64 grouped variant is equivalent to fixed M=64 chunks when an expert exceeds 64 tokens",
+      "Backward parity, zero-token experts, TP/EP combinations, FP8, and CUDA-graph coverage for a production patch"
+    ],
+    "why": "Issue provides a concrete, deterministic, bit-reproducible invariant violation (dropless DeepEP GPT-OSS 20B logits depend on other EP-rank samples, max_abs_delta=0.25). Contributor follow-ups isolate the mechanism to FC2 GEMM split-K selection at the M=64 shape boundary (cuBLASLt trace shows splitK=2 for M=16/32, none for M>=64), and validate two concrete fixes: compute-only pad-to-64 (exact 0 across module, backward, and full-model) and a 4-byte TE cuBLAS workspace WAR (exact 0 E2E). This is a genuine numerical/distributed-training algorithm contribution with a clear reference-vs-implementation test path."
   },
   "b2488d117df24330ef29c2f9cc9162b1ac4785364025fb98e8d5fdd580a73ad4": {
     "confidence": 0.9,
@@ -163905,6 +164090,40 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a pricing-data gap causing silent under-billing for priority tier on dated-snapshot model entries, with concrete repro and root cause. However, an open PR #34504 overlaps semantically and touches the same cost-calc path, so a new PR risks duplication until that PR's scope is assessed."
   },
+  "eb74e50c199def72dcff0773454a3bef51898b8de4bdbae5760fd3309723c8cb": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist/derive lineage (parent_session_id/conversation_id) for resumed sessions and exclude clones from root listing",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path should write lineage when creating continuation session",
+      "usage/token accounting so inherited context is not double-counted across fragments"
+    ],
+    "risks": [
+      "Lineage schema change may affect CLI/Hub paths fixed in #12500 and must stay consistent",
+      "Usage de-duplication could alter existing cost reporting semantics",
+      "Overlap with open #12590 and #14840 on the same History handler"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test that resumes a cancelled session and asserts the new session record carries parent_session_id/conversation_id",
+      "Regression test that listHistory returns one root entry for a resumed conversation",
+      "Integration check comparing sessions.db rows and usage totals before/after resume to confirm no duplicate billing accounting"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer lineage columns vs. a conversation_id grouping approach",
+      "Whether #12590/#14840 fixes will touch the same handler and conflict"
+    ],
+    "why": "Issue provides a concrete, measured reproduction (two session rows, same pid, 147ms apart, identical message prefix, NULL lineage columns) and pins the root cause to specific code anchors: isRootSessionRecord filtering on parentSessionId in history.ts and the resume path in sdk-task-history.ts creating a new session with initialMessages. This is a real agent-runtime state/lineage bug with a clear validation path via sessions.db inspection and History listing."
+  },
   "eb76f5db0014ade85486ecc8b9a01f4f4160c8dfcb4844966b8adc56b1a4d20b": {
     "confidence": 0.8,
     "contradictions": [],
@@ -168884,6 +169103,42 @@
       "Whether maintainers have a preferred implementation for the ACP usage mapping"
     ],
     "why": "Issue clearly identifies the dropped `usage` event in apps/cli/src/acp/session-updates.ts and the missing usage in AcpAgent.prompt(), but an open PR #14252 ('fix(acp): forward token usage and cost to ACP clients') already overlaps the same code paths and semantics, and the issue itself states 'A fix is up as a PR, linked below.' Whether that PR already covers the root cause is unresolved, which materially determines whether new code work is actionable."
+  },
+  "f26d682e428cba5982badb3f45d711360484d9759f6ba7b6fbacafe15ed1a75c": {
+    "confidence": 0.82,
+    "contradictions": [
+      "candidate.why claims LLM algorithm mechanisms (PEFT, model_architecture) but the issue body describes Go parser option wiring with no algorithmic content",
+      "candidate.actionability_evidence.root_cause_signal is false while the issue body gives concrete file/line root causes"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/ingestion/component/pdf_vision_dispatch.go: populate file.outline and apply remove_header_footer filtering",
+      "internal/parser/parser/pdf_parser_remote_common.go: stop hard-coding empty outline",
+      "web/src/pages/agent/form/parser-form/pdf-form-fields.tsx: conditionally render options per parse method"
+    ],
+    "risks": [
+      "Overlaps with already-merged PRs #21228 and #19779, so remaining scope may be partially covered",
+      "Memory discipline for image handling must be preserved",
+      "Behavior may differ per engine adapter"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Parse a PDF with printed TOC and running headers via mineru/plain_text and assert outline is populated and header/footer removed when switches are on",
+      "Regression test that toggling remove_toc/remove_header_footer changes output for remote parsers",
+      "Compare DeepDoc vs remote parser output on the same document"
+    ],
+    "unknowns": [
+      "Whether merged PRs #21228/#19779 already fully resolve the remaining remove_toc/remove_header_footer gaps",
+      "Whether maintainers consider this in scope for a new contribution"
+    ],
+    "why": "The issue is a Go ingestion/parser wiring bug: remove_toc and remove_header_footer options are not consumed on remote PDF parser paths, and outline is hard-coded empty. This is ordinary parser plumbing/configuration behavior, not an LLM algorithm contribution (no training objective, model mechanism, distributed invariant, quantization/numerical method, kernel, or evaluation methodology). The 'algorithm_evidence' matched only generic terms like 'adapter' and 'normalization' from parser code, which is a false positive for track=llm_algorithm. Additionally, merged PRs #21228 and #19779 already cover the shared normalization and box-level TOC/header-footer removal, reducing remaining value."
   },
   "f275a7d5a039c5d2a19b7a068fa8184f08a6509d08dc6cb22bbc34172b97c70f": {
     "confidence": 0.6,
