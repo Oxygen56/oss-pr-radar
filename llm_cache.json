@@ -167861,6 +167861,38 @@
     ],
     "why": "The issue describes a concrete streaming-adapter behavior (synthetic empty text block, stop_reason=end_turn on 0-output/thinking-only/aborted streams) with named code anchors, but the supplied evidence is contradictory about track fit and coverage: the candidate is labeled llm_algorithm yet the work is ordinary streaming/API plumbing (adapter event translation), not a training objective, model mechanism, quantization/numerical method, kernel, or evaluation methodology. Additionally, open PR #47832 has semantic overlap (end_turn, stop_reason, v1_messages) with unclear direct code overlap, and the duplicate status is 'semantic_overlap_requires_review', so whether the root cause is already covered is unresolved."
   },
+  "ef662455c36a72eb4491256d0ee2cc0b9087a118fc33206baba2c3a9d1f6f68d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Proxy spend recalculation endpoint",
+      "Failed-request billing policy configuration",
+      "Auditable idempotent recalculation logic"
+    ],
+    "risks": [
+      "Scope is large and design-dependent; maintainer design preference materially affects implementation",
+      "Billing policy semantics (provider-reported cost vs token usage) are underspecified",
+      "No reproduction means correctness cannot be validated"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Would need a concrete failing scenario (e.g., stale spend record) to build a regression test",
+      "Targeted unit tests for recalculation idempotency and billing policy selection"
+    ],
+    "unknowns": [
+      "No concrete reproduction or failing case",
+      "No code anchors or affected modules identified",
+      "No maintainer design confirmation for recalculation semantics or billing policy defaults"
+    ],
+    "why": "Issue is a broad feature request for historical SpendLogs recalculation plus configurable failed-request billing policy. No reproduction, no code anchors, no root-cause evidence, and no concrete validation path beyond a proposed endpoint sketch. Pre-task evidence flags no_code_surface and reproduction_or_validation_missing."
+  },
   "ef77f8295c787bf49e33f63bad38fb6def781bb5c23f4d175598a105d026949d": {
     "confidence": 0.7,
     "contradictions": [],
