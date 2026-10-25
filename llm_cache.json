@@ -122422,6 +122422,41 @@
     ],
     "why": "Issue provides a concrete reproduction and root-cause hypothesis for gpt-6.1-sol forwarding unsupported none/minimal reasoning effort, but an open PR #43935 already directly references the issue and claims to fix both Chat Completions and Responses surfaces. The supplied evidence marks that PR as technically complete with tests, yet root_cause_coverage=false and no material competition gaps are identified, leaving unresolved duplicate/coverage uncertainty that determines whether independent code work is actionable."
   },
+  "b1281084a97cf4b119b1e73d756d53f974d226706b27a21e921fb1375b4d8e36": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate marks root_cause_signal true and probe_ready true, but supplied logs only show minified frontend frames and a CORS failure on an external prod runtime host, not a repository code path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "conversation event polling / reconnect logic in frontend",
+      "runtime proxy CORS headers (likely infra, not this repo)"
+    ],
+    "risks": [
+      "Root cause may be cloud infrastructure (prod-runtime CORS) outside repository scope",
+      "Minified bundle anchors do not map to actionable source files",
+      "Broad 'unusable everywhere' report may conflate multiple distinct failures"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce conversation resume after idle timeout against a local runtime and assert events/count request succeeds without CORS error",
+      "Add regression test for reconnect/backoff behavior on conversation panel"
+    ],
+    "unknowns": [
+      "Whether the CORS/connection failure originates in this repository's code or in deployed cloud runtime configuration",
+      "Whether the referenced conversation IDs are reproducible in a local/dev environment",
+      "Which source module corresponds to the minified bundle frames"
+    ],
+    "why": "Issue reports a user-visible 'Unable to connect to server' failure with CORS errors against a prod runtime host, but the logs are minified frontend bundles and a 404 on an unrelated Jira integration endpoint. No source-level root cause, no reproduction in-repo, and the code anchors are build artifacts rather than repository modules, so it is unclear whether the fix belongs in this repo or in cloud runtime infrastructure."
+  },
   "b1318133216fb102c7f4f670025f31230a8502660a12c3784a0c5193fc160834": {
     "confidence": 0.85,
     "contradictions": [
@@ -156374,6 +156409,40 @@
     ],
     "why": "The issue precisely identifies a gap in the FC agent runner where a terminal answer with zero tool calls is accepted when tools were offered, and the code path is confirmed by maintainer bot with exact line references. The proposed fix (detect empty tool_responses and function_call_state False with non-empty prompt_messages_tools, then error or retry) is actionable and testable."
   },
+  "e086f30dd94f978d47c8d39634a3f7aa71dc62230eabd1182f2efe280634a97c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "web/app/components/workflow/nodes/agent/use-config.ts: skip serializing empty optional 'any' fields as variable references",
+      "api/core/workflow/nodes/agent/runtime_support.py: guard against None selectors before variable_pool.get()"
+    ],
+    "risks": [
+      "Nested MCP arguments with auto: 1, value: null are intentional and must not be treated as malformed selectors",
+      "Changing serialization may alter DSL export/import compatibility for existing apps",
+      "Related issue #44579 reports a similar failure with an unmerged local fix; ensure scope does not duplicate or conflict"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a frontend unit test asserting onFormChange with empty allowed_tools/context/files does not emit type: variable, value: null",
+      "Add a backend test feeding agent_parameters with value: null and asserting no TypeError and correct fallback behavior",
+      "Reproduce end-to-end: import app.yaml with null optional params, run agent node, confirm no NoneType crash"
+    ],
+    "unknowns": [
+      "Exact remove/re-add trigger in the editor is inferred, not directly reproduced in supplied evidence",
+      "Whether maintainers prefer frontend-only fix, backend defensive guard, or both"
+    ],
+    "why": "Issue provides a concrete reproduction (remove/re-add MCP tool after 1.17.1→1.18.0), a full traceback, and a sanitized app.yaml showing allowed_tools/context/files serialized as type: variable with value: null. Dosu analysis anchors the frontend serialization in web/app/components/workflow/nodes/agent/use-config.ts onFormChange() and the backend crash in api/core/workflow/nodes/agent/runtime_support.py build_parameters, giving a clear reference-vs-implementation test path."
+  },
   "e08774850864fef26c0a7b0b921e5da368035613f38dd8db92c933bdd4b4fec9": {
     "confidence": 0.8,
     "contradictions": [],
@@ -176484,6 +176553,40 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue describes a plausible version-drift bug in effect-based plugin tool decoding, with a concrete repro and suggested fixes. However, the root cause is not confirmed by maintainers, no code-level verification is provided, and the suggested directions have different design tradeoffs. The only comment is from an unaffiliated user and adds no authoritative evidence."
+  },
+  "fbbe090e1bc7b657aa2cb3c36c52f63b9d23f6c4514be462dbb47c80ca1b3ec2": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: route to Responses API when reasoning and tools are enabled, or allow explicit reasoning_effort none",
+      "response parsing/streaming and tool-call continuation for Responses API",
+      "pre-execution validation with actionable guidance for unsupported model/endpoint/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API adaptation touches request construction, streaming, and tool-call continuation, widening blast radius",
+      "Maintainer may prefer a narrower validation-only fix over full Responses support",
+      "Exact effective reasoning_effort not captured, so the triggering configuration must be pinned in tests"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: gpt-6-luna with tools and reasoning enabled via Responses API succeeds",
+      "Regression test: gpt-6-luna with tools and explicit reasoning_effort none via Chat Completions succeeds",
+      "Validation test: unsupported combination returns clear pre-execution error rather than raw HTTP 400"
+    ],
+    "unknowns": [
+      "Exact effective reasoning_effort value used in the failing deployment",
+      "Whether maintainers prefer Responses API support vs. validation-only fix"
+    ],
+    "why": "Issue provides a concrete HTTP 400 error, expected/actual pair, reproduction steps, and a code anchor (internal/entity/models/openai.go) showing the Chat Completions adapter builds requests incompatible with reasoning+tools for gpt-6-luna. Root cause is well-scoped to endpoint/request construction and response parsing, though the exact effective reasoning_effort value is not captured."
   },
   "fbcfc763712ddb5423c9eed74f720e733b2d22f293a8746cae61b762b856a486": {
     "confidence": 0.8,
