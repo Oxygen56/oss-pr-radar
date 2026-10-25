@@ -48532,6 +48532,42 @@
     ],
     "why": "Issue #5120 identifies a concrete OAuthProxy bug: revoke_token() forwards the FastMCP-issued refresh JWT to the upstream revocation endpoint instead of the stored upstream refresh token, with a specific code anchor (proxy.py L2374) and a suggested fix path via the existing JTI lookup used by exchange_refresh_token() (L1794-L1806). Reproduction steps and expected/actual behavior are supplied. The open PR #5122 covers the same path but lacks regression tests, leaving a clear gap for a test-backed fix."
   },
+  "487a06d5bc510dc08f7c725a316c41cb9ab328dba60049f033d092eb3b1cea94": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue states the two-request case still reproduces after PR #45545, while open_pr_assessment lists #45545 as only keyword-overlap context with no direct code overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "GDN linear-attention Triton kernel path: align chunk/extend vs packed-decode numerics for hybrid models",
+      "Scheduler mixed-chunk handling for hybrid GDN state so scheduling does not alter greedy logits",
+      "Add deterministic-inference regression test covering mixed-chunk on/off for hybrid GDN models"
+    ],
+    "risks": [
+      "Distinguishing a genuine scheduling-invariant bug from acceptable BF16/FP32 floating-point nondeterminism requires fixed tolerance and baseline",
+      "GPU was not exclusive and JIT/disk caches not cleared, so some observed variance may be environmental",
+      "PR #45545 overlaps on GDN chunk alignment and may partially cover the fix; must confirm the two-request case is not already resolved by it"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the attached portable launcher: two-request workload (4118-token prompt, 128 gen; 255-token prompt, 8 gen), mixed-chunk on vs off, seed 42, temperature=0, assert identical greedy tokens",
+      "Add a small-model/synthetic-batch unit test comparing GDN chunk/extend vs packed-decode logits within a fixed numerical tolerance",
+      "Regression test asserting concurrency 1 vs 8 yields identical greedy outputs for a fixed prompt set under deterministic inference"
+    ],
+    "unknowns": [
+      "Whether the divergence is a true kernel numerical bug or an accepted hybrid-GDN precision limitation not covered by the deterministic guarantee",
+      "Whether maintainers consider hybrid GDN + Triton backend in scope for the deterministic-inference guarantee"
+    ],
+    "why": "Issue provides a concrete, reproducible greedy-decoding divergence in hybrid GDN (Qwen3.5-9B) between mixed-chunk and non-mixed scheduling, with fixed seed/temperature=0, 3/3 paired cold-start trials, exact token IDs, and a raw-logit divergence (~0.06875) at prediction step 3. This is a numerics/scheduling-invariant mechanism with a clear reference-vs-implementation comparison path. Root cause is localized to GDN chunk/extend vs packed-decode path but not uniquely proven, which is normal implementation uncertainty rather than a blocker."
+  },
   "4884ce8bef97ee257ee2fb38b6390c8d494174b57f3f8b737db2cc717cf3198a": {
     "confidence": 0.82,
     "contradictions": [],
@@ -61708,6 +61744,43 @@
       "Whether the cache corruption issue is independently reproducible; the issue author notes it was not reproduced locally."
     ],
     "why": "Issue provides a clear, reproducible bug with a concrete traceback and a minimal repro setup, identifying the root cause as a non-iterable ModelResponseStream object in the streaming interception path. The expected fix is well-scoped and testable, and the existing PR #37657 is still a draft with gaps, leaving room for a competitive contribution."
+  },
+  "599341d518b8091aab0ba996315974b02a97a4c4a470caa8e5620bde48f6866c": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "403-integration guidance surfaced in agent-visible tool result or microagent knowledge",
+      "Cloud UI attach-on-save flow wiring to existing update_secrets / POST /api/conversations/{id}/secrets",
+      "Explicit error on attach failure instead of silent no-op",
+      "Local vs Cloud behavior parity or documented limitation"
+    ],
+    "risks": [
+      "Scope spans two distinct product gaps; may need splitting into separate PRs",
+      "UI/backend boundary unclear (Cloud UI vs agent-server secrets API)",
+      "Potential secret-handling/security review requirements",
+      "Docs PR #1003 is keyword-overlap only and does not cover code work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: save secret while conversation running, assert secret available on next tool call",
+      "Negative test: 403-guidance trigger fires only for integration-token 403, not other GitHub errors",
+      "Test attach failure surfaces explicit error and leaves conversation state unchanged",
+      "Verify no secret value appears in chat text or tool outputs"
+    ],
+    "unknowns": [
+      "Exact Cloud UI code location for Settings > Secrets save flow not identified",
+      "Whether maintainers want guidance via microagent vs tool-result annotation"
+    ],
+    "why": "Issue documents a concrete reproduction (403 Resource not accessible by integration on fork/repo-create/PR-create) and a bounded scope: 403-integration guidance plus attach-on-save for secrets. Triage notes existing update_secrets/secrets API path, giving a concrete validation route. Root cause for the 403 is well established (App installation token cannot perform user-level actions); the attach-on-save gap is a product/UI wiring issue rather than a deep algorithmic one, but it is actionable code work with a clear test path."
   },
   "59ac443d9d7d3b98cc4276534b36b62fd4f131bf4fc4aac4a806501d1c65001b": {
     "confidence": 0.85,
@@ -100369,6 +100442,42 @@
       "Whether maintainers have a preferred fix approach (cap vs chunking vs lazy/remote findFiles) that would make a competing PR redundant"
     ],
     "why": "Issue #13249 provides a detailed, code-anchored root cause (unbounded synchronous MiniSearch.addAll in FileSearch.initializeFileSearchState) with CPU profiles and logs, and a concrete validation path exists. However, open PR #13271 directly references this issue, overlaps the exact file and distinctive identifiers (filesearch_initializefilesearchstate, remote_ssh), and is only 1 day old and still open. The duplicate/coverage status is explicitly 'human_review_required' with best_score 29, and the supplied evidence does not establish whether #13271 already resolves the issue or leaves independent implementation space. That unresolved coverage question materially determines whether new code work is actionable."
+  },
+  "8fc05e665955f9d18391f34d3fb8f95fe5fb5ed91822dbca2fd62c1fc9fef724": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist/derive lineage so clones are not root entries",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path writes parent_session_id/conversation_id on continuation",
+      "History listing dedupes or nests continuation sessions under original conversation",
+      "Usage aggregation avoids double-counting inherited context"
+    ],
+    "risks": [
+      "Lineage schema change may affect existing DB rows/migrations",
+      "Dedupe logic could hide legitimately separate sessions",
+      "Usage aggregation semantics need maintainer alignment"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test: cancel a session, resume, assert new session row has parent_session_id/conversation_id set",
+      "Assert History returns one logical conversation entry, not two roots",
+      "Assert usage totals are not double-counted across lineage",
+      "Run targeted unit tests for history.ts and sdk-task-history.ts plus static checks"
+    ],
+    "unknowns": [
+      "Whether #12590/#14840 already cover the VS Code lineage fix",
+      "Whether maintainers prefer lineage persistence vs History-side dedupe"
+    ],
+    "why": "Issue provides a concrete reproduction, measured session/usage data, and code anchors (history.ts isRootSessionRecord, sdk-task-history.ts resume path) showing the resume path creates a new session with NULL parent_session_id/conversation_id, so History lists it as a root entry and context is re-billed. This is a concrete, testable behavioral bug in the agent runtime/history path."
   },
   "9005630a49d1a8b7b165b5039fda692e43c089be36f1783555f42e742495570a": {
     "confidence": 0.85,
@@ -169839,6 +169948,40 @@
       "Whether maintainers prefer a config option for scopes or default to omitting scope; exact location of scope construction code"
     ],
     "why": "The issue provides a detailed root cause for Bug 1 (missing hydration of persisted client credentials) and Bug 3 (over-broad scope from discovery), with concrete code anchors and a clear reproduction path. Recent comments indicate Bug 1's hydration is already fixed on the default branch, but Bug 3 remains unaddressed and is actionable. The issue is technically valuable and not fully covered by existing PRs."
+  },
+  "f1c950124db7c812f56ef284760358f88df4ac0a5c2888621970a5a2e9baedd5": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue labels it a bug but body states it is a question about intended semantics rather than a clear bug",
+      "Candidate marks ALLOW_TO_WORK while root_cause_signal is false and design confirmation is absent"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "process_metadata_filter_func in knowledge retrieval metadata filtering: add OR <field> IS NULL for is not / != / not contains / not in, if reading B is confirmed"
+    ],
+    "risks": [
+      "Changing semantics silently alters existing user filter results",
+      "Overlap with open PR #44753 and related issue #43346",
+      "Maintainers may declare reading A intended, making the change unwanted"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with three documents (alice, bob, missing) and assert negative operators return {bob, missing} under reading B",
+      "Regression test that positive operators and >/< remain unchanged",
+      "Cover empty/not empty interaction with #43346"
+    ],
+    "unknowns": [
+      "Maintainer decision on whether reading A or B is intended",
+      "Whether PR #44753 will be accepted, making independent work redundant"
+    ],
+    "why": "The issue itself frames the behavior as an open semantics question (reading A vs B), not a confirmed bug, and explicitly asks maintainers whether current behavior is intended. The SQL NULL-comparison mechanism is well explained, but whether the fix is desirable is unresolved. An open PR #44753 already implements reading B, so the actionable question is maintainer intent, not code work."
   },
   "f1e2228636e824b92b97ee18352518538bd97025f3ddf915220720d96f2bd9ac": {
     "confidence": 0.8,
