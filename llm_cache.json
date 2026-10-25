@@ -91438,6 +91438,46 @@
     ],
     "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced streaming in transform_responses_api_request and incomplete aggregation in the streaming iterator, with a suggested fix location. This is actionable for an agent."
   },
+  "842ae9cc80be6d820fb7adc0408eef5669d45ccedb364cfd83aa7b66c89ce41f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter hypothesizes a free/ownership bug in the session/KV release paths, while contributor trace says the walk makes no native calls and iterated an empty dict, pointing instead to native/Rust radix-core refcounting or earlier heap corruption",
+      "Issue stack frames are reported as already gone on main (#42539), so the reported crash site may not match current code"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sglang/srt/session/streaming_session.py session_held_tokens walk",
+      "sglang/srt/mem_cache/unified_radix_cache.py session_held_tokens",
+      "sglang/srt/managers/scheduler_components/invariant_checker.py _check_full_pool",
+      "Rust radix-tree core tensor refcounting (unconfirmed)"
+    ],
+    "risks": [
+      "Root cause may be in native/Rust radix core, not the Python walk, making a Python-side fix ineffective",
+      "Frames already removed on main (#42539), so a fix may target stale code",
+      "Heap corruption may originate earlier in the free/ownership paths (#41617 family) and be non-deterministic"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the idle-loop abort with SGLANG_ENABLE_STRICT_MEM_CHECK_DURING_IDLE and the reported server_args",
+      "Retest with SGLANG_UNIFIED_RADIX_TREE_CORE_BACKEND=python to isolate the Rust core",
+      "Capture full faulthandler dump (all threads, extension modules) and scheduler /proc/<pid>/status and wchan at crash"
+    ],
+    "unknowns": [
+      "Full faulthandler dump and /proc status/wchan from the crash are not yet provided",
+      "Whether SGLANG_UNIFIED_RADIX_TREE_CORE_BACKEND=python avoids the crash is untested",
+      "Whether the Rust radix core's tensor refcounting is the actual corruption source is unconfirmed",
+      "Whether PR #46191 or the #41617 free/ownership family already covers this root cause"
+    ],
+    "why": "The issue reports a heap-corruption abort in the idle invariant walk, but the supplied evidence does not establish a root cause: the reporter only hypothesizes a free/ownership bug, and the contributor trace (sohom-cs) argues the walk makes no native calls, iterated an empty dict with streaming sessions disabled, and that the frames are already gone on main (#42539). The crash is attributed to native/Rust radix-core refcounting or earlier heap corruption, which is unconfirmed and requires a faulthandler dump, /proc status, and a python-backend retest that the reporter has not yet provided."
+  },
   "8442a888bb75d59bc58efc532b1a74c5589c9c22d125733590947071935bc8ed": {
     "confidence": 0.7,
     "contradictions": [],
@@ -134100,6 +134140,42 @@
     ],
     "wait_reason": null,
     "why": "Issue clearly describes a bug where GPU counting assumes device plugin and fails with DRA ResourceClaims, causing global planner crash and local planner warnings. Includes reproduction steps, expected vs actual behavior, and code anchors. No competing PR or issue found. The fix is actionable: extend GPU count detection to support DRA ResourceClaims."
+  },
+  "c21576e448b78d387931195ca44707cc396ee7ad7d17744122812a13cf3299b3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter initially could not tell if the final response was generated, empty, or unrendered; the session extract later shows a normal 7,513-char text part was saved, and reopening displays it, contradicting a generation/empty-response explanation",
+      "Maintainer states current dev renders ordinary text in a separate transcript row outside thinking groups, yet the live view failed to show it, leaving live-delivery vs rendering unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "live transcript/streaming state update path in the TUI client",
+      "session message part delivery to the live view (not persistence or parser)"
+    ],
+    "risks": [
+      "Root cause may be in live client state rather than server/parser, so a parser-side fix would be ineffective",
+      "Without a minimal reproduction, any fix risks being speculative and unverifiable",
+      "Broad code-path plan touching unrelated markdown modules could produce scope creep"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce a long tool-heavy session where a saved text part is not shown live but appears after session reopen",
+      "Add a regression test asserting that a text part received during streaming is rendered in the live transcript without requiring reopen",
+      "Verify session.markdown source mode and normal mode both render the saved text part"
+    ],
+    "unknowns": [
+      "Whether the live view dropped the text part during streaming or received it but failed to render",
+      "Whether the failure is specific to the opencode-console/deepseek-v4.1-flash-free provider path or general to long tool-heavy sessions",
+      "No minimal reproduction or failing test exists to anchor a fix"
+    ],
+    "why": "The issue is a real user-visible bug, but the supplied evidence does not establish a root cause. The reporter's session extract shows the final text was saved (finish: stop, 7,513-char text part), and reopening the session displays it correctly, so the failure is in live client delivery/state rather than generation or persistence. The maintainer explicitly says the evidence cannot distinguish live-delivery failure from rendering failure, and the reporter could not confirm whether Markdown rendering was involved. No minimal reproduction exists ('I have not yet established a minimal reproduction'), and the code-path plan lists many unrelated markdown/parser files rather than a concrete suspect in the streaming/transcript path."
   },
   "c232c5e28ffc57656e6e635723251936554078270fbaf52e364202428f3f2bab": {
     "confidence": 0.85,
