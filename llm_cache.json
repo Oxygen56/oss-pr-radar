@@ -2323,6 +2323,43 @@
     ],
     "why": "Issue pinpoints a concrete regression in encode_arguments_to_dsml(): unconditional json.loads() on an already-normalized dict raises TypeError, caught and wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. Expected vs actual output and the #28035 reference behavior are supplied, giving a clear root cause and validation path."
   },
+  "046b5da2098ac19e379d45009f9266835567de4bf590812e2a0c0d50baead4f1": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: request construction to select Responses API or force reasoning_effort=none when tools are present",
+      "Pre-execution validation of unsupported model/endpoint/reasoning/tool combinations with actionable error",
+      "Response parsing/streaming and tool-call continuation if Responses path is added"
+    ],
+    "risks": [
+      "Responses API support requires broader adapter changes (parsing, streaming, tool-call continuation) beyond a URL swap",
+      "Exact effective reasoning_effort not captured, so the triggering configuration is inferred",
+      "Successful execution with reasoning_effort=none unconfirmed in this deployment",
+      "Possible maintainer preference for validation-only vs full Responses support"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: gpt-6-luna + tools + reasoning enabled routes to Responses API (or rejects with actionable message)",
+      "Unit test: gpt-6-luna + tools + reasoning_effort=none builds a valid Chat Completions request",
+      "Regression test asserting no silent disabling of user-requested reasoning",
+      "Mocked 400 response from provider to verify error surfacing in Agent node"
+    ],
+    "unknowns": [
+      "Exact effective reasoning_effort value used in the failing run",
+      "Whether reasoning_effort=none actually succeeds end-to-end in this deployment",
+      "Maintainer preference between Responses API support and validation-only fix"
+    ],
+    "why": "Issue provides a concrete HTTP 400 with OpenAI's own error message naming reasoning_effort + function tools on /v1/chat/completions as the incompatibility, plus a code anchor (internal/entity/models/openai.go) and a clear expected-behavior split (Responses API vs reasoning_effort:none). No duplicate PR/issue coverage. Root cause is provider-side constraint rather than a confirmed RAGFlow defect, and the exact effective reasoning effort was not captured, but the fix surface (request construction/validation in the OpenAI adapter) and validation path are concrete."
+  },
   "04703c3678839fd16dc521d81c29d92f9a7fbe45907c3f91715845d128714297": {
     "confidence": 0.55,
     "contradictions": [
@@ -88676,6 +88713,41 @@
     ],
     "why": "The issue clearly describes a user-visible bug where CodeGraph configuration ignores the user's agent selection and modifies unselected agents' configs. It provides a concrete reproduction, traces the root cause to specific functions (InstallWithHome, detectedCodeGraphTargets, InjectCodeGraphGuidance) that use DiscoverInstalled instead of the selected AgentIDs, and suggests acceptance criteria. No competing PR or related issue exists, and the gate allows work. The fix is actionable: pass resolved AgentIDs through the installation flow and scope all CodeGraph operations to selected agents."
   },
+  "7f3388cec588442cd9b455462618c2df7404b2ce8796380f6dd803ce547d50cc": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "execute_command pre-flight validation/rewrite of known-unsafe CLI forms",
+      "stall/timeout detector for execute_command completion signal",
+      "warning surfacing when generated command matches forbidden .clinerules pattern"
+    ],
+    "risks": [
+      "Exact execute_command code path not confirmed; fix may land in wrong module",
+      "Rewrite logic could alter legitimate user commands unexpectedly",
+      "Timeout detector may false-positive on genuinely long-running commands"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing vitest case that feeds an inline multi-line --body command and asserts rewrite to --body-file",
+      "Regression test simulating missing shell-integration completion marker to verify timeout auto-recovery",
+      "Manual repro on Windows pwsh 7 with shell integration enabled to confirm no indefinite stall"
+    ],
+    "unknowns": [
+      "Precise source location of execute_command completion handling not identified",
+      "Whether maintainers prefer validation/rewrite vs timeout-detector approach"
+    ],
+    "why": "Issue documents a reproducible Windows PowerShell stall tied to shell-integration completion markers being corrupted by unsafe CLI forms (inline --body, multi-line -m, unredirected streaming). Concrete reproduction steps and code anchors (Node.js, vitest, parser waiting) are supplied; no open PR or duplicate issue covers it. Root cause is plausible but the exact code path in execute_command is not pinned, so clarity is medium rather than high."
+  },
   "7f5c2f3deffe6e605173f2b7c5296a7c6a9e2b646fd0f8115e3a7d371dc1f1ad": {
     "confidence": 0.8,
     "contradictions": [
@@ -89724,6 +89796,39 @@
       "Whether maintainers have a preferred implementation for the E-Paraformer PifPredictor path"
     ],
     "why": "Issue identifies a concrete argument-order defect in Paraformer.inference(): cif_peak and alphas are passed to ts_prediction_lfr6_standard in reverse order relative to the helper contract, silently producing structurally valid but incorrect timestamps. A deterministic reproduction using the real cif and ts_prediction_lfr6_standard functions is provided, with observed vs expected outputs, and a fix with regression tests is referenced in #3716."
+  },
+  "80f028692d744ecb251606abf77fa0713335b1e0125e320c5d0430d5bcef627c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "rome_apps/assistant/skills/routine-from-chat/SKILL.md: add non-interactive branch permitting system:create_routine with prose confirmation",
+      "packages/core/src/core/mcp-facade.ts: optionally support non-card propose_routine workflow",
+      "packages/core/src/core/mcp-facade.routine-draft.test.ts: add non-interactive scheduling regression test"
+    ],
+    "risks": [
+      "Maintainer may prefer option 2 (non-card propose_routine) over option 1 (skill branch), changing scope",
+      "Skill change could weaken permission/argument checks if not carefully scoped",
+      "Originating channel unknown, though cross-surface mismatch is explicit in source"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting the skill's non-interactive path can complete scheduling via system:create_routine",
+      "Run existing mcp-facade.routine-draft.test.ts to confirm interactive card path unchanged",
+      "Verify read_action('system:propose_routine') still returns Unknown action and is not relied upon"
+    ],
+    "unknowns": [
+      "Which fix option maintainers prefer (skill branch vs non-card propose_routine)"
+    ],
+    "why": "Issue pins a concrete cross-surface contract mismatch: the routine-from-chat skill requires propose_routine and forbids create actions, while the shared facade intentionally omits propose_routine on non-interactive messaging surfaces, leaving no compliant scheduling path. Code anchors, existing test coverage, and a clear reproduction path are supplied."
   },
   "8104d17ad6dcf3d4728bc247484b41165889229c90b5dda85e4c2900807f8668": {
     "confidence": 0.85,
@@ -111075,6 +111180,41 @@
       "Whether the crash reproduces without the local plugins"
     ],
     "why": "The issue's premise (top-level aliases for namespaced MCP tools) is contradicted by the maintainer bot's analysis: Code Mode does not create such aliases, and tools.mem_search is likely a separate plugin-registered tool whose execute returns a non-v2 result. The actual root cause (plugin tool returning a plain string/undefined) is unconfirmed and depends on the reporter's plugin definition, which is not supplied."
+  },
+  "9ec0bd90ed5eec9e7b86f61f5bffea30a28ee00b9f0138e202674216ccb92ad8": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: isRootSessionRecord / manifestToSessionRecord lineage handling",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path must persist parent_session_id/conversation_id on new session",
+      "History listing must not surface clone as root entry; usage aggregation must not double-count inherited context"
+    ],
+    "risks": [
+      "Usage double-counting fix may require schema/aggregation change beyond lineage write",
+      "Overlap with open #12590 (same symptom, context-menu path) and #14840 (same handler) could cause duplicate effort",
+      "Maintainer may prefer a different lineage representation (conversation_id vs parent_session_id)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: resume a cancelled/failed session and assert new session row has non-null parent_session_id or conversation_id",
+      "Unit test: listHistory returns one entry for a resumed conversation, not two roots",
+      "Regression test: usage totals for resumed session do not add inherited context on top of original",
+      "Reproduce via issue steps: abort turn, continue chat, verify single History entry and DB lineage columns"
+    ],
+    "unknowns": [
+      "Whether #12590 already covers the VS Code resume path or only the context-menu follow-up path",
+      "Whether maintainers have a preferred lineage schema (parent_session_id vs conversation_id)"
+    ],
+    "why": "Issue provides a concrete, measured reproduction (two session rows, same pid, 147ms apart, identical message prefix, NULL parent_session_id/conversation_id) and names specific code anchors (history.ts isRootSessionRecord, manifestToSessionRecord hardcoding isSubagent:false, sdk-task-history.ts resume path). Root cause is a lineage-persistence gap in the VS Code resume path, distinct from the CLI-only fix #12500. Actionable with a failing test on session lineage and a minimal fix writing parent_session_id/conversation_id on clone."
   },
   "9ed41ee46f2bb9856794228543909cf13d9abe9798db33cee69fb2f18b0d1e50": {
     "confidence": 0.8,
