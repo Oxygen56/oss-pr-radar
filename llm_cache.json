@@ -30738,6 +30738,40 @@
     ],
     "why": "Issue provides a concrete reproduction command, exact error output, and a specific root cause: llm_bench.cpp does not instantiate Gemma4EmbeddingPreprocessor or register ple_token_embeds_<idx> tensor views in tensorMap, while LLMRankRuntime does. This is a well-scoped runtime binding fix with clear code anchors."
   },
+  "2d0a18454c0d77c542f5e93f281161312468797289586176c0bb54599910ce8d": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment marks PR #6373 technical_complete=true but root_cause_coverage=false and semantic_overlap=false despite referencing the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "GeminiTTSService._run_genai_tts: route voice_... ids to VoiceConfig.voice and keep prebuilt names in prebuilt_voice_config",
+      "Voice validation/settings handling to distinguish custom vs prebuilt voice ids"
+    ],
+    "risks": [
+      "Overlapping open PR #6373 may duplicate the same change",
+      "google-genai version gating for VoiceConfig.voice (>=2.25.0) must be respected",
+      "Broadening voice handling could alter behavior for languageCode combinations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test asserting a voice_... id produces VoiceConfig.voice (not prebuiltVoiceConfig) in the request payload",
+      "Regression test that a prebuilt name like 'Kore' still uses prebuilt_voice_config and returns audio",
+      "Run the issue's run_test reproduction against a mocked/recorded API to confirm no ErrorFrame and audio frames emitted"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the existing PR #6373 over a competing implementation",
+      "Exact google-genai minimum version already pinned in the repo for this service"
+    ],
+    "why": "Issue gives a concrete root cause: _run_genai_tts always places the voice id in prebuiltVoiceConfig.voiceName, while custom voice_... ids must go in VoiceConfig.voice. Reproduction is explicit (expected/actual, ordered steps, Postman A-D matrix isolating the field), and a validation path exists via the run_test harness plus a prebuilt-voice regression check. An open PR #6373 covers the same fix but is not merged and lacks root-cause coverage evidence, so it does not fully close the opportunity."
+  },
   "2d103a9998c82d8defd07df3e3748e3bcc4e73057172ea45de85b1b2226568bd": {
     "confidence": 0.7,
     "contradictions": [
@@ -154632,6 +154666,39 @@
       "Whether PR #40617 or another open PR already fixes this exact root cause"
     ],
     "why": "The issue describes a plausible token-basis mismatch between Bedrock Converse inflation and the Responses bridge pass-through, with a concrete arithmetic reproduction. However, the issue itself states the fix location depends on an unresolved maintainer convention decision (cache-inclusive vs cache-exclusive input_tokens), and the supplied duplicate assessment flags PR #40617 as semantic overlap requiring human comparison. These are materially blocking unknowns for choosing an actionable code change."
+  },
+  "de2009ddd032e075eb01f216c5863eb430ad43f9fbc8d1a81a68eae8a39197ac": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate marks root_cause_signal true and probe_ready true, but the only investigative comment states root cause could not be conclusively established"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unclear: candidate code surface not identified (frontend reconnect logic vs runtime provisioning vs CORS/proxy config)"
+    ],
+    "risks": [
+      "Root cause may be in hosted cloud infrastructure not in this repository",
+      "Minified bundle traces do not map to source modules",
+      "Fixing the wrong layer (frontend retry vs runtime lifecycle) could mask the real defect"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce idle-then-resume conversation flow against a local runtime and assert reconnect succeeds",
+      "Regression test for conversation event stream reconnection after idle timeout"
+    ],
+    "unknowns": [
+      "Which repository component owns the idle/resume failure (frontend reconnect, runtime provisioning, or proxy/CORS)",
+      "Whether the failure reproduces against a self-hosted runtime or only the hosted cloud service",
+      "Source-level code anchor corresponding to the minified stack traces"
+    ],
+    "why": "Issue reports a user-visible idle/resume connection failure on the hosted cloud canvas, but supplied evidence contains only minified frontend stack traces and a commenter who explicitly could not establish root cause. No source-level code anchor, no confirmed failing component, and the failure may be in hosted infrastructure rather than repository code."
   },
   "de2beaecfeaa6253448ec702ce94827af9029c67222d39bebfdc6525aeb900c1": {
     "confidence": 0.85,
