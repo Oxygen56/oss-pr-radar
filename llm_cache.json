@@ -14537,6 +14537,41 @@
     ],
     "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied evidence contains a material unresolved duplicate/overlap: open PR #40897 is flagged as semantic_overlap_requires_review with overlapping code paths and the distinctive token reasoning_effort, and the pre-task duplicate status is semantic_overlap_requires_review. Whether that PR already covers the root cause determines whether new code work is actionable, so this is a materially blocking unknown rather than normal implementation uncertainty."
   },
+  "16cbf657c2020facd4a5a2664d32dcc0a4d720cec9210bdc78c51e50369a80c2": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body attributes crash to tool-name underscore-to-space change, but comment analysis shows tool_name retains underscore and real cause is null optional variable fields"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "web/app/components/workflow/nodes/agent/use-config.ts: filter empty optional 'any' fields during onFormChange serialization",
+      "api/core/workflow/nodes/agent/runtime_support.py: defensive handling of null variable selectors in build_parameters"
+    ],
+    "risks": [
+      "PR #44748 may already cover the frontend fix, making a new PR duplicative",
+      "Backend defensive change could mask malformed DSL rather than fix root cause",
+      "Nested MCP auto:1/value:null arguments are intentional and must not be conflated with malformed selectors"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing frontend test asserting empty allowed_tools/context/files are not serialized as type:variable/value:null",
+      "Regression test that build_parameters tolerates null selector without TypeError",
+      "Reproduce remove/re-add MCP tool flow and confirm no NoneType crash"
+    ],
+    "unknowns": [
+      "Whether PR #44748 fully resolves the same root cause",
+      "Exact remove/re-add trigger not yet reproduced",
+      "Whether maintainers want frontend-only, backend-only, or both fixes"
+    ],
+    "why": "Issue has a concrete traceback and a plausible frontend serialization root cause (onFormChange serializing empty optional 'any' fields as type:variable/value:null), but the exact remove/re-add trigger is still unconfirmed per the analysis, and an open PR #44748 ('fix(web): omit empty optional agent variable inputs') semantically overlaps the same frontend path without referencing the issue. Duplicate/coverage status is unresolved, which materially determines whether new code work is actionable."
+  },
   "16d193651e64a795036923965963f34f63fc62944b6dbf8e490df443f2533cd6": {
     "confidence": 0.55,
     "contradictions": [
@@ -142134,6 +142169,38 @@
       "Whether the underlying offset bug from #37968 will be fixed in tandem"
     ],
     "why": "The issue identifies a concrete root cause: a data-dependent RuntimeError in _adjust_embedding_length during multimodal chunked prefill kills the entire scheduler process via SIGQUIT, amplified by client retries across nodes. The proposed fix (abort request instead of server) is actionable and testable, with clear reproduction evidence and a related issue (#37968) pointing to a specific offset bug."
+  },
+  "cc5988102624c2b26e314622d357252ba3e66b01ad99cda0ccfa0dbb8af5607f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Thread activity classifier: treat waiting_human with only synthetic question waits as awaiting input/settled rather than active",
+      "Composer/in-progress row: suppress 'Starting session...' stage and Stop button once turn.completed has arrived with no pending turn"
+    ],
+    "risks": [
+      "Over-broad change to waiting_human handling could hide genuinely active human-wait states",
+      "Fix must not regress the goal-loop invariant that a question wait blocks auto-continue",
+      "Scope creep into unrelated lifecycle states"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test: turn completes with a synthetic question wait, assert thread activity is awaiting-input/idle and no Stop button or 'Starting session...' row renders",
+      "Control test: turn completes with state=done renders idle as before",
+      "Run targeted package unit tests and static checks for the desktop state classifier"
+    ],
+    "unknowns": [
+      "Exact source location of the shipped classifier in the repo (issue cites bundled asset only)"
+    ],
+    "why": "Issue provides ordered reproduction, expected/actual pair, event-log evidence showing the question-ending turn settles in waiting_human instead of done, and a concrete classifier anchor mapping waiting_human to active. Maintainer confirmed and traced the cause, distinguishing it from merged PR #11254. This is a user-visible desktop state-classification bug with a clear minimal fix and validation path."
   },
   "cc66e6e02128459ebc86bb0ce406d7d5e5c9012e9b45eeeccc32820a34895756": {
     "confidence": 0.82,
