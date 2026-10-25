@@ -28972,6 +28972,40 @@
     ],
     "why": "Issue provides a concrete, reproduced UI bug with Playwright measurements, identified code anchors (chat-interface.tsx, conversation-main.tsx), a confirmed root cause (selectable siblings of the scrollable feed), and a verified minimal reproduction plus a suggested fix. Acceptance criteria and a regression test path are explicit."
   },
+  "2af84e45d982a93a4a87b34c52a4f16ed51957ed9d1b09dbac93a4fd1adf77a6": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue title/body attributes crash to tool-name underscore-to-space rename, but bot analysis and reporter confirmation identify empty optional field serialization as the actual cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "web/app/components/workflow/nodes/agent/use-config.ts: filter empty optional 'any' fields instead of serializing them as variable references",
+      "api/core/workflow/nodes/agent/runtime_support.py: guard against None variable selectors before calling variable_pool.get"
+    ],
+    "risks": [
+      "Open PR #44748 touches the same frontend file and may partially cover the fix; must compare before duplicating",
+      "Backend defensive None check could mask genuinely malformed selectors if too broad",
+      "Auto-generated MCP arguments with auto:1/value:null are intentional and must not be conflated with the malformed optional-field selectors"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a frontend unit test asserting onFormChange does not emit type: variable/value: null for empty allowed_tools/context/files",
+      "Add a backend regression test that build_parameters handles a None agent_input.value without raising TypeError",
+      "Reproduce end-to-end: remove and re-add an MCP tool in an Agent node, run workflow, confirm no NoneType crash and tool name preserved"
+    ],
+    "unknowns": [
+      "Whether PR #44748 already fixes the frontend serialization root cause",
+      "Whether maintainers prefer frontend-only fix vs. also adding backend None guard"
+    ],
+    "why": "Issue provides a concrete traceback (runtime_support.py build_parameters -> variable_pool.get with None selector) and a bot analysis plus user confirmation that the frontend Agent editor serializes empty optional 'any' fields (allowed_tools, context, files) as type: variable with value: null, which the backend then resolves and crashes. Reproduction is documented (remove/re-add MCP tool in 1.18.0) and a workaround (constant empty arrays) is validated by the reporter, giving a reference-vs-implementation test path. Open PR #44748 overlaps only on use-config.ts and does not reference the issue, so it is not confirmed coverage."
+  },
   "2aff874b834f495c7a007eca6558cfbf89933744f31c556db7af0de08e516c48": {
     "confidence": 0.85,
     "contradictions": [
@@ -82026,6 +82060,40 @@
       "Whether an existing PR or issue already addresses this; maintainer design preferences on error format"
     ],
     "why": "Issue clearly identifies a concrete bug in error response format with a proposed fix, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "75ac2dd3539d814ed62ea3ee861fecb0772af6c23b0823aa03a5a51181114caa": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist/consume lineage so clones are not root entries",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path writes parent_session_id/conversation_id on new session",
+      "usage aggregation: inherited context not double-counted across fragments"
+    ],
+    "risks": [
+      "Lineage schema change may affect CLI/Hub paths fixed in #12500",
+      "Usage de-duplication could alter existing cost reporting semantics",
+      "Overlap with open #12590 and #14840 on same History handler"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: start task, abort turn, continue in same chat; assert History shows one entry and DB rows carry lineage",
+      "Unit test isRootSessionRecord/manifestToSessionRecord with a clone row having parentSessionId set",
+      "Regression: usage totals for a resumed conversation equal single-session cost, not sum of fragments"
+    ],
+    "unknowns": [
+      "Whether #12590/#14840 already cover the VS Code lineage fix",
+      "Exact schema/migration expectations for parent_session_id in the DB"
+    ],
+    "why": "Issue provides a concrete reproduction, measured session/usage data, and code anchors (history.ts isRootSessionRecord, sdk-task-history.ts resume path) establishing that resumed cancelled/failed tasks create a new session with NULL parent_session_id/conversation_id, causing duplicate History roots and re-billed context. A reference-vs-implementation test (single logical conversation -> one History entry, no duplicated usage) is feasible."
   },
   "75d7d6b07033b671fe214ffe910f9ecc0c758c6c28f00a32d127ab7faa1aa7cc": {
     "confidence": 0.85,
@@ -142282,6 +142350,38 @@
       "Exact root cause in NgramCorpus implementation not yet identified; whether existing PR #38130 already fixes the issue despite being draft."
     ],
     "why": "Issue provides a concrete, self-contained reproduction script with expected vs actual outputs, identifying stale NGRAM cache behavior after trie growth. Root cause is clearly localized to NgramCorpus state handling. Existing draft PR #38130 lacks root-cause coverage and is still draft, leaving actionable competition space."
+  },
+  "cc28e175ceaf4193ac2b657ccd1e6e4ae4d016cb3e44a8492667a7de2cd7b004": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "web/src/features/prompts/server/routers/promptRouter.ts importBulk: retry or topologically order entries whose dependencies were not yet imported",
+      "Add regression test covering composed prompt sorted before its dependency"
+    ],
+    "risks": [
+      "Overlapping open PR #19362 may conflict; must compare before implementing",
+      "Avoid broad API behavior changes; keep fix scoped to import ordering/retry",
+      "DCO sign-off and CLA acceptance require user action"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create failing test: import JSON with a-parent (referencing z-child v1) before z-child; assert both prompts persist and a-parent resolves to 'Before Shared instruction after'",
+      "Control test: reversed order still imports successfully",
+      "Run targeted prompt router unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer topological sort vs retry-loop implementation",
+      "Exact test harness location for prompt router integration tests"
+    ],
+    "why": "Issue provides a concrete ordered reproduction (a-parent before z-child), expected vs actual behavior, and code anchors in exportAll/importBulk showing sequential processing without retry after dependency resolution. A reference-vs-implementation test is straightforward: import the alphabetical payload and assert both prompts exist and composed content resolves. Existing PR #19362 overlaps but lacks tests and root-cause coverage, leaving a concrete gap to fill."
   },
   "cc3be7d3a0587a35a31c2e8b44acc396be176106719c2d5e74c433225a82cd0e": {
     "confidence": 0.85,
