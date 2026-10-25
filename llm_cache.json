@@ -119875,6 +119875,41 @@
     ],
     "why": "The issue documents a real Python-vs-Rust prompt rendering divergence with concrete token-count evidence and a plausible root cause (independent API representations), but the actionable target behavior is explicitly unresolved: the reporter asks whether Rust should match current Python behavior or both should adopt revised normalization, and a commenter notes overlapping Python-side PRs (#29114, #29327, #39616) that intend to change the very defaults in question. Without a settled contract, a fix could be invalidated or conflict with in-flight work."
   },
+  "ad7578c6f19dac34121f1420ec9727cbb13b2f157eee4a7edc5d65b0f675d63e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/core/workflow/graph_topology.py: incorporate container membership and parent Iteration/Loop incoming edges into upstream ancestry",
+      "api/core/workflow/nodes/agent_v2/validators.py: allow agent_job.previous_node_output_refs to resolve iteration.item/index and outer upstream variables",
+      "Add regression test for Agent V2 inside Iteration referencing iteration.item and outer Start variable"
+    ],
+    "risks": [
+      "Broadening is_upstream could weaken validation for genuinely invalid references",
+      "Container-membership traversal may affect Loop subgraphs and other node validators sharing WorkflowGraphTopology",
+      "Maintainer may prefer a scoped fix in agent_v2 validator rather than shared topology helper"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build minimal workflow: Start -> Iteration -> iteration-start -> Agent V2 with prompt referencing {{#<iteration_id>.item#}}; assert publish validation passes",
+      "Same workflow with Agent V2 prompt referencing {{#<start_id>.input#}}; assert publish validation passes",
+      "Negative test: Agent V2 referencing a genuinely non-upstream node still fails validation",
+      "Run targeted unit tests for graph_topology and agent_v2 validators plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers want the fix in shared WorkflowGraphTopology or scoped to agent_v2 validator"
+    ],
+    "why": "Issue provides ordered reproduction, expected/actual pair, and a concrete root cause: WorkflowAgentNodeValidator.validate_node_job relies on WorkflowGraphTopology.is_upstream, which builds ancestry only from explicit edges and ignores container membership, so iteration.item and outer upstream refs are unreachable. Dosu comment corroborates the same code path and notes PR #39192 only relaxed draft saves, leaving publish validation unfixed. No duplicate open PR/issue found."
+  },
   "ad7f039d8739e08088a43eb8531db6d20f58955b20863c8bca14b55967697b33": {
     "confidence": 0.85,
     "contradictions": [
@@ -178756,6 +178791,46 @@
       "Whether maintainers have an existing fix in progress"
     ],
     "why": "Issue identifies a clear performance bug with measured impact and a concrete fix, but maintainer triage is pending and design confirmation is needed for the suggested approach."
+  },
+  "ffb6de4104c9d79fdbf8d4273b80acebbc2a9113b981afaa0cc921340bf16953": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Early hypothesis blamed stale module-global DeepEP buffer; later evidence falsifies buffer reuse as necessary",
+      "Initial module-level harness did not reproduce; later true single-MoELayer isolation did reproduce"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Expert GEMM path (TEGroupedMLP/SequentialMLP FC2) to avoid shape-dependent split-K reduction order",
+      "Optional post-dispatch expert padding config (moe_expert_padding_multiple) independent of capacity/drop semantics",
+      "Regression test asserting logit invariance across heterogeneous EP batches"
+    ],
+    "risks": [
+      "Split-K isolation is inferred from algorithm-family correlation, not a single-attribute toggle",
+      "Padding-to-64 cost is high at small per-expert loads (reproducer scale)",
+      "Fix must be validated across GPU generations, TE versions, dtypes, FP8, and CUDA graphs",
+      "Combine/unpermute nondeterminism is a separate hazard when permute fusion is off"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the linked 8-GPU GPT-OSS 20B reproducer with fixed seed and assert max_abs_delta=0 across homogeneous vs heterogeneous EP batches",
+      "Single-layer MoELayer isolation test comparing layer output delta across neighbor counts 1-7",
+      "Direct real-expert cross-M probe (M=16..1024) asserting bit-identical matching rows",
+      "Backward parity check: input grad and parameter grad deltas under heterogeneous batches"
+    ],
+    "unknowns": [
+      "Whether the 4-byte workspace WAR is acceptable upstream vs a kernel-level fix",
+      "Whether maintainers want padding config vs kernel pinning as the production approach",
+      "Cross-hardware generality of the M=64 split-K boundary"
+    ],
+    "why": "Issue provides a concrete, deterministic, bit-reproducible batch-invariance failure in dropless DeepEP MoE, with a standalone reproducer, module-boundary tracing, and a narrowed root cause: FC2 GEMM cuBLASLt split-K selection changes with expert token count (M), confirmed via cuBLASLt traces and a 4-byte workspace WAR that yields exact-zero deltas. This is a genuine distributed-training/numerics correctness mechanism with a clear reference-vs-implementation validation path."
   },
   "ffb95e61e85c692e0044501972f93dbf8c4a0f8db2ca1b8b58862e537a16fa56": {
     "confidence": 0.6,
