@@ -70761,6 +70761,37 @@
     ],
     "why": "The issue provides a clear frontend-only bug with a concrete reproduction path, expected vs actual behavior, and a specific root cause (sidebar reads from null metrics field instead of populated stats.usage_to_metrics). Acceptance criteria include a regression test, making the fix actionable."
   },
+  "65da75f04c0c1a4604acbfa670825064edda64c0f6546f636d0de83ac4a05b6d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels this agent/inference/RAG key path, but the described change is pure frontend layout"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "web knowledge creation dialog footer layout",
+      "conditional rendering of model cost notice"
+    ],
+    "risks": [
+      "Overlaps maintainer-owned draft PR #44806",
+      "No root-cause code anchor beyond a base SHA",
+      "Visual verification not yet done"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add a component/visual regression test asserting footer height is stable across empty vs upload modes",
+      "Manual browser check of /datasets/new/create mode switching"
+    ],
+    "unknowns": [
+      "Whether maintainer intends PR #44806 to be the sole fix"
+    ],
+    "why": "This is a frontend CSS/layout bug in the knowledge creation dialog (conditional mounting of a cost notice resizing the footer), not an agent/inference/RAG algorithm contribution. Track is agent_ai_infra but the work is ordinary UI plumbing with no training objective, model mechanism, kernel, quantization, or evaluation methodology. A maintainer-owned draft PR #44806 already covers the same fix, and the issue itself notes browser visual verification has not been performed."
+  },
   "65df70baa60bb014fa5d15be411e3b5a5cab4e541a456a00eaf51e692ebef185": {
     "confidence": 0.7,
     "contradictions": [
@@ -169076,6 +169107,38 @@
       "Whether the expected behavior includes showing the file in the Files tab or only informing the agent"
     ],
     "why": "The issue describes a user-visible bug in the cloud canvas file upload flow: the agent is not informed of the uploaded file's path. The root cause is plausible (missing event or context propagation) but not confirmed. No maintainer assignment, design confirmation, or explicit help-wanted signal. The track is agent_ai_infra, not llm_algorithm, so the algorithm-specific requirement does not apply. The issue is actionable in principle, but the lack of maintainer signal and the need to confirm the intended behavior (e.g., whether the file should appear in Files tab) make it safer to wait for maintainer input."
+  },
+  "ef2c8f7c199f5b9b87dc3bed853aad7e8874d6a52ef6ee36a380d4dbc6cff9dd": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/types/vectorstore.go: rename the postgres engine display name to 'PostgreSQL (pgvector + ParadeDB)'",
+      "internal/types/vectorstore_test.go: update the name assertion at L143",
+      "README.md / README_CN.md line 328: align table wording with docs"
+    ],
+    "risks": [
+      "Wording choice may differ from maintainer preference (docs vs README phrasing)",
+      "Frontend may have other hard-coded references to the old name",
+      "Scope creep into unrelated vector store naming"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the targeted internal/types package test asserting the postgres engine name",
+      "Start stock docker-compose deployment and confirm Settings > Vector database engine card shows the updated name while engine_type remains 'postgres'",
+      "Verify API response 'name' field reflects the new wording"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the docs wording exactly or a shorter variant"
+    ],
+    "why": "Issue pins the hard-coded display name in internal/types/vectorstore.go (L835-845) and the UI passthrough in VectorStoreSettings.vue, with a concrete expected/actual pair and ordered reproduction. The fix is a small, well-scoped naming change (engine_type stays 'postgres'), backed by an existing assertion at vectorstore_test.go#L143. No duplicate or merged fix covers it; PR #4546 is keyword-only overlap and a draft."
   },
   "ef36dd50f6d57ecc11d0c36c509b285cf6a60279fb8200d80122cdf14f506180": {
     "confidence": 0.8,
