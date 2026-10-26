@@ -80429,6 +80429,41 @@
     ],
     "why": "Issue reports tokenizer misbehavior on Windows CPU but maintainer cannot reproduce; root cause unclear and likely environmental. No code path or algorithm mechanism identified; open PR and related issue lookup failed, so duplicates cannot be excluded."
   },
+  "729df8d4ef02917ee144dd1b93ac0e357264bc488e477cc5d3caac235ba64d0c": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment marks rootCauseCoverage=false and semantic_overlap=false for PR #59226, yet its title addresses keeping room for the summary reply when the compaction buffer is small, which overlaps the issue's root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core compaction summary request: decouple summary output budget from compaction.buffer or disable/reduce reasoning for the summary request",
+      "compaction error message: distinguish reasoning-consumed budget from summary-too-long",
+      "config schema/docs for compaction.buffer semantics"
+    ],
+    "risks": [
+      "Open PR #59226 already targets the same buffer/summary-room area; must compare to avoid duplicate implementation",
+      "Changing buffer semantics could alter when auto-compaction triggers",
+      "Provider-specific reasoning token accounting may vary"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test using the drive.ts simulated-model reproduction: buffer=2048, reasoning-only summary response, assert compaction succeeds or errors with a reasoning-specific message",
+      "Regression test that normal turns still receive full max_completion_tokens while /compact gets a budget covering reasoning plus summary",
+      "Test that a non-reasoning compaction variant still compacts the same 544k-token conversation on first attempt"
+    ],
+    "unknowns": [
+      "Whether PR #59226 already fixes the reasoning-budget split or only adjusts buffer headroom",
+      "Maintainer preference between disabling reasoning for summaries vs. enlarging the summary budget"
+    ],
+    "why": "The issue provides a concrete, reproduced root cause: compaction.buffer is used both as context headroom and as the summary request's max_completion_tokens, so reasoning tokens consume the entire budget and output is 0. A maintainer bot reproduced it on dev with a drive.ts script showing max_completion_tokens=2048 for /compact vs 16000 for normal turns, and the workaround (non-reasoning variant) confirms the mechanism. This is a concrete budget-split bug in the agent compaction path with a clear reference-vs-implementation validation path."
+  },
   "729fb5120d96ea7ed0fed61d1b2de361a41ccdff9040fcb8f3c36839b27e73d1": {
     "confidence": 0.7,
     "contradictions": [],
@@ -82749,6 +82784,39 @@
       "Whether maintainers have a preferred fix shape (resubscribe-under-lock vs. filtering pre-resync events) that would make an alternative implementation redundant"
     ],
     "why": "Issue provides a concrete root cause (lagged broadcast receiver replays pre-resync buffered events after list_and_watch reconciles from list_state), exact code anchors (kube.rs:552, daemon.rs:364-376, mod.rs:1684-1687, mem.rs:245-252), a deterministic unit-test reproduction on a current-thread runtime with a 16-slot channel, and an expected-vs-actual event ordering. The proposed fix (resubscribe under the list_state read lock, matching mem.rs) is concrete and testable. Open PR #15767 covers the same path but lacks regression tests, leaving a clear gap for a test-backed contribution."
+  },
+  "75e6ed32da465a974c0082e5fb331c452635753214894752956374394e940318": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: isolate per-request upstream fetch from shared session manager TaskGroup teardown",
+      "litellm/experimental_mcp_client/client.py: ensure list_tools cancellation scope is not shared across concurrent requests"
+    ],
+    "risks": [
+      "Fix may require changes to shared session manager lifecycle with broader concurrency implications",
+      "Prior issue #24522 was closed as non-reproducing, so maintainers may dispute recurrence",
+      "Avoid altering public /mcp API behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test issuing two concurrent tools/list requests to POST /mcp against two HTTP streamable upstreams and assert both succeed",
+      "Reproduce with two simultaneous curls and confirm no MCPServerListError(ServerListFault(tag=internal)) in logs",
+      "Run targeted unit tests for mcp_server_manager and experimental_mcp_client"
+    ],
+    "unknowns": [
+      "Exact code path where the shared TaskGroup is torn down is not confirmed by a maintainer or code inspection",
+      "Whether #24522's closure implies a partial fix already exists on main"
+    ],
+    "why": "Issue provides a concrete reproduction (two overlapping tools/list requests to POST /mcp), a traceback showing cancellation via StreamableHTTPSessionManager._handle_stateless_request's cancel scope, and code anchors in mcp_server_manager.py and experimental_mcp_client/client.py. Root cause is plausibly identified as shared TaskGroup teardown, though the exact fix location is not fully pinned."
   },
   "75eb9ce493fea11800766d088588950390b342b538edd02e34071f71ce014454": {
     "confidence": 0.7,
@@ -96052,6 +96120,40 @@
     ],
     "why": "Issue provides a clear root cause: updating max_budget/budget_duration does not propagate to existing budget_limits array, causing auth to enforce stale limits. Reproduction steps and expected behavior are concrete, and code anchors are identified."
   },
+  "88b8f55b124d47df8f6402526dcfb9a3e945cdc70e15ca2c71878d2ccd6a1173": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/hooks/use-websocket.ts: detect close code 4001 and trigger conversation refresh before reconnect",
+      "src/contexts/conversation-websocket-context.tsx: use refreshed session_api_key on next connect; surface error state when refresh yields no usable key",
+      "planning sub-conversation socket: avoid reconnecting with just-rejected parent fallback key"
+    ],
+    "risks": [
+      "No local reproduction yet; behavior inferred from logs and code",
+      "Refresh loop could cause repeated refetches if server keeps rejecting",
+      "Planning sub-conversation fallback key handling may be subtle"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: simulate socket close with code 4001, assert conversation refetch occurs and next connect uses the new session_api_key",
+      "Regression test: non-4001 closes retain existing backoff behavior with unchanged key",
+      "Test: refresh failure/no usable key stops retries and shows user-facing error",
+      "Test: local-backend conversation sockets connect/reconnect unchanged"
+    ],
+    "unknowns": [
+      "Exact mechanism by which useActiveConversation/useUserConversation refetch is triggered from the socket hook is not fully specified"
+    ],
+    "why": "Issue identifies a concrete frontend root cause: 4001 close (rotated session key) is treated as a generic drop, so use-websocket reconnects with the stale sessionApiKey and never refetches conversation data. Code anchors (sockets.py 4001 close, use-websocket.ts retry loop, conversation-websocket-context.tsx onError) and a bounded triage scope with acceptance criteria support an actionable Canvas-owned fix."
+  },
   "88bb1c38e07b123e9f3a8e01f3a3c092261f8b594f87b6b92662a0d278e3922b": {
     "confidence": 0.6,
     "contradictions": [
@@ -105316,6 +105418,43 @@
       "Whether the substring classifier is the true cause of the misleading banner"
     ],
     "why": "Issue describes a plausible substring-based auth classifier (Smt/QXu) and a resume-time refresh failure, but the reporter explicitly states they could not prove the refresh failure raised the banner, and the banner text is not found in the extension. Root cause is therefore not established, and the pre-task evidence flags no_code_surface and reproduction_or_validation_missing. An open PR #14122 already targets the same token-refresh-on-network-failure path, so duplicate coverage is unresolved."
+  },
+  "95ebd1a25ec8af20dc6ba70361ef1f89c9d9d1ec58ad7d77bd0828ce6109ca80": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Triage hypothesizes fresh-provisioning race open only for first seconds, but comment evidence shows identical key hash across conversations days apart, suggesting stale/unregistered token serving rather than a narrow creation-time race"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "openhands-sdk/openhands/sdk/event/error_classification.py: classify token-not-found 401 detail as transient/retryable and avoid user_action=settings",
+      "conversation/impl/local_conversation.py: suppress fatal ConversationErrorEvent when immediate retry succeeds",
+      "openhands/agent_server/managed_llm_key.py: reuse existing refresh-on-401 path without bypassing allow-list"
+    ],
+    "risks": [
+      "Root cause ambiguity between provisioning race and stale token serving may affect whether retry alone is sufficient",
+      "Changing classification could affect other auth error paths if detail matching is too broad",
+      "Must not log or persist API key material in event details"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test in tests/sdk/event/test_error_classification.py asserting token-not-found detail yields retryable=true and user_action != settings",
+      "Add test in tests/sdk/llm/test_auth_refresh_retry.py covering first-attempt-401-then-success with no fatal error event persisted and final status not error",
+      "Verify existing parametrized precedence tests still pass and genuine invalid-key classification unchanged"
+    ],
+    "unknowns": [
+      "Whether the fix should be purely classification/event-suppression or also require credential re-resolution changes",
+      "Whether maintainers prefer a distinct transient class versus kind=auth with retryable=true"
+    ],
+    "why": "Issue provides a concrete, reproducible user-visible bug: a transient LiteLLM token-not-found 401 on the first LLM call is persisted as a fatal, non-retryable LLMAuthenticationError with user_action=settings, even though the retry succeeds. Evidence includes verbatim event timelines, expected/actual pairs, ordered steps, and code anchors in error_classification.py, local_conversation.py, and managed_llm_key.py. Triage scopes the fix to the SDK layer with clear acceptance criteria and a validation path via existing tests. Root cause is partially narrowed (proxy-side lookup race vs. stale token serving) but the actionable defect — misclassification and false fatal event emission — is well established."
   },
   "960b709d435aff5527938acfeff6930f209b238608f4be08ccc17962d5847674": {
     "confidence": 0.85,
@@ -138271,6 +138410,37 @@
     ],
     "why": "Issue provides an executable reproduction, expected-vs-actual pair, and a traceback pinpointing the missing cross-field validation between convert=classify and runner=generate that leads to a bare AssertionError in _init_pooler. The fix is a concrete config-validation change with a clear regression test path. No duplicate or merged fix covers this; open PRs only share the incidental 'pooler_config' keyword and do not overlap code paths."
   },
+  "c636d4a537f8f6c73f0ab89e892cf153c670e1c9841834eed54cbd4a139c9741": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/base_aws_llm.py: stop restoring incoming SigV4 Authorization over a fresh signature; only preserve Bearer-token auth",
+      "Retry path in llm_http_handler.py: ensure re-signed request uses the fresh signature after body mutation"
+    ],
+    "risks": [
+      "Over-broad header handling change could affect other SigV4 providers or forwarded headers",
+      "Bearer-token detection via string prefix may miss other auth schemes",
+      "No maintainer pre-approval on the chosen fix shape"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for _sign_request asserting a fresh SigV4 signature is not overwritten by an incoming Authorization header",
+      "Add a regression test simulating the strip-and-resign retry with a mutated body and asserting the Authorization header changes between attempts",
+      "Verify Bearer-token (AWS_BEARER_TOKEN_BEDROCK) auth is still preserved"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer this fix location versus handling it in the retry loop"
+    ],
+    "why": "Issue pinpoints the stale SigV4 Authorization restore in BaseAWSLLM._sign_request, explains why the strip-and-resign retry on /v1/messages fails with InvalidSignatureException, and provides a concrete diff plus end-to-end verification; no competing PR covers the same code path."
+  },
   "c651961fec8461794380c22375c735cb968cdc734a697256ecc1a3cb370145f7": {
     "confidence": 0.7,
     "contradictions": [],
@@ -149616,6 +149786,40 @@
       "Whether the fix should cover all binary ingress routes or only attachments"
     ],
     "why": "The issue describes a real transport-shape limitation (single unchunked POST to /session/:id/attachments, 8 MiB daemon cap unreachable behind a ~1 MiB proxy cap), and the triage bot independently confirmed the code paths at the pinned SHA. However, the maintainer triage explicitly reclassified this as an enhancement, deferred it to the v0.16.x containerized/reverse-proxy milestone (#3803), and stated that proxied deployment is out of scope today. The same gap affects all binary ingress routes (/file/upload 50 MiB, extensions 10 MiB, voice 10 MiB), so a targeted attachments-only patch would be incomplete. The suggested chunked protocol requires maintainer design decisions (upload-id lifecycle, assembly, GC, auth) that are not yet settled, and the cheaper tracked alternative (--max-body-size flag + proxy documentation) is already noted. This is a design/scope decision, not an actionable code fix at this time."
+  },
+  "d483c44b3d5af1b602c2c8dfcec9dd10c37844589861d210e24b4a1d47528b28": {
+    "confidence": 0.55,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "SummarizingCompaction.compact(): compare estimated token count of result vs input and return original messages when not smaller",
+      "before_model_request / compact_with_span: skip committing non-shrinking compaction and record a span attribute",
+      "FallbackCompaction: fall through to next strategy when the guard fires"
+    ],
+    "risks": [
+      "Behavior change to automatic compaction path may conflict with maintainer design preference",
+      "Token estimation heuristics could cause unexpected skips",
+      "Assignment requirement unmet"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add regression test using the issue's FunctionModel repro asserting the request sent is never larger than uncompacted history",
+      "Cover both keep_messages and keep_tokens paths with an oversized summary",
+      "Test FallbackCompaction falls through to SlidingWindowCompaction when summary does not shrink"
+    ],
+    "unknowns": [
+      "Repository requires assignment but issue has no assignees",
+      "Whether maintainers want the guard in compact() vs before_model_request vs FallbackCompaction"
+    ],
+    "why": "Issue gives a deterministic FunctionModel repro and code anchors showing SummarizingCompaction.compact() returns a larger history with no shrink guard, and before_model_request assigns it unconditionally. However the repository policy is needs_assignment with assignmentRequired=true and the issue has no assignees, which is a materially blocking unknown for whether code work is actionable."
   },
   "d4876a2640369bc841726e867da270a80ee3c082d177fd42b57a511b016bca87": {
     "confidence": 0.6,
@@ -171541,6 +171745,44 @@
     ],
     "why": "The issue itself frames the behavior as an open semantics question (reading A vs B), not a confirmed bug, and explicitly asks maintainers whether current behavior is intended. The SQL NULL-comparison mechanism is well explained, but whether the fix is desirable is unresolved. An open PR #44753 already implements reading B, so the actionable question is maintainer intent, not code work."
   },
+  "f1d11a6bb3ecf93dc1293b854b8f5c8de0b6749d90a0e0ba08ff75587c72e6ba": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate codePathsPlan lists src/components/features/terminal/terminal.tsx while the issue and bot comment locate the cause in the Python SDK validation layer.",
+      "Candidate actionability_evidence reports root_cause_signal=false while the bot comment names specific SDK functions and the extra=forbid base schema."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "openhands-sdk/openhands/sdk/tool/schema.py (extra=forbid policy)",
+      "openhands-sdk/openhands/sdk/agent/agent.py (_get_action_event validation path)",
+      "openhands-sdk/openhands/sdk/agent/utils.py (normalize_tool_call / fix_malformed_tool_arguments)"
+    ],
+    "risks": [
+      "Implementing in OpenHands/OpenHands instead of software-agent-sdk would duplicate or conflict with upstream ownership.",
+      "Aliasing or dropping unknown keys on state-changing tools (terminal, file_editor) could silently change tool semantics.",
+      "The candidate codePathsPlan targets a frontend file unrelated to the Python validation layer, risking a misdirected fix."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test that constructs a TerminalAction with command plus description and asserts the chosen behavior (alias, drop-with-warning, or actionable error).",
+      "Regression test that a fully valid terminal call still executes unchanged.",
+      "Cross-model reproduction using the reported conversation event shape to confirm the error path is exercised."
+    ],
+    "unknowns": [
+      "Which behavior maintainers will choose for unknown tool-call parameters (alias, drop-with-warning, or clearer rejection).",
+      "Whether the fix is to be made in software-agent-sdk rather than this repository.",
+      "Whether this issue stays open as cross-model evidence or is redirected to software-agent-sdk#5610."
+    ],
+    "why": "The issue describes a real user-visible failure (extra_forbidden on terminal.description), but the supplied evidence shows the fix belongs upstream in software-agent-sdk#5610, where a maintainer decision between aliasing, drop-with-warning, and clearer-error behavior is still pending. The candidate's own codePathsPlan points at a frontend terminal.tsx path that does not match the described Python SDK validation layer, and the actionability evidence explicitly records root_cause_signal=false. The behavior choice materially determines what code to write, so this is a blocking unknown rather than normal implementation uncertainty."
+  },
   "f1e2228636e824b92b97ee18352518538bd97025f3ddf915220720d96f2bd9ac": {
     "confidence": 0.8,
     "contradictions": [],
@@ -179336,6 +179578,41 @@
       "No explicit confirmation of which fix option maintainer prefers, but issue and comment indicate openness to either"
     ],
     "why": "Issue provides concrete root cause: ReLoRA callback prunes adapters without merging, causing function discontinuity, and strict thresholding can zero both factors on ties. Maintainer confirmed both claims with reproducible evidence. Clear fix options and acceptance criteria are given."
+  },
+  "fd3ca8413dae0f1f8fb7d7a6219be3b81c55ed319fb3d704becaadee4e23f169": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "speculative/dp_spec_prefill_coordination.py: coordinated-step flag handling",
+      "models/deepseek_v4_replay_tail.py: plan/run_idle tail decision for TARGET_VERIFY ranks",
+      "models/deepseek_v4.py: routing of verify ranks away from run_idle",
+      "model_executor/runner/row_bucket_graph_runner.py: out_rows slicing semantics"
+    ],
+    "risks": [
+      "Fix must keep all ranks in step for host gather and graph captures",
+      "Disabling tail graphs on coordinated steps may regress prefill performance",
+      "Open PR #41893 touches overlapping DSPARK verify paths and may conflict or partially cover the root cause"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a GPU test that reproduces the 128-row cut without a full server: coordinated step with one prefilling rank and one verifying rank with >21 requests, assert logits row count matches verify rows",
+      "Regression test asserting verify rank hidden states are not replaced by bucket-sized idle replay outputs",
+      "Run the supplied 2x B300 load recipe with tail graphs kept off coordinated steps and confirm 240s run with 27-39 verifying requests and no mismatch"
+    ],
+    "unknowns": [
+      "Whether PR #41893 already fixes or conflicts with the proposed coordinated-step tail-graph change",
+      "Exact intended semantics of out_rows slicing in RowBucketGraphRunner for non-idle verify ranks"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: coordinated DP spec-prefill steps mark verify ranks as extend, DecoderReplayTail.plan yields no tail, DeepseekV4Model routes them to run_idle, and RowBucketGraphRunner.run slices a 128-row bucket buffer to out_rows, producing the row-count mismatch. Reproduction on 2x B300 with a full server recipe, regression window, workaround validation, and a proposed fix direction are all supplied."
   },
   "fd422176e691f8c3623930ae9f6e203e0de80dc675fc98c7c6d35d14c7783223": {
     "confidence": 0.85,
