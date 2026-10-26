@@ -23979,6 +23979,48 @@
     ],
     "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm with a concrete validation path: reproduce the assertion error and verify the fix by running with different k values."
   },
+  "24c2152a6b6b1c182eb32504cb14432e7b0c0e732526f73b052a1c85da1ac335": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims measured 1,494,911-byte event, but commenter states they have not reproduced it locally",
+      "PreTask validationPathPlan=true but reproductionPathPlan=false and probe_ready=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py: classify oversized SSE event as upstream/transport fault instead of internal",
+      "litellm/proxy/_experimental/mcp_server/faults/list_outcomes.py: add size-specific classification and redacted diagnostic",
+      "litellm/types/mcp_server/mcp_server_manager.py: preserve typed reason at decode/SDK boundary"
+    ],
+    "risks": [
+      "No confirmed reproduction of the 1.49 MB wire event; root cause may differ",
+      "httpx2.SSEError may be lost when SDK wraps the exception, making classification unreliable",
+      "Changing ServerListFault tag union could break public contract",
+      "Globally raising the default limit would be an unsafe fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Oversized single SSE event (~1.49 MB) yields size-distinguishable 502, not opaque 500",
+      "Same catalog paginated into three sub-1 MiB events returns all 644 tools",
+      "Mixed aggregate with one failing and one healthy upstream keeps healthy tools intact",
+      "Ordinary disconnected SSE stream is not misclassified as oversize",
+      "Upstream OAuth 401/403 remains on existing auth path",
+      "Sensitive tool descriptions/headers never appear in public error"
+    ],
+    "unknowns": [
+      "Whether the oversized SSE event is actually reproducible against current main",
+      "Whether PR #48187 or another PR already addresses the size-cap classification",
+      "Whether httpx2.SSEError survives SDK wrapping as a typed cause"
+    ],
+    "why": "The issue describes a plausible root cause (httpx2 1 MiB per-SSE-event cap plus fault misclassification in list_outcomes/mcp_server_manager), but the supplied actionability evidence shows no public reproduction (public_repro_signals=0, reproduction_evidence empty, probe_ready=false) and the commenter explicitly states they have not reproduced the 1.49 MB wire event. The open PR #48187 overlaps only semantically on tools_list and does not cover the root cause, so duplicate coverage is unresolved. These are materially blocking unknowns for actionable code work."
+  },
   "24c83cd170ff2ed0249e575a01f0ffd9dab10923ba1ec09be6503ccd9cfccf35": {
     "confidence": 0.85,
     "contradictions": [
@@ -46575,6 +46617,41 @@
       "Whether maintainers require the ready-for-dev label before implementation"
     ],
     "why": "Issue reports code-explorer subagent hangs/errors, but the supplied root-cause analysis is a truncated third-party agent-generated hypothesis about empty StreamingDeltaEvents; the issue itself lacks a maintainer-confirmed root cause, and the readiness bot explicitly flags missing Steps to Reproduce, Actual Behavior, and Acceptance Criteria. The only overlapping PR (#4385) is keyword-only and does not reference this issue, so duplicate/coverage status is unresolved."
+  },
+  "455f17d095a22d485b93773e28d3c412be1acab9f600c7a64babe90aaac82fde": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist parent_session_id/conversation_id on resume-clone and stop treating clone as root",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path should write lineage instead of creating an unlinked new session",
+      "usage accounting: avoid double-counting inherited context tokens/cost across clone and original"
+    ],
+    "risks": [
+      "Changing isRootSessionRecord semantics could hide legitimate root sessions or break subagent filtering",
+      "Usage de-duplication logic may conflict with existing cost aggregation expectations",
+      "Resume-path change touches shared runtime used by CLI/VS Code, risk of cross-surface regression"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test: resume a cancelled/failed session and assert new record has parentSessionId set and isRootSessionRecord returns false",
+      "Regression test: History list returns one entry for a resumed conversation",
+      "Usage aggregation test: clone's inherited usage is not added on top of original totals",
+      "Manual repro: abort turn, continue chat, verify single History entry and sessions.db lineage columns non-NULL"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer lineage-persistence vs. resume-in-place as the fix approach",
+      "Whether #12590/#14840 overlap enough to require coordination"
+    ],
+    "why": "Issue provides a detailed, measured reproduction (two session rows, same pid, 147ms gap, identical message prefix, NULL lineage) and names concrete code anchors (history.ts isRootSessionRecord, manifestToSessionRecord hardcoding isSubagent:false, sdk-task-history.ts resume path). Root cause is a concrete session-lineage/history-filtering defect with a clear reference-vs-implementation validation path via sessions.db inspection and History UI."
   },
   "45729aca58b3337b5afeb7784e8905f910ed33861eef4de762fcae93710ca62a": {
     "confidence": 0.8,
@@ -81056,6 +81133,35 @@
       "Whether maintainers have a preferred fix approach or are already working on it"
     ],
     "why": "Issue provides a minimal curl repro, control models, and multiple independent confirmations; root cause is isolated to the Ox Alpha free model's tool path on both Zen routes. Evidence includes a concrete validation path (curl repro and control tests) and code anchors for the relevant tool/routing modules."
+  },
+  "73a6d4e32e5108a523c8a1b8ec69b404b87feae4a7be78e5be5c74a469108cc6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until failing job/logs are identified; possibly dependency constraint bump in pyproject.toml or type/lint fixes"
+    ],
+    "risks": [
+      "Fixing without the actual failure log may address the wrong cause",
+      "Dependency bump could mask a real regression"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Retrieve workflow run #930 logs to identify the failing job",
+      "Reproduce with uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto"
+    ],
+    "unknowns": [
+      "Which job failed (static analysis vs tests)",
+      "Actual error messages from workflow logs",
+      "Whether failure is a dependency drift or a code defect"
+    ],
+    "why": "The issue is an auto-generated scheduled upgrade-check failure with no identified failing job, no error output, and no root cause. It only lists generic possible causes (ty, ruff, MCP SDK) and generic reproduction steps. No concrete code surface or failing behavior is established."
   },
   "73b3b578b6c385bb30c9b560551e4e276fb224baa9e1c4ffcead5020d479c84d": {
     "confidence": 0.7,
@@ -146136,6 +146242,41 @@
       "Whether existing PRs actually fix this issue despite not referencing it"
     ],
     "why": "Issue provides a detailed root cause and a self-contained repro, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, so maintainer confirmation is needed before starting work."
+  },
+  "d10ded53dd770f7d4c91a5c44115c248edb794bba25d8e7abeae57fd79b5d56f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter observes ~1/10 drops; maintainer bot observed 0/70 command runs and 0/25 prompt runs"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/config/plugin/command.ts prompt delivery verification",
+      "session inbox delivery/retry behavior for freshly-created child sessions"
+    ],
+    "risks": [
+      "Root cause unconfirmed; fix may target wrong layer (inbox vs command plugin)",
+      "Possible overlap with #52468 delivery race",
+      "Reporter's environment (desktop bundled service) may differ from reproducible CLI path"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with opencode serve using the reporter's exact command/agent frontmatter and capture inbox state for a 0-message child",
+      "Add regression test asserting prompt materializes or errors when prompting a just-created session"
+    ],
+    "unknowns": [
+      "Inbox state of a 0-message child session",
+      "Whether drop reproduces outside desktop bundled service",
+      "Exact command/agent frontmatter and '.' argument steps",
+      "Whether #52468 already covers this delivery race"
+    ],
+    "why": "Issue reports a silent prompt drop in subagent-bound commands, but the maintainer bot could not reproduce it across 25-70 runs and requested missing details (inbox state, service uptime, response bodies, frontmatter). No confirmed root cause, no reproduction evidence, and a related issue (#52468) may cover the same delivery race."
   },
   "d127e24097d88d0e4d3a3fa530a97cb639295e4969ba077d7dbf01d6e8a139f0": {
     "confidence": 0.85,
