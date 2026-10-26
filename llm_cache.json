@@ -8840,6 +8840,40 @@
     ],
     "why": "Issue provides strong evidence of MRv2 memory profiler over-reporting available KV cache due to insufficient CUDA graph capture headroom, leading to OOM under load. However, root cause is not fully isolated (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete with failed CI. Maintainer direction is unclear, and the issue is still open without explicit approval."
   },
+  "0d426bc4e8b23d5c17faa809ef0cf5238ea6690eb0338a5d405e8715fb5e4006": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "AutomationScanner.tick: log each additional ExecutionException cause instead of dropping them",
+      "ManagedArtifactConfiguration: correct the automationScannerExecutor bean javadoc shutdown wording",
+      "Design doc residual-ceilings paragraph: correct the process-exit claim about queued non-daemon rows",
+      "Optional: relocate the DIRECT AbstractExecutorService test seam out of src/main"
+    ],
+    "risks": [
+      "Item 6 relocation may require restructuring the join since ExecutorService type is load-bearing",
+      "Item 7 only covers infrastructure faults, not per-row work faults (claimed() already logs those)",
+      "Doc-only items 8/9 are low-risk but low-value individually"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test where two rows fail in one tick and assert both causes are logged",
+      "Doc/javadoc changes verified by review against the measured 30s shutdown-phase behavior",
+      "Run AutomationScannerTest and ManagedArtifactConfigurationTest to confirm no regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers want items 6-9 bundled in one PR or split per triage suggestion"
+    ],
+    "why": "Issue is a concrete post-merge follow-up list with code anchors (AutomationScanner.tick, ManagedArtifactConfiguration, design docs). Items 1-5 are already closed by merged PR #15528; remaining actionable items 6 (DIRECT seam in src/main), 7 (dropped later ExecutionException causes, one-line LOG.warn), 8 (process-exit claim in residual-ceilings paragraph), and 9 (same shutdown overclaim in the bean javadoc) are each precisely located and independently fixable. Triage comment confirms all seven residues against main and refines scope. No duplicate/merged coverage for the remaining items."
+  },
   "0d8f19b422ba60530fa5c11135db9b1d78f92ac1d7cae0375129405a84f762b5": {
     "confidence": 0.8,
     "contradictions": [
@@ -101339,6 +101373,42 @@
     ],
     "why": "Issue gives a strong standalone ORM reproduction (2N SQL, quadratic identity-map visits) and code anchors, but the actionable fix is materially contested: open PR #38519 already targets the same file with committed steps and bounded batches, and the issue itself concedes it overlaps #38518/#38519. Whether new code work is actionable depends on comparing #38519's implementation boundary, which supplied evidence marks as unresolved (semantic_overlap_requires_review, direct_code_overlap false, root_cause_coverage false)."
   },
+  "901d06f68ee048f84158e11db2ce6f3970b97b61872f9de8c4a04cad63afb59d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Bot comment lists open PRs #55311 and #57134 addressing stopping a failed service, while open_pr_assessment reports status 'none' with no related PRs"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Background service boot failure handling: terminate the failed serve --service process so it releases the port",
+      "Service status reporting so a failed process is not reported as stopped while still alive",
+      "Desktop restart/reconnect path recovering without manual process kill"
+    ],
+    "risks": [
+      "Original report is Windows-specific and seen once; bot reproduction uses a corrupted DB rather than a transient disk I/O error, so the exact trigger may differ",
+      "Related open PRs #55311 and #57134 may already cover stopping a failed service, risking duplicate work",
+      "Changing process lifecycle on boot failure could affect legitimate long-running service behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied repro.sh: start service, corrupt opencode.db, start again, verify failed process exits and port is freed",
+      "Restore good DB and verify service start returns 200 on /api/info without manual kill",
+      "Regression test asserting service status reflects a failed boot rather than 'stopped' with a live process"
+    ],
+    "unknowns": [
+      "Whether #55311/#57134 already implement the fix, making this issue covered",
+      "Exact code location where the failed serve --service process is left running"
+    ],
+    "why": "Issue reports a concrete failure: a background service whose boot fails on a SQLite error stays alive holding the port and returns 500 indefinitely; a bot comment supplies a reproducible script and confirms it on latest dev (ed74ec8). Root cause is narrowed to failed-boot process not being terminated, though the exact code path is not yet pinned."
+  },
   "9020b6e723c859590ceaf3b0833ce5754980a6f3ea364204966fb7df77602eb5": {
     "confidence": 0.8,
     "contradictions": [],
@@ -132721,6 +132791,43 @@
     ],
     "why": "Issue provides a concrete user-visible performance bug with reproduction steps, isolation tests, logs, and static code anchors pointing to 120s waits in runAndWait()/streamOutput() and completion-event handling. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply. No open PR or duplicate issue covers it. Root cause is suspected rather than confirmed, but the evidence supports a concrete reference-vs-implementation validation path (native Codex ~5s vs Ekko ~120s) and targeted code investigation."
   },
+  "be691b792558bf8d29964605dec26097e7a19b49684292cc7bd6768ded6fdf29": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims baseline regression tests fail, but supplied evidence marks root_cause_signal=false and rootCauseCoverage=false",
+      "Open PR #17296 references the issue with COVERAGE relation yet semantic_overlap=false and direct_code_overlap=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "PrefillRouter cancellation propagation for queued P leg",
+      "Decode-leg staged-KV cleanup gating before dispatch",
+      "Overload decision using future due_at as bounded capacity wait"
+    ],
+    "risks": [
+      "Open PR #17296 may already cover the same fix, making independent work duplicative",
+      "Behavior change to overload rejection could affect requests without due_at if not carefully gated",
+      "Legacy workers lacking disagg_prefill_cancel_anytime_v1 must retain bounded cleanup path"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "1P1D SGLang KV-routing reproduction: disconnect client while P leg queued, verify no dispatch after capacity release",
+      "Decode-queued cancellation test verifying abort-capable P is stopped without new D cleanup dispatch",
+      "Future due_at overload test: capacity recovery admits before deadline; expiry returns existing deadline error; no-due_at retains immediate rejection"
+    ],
+    "unknowns": [
+      "Whether PR #17296 already fully addresses the cancellation and bounded-wait behavior",
+      "Concrete root-cause location in PrefillRouter/D selection code",
+      "Whether maintainers consider the open PR the intended fix path"
+    ],
+    "why": "The issue describes a plausible user-visible bug with ordered reproduction steps and code anchors, but the supplied evidence explicitly lacks root-cause coverage (root_cause_signal=false, rootCauseCoverage=false) and there is an open PR #17296 that already claims to fix the same cancellation and bounded-capacity-wait behavior. Whether independent code work is actionable depends on unresolved duplicate coverage and missing root-cause evidence."
+  },
   "be6faf25f7403ec434994e8d08e752d5c0cd3ec19dca4bfdd562a4d29373c481": {
     "confidence": 0.82,
     "contradictions": [
@@ -146353,6 +146460,38 @@
       "Whether maintainers have a preferred design (exact equality vs server-namespaced rid) that affects scope"
     ],
     "why": "Issue provides a concrete root cause: client-controlled rid is preserved in GenerateReqInput._normalize_single_inputs, delayed disconnect cleanup calls abort_request(rid), and Scheduler.abort_request uses req.rid.startswith(recv_req.rid) instead of exact equality, enabling cross-request aborts. Code anchors, an executable PoC, and a controlled test matrix (prefix vs non-prefix, exact-equality control, single-worker and 1P1D) are supplied, establishing both reproduction and validation paths."
+  },
+  "d0fef88cab1fb077ed56d56ea682052e0c253dd5dd7d34f6fd5a2bcd47a049df": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "web/app/components/base/chat/chat/utils.ts: treat empty optional file value as unset before file processing",
+      "web/app/components/workflow/panel/inputs-panel.tsx: avoid copying empty-string default into file input state"
+    ],
+    "risks": [
+      "Unclear which creation/editing path introduces default: '' — fix should be defensive at normalization layer",
+      "Avoid broad API/behavior changes beyond empty-value handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for getProcessedInputs with single-file input value '' (default: '') expecting no throw and treated as unset",
+      "Add regression test for missing default (undefined) to confirm unchanged behavior",
+      "Reproduce via workflow test run with optional single-file input left empty and confirm execution submits"
+    ],
+    "unknowns": [
+      "Origin of default: '' in stored workflow data is unestablished, but not blocking since normalization fix is actionable"
+    ],
+    "why": "Issue provides ordered reproduction, expected/actual pair, and a bot comment tracing the failure to getProcessedInputs() evaluating 'transfer_method' in inputValue on an empty-string default, with concrete code anchors in inputs-panel.tsx and chat/utils.ts. This is a concrete frontend input-normalization bug with a clear validation path."
   },
   "d107919dae54e1cf764f22cca6ab9e08ee2e8a401f6247e3758fb695bd0bc74f": {
     "confidence": 0.7,
@@ -167355,6 +167494,40 @@
       "Maintainer design preference"
     ],
     "why": "Issue reports a user-facing bug with DeepSeek thinking mode in react_agent, but lacks a minimal reproducible example and root cause is unconfirmed. Existing PR #6535 is closed and stale, and repository requires assignment, so maintainer confirmation is needed."
+  },
+  "ed8a7d189f0f54b69fad592e1ff8dda44beb7e6d4fd7d916019363d6a7263bef": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate marks root_cause_signal=true and probe_ready=true, but the only comment states the root cause could not be conclusively established",
+      "Candidate claims code_anchors, but the anchors are minified frontend bundle filenames rather than identifiable source modules"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unclear: possibly frontend conversation reconnect/retry logic, or runtime provisioning/idle-timeout handling; not determined from supplied evidence"
+    ],
+    "risks": [
+      "Failure may be infrastructure/cloud-runtime specific and not fixable in this repository",
+      "Minified bundle anchors do not map to source modules, so the change surface is unknown",
+      "Fixing the CORS/404 symptom could mask the underlying idle-reprovisioning cause"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce idle-then-resume flow against a local or staging runtime and capture whether the runtime container is reprovisioned and whether CORS headers are present on the events/count endpoint",
+      "Add a regression test around conversation reconnect behavior after a runtime becomes unavailable and returns"
+    ],
+    "unknowns": [
+      "Whether the idle/resume failure originates in repository code or in cloud runtime provisioning",
+      "Which source module handles conversation reconnect and runtime availability",
+      "Whether the CORS error is the cause or a downstream symptom of runtime reprovisioning"
+    ],
+    "why": "Issue reports a user-visible idle/resume connection failure with CORS errors and a 404 on an integration endpoint, but the supplied evidence does not establish a concrete root cause in the repository code. The only comment explicitly says the root cause could not be conclusively established and that the runtime appeared to have been reprovisioned. The code anchors are minified frontend bundle filenames, not source modules, and the failure may be in cloud runtime provisioning rather than in this repository's code."
   },
   "ed9e8b9ba7856a99a790581676d779054458e3534a6be223df01de56a97156be": {
     "confidence": 0.55,
