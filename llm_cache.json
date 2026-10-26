@@ -13397,6 +13397,41 @@
     ],
     "why": "Issue describes a plausible root cause (detectMinerUProtocol omits Authorization header), but supplied evidence marks root_cause_signal=false and rootCauseCoverage=false, and an open PR #4470 already targets the same fix with tests and passing checks. Whether independent code work is actionable depends on unresolved duplicate coverage and missing root-cause confirmation."
   },
+  "15054ec4f8e317bdc54c6f9f99621fdb17e603ea0224287299f28d8835549797": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "openhands-sdk/openhands/sdk/event/error_classification.py: distinguish proxy token-not-found 401 from genuine invalid-key auth",
+      "conversation/impl/local_conversation.py: avoid persisting fatal ConversationErrorEvent when immediate retry succeeds",
+      "openhands/agent_server/managed_llm_key.py: reuse existing refresh-on-401 path for the transient race"
+    ],
+    "risks": [
+      "Broadening retryable classification could mask genuinely invalid keys if detail matching is too loose",
+      "Suppressing error events may hide real failures if retry-success detection is incorrect",
+      "Key material must not leak into event details/logs during re-resolution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: first LLM call returns token-not-found 401, retry succeeds -> no ConversationErrorEvent persisted, execution_status not error",
+      "Parametrized classify_error test asserting token-not-found detail yields retryable=true and user_action != settings",
+      "Preserve existing invalid-api-key case: retryable=false, user_action=settings, friendly-detail emission unchanged",
+      "Run tests/sdk/event/test_error_classification.py, tests/sdk/llm/test_auth_refresh_retry.py, tests/agent_server/test_managed_llm_key.py"
+    ],
+    "unknowns": [
+      "Exact retry-success detection point in the run loop is not pinned to a line, though code anchors are supplied",
+      "Whether maintainers prefer reclassification vs. event suppression as primary fix"
+    ],
+    "why": "Issue provides a verbatim event-log timeline showing an instant LiteLLM token-not-found 401 followed by a successful retry, plus concrete code anchors (classify_error, local_conversation run loop, managed_llm_key refresh hook) and explicit acceptance criteria. Root cause is a transient credential-provisioning race surfaced as a fatal, non-retryable auth error; the fix path (suppress fatal event on successful retry, reclassify exhausted token-not-found as retryable/non-settings) is concrete and testable. No open PR or duplicate issue covers it."
+  },
   "1507a269398aba85debbe3190419aeadc9eee5c456e88a3d92881096308537fe": {
     "confidence": 0.85,
     "contradictions": [
@@ -41844,6 +41879,44 @@
     ],
     "why": "Issue provides a clear regression between v1.93.0 and v1.97.0, a concrete reproduction with exact config and commands, and a suspected cause (wrap_sse_stream_with_keepalive_pings). The bug is user-visible and affects streaming timeout behavior, making it a valuable and actionable fix."
   },
+  "3e2688012c3fd0f584852b08f100719b86d4daedc7d7fa56ba08f06e480dd36a": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue body hypothesizes a free/ownership bug in session/mamba/KV release paths, while contributor trace says the walk makes no native calls and streaming sessions are empty, pointing instead to the Rust radix-tree core or earlier heap corruption"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/unified_radix_cache.py (Rust/PyO3 tensor refcounting on release)",
+      "python/sglang/srt/session/streaming_session.py (session slot free path)",
+      "python/sglang/srt/managers/scheduler_components/invariant_checker.py (idle walk behavior)"
+    ],
+    "risks": [
+      "Root cause may be in the Rust extension, requiring native debugging not covered by Python-only changes",
+      "Existing PRs #33111/#46459 touch scheduler.py but do not cover the root cause; overlap must be resolved before duplicating work",
+      "Disabling the idle check would mask real corruption rather than fix it"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce under SGLANG_UNIFIED_RADIX_TREE_CORE_BACKEND=python vs default Rust core to isolate the native free path",
+      "Run a long mixed-workload soak with faulthandler enabled and capture full all-thread dump on abort",
+      "Add a regression test exercising radix release/insert refcount balance under repeated match/insert/release cycles"
+    ],
+    "unknowns": [
+      "Whether SGLANG_UNIFIED_RADIX_TREE_CORE_BACKEND=python avoids the crash",
+      "Full all-thread faulthandler dump and scheduler /proc status/wchan from recurrence",
+      "Whether the Rust radix-tree tensor refcounting is the actual double-free source",
+      "Whether any open PR actually covers this root cause"
+    ],
+    "why": "The issue reports a heap-corruption abort in the idle invariant walk, but the supplied evidence does not establish a concrete root cause: the walk is read-only, streaming sessions are disabled (empty dict), and the contributor's trace attributes the glibc abort to native/Rust radix-tree refcounting or an earlier heap corruption rather than the walk itself. The candidate's own actionability evidence sets root_cause_signal=false, and the open-PR overlap (scheduler.py only, no direct code overlap, no root-cause coverage) is unresolved. Without a reproduction or confirmed ownership bug, code work is not yet actionable."
+  },
   "3e29b331f45ab625fbea27bcd5e607177940b49d672a9619df90b972ea2e51ad": {
     "confidence": 0.82,
     "contradictions": [],
@@ -69378,6 +69451,39 @@
     ],
     "why": "Issue provides a concrete, code-anchored root cause for the primary defect: _engine_inputs_from_video() in components/src/dynamo/vllm/omni/omni_handler.py omits response_format=req.response_format, so output_formatter.py defaults to url delivery. A minimal diff is proposed and a model-free reproduction plus curl-based validation path are supplied. The secondary FFmpeg color defect is isolated with a controlled RGB-quadrant experiment and cpuflags matrix, giving a concrete reference-vs-implementation test. No open PR or duplicate issue covers this."
   },
+  "64695ab5c695f5257431ede73618c9e26086f8748164b0690a3c901120da2a7f": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "maybe_run_setup_script: guard chmod/source behind file-existence check",
+      "maybe_setup_git_hooks: guard chmod of .openhands/pre-commit.sh behind existence check while preserving hook-install behavior",
+      "Bootstrap command construction in app_conversation_service_base.py"
+    ],
+    "risks": [
+      "Existence guard could accidentally mask genuine script failures if exit status is swallowed",
+      "Behavior must hold for both repo-rooted and plain working-directory workspaces",
+      "Implementation lives in enterprise app server path, so fix location may differ from OSS repo"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Start a conversation in a workspace with no .openhands/setup.sh or pre-commit.sh and assert no exit-1 chmod BashOutput events",
+      "Workspace with .openhands/setup.sh present: assert it is chmod'd and executed, and a failing script still reports its real exit status",
+      "Workspace with .openhands/pre-commit.sh present: assert chmod, preservation of existing hook to pre-commit.local, and OpenHands hook installed",
+      "Workspace without pre-commit.sh: assert no OpenHands pre-commit hook is installed"
+    ],
+    "unknowns": [
+      "Whether the fix belongs in the OSS repo or the enterprise app server where the code currently resides"
+    ],
+    "why": "Issue gives a concrete reproduction (fresh workspace without optional .openhands scripts), expected-vs-actual exit-1 chmod failures, and triage pins the root cause to unconditional chmod in maybe_run_setup_script and maybe_setup_git_hooks in app_conversation_service_base.py. Acceptance criteria define a clear reference-vs-implementation test: absence tolerated, presence behavior unchanged, genuine script failures still surfaced. No duplicate or merged fix covers it; PR #18740 is keyword-only overlap (auto-run setup.sh feature) and does not address the chmod-on-absent-file bug."
+  },
   "6469ec89b0ca99a65bdbfaed9828ffe570aa693e6b5c8b96dc6c6f129b20aa76": {
     "confidence": 0.6,
     "contradictions": [
@@ -86531,6 +86637,40 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a Wasm OCI image fetch failure for ai-statistics plugin, but the root cause is unclear: it may be a registry-side image format problem, a client-side parsing bug, or a configuration issue. The reproduction steps are placeholders, and no maintainer investigation or design confirmation is present. The repository requires assignment and AI disclosure, and the gate decision is HUMAN_REVIEW."
+  },
+  "7c0bbd2ae52d68e81cd0fdf33b139067c061391035fa9cc1719b7734ef40cd84": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist/derive lineage so clones are not root entries",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path writes parent_session_id/conversation_id on new session",
+      "History listing dedupes/aggregates cloned sessions and avoids double-counting inherited usage"
+    ],
+    "risks": [
+      "Lineage schema change may affect existing History queries and pagination (#14840)",
+      "Usage aggregation semantics need care to avoid under- or double-counting",
+      "Maintainer may prefer a different lineage representation (conversation_id vs parent_session_id)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test: resume a cancelled session and assert new session row has parent_session_id set and is not returned as a root History entry",
+      "Regression test asserting inherited usage is not summed on top of original session totals",
+      "Reproduce via issue steps: abort turn, continue chat, verify single History entry and DB lineage columns populated"
+    ],
+    "unknowns": [
+      "Whether #12590 (open, stale) already covers the VS Code follow-up path and would make this a duplicate",
+      "Exact intended lineage field (parent_session_id vs conversation_id) per maintainer design"
+    ],
+    "why": "Issue provides a detailed, measured reproduction with concrete code anchors (history.ts isRootSessionRecord, sdk-task-history.ts resume path) and a clear root cause: resume of cancelled/failed sessions creates a new sessionId without persisting parent_session_id/conversation_id, so History lists the clone as a root entry and re-bills context. This is a concrete, testable behavioral bug in the agent runtime/history path, not mere plumbing."
   },
   "7c1fd61c2f9e7014948f56c96ce15c242f824b93171282394c66d7d860a9e302": {
     "confidence": 0.7,
@@ -113104,6 +113244,42 @@
       "Maintainer preference on whether to defer deletions or implement rollback; no maintainer approval or help-wanted signal."
     ],
     "why": "Issue provides a clear, reproducible bug with a concrete code path and expected behavior, but the deterministic gate requires HUMAN_REVIEW and design confirmation is needed before implementation."
+  },
+  "a16a7c81f3e08fb6a243f1d1d40127b1e043339d219a83e5d18a0644d926e585": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate codePathsPlan targets src/components/features/terminal/terminal.tsx (frontend) while the reported validation lives in the Python SDK",
+      "Candidate marks probe_ready=true but root_cause_signal=false and design_confirmation=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "openhands-sdk/openhands/sdk/tool/schema.py (extra=forbid policy)",
+      "openhands-sdk/openhands/sdk/agent/agent.py (_get_action_event validation)",
+      "openhands-sdk/openhands/sdk/agent/utils.py (normalize_tool_call / fix_malformed_tool_arguments)"
+    ],
+    "risks": [
+      "Fixing in OpenHands repo would duplicate/conflict with upstream software-agent-sdk#5610",
+      "Behavior choice (alias vs ignore vs reject) is a maintainer design decision not yet made",
+      "Applying lenient handling to state-changing tools (terminal, file_editor) could mask genuinely malformed calls"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test that constructs a TerminalAction with an unknown 'description' key and asserts the chosen behavior (alias, drop-with-warning, or actionable error)",
+      "Regression test that a well-formed terminal call with 'summary' still validates and executes"
+    ],
+    "unknowns": [
+      "Whether the fix should land in OpenHands or software-agent-sdk#5610",
+      "Which of the three candidate behaviors maintainers will approve",
+      "Whether this issue will be closed/redirected upstream"
+    ],
+    "why": "The issue describes a real cross-model failure (extra_forbidden on unknown tool-call params), but the supplied collaborator comment states the fix belongs in the upstream software-agent-sdk repo (issue #5610), not OpenHands, and that a maintainer decision on the desired behavior (alias vs drop vs better error) is still pending. The candidate's own actionability evidence also records root_cause_signal=false and design_confirmation=false, and the code-path plan points at a frontend terminal.tsx that does not match the described SDK validation layer."
   },
   "a19b1e736d30ad0b45487395a76a54cbd448331ac6691ba83027f3b950bb3c5c": {
     "confidence": 0.82,
