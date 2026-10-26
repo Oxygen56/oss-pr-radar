@@ -61902,6 +61902,42 @@
     ],
     "why": "The issue provides a clear root cause (token underestimation in count_tokens), concrete reproduction steps, benchmark data, and a validation path comparing estimates to actual usage. The algorithm evidence includes mechanisms like distributed training and numerics, and the issue supports a reference-vs-implementation test. Although an open PR exists, it lacks root-cause coverage, leaving room for a more complete contribution."
   },
+  "594dca8763adbfabb2ecf741ce73304767447fcc39466c60d316d820cf08f78b": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate labels this WAIT_MAINTAINER/HUMAN_REVIEW while actionability_evidence shows reproduction_or_validation_missing and probe_ready=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/aisdk.ts: stop dropping tool-approval-request stream parts and surface them as an internal approval event",
+      "permission/auto-policy path: route approval verdict back as tool-approval-response on the next model call",
+      "plugin/effect/promise aisdk adapters if the event must be exposed"
+    ],
+    "risks": [
+      "Feature-request scope may need maintainer design sign-off before implementation",
+      "Changing stream-part handling could affect raw/source part behavior and AI SDK v7 upgrade (#52068)",
+      "No public reproduction means the fix could target the wrong layer"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a fake LanguageModelV3 provider that emits tool-call + tool-approval-request and asserts a tool-approval-response is sent back",
+      "Regression test that a bare tool-approval-request triggers a permission prompt and respects --auto",
+      "Headless run test that the stream does not hang or ECONNRESET while awaiting a verdict"
+    ],
+    "unknowns": [
+      "No public minimal reproduction or probe confirming the exact failure path",
+      "Maintainer decision on whether to support provider-emitted approvals and the intended response semantics",
+      "Whether AI SDK v7 upgrade (#52068) changes approval-part handling"
+    ],
+    "why": "The issue describes a real gap: provider-emitted tool-approval-request parts are dropped in packages/core/src/aisdk.ts and no internal event routes a verdict back. However, the supplied evidence contains no public minimal reproduction (public_repro_signals=0, reproduction_evidence empty, probe_ready=false), and the bot reply frames this as a feature request that maintainers will consider, not a confirmed defect with an agreed design. The exact expected behavior (prompt vs auto policy, response part shape) is not pinned down, so actionability is materially uncertain."
+  },
   "595a505356a28e4acd736f3dc3cfa1d00adacc1736376664037b816f061ac96e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -144139,6 +144175,41 @@
     ],
     "why": "Issue provides a precise root cause (missing 'max' in UI/CLI whitelists while SDK already supports it), a concrete fix plan, and a clear validation path. Existing PR #12973 overlaps but is draft and incomplete, so the issue remains actionable."
   },
+  "ce1eff40d064fee8e07ee394d9f38d891de1d210246777b31153020685eaa42e": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: validate or adjust reasoning_effort when function tools are present on Chat Completions",
+      "Agent node tool-calling path: surface actionable error or route to Responses API when reasoning+tools enabled",
+      "Regression tests for tools+reasoning and tools+reasoning_effort:none combinations"
+    ],
+    "risks": [
+      "Full Responses API support requires request construction, response parsing, streaming, and tool-call continuation changes — larger than a minimal fix",
+      "Successful execution with reasoning_effort:none is unconfirmed in the reporter's deployment",
+      "Maintainer may prefer one of two reasonable fixes (validation vs Responses routing), affecting scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: build Chat Completions request with function tools and reasoning_effort set, assert validation error or forced none",
+      "Unit test: tools with explicit reasoning_effort:none produces a valid request payload",
+      "Integration/mock test: Agent node with tools and reasoning enabled either succeeds via Responses or returns actionable validation error instead of raw HTTP 400"
+    ],
+    "unknowns": [
+      "Whether reasoning_effort:none actually resolves the failure in this deployment",
+      "Whether maintainers prefer validation-only fix vs full Responses API support",
+      "Exact effective reasoning effort configuration path in the Agent node"
+    ],
+    "why": "Issue provides a concrete HTTP 400 error, expected/actual pair, reproduction steps, and a named code anchor (internal/entity/models/openai.go) where the Chat Completions adapter builds requests. The root cause is well-scoped: the adapter sends function tools with a non-none reasoning_effort to /v1/chat/completions for gpt-6-luna, which the API rejects. A minimal fix (validation or reasoning_effort:none fallback) plus a Responses-API path is actionable, though the full Responses adaptation is larger."
+  },
   "ce2b634db50ac8f3121c13f4c3b9cd2c234957c96ac0f4bd79a69a632e319cce": {
     "confidence": 0.55,
     "contradictions": [
@@ -147003,6 +147074,42 @@
     ],
     "why": "The issue clearly identifies a missing MCP tool enumeration in the CLI, with a concrete code path and proposed design. However, the triage bot's comment indicates an implementation is already in progress, and the issue lacks explicit maintainer approval or design confirmation. The proposed change is a user-facing feature enhancement, not a critical bug fix, and the existing PR may already address it."
   },
+  "d244f018335033b0a8be7315348fb98efa19cbe4be1bf7f96887f41cffb9e1f9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/config/config.ts: track provenance of implicit non-interactive edit/write_file denials separately from user-configured deny",
+      "packages/core/src/memory/memory-scoped-agent-config.ts: allow scoped memory-root writes past implicit deny only, preserving user deny",
+      "packages/core/src/config/config.ts: gate extract/dream scheduling on whether the worker has a writable destination",
+      "packages/core/src/memory/extractionAgentPlanner.ts: abort early when scoped allow loses to base deny to bound token cost"
+    ],
+    "risks": [
+      "Provenance tracking of implicit vs user deny is invasive and could weaken user-configured deny if done incorrectly",
+      "Path-scope exemption could leak writes outside memory roots or across project/user roots",
+      "Maintainers may prefer skip-scheduling, making a scoped-exemption patch misaligned"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with `qwen --approval-mode auto --output-format json -p \"...remember pnpm/vitest...\"` and assert MEMORY.md is written or memory workers are not scheduled",
+      "Regression: explicit permissions.allow/coreTools covering memory writer with approvalMode=auto must still run memory",
+      "Regression: user-declared permissions.deny or --exclude-tools on write_file must remain denied despite scoped allow",
+      "Path-scope test: outside-root, symlink-escaped, and pinned/ memory paths must not become writable via exemption",
+      "Assert extractor/dream token spend and saved-state reporting reflect 'not scheduled' when unwritable"
+    ],
+    "unknowns": [
+      "Which of the two fix directions maintainers will accept (skip-scheduling vs. scoped exemption) is undecided, though both are actionable"
+    ],
+    "why": "Issue provides a concrete reproduction, a verified two-part root cause (implicit -p deny in loadCliConfig plus deny-outranks-allow in memory-scoped-agent-config), a control run, and a triage bot that statically confirmed both mechanisms against main. The remaining choice between skip-scheduling vs. scoped-deny-exemption is normal implementation uncertainty, not a blocker; the acceptance matrix from a commenter sharpens validation."
+  },
   "d256de57b86b08e29dcc1b0e08fb8983b390a3556fc46457f2551c6cd8a10a52": {
     "confidence": 0.55,
     "contradictions": [
@@ -147639,6 +147746,43 @@
       "Exact migration number allocation and current migration stack status."
     ],
     "why": "Issue clearly identifies a root cause: provisioning reader uses newest-created ordering instead of execution-tier authority, and mutation chain lacks fail-closed Shared-tier boundaries. Concrete acceptance criteria and evidence plan are provided. No duplicate open PRs; related PRs are merged and do not close this issue. Maintainer-approved and actionable."
+  },
+  "d2d29e7d4421fec719b1ccc50c2051001abf8d317be851e34095f48712bd980f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist/derive lineage so clones are not root entries",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path writes parent_session_id/conversation_id when creating continuation session",
+      "History listing: dedupe or nest cloned sessions under original conversation",
+      "Usage accounting: avoid double-counting inherited context in clone totals"
+    ],
+    "risks": [
+      "Scope creep into API/behavior changes for session lineage schema",
+      "Possible overlap with open #12590 and #14840 on same History handler",
+      "Maintainer may prefer a specific lineage schema (conversation_id vs parent_session_id)",
+      "Cross-surface consistency with CLI fix #12500"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test: cancel a task, resume, assert new session row has non-null parent_session_id/conversation_id",
+      "Assert History list returns one root entry for the logical conversation",
+      "Assert aggregated usage does not double-count inherited context tokens",
+      "Run targeted unit tests for history.ts and sdk-task-history.ts plus static checks"
+    ],
+    "unknowns": [
+      "Whether #12590 or #14840 already cover the VS Code lineage fix",
+      "Preferred lineage field/schema by maintainers"
+    ],
+    "why": "Issue provides a detailed, measured reproduction (two session rows, same pid, identical message prefix, duplicated usage) and concrete code anchors: history.ts isRootSessionRecord filtering on parentSessionId, manifestToSessionRecord hardcoding isSubagent:false, and sdk-task-history.ts resume path creating a new session with initialMessages. Root cause (missing lineage on resume/clone) is established and a concrete validation path exists (DB row inspection + History entry count + usage totals)."
   },
   "d2d83539e8232bcf7445512232aac4f5e31c68791f8edae4e102a198fb3002f0": {
     "confidence": 0.85,
