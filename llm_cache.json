@@ -12628,6 +12628,36 @@
     ],
     "why": "Issue describes a concrete distributed-training deadlock and OOM in AsyncGRPO weight transfer, with clear reproduction steps and expected behavior. It identifies a real algorithmic mechanism (distributed training, numerical precision) and supports a reference-vs-implementation test. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "13d40a052e18554905ae70bfb9831b4cd2658b92fe7af1ca42432b706c73820f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/types/vectorstore.go: change hard-coded postgres engine display name to 'PostgreSQL (pgvector + ParadeDB)'",
+      "internal/types/vectorstore_test.go: update name assertion at L143",
+      "README.md and README_CN.md line 328 table wording alignment"
+    ],
+    "risks": [
+      "Frontend or API consumers may key off the display name string",
+      "Scope creep into docs/README changes beyond the minimal fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Update vectorstore_test.go assertion and run the internal/types package tests",
+      "Start stock docker-compose deployment with RETRIEVE_DRIVER=postgres, open /platform/settings?section=vectorstore, confirm card name and that engine_type remains 'postgres'"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the exact wording 'PostgreSQL (pgvector + ParadeDB)' vs another label"
+    ],
+    "why": "Issue pins the hard-coded display name in internal/types/vectorstore.go#L835-L845 and the single asserting test at vectorstore_test.go#L143, with a clear expected/actual pair and ordered reproduction. The fix is a small, well-scoped naming change (engine_type stays 'postgres'), so it is actionable despite being a labeling/docs-level change rather than an algorithm contribution."
+  },
   "13e5fa84aa5f25b11d2509d1e922d447da101b26a1dfb50366e212f41f65d8c9": {
     "confidence": 0.82,
     "contradictions": [
@@ -68456,6 +68486,44 @@
       "Whether the failure is model-switch, idle-resume, or image/tool-call specific"
     ],
     "why": "Issue is a bare provider error report with no reproduction beyond 'select model, send chat', no root-cause evidence, and no code anchors beyond the error string. The bot comment lists five closely related issues (#48805, #48915, #48741, #48947, #48319) covering the same encrypted_content failure, and the related-issue assessment flags #49247 as a potential duplicate. Two open PRs (#48908, #48918) already target stale encrypted reasoning recovery. Whether any code work is actionable depends on unresolved duplicate/coverage status, which is a materially blocking unknown."
+  },
+  "62c334ff1ce95fa8b71a926f32a7aa4273919ce8769b472b4f5a9f9fe5dc2377": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Pre-task policy status is needs_assignment with assignmentRequired true, while the issue has no assignees; this is a submission-policy gate rather than a technical blocker"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "HttpClientStreamableHttpTransport.handleException: compare-and-set activeSession against the failed request's session instead of unconditional getAndSet",
+      "Pass the captured transportSession from sendMessage/reconnect call sites (413, 593, 609) into handleException/handleExceptionSafely",
+      "Expose the session id on McpTransportSessionNotFoundException so handleException can compare it",
+      "Avoid forwarding stale session-not-found to LifecycleInitializer.handleException so the current initialization is not closed"
+    ],
+    "risks": [
+      "Maintainer comment marks this low priority due to modern-protocol work, so merge timing is uncertain",
+      "Behavior change in exception forwarding could affect callers relying on re-initialization on any session-not-found",
+      "Reflection-based repro test is brittle if internals change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add LateSessionNotFoundReproTest asserting activeSession keeps 'current-session' after a stale McpTransportSessionNotFoundException",
+      "Add the full FakeServer integration test: late 404 for s1 must not fail in-flight C on s2 and must not send DELETE s2",
+      "Run mcp-core targeted unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept the compare-and-set approach versus an alternative design",
+      "Whether the repository requires assignment before a PR may be opened"
+    ],
+    "why": "Issue gives a precise root cause: statusError tags the exception with the request's session id, but handleException unconditionally swaps activeSession and closes the current initialization, so a late 404 for an old session tears down the healthy new session. A minimal reproduction and an independent failing unit test on main (54e8b61) confirm it, and a concrete compare-and-set fix is proposed."
   },
   "62cd36a2fb7f4c7629a4746bfd5f400285a6ab6620a462cca2860c10ae33b936": {
     "confidence": 0.85,
