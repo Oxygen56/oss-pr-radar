@@ -59185,6 +59185,42 @@
     ],
     "why": "Issue identifies concrete docstring bugs in PEFT tuners with clear root causes and executable reproduction steps. Although track is llm_algorithm, the contribution is docstring fixes and test updates, not algorithm changes. However, the issue provides strong evidence of actionable code work with validation path."
   },
+  "55fb64068397dd37d4866d00366dfd5eca217b5abb13c1289571666f7259bb66": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence marks qualified=true with evaluation_method, but the issue's proposed fix is a runtime determinism probe and docs, not an algorithmic or numerical method"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lm_eval/models/gguf.py: optional preflight determinism probe with tolerance and loud failure/warning",
+      "gguf backend docs/README: document the run-stable pre-sampling logprob assumption"
+    ],
+    "risks": [
+      "Nondeterminism originates upstream; a harness-side probe may be flaky or add startup latency",
+      "Tolerance choice is arbitrary and may false-positive on legitimate sampling variance",
+      "Work is operational/plumbing and may be judged out of scope for the algorithm track"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test a mocked llama-server client returning varying logprobs across identical probes and assert the preflight raises/warns beyond tolerance",
+      "Unit test stable mocked responses pass the preflight without warning",
+      "Document manual repro against a nondeterministic llama-server build as an integration check, not a CI gate"
+    ],
+    "unknowns": [
+      "No in-repo reproduction showing harness-side failure independent of the external server build",
+      "Whether maintainers consider a preflight determinism check in scope for the gguf backend",
+      "Whether the nondeterminism is specific to the SYCL/MoE build or general to llama-server"
+    ],
+    "why": "The issue describes nondeterministic logprobs from an external llama-server build (SYCL/MoE) and proposes documentation plus a preflight determinism probe. The root cause is attributed to the upstream server, not to harness code, and no in-repo reproduction or failing harness behavior is established. The proposed work is a runtime preflight check and docs, which is operational plumbing rather than an algorithmic mechanism (training objective, model mechanism, quantization/numerical method, kernel, or evaluation methodology) required for track=llm_algorithm."
+  },
   "560cc6c87bcf3b485568f819f8ad4aa1c30cb837941a1d175cb4dee9eaab593e": {
     "confidence": 0.7,
     "contradictions": [],
@@ -114704,6 +114740,40 @@
     ],
     "why": "Issue reports a regression in tool syntax handling for local Ollama/Qwen3.6 after Cline 4.1.x, but the root cause is not clearly identified. Existing PRs (e.g., #11486, #11937) have semantic overlap but none directly reference this issue, and the issue's primary request is documentation (.clinerules example), which is not a code fix. The deterministic gate is HUMAN_REVIEW, and maintainer design confirmation is needed."
   },
+  "a2ca071236e1736cf65f44cff5e1fddcae7dee29992426d7734481348c26f90a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue body attributes root cause to Bun 1.4.4 runtime regression, while candidate.actionability_evidence reports root_cause_signal=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No in-repo fix expected for v1; possible investigation of stdio child_process handling in packages/opencode/src/mcp/index.ts",
+      "Potential v2 verification of MCP stdio transport"
+    ],
+    "risks": [
+      "Root cause may be in upstream Bun 1.4.4, outside repository control",
+      "v1 is in maintenance-only mode; fix may be rejected as out of scope",
+      "Windows-specific stdio behavior is hard to reproduce in CI"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce on Windows 11 with a local stdio MCP server (Serena) on 1.19.4 and confirm CallToolRequest never reaches the server",
+      "Confirm 1.19.3 succeeds as control",
+      "If pursuing, add a regression test around stdio MCP request delivery after initialize/tools-list"
+    ],
+    "unknowns": [
+      "Whether the bug reproduces on v2 (@opencode/cli)",
+      "Whether the failure is truly in Bun runtime versus opencode MCP client code"
+    ],
+    "why": "Issue is a Windows stdio MCP timeout regression attributed to a bundled Bun runtime upgrade; maintainer bot states v1 only receives critical fixes and that rollback to 1.19.3 is a working workaround, so this is a low-value/covered opportunity for v1. Root cause is a suspected upstream Bun child_process regression, not a clear in-repo code defect."
+  },
   "a2cfcf3510da261734379ee62885ab9831484bda93e56824128a019f75ae5d17": {
     "confidence": 0.55,
     "contradictions": [
@@ -124068,6 +124138,42 @@
       "Whether any existing PR actually covers this root cause (open PR assessment is weak/incomplete)"
     ],
     "why": "Issue is an environment/startup hang report (engine proc never starts, shm broadcast timeout) with no confirmed root cause; comments propose mutually inconsistent workarounds (NCCL_P2P_DISABLE + --disable-custom-all-reduce, HF cache download wait, VLLM_USE_FLASHINFER_SAMPLER=0) and one reporter says the NCCL workaround did not help. No concrete algorithm mechanism, training objective, numerical method, or reproducible reference-vs-implementation test is established."
+  },
+  "b1c30938978a1d6d3ed2a1bafe2a2788f2883a8c2b7fbd01411126240c588f35": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "openhands-sdk/openhands/sdk/event/error_classification.py: classify token-not-found 401 detail as transient/retryable rather than auth/settings",
+      "conversation/impl/local_conversation.py: suppress fatal ConversationErrorEvent when the immediate retry succeeds and avoid error/stuck status",
+      "openhands/agent_server/managed_llm_key.py: reuse existing refresh-on-401 hook for credential re-resolution without bypassing the base-URL allow-list"
+    ],
+    "risks": [
+      "Broadening retryable semantics could mask genuinely invalid keys if the detail-matching is too loose",
+      "Suppressing the error event may hide real failures if retry-success detection is incorrect",
+      "Credential re-resolution must stay within the managed-key refresh allow-list so BYOK LLMs are never retried with a managed key"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test in tests/sdk/event/test_error_classification.py asserting the token-not-found detail yields retryable semantics and user_action != settings, while genuine invalid-key detail keeps retryable:false/settings",
+      "Add a first-attempt-401-then-success test in tests/sdk/llm/test_auth_refresh_retry.py asserting no ConversationErrorEvent is persisted and final status is not error",
+      "Run the existing parametrized precedence tests in tests/sdk/event/test_error_classification.py to confirm code-over-detail precedence and other classifications are unchanged",
+      "Verify no key material or hash appears in event details, telemetry, or logs"
+    ],
+    "unknowns": [
+      "Exact code location where the run loop decides to emit the fatal event versus suppress it is not shown in supplied evidence",
+      "Whether the existing refresh hook is enabled in the affected Cloud deployment is not confirmed"
+    ],
+    "why": "Issue provides a verbatim event-log timeline, an expected/actual pair, ordered reproduction steps, and a follow-up comment showing the same key hash across six conversations days apart, which rules out rotation and points to a proxy-side token-lookup race. Triage bounds the fix to the SDK error-classification and run-loop paths with concrete acceptance criteria and named test files, giving a clear reference-vs-implementation validation path."
   },
   "b1c6494aa96b09d470c299f70f37830f3ab1289a4eacfa3d6d900fcf1af222e4": {
     "confidence": 0.85,
