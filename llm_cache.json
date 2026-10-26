@@ -105943,6 +105943,39 @@
     ],
     "why": "Issue provides detailed root cause (TOCTOU race in vacuum swap), reproduction steps, and concrete code anchors. The suggested fixes are actionable and testable."
   },
+  "96ff9bc198ebfdd96bcbed9e653d8bd7dc052a3aaf92e66dc0040db4735c9132": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/shared/clickhouse/migrations/canonical/0050_scores_trace_index_granularity.up.sql: guard or pre-materialize session_id/dataset_run_id before index materialization",
+      "migration preflight/upgrade documentation for historical Compact parts on ClickHouse 26.4"
+    ],
+    "risks": [
+      "Fix may need to be ClickHouse-version-conditional rather than a blanket migration change",
+      "Materializing columns on large historical tables could be expensive or lock-heavy",
+      "Upstream ClickHouse issue #114329 may already cover the underlying defect, so a Langfuse-side workaround could become redundant"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied reproduce-clickhouse-legacy-parts.py against 26.4.5.143 expecting failure and 26.8/26.10 expecting pass",
+      "Add a migration regression test that seeds historical Compact parts with later-added indexed columns and asserts migration 50 completes with zero unfinished mutations and unchanged row checksums",
+      "Verify the repair path (MATERIALIZE COLUMN with DEFAULT NULL) leaves data fingerprint identical"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a migration-side workaround versus a documented minimum ClickHouse version bump",
+      "Whether the exact writer version of the reporter's original historical parts was established (acknowledged as a controlled reconstruction)"
+    ],
+    "why": "Issue provides a self-contained Docker reproduction, a concrete failing migration (0050 materializing idx_project_trace_observation_v2 on historical Compact parts), a version matrix isolating ClickHouse 26.4 behavior, and a verified repair path; root cause is narrowed to historical Compact-part mutation handling of later-added indexed columns."
+  },
   "970c75a2b94268ef77f267dc9c65ea1ba7255bb5b0ff506211600ebde4d3fb0d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -122518,6 +122551,43 @@
       "Whether maintainers want the fix in-repo vs. in the plugin packaging pipeline"
     ],
     "why": "Issue provides a concrete Windows-only reproduction with ordered steps, expected/actual pair, and process-level evidence showing git-bash.exe/mintty spawning hung windows for on_file_read_cursor.sh on Read hooks. A commenter supplies a plausible root cause (git-bash.exe is a mintty wrapper) and a concrete fix direction (point hook at Git's bin/bash.exe). This is actionable code work in the plugin hook scripts, not the Python SDK."
+  },
+  "af72cd031fe211d2abcd45086811d62b1e5bd76cd50b4330bb9ae13fe7b24172": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER/HUMAN_REVIEW while actionability_evidence reports needs_confirmation=false and maintainer_approved=false",
+      "Open PR #18985 is marked maintainer_owned and references the issue, yet root_cause_coverage=false and technical_complete=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/components/features/automations/setup/automation-setup-prompt-stack.tsx: single-line option rendering with prefix-first ellipsis and reserved repository segment",
+      "Focused component tests for one-line, truncation, and hover tooltip contracts"
+    ],
+    "risks": [
+      "Overlap with open maintainer PR #18985 may make independent implementation redundant",
+      "PR #18985 lacks regression tests, so test coverage gap alone does not prove independent space",
+      "Scope creep into selected pills, search, or clone semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Component test: long organization/project/repository name renders on one line with no mid-word break",
+      "Component test: prefix truncates with ellipsis while final repository segment stays visible",
+      "Component test: repository segment wider than menu truncates rather than wraps",
+      "Component test: hover tooltip equals full repository name",
+      "Mock-API screenshot recipe per .pr/repo-picker-one-line/evidence.mjs produces one-line options"
+    ],
+    "unknowns": [
+      "Whether maintainer PR #18985 already fully resolves the issue or will be superseded",
+      "Whether maintainers want an independent implementation or test-only contribution given the open PR"
+    ],
+    "why": "Issue is a UI text-wrapping regression in the automation repository picker with a plausible root cause (break-all/text-wrap replacing truncate in automation-setup-prompt-stack.tsx) and concrete acceptance criteria. However, an open maintainer-authored PR #18985 directly references the issue, overlaps the same file, and implements the same one-line fix, so duplicate/coverage status is unresolved and determines whether independent code work is actionable."
   },
   "af93e795ad3c6bda430639c6c9fae128bf392221249184eaeba6d3c228ddb5fa": {
     "confidence": 0.7,
@@ -141028,6 +141098,39 @@
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP servers, breaking external Python interpreters. Reporter supplies executable minimal repro, /proc environ evidence, and a working workaround. Triage bot disputes the AppImage attribution but the reporter's follow-up provides live /proc evidence and a reproduction matrix. Code anchors (mcp-client.ts, sanitize-child-env.ts, shared-env-keys.ts) point to a plausible fix location. No open PR or duplicate issue found. Remaining uncertainty is whether maintainers accept the deferred-scrubbing tradeoff (#8653), which is a design preference, not a blocker to actionable code work."
   },
+  "c9c704f74104886ec33fe779e66f9d22f3f96d81ee589de99b040d0a5a971aef": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "rome_apps/assistant/skills/routine-from-chat/SKILL.md: add non-interactive branch allowing system:create_routine under existing permission rules",
+      "packages/core/src/core/mcp-facade.ts: optionally support non-card propose_routine workflow on messaging surfaces",
+      "packages/core/src/core/mcp-facade.routine-draft.test.ts: add non-interactive scheduling regression test"
+    ],
+    "risks": [
+      "Open PR #1371 overlaps the routines setup area and may cover part of the fix",
+      "Changing skill instructions could alter permission/argument-check expectations for direct creation",
+      "Originating channel is unknown, so the exact surface behavior may differ from the derived reproduction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test simulating a non-interactive surface where the skill flow completes scheduling via system:create_routine",
+      "Run existing mcp-facade.routine-draft.test.ts to confirm interactive-surface proposal behavior is unchanged",
+      "Verify read_action('system:propose_routine') still returns Unknown action and that no card-delivery claim is made on messaging channels"
+    ],
+    "unknowns": [
+      "Whether PR #1371 already resolves the skill/tool contract mismatch",
+      "Exact originating messaging channel"
+    ],
+    "why": "Issue provides a source-anchored root cause: the routine-from-chat skill requires propose_routine, but mcp-facade intentionally omits that tool on non-interactive surfaces while the skill forbids the available system:create_routine action. Concrete code anchors and an existing facade test pin the omission, and a validation path (non-interactive scheduling regression test) is specified. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific bar does not apply."
+  },
   "c9c8a5cbc85e84d839191ca411c325486586e0fcaaf2f9aa8c5f5df688fafb37": {
     "confidence": 0.85,
     "contradictions": [],
@@ -141126,6 +141229,38 @@
       "Whether the reporter's exact DFlash2 + json_object combination has a distinct residual bug after the fix."
     ],
     "why": "The issue reports a deterministic 'Failed to advance FSM' error under DFlash2 spec decode + xgrammar json_object grammar, but the supplied evidence shows the root cause is likely already fixed by #53046 (validate_tokens guard in grammar_bitmask), which is absent from the reporter's PR-head build and from v0.28.0. Multiple commenters converge on this diagnosis, and no evidence establishes persistence on a post-fix build. The remaining actionable work is release-branch cherry-pick/provenance, not a new algorithm fix."
+  },
+  "c9d6733cae9ffbc1c5e52eebef7d395bc9f17173823d1e140987c055b130d0ca": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "web/src/features/prompts/server/routers/promptRouter.ts: importBulk should retry or topologically order entries so composed prompts resolve regardless of alphabetical order",
+      "Add regression test covering parent-before-child import ordering"
+    ],
+    "risks": [
+      "Open PR #19362 already touches promptRouter.ts; must avoid duplicate implementation and coordinate",
+      "Retry/topological ordering change could alter import error semantics for genuinely missing dependencies",
+      "CI on existing PR is failing (diagnostic only, not proof of value)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create failing test: import payload [a-parent referencing z-child v1, z-child] into empty project; assert both persist and a-parent resolves to 'Before Shared instruction after'",
+      "Control test: reversed payload [z-child, a-parent] still imports successfully",
+      "Run targeted prompt router unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer retry-loop vs topological sort implementation",
+      "Whether PR #19362 will be revised to add tests, closing the competition gap"
+    ],
+    "why": "Issue provides a concrete, ordered reproduction: exportAll sorts prompts alphabetically, importBulk processes sequentially and never retries failed entries after later dependencies succeed, so a composed prompt sorting before its dependency is permanently dropped. Code anchors (exportAll, importBulk, createPrompt dependency validation) and an expected-vs-actual pair are supplied, giving a clear reference-vs-implementation test. The open PR #19362 overlaps the same path but lacks regression tests and root-cause coverage, leaving a concrete gap (add failing test + minimal retry/topological fix)."
   },
   "c9defc6255b0f836d27395f7722fdd1bd5b6efd7316511de31404d5a7f679325": {
     "confidence": 0.7,
@@ -154799,6 +154934,40 @@
     ],
     "why": "Issue and confirming comment establish a concrete cross-replica cache-coherence bug: per-user OAuth token backend uses process-local user_api_key_cache in front of Redis, and the MCP disconnect path does not publish cross-worker invalidation. Comment adds a second concrete defect (conditional invalidation skipped when row already deleted) and points to exact code anchors, giving a clear root cause and validation path."
   },
+  "dc04ab16ae7a71f37f6326465f0e1e08d1c5856e2102b327aafbbb721fa59f4a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/runtime/host/history.ts: persist parent_session_id/conversation_id on resume-created sessions and stop treating clones as root entries",
+      "apps/vscode/src/sdk/sdk-task-history.ts: resume path should write lineage when starting a new physical session from cancelled/failed state",
+      "Usage aggregation: inherited context tokens should not be double-counted across lineage-linked sessions"
+    ],
+    "risks": [
+      "Maintainer may prefer a different lineage model (conversation_id vs parent_session_id) affecting schema/API",
+      "Usage de-duplication could interact with existing cost accounting and reporting paths",
+      "Related open issues #12590 and #14840 touch the same History handler; scope overlap must be checked"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test for isRootSessionRecord/manifestToSessionRecord asserting a resumed clone with parentSessionId is not a root entry",
+      "Add a test that resuming a cancelled session persists parent_session_id/conversation_id on the new session row",
+      "Regression test that History lists one entry for a lineage-linked resume pair and that usage totals are not summed twice"
+    ],
+    "unknowns": [
+      "Whether #12590 or #14840 already cover the VS Code lineage fix in an open PR (assessment reports none, but issues are open)",
+      "Exact schema constraints on sessions.db for parent_session_id/conversation_id"
+    ],
+    "why": "Issue provides a concrete, measured reproduction (two session rows, same pid, 147ms apart, identical message prefix, NULL parent_session_id/conversation_id) and names specific code anchors (history.ts isRootSessionRecord, manifestToSessionRecord hardcoding isSubagent:false, sdk-task-history.ts resume path). Root cause is well-supported: resume of cancelled/failed sessions creates a new session without lineage, so History lists it as a root entry and usage is double-counted. This is an agent runtime/history correctness bug with a clear reference-vs-implementation validation path."
+  },
   "dc1426d4a3431f8607619670e067e005d9518b6b8043496a9086b5567dc8ebaf": {
     "confidence": 0.9,
     "contradictions": [
@@ -157611,6 +157780,42 @@
     ],
     "wait_reason": null,
     "why": "Issue reports a concrete functional bug in /report navigation for nested subagents, with clear reproduction steps and expected vs actual behavior. No competing PR or related issue found. The fix is likely localized to session-tree traversal logic, making it actionable."
+  },
+  "e02b2edd770ccd8b560983f296dda7c1c5db30373dc2861c064e09124e371088": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: request construction to select Responses API or reasoning_effort none when tools+reasoning are combined",
+      "response parsing / streaming / tool-call continuation if Responses path is added",
+      "pre-execution validation with actionable error for unsupported combinations"
+    ],
+    "risks": [
+      "Responses API support requires broader changes (parsing, streaming, tool-call continuation) than a URL swap",
+      "reasoning_effort none path unconfirmed in reporter's deployment",
+      "Possible maintainer preference for one fix approach over the other",
+      "Avoid silently disabling user-requested reasoning"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: gpt-6-luna with tools and reasoning enabled routes to Responses and succeeds",
+      "Regression test: gpt-6-luna with tools and explicit reasoning_effort none via Chat Completions succeeds",
+      "Unit test: unsupported combination yields clear validation error before request",
+      "Run targeted package tests and static checks for internal/entity/models"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Responses API migration vs. reasoning_effort none fallback",
+      "Whether reasoning_effort none actually succeeds for this model in practice"
+    ],
+    "why": "Issue provides a concrete HTTP 400 error, expected/actual pair, reproduction steps, and a named code anchor (internal/entity/models/openai.go) where the chat-completions request is built. Root cause is well-scoped: the adapter sends function tools with reasoning_effort to /v1/chat/completions, which the model rejects. Fix options (Responses API vs. reasoning_effort none) are both reasonable and testable."
   },
   "e033406ffbf687594f6b629f4436153b5068e7dac81f632d896491de1317e81f": {
     "confidence": 0.8,
