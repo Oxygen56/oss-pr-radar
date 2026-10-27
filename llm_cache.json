@@ -75428,6 +75428,41 @@
     ],
     "why": "Issue identifies four scheduler defects with detailed reproduction and root-cause analysis; comments confirm bugs 1 and 4 fixed in v1.46, bug 3 partially addressed, and remaining bounded defect is recipe settings ignored in scheduled runs. Existing PR #11110 overlaps scheduler code but lacks tests and does not reference the issue. Maintainer design confirmation is pending for scope of recipe settings and unknown-setting validation."
   },
+  "6b798223f69985672c7b02e95dfecb5118b5895e17fe075ba9d55e15807d793d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims reproduction on v1.94.0, but maintainer comment says streaming /v1/responses recorded output and usage on v1.94.0 and main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "LangfuseOtelLogger._set_observation_output to unwrap nested Responses response.output",
+      "streaming success-callback event handling for response.completed",
+      "streaming regression test for Langfuse OTEL output"
+    ],
+    "risks": [
+      "Maintainer could not reproduce, so the bug may be provider/config-specific or already fixed",
+      "Open PR #36362 already targets this issue and may cover the fix",
+      "Broadening output parsing could change behavior for non-Responses callbacks"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's curl against /v1/responses stream:true and confirm Langfuse generation output is undefined",
+      "Add a unit test feeding a ResponseCompletedEvent wrapper into _set_observation_output and asserting output is recorded",
+      "Run targeted Langfuse OTEL callback tests"
+    ],
+    "unknowns": [
+      "Which provider/model and Langfuse OTEL callback configuration reproduces the missing output",
+      "Whether open PR #36362 already resolves the nested response.output parsing"
+    ],
+    "why": "Issue proposes a concrete root cause (LangfuseOtelLogger._set_observation_output reads only top-level choices/output, not nested response.output), but a maintainer comment reports being unable to reproduce on v1.94.0 and main with a real provider, and asks for provider/model and callback configuration. That contradiction directly determines whether the bug is actionable."
+  },
   "6b9066f30bcd6c94e8596ea62f1c0fba190b680a2246ca92535fa169914c426e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -148017,6 +148052,39 @@
       "Whether #52468 already covers this delivery race"
     ],
     "why": "Issue reports a silent prompt drop in subagent-bound commands, but the maintainer bot could not reproduce it across 25-70 runs and requested missing details (inbox state, service uptime, response bodies, frontmatter). No confirmed root cause, no reproduction evidence, and a related issue (#52468) may cover the same delivery race."
+  },
+  "d112e0da9fd947c9adf12fc243a686537b0839183f7970b036d0a8e31ee2f4e3": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue reports fully reproduced failure on 2.0.26, but author notes the code path could not be found on current HEAD, so it may already be fixed or reshaped"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugin source scan containment check against cached Bun.resolveSync resolution",
+      "plugin lifecycle logging for rejected/unloaded plugins"
+    ],
+    "risks": [
+      "Duplicate of #53763; work should be consolidated there",
+      "Prior fix #53945 closed unmerged, suggesting maintainer design preference unresolved",
+      "Plugin config subsystem refactored since pinned version; failure mode may not survive"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce symlink swap plus rescan in isolated XDG env and assert plugin remains loaded or logs a warning",
+      "Regression test that retargeted directory symlink loads new MARKER after rescan"
+    ],
+    "unknowns": [
+      "Whether the failure mode still exists on current dev HEAD after the plugin config refactor",
+      "Maintainer decision on the closed #53945 approach"
+    ],
+    "why": "The issue is a well-reproduced plugin lifecycle bug, but the supplied bot comment identifies it as a duplicate of #53763 with the same root cause (Bun.resolveSync caching vs fresh realpath containment check) and notes a prior fix attempt #53945 was closed unmerged. This is plugin loading/rescan plumbing, not an algorithm contribution, and duplicate coverage makes it low-value to pursue independently."
   },
   "d127e24097d88d0e4d3a3fa530a97cb639295e4969ba077d7dbf01d6e8a139f0": {
     "confidence": 0.85,
