@@ -48930,6 +48930,41 @@
     ],
     "why": "Issue provides a concrete distributed-training invariant violation: AllGatherHandle/NoGatherHandle wait() is not idempotent, so a second wait sets AVAILABLE over freed storage, causing empty-weight matmul. Root cause, code anchors, and two handle-level reproductions on 2 GPUs are supplied; the open PR #8487 is still a draft and lacks root-cause coverage, so competition space remains."
   },
+  "4843e41c1e00921ab7b59017b7a91bc0a58f602afe5dd6d0a2e45dbee6b720be": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/hooks/use-llm-stream.ts: pass goalTurnActive=false at the two mid-turn steer drain sites while keeping /goal commands draining",
+      "packages/cli/src/ui/hooks/useMessageQueue.ts: restate the pinning test so plain text drains at steer boundary but non-steerable slash commands remain held",
+      "packages/cli/src/ui/AppContainer.tsx: leave popNextSubmission 'priority' new-turn admission gate untouched"
+    ],
+    "risks": [
+      "Maintainer may prefer the keep-hold option, requiring doc carve-out and hold-cause UI instead",
+      "Steered plain text entering the Goal transcript could affect verifier evidence window semantics",
+      "Existing pinning test at useMessageQueue.test.ts:1103 must be restated, not deleted, to avoid masking regressions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting drainQueue(false, true) returns plain text at the steer boundary during an active Goal",
+      "Assert /model and other non-steerable slash commands remain held while a Goal turn is active",
+      "Assert deferred (Ctrl+Q) entries are still excluded by includeDeferred=false during an active Goal",
+      "Reproduce via interactive terminal: start multi-turn Goal, type ordinary message + Enter, verify it reaches the model at next boundary"
+    ],
+    "unknowns": [
+      "Final maintainer product decision between 'Enter steers' and 'keep hold + doc carve-out + visible reason'"
+    ],
+    "why": "Issue provides a concrete reproduction, byte-verified code anchors (useMessageQueue.ts drainQueue/popNextSubmission, use-llm-stream.ts steer boundaries, AppContainer.tsx priority mode), and a documented contract contradiction (Enter steers vs. held during active Goal). Collaborator comments confirm the 'one flag, two lanes' root cause and establish that a steer reuses the running turnId without perturbing budget/verifier accounting, yielding a narrow lane-split fix with a clear validation path. Remaining product decision (steer vs. keep-hold) is normal maintainer preference, not a blocking unknown."
+  },
   "484b6568a8377f36a201c8b8c308f71f9acd5522b179801e3ff3cee732bf1d63": {
     "confidence": 0.9,
     "contradictions": [
