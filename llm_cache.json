@@ -32411,6 +32411,37 @@
     ],
     "why": "Issue reports a concrete scheduler OOM with --enable-unified-memory on hybrid-SWA gpt-oss-20b, with traceback, ordered repro steps, and a replay client. However, the supplied evidence shows an open PR #42700 ('[HiCache] Fix SWA over-admission of host load-backs that crashes the scheduler') with semantic overlap on alloc_token_slots and scheduler, and the duplicate status is 'semantic_overlap_requires_review'. Whether that PR already covers this root cause is unresolved, which materially determines whether new code work is actionable."
   },
+  "2fafe3359b9ec70303641e64e1d27853d4766b56f110fdbda55d8e0b84922d29": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "core/rag/extractor/notion_extractor.py: check HTTP status before parsing database query response",
+      "raise on non-success for first and later pages instead of returning empty/partial documents",
+      "preserve existing behavior for HTTP-200 empty databases and successful pagination/cursor requests"
+    ],
+    "risks": [
+      "Must not alter cursor policy or overlap with #44491 repeated-cursor protection",
+      "Avoid introducing retry policy, credential lookup, or dependency changes beyond scope",
+      "Ensure error type/message is consistent with existing extractor error handling conventions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add offline regression test using httpx.MockTransport returning 401/429/503 on first page; assert extract() raises",
+      "Add test with one valid page (has_more=true, next_cursor) followed by 503; assert no partial Document is returned",
+      "Add control tests: HTTP-200 empty database returns [], and multi-page success preserves output and cursor requests"
+    ],
+    "unknowns": [],
+    "why": "Issue provides an executed offline reproduction using the production NotionExtractor with httpx.MockTransport, showing 401/429/503 and later-page 503 silently return empty or partial results because res.json() is parsed without a status check. Root cause is anchored to _get_notion_database_data and expected behavior is concrete: raise on non-success, preserve HTTP-200 empty and successful pagination."
+  },
   "2fbbc13c2e6e0403f7892ba6a2135ca3d6c4a8fcfcaa18a8d3a3ba9be423b5c4": {
     "confidence": 0.7,
     "contradictions": [
@@ -76557,6 +76588,43 @@
     ],
     "why": "Issue provides a concrete root cause (streamed response model name not refreshed from terminal event), a runnable repro, and a clear fix location. The proposed change is narrow and testable, with maintainer discussion confirming the bug and approach."
   },
+  "6d18bd710de0fa99682f5eb8e4ee66c6ca54e44440ad58d95d8aec99c7a5b06f": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue states metadata and long-running operation succeed while standard download fails, but does not establish which component (staging vs MCP) is at fault"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "File-staging/upload-response path for GOOGLEDRIVE_DOWNLOAD_FILE (Apollo/Mercury token handling)",
+      "MCP binary response handling for authenticated downloadUri artifacts",
+      "Regression test covering shared .xlsx download via standard tool"
+    ],
+    "risks": [
+      "Root cause may lie in internal Apollo/Mercury service not in this repo, making a code fix out of scope",
+      "Changing staging token handling could affect other integrations' file delivery",
+      "Binary/artifact mode changes may alter MCP response contract"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a shared .xlsx: metadata succeeds, GOOGLEDRIVE_DOWNLOAD_FILE fails with staging 401",
+      "Assert staging upload uses a valid admin token for an active connected account",
+      "Verify MCP client receives usable bytes or a fetchable artifact URL for the long-running operation variant"
+    ],
+    "unknowns": [
+      "No root-cause signal identifying the failing code path or token source",
+      "Repository requires assignment and issue has no assignee",
+      "Whether the Apollo/Mercury staging service is in this repository or external",
+      "Historical merged PR #1460 (s3 url support) has only keyword overlap and does not cover this failure"
+    ],
+    "why": "The issue documents a reproducible user-visible failure (Apollo/Mercury file-staging HTTP 401 on GOOGLEDRIVE_DOWNLOAD_FILE) with ordered steps and isolation tests, but supplies no root-cause evidence: it is unknown whether the fault is in the staging upload path, token propagation, or MCP binary handling. The repository policy requires assignment (needs_assignment) and the issue has no assignees, which is a materially blocking unknown for actionable code work."
+  },
   "6d1bb2ed147ab7efc2fcd981648130fffa38e019a7369110177f165060fe4807": {
     "confidence": 0.55,
     "contradictions": [
@@ -89487,6 +89555,42 @@
       "Whether the reproduction harness is available in-repo for a reference-vs-implementation test"
     ],
     "why": "The issue presents a clear, code-anchored root cause (Azure pass-through route resolves no model, so can_key_call_model is skipped and the raw relay uses gateway credentials) and a concrete reproduction. However, the supplied duplicate assessment flags PR #40030 as semantic_overlap_requires_review with overlapping pass-through paths, and the pre-task evidence explicitly forbids auto-creating a duplicate task until a human compares implementation boundaries. That unresolved duplicate/merged-fix coverage is a materially blocking unknown for actionability."
+  },
+  "7f27bdf7031c73a929412855036e86d6c012754ed9b39a5d88ba70711d050c5d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate labels track agent_ai_infra but issue is a Desktop UI feature gap with no algorithm content"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Desktop App composer UI: add Plan/Act mode toggle",
+      "Desktop App settings: add Auto Approve controls",
+      "Wire UI state to existing enableTools/autoApproveTools session schema"
+    ],
+    "risks": [
+      "Feature scope may be intentional product decision, not a bug",
+      "No confirmed code surface or maintainer design preference",
+      "Track mismatch: agent_ai_infra but issue is UI plumbing"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on Desktop 0.0.49: confirm composer lacks Plan/Act and Auto Approve",
+      "Add UI test asserting toggle renders and persists mode to session schema",
+      "Regression test that mode is passed as <user_input mode=...> to runtime"
+    ],
+    "unknowns": [
+      "Whether Desktop App intentionally omits these controls",
+      "Which code surface owns the composer/settings UI",
+      "Whether maintainers want this feature at all"
+    ],
+    "why": "Issue is a Desktop App UI feature-gap report (missing Plan/Act toggle and Auto Approve controls). It is a UI/feature request, not an agent/inference/RAG algorithm contribution; no concrete training objective, model mechanism, kernel, quantization, or evaluation methodology is present. Root cause is not established (only that the UI lacks controls), and no code path or failing test is identified."
   },
   "7f2f19f1dc6e0fcce5e5e7f0e2b2e2c15b1baf99667bdf666e21f508605fe232": {
     "confidence": 0.8,
@@ -123120,6 +123224,42 @@
       "Maintainer's design intent and acceptance criteria"
     ],
     "why": "The issue requests a UI feature to collapse AI work details by default. The deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups failed due to timeouts, so duplicate implementations cannot be ruled out. The bot comments suggest possible duplicates (#35193, #14511) and a related comment link, but these are not fully verified. No maintainer approval or design confirmation is present."
+  },
+  "afa8b8ff85f4b4b23ea5b9a83cd590f3340622911bb02e1eb570277be52600bb": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: request construction to select Responses API when reasoning+tools enabled, or allow explicit reasoning_effort none",
+      "Response parsing/streaming and tool-call continuation for Responses API path",
+      "Pre-execution validation of unsupported model/endpoint/reasoning combinations with actionable error"
+    ],
+    "risks": [
+      "Responses API adaptation touches request construction, response parsing, streaming, and tool-call continuation, widening blast radius",
+      "Exact effective reasoning_effort not captured, so the triggering configuration may need confirmation",
+      "Behavior change in provider adapter could affect other OpenAI-compatible models"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: gpt-6-luna with tools and reasoning enabled routed through Responses API succeeds",
+      "Regression test: gpt-6-luna with tools and explicit reasoning_effort none via Chat Completions succeeds",
+      "Negative test: unsupported combination yields clear validation error before HTTP call",
+      "Reproduce original HTTP 400 with current adapter to confirm failing baseline"
+    ],
+    "unknowns": [
+      "Exact effective reasoning_effort value used in the failing run",
+      "Whether reasoning_effort none workaround succeeds in this deployment",
+      "Whether maintainers prefer Responses API support vs validation-only fix"
+    ],
+    "why": "Issue provides a concrete HTTP 400 reproduction with expected/actual pair and a named code anchor (internal/entity/models/openai.go). Root cause is partially established: the adapter builds Chat Completions requests with reasoning_effort plus function tools, which the provider rejects for this model. The fix direction (Responses API support or explicit reasoning_effort none plus pre-validation) is concrete and testable, though the exact effective reasoning setting was not captured."
   },
   "afae0a839b08166656ed3a9bae94588ffb8134dbd52185c9fee02380fd0d652b": {
     "confidence": 0.85,
