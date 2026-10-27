@@ -11448,6 +11448,47 @@
     ],
     "why": "Triage evidence confirms the shipped RECAP_SYSTEM_PROMPT lacks the language-matching bullet that the design doc says should be there, and the default 'auto' path leaves the recap in English. The fix is a concrete one-line prompt change in packages/core/src/services/sessionRecap.ts, with a clear validation path via the existing sideQuery tests and a Russian-conversation reproduction."
   },
+  "11975c2a6e1186d103f29c8a6c0c2bfa3a574ded6fa8a7ca653bd7d48863c260": {
+    "confidence": 0.72,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while issue body presents a detailed, code-anchored root-cause hypothesis",
+      "preTaskEvidence.reproductionPathPlan=false while issue body supplies ordered reproduction steps"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "State sync path: send partialMessage/message deltas during streaming instead of full state",
+      "subscribeToState payload: exclude or window clineMessages and page older messages on demand",
+      "Debouncer: scale debounce with payload size or skip flush while previous serialization/delivery is in flight",
+      "Compaction/archive: trim UI-held message history to bound memory on task reopen"
+    ],
+    "risks": [
+      "Reporter lacks heap snapshot; retention vs churn ambiguity could mean the chosen fix does not fully resolve OOM",
+      "Changing subscribeToState payload shape may break webview consumers expecting full clineMessages",
+      "Debounce scaling could degrade UI responsiveness if tuned poorly",
+      "Related issues #15031/#12419/#4626 suggest overlapping prior proposals; need to confirm no existing fix covers this"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build a synthetic task with thousands of messages (~10+ MB messages.json) and assert subscribeToState payload size stays bounded during streaming",
+      "Regression test that streamed events emit deltas rather than full-state re-serialization",
+      "Measure serialized bytes per streamed event and assert no unbounded growth with task length",
+      "Reopen a large task and verify no OOM / bounded heap growth over a streaming session"
+    ],
+    "unknowns": [
+      "Whether the 17 MB stateJson strings are retained (as in #15031) or merely churn, which affects which fix is sufficient",
+      "Whether any prior/closed PR (#4626 state diff sync) already implements a partial fix",
+      "Exact webview consumer contract for subscribeToState that constrains payload changes"
+    ],
+    "why": "Issue provides a concrete, ordered reproduction (long task -> multi-MB messages.json -> subscribeToState re-serializes full state on every streamed event -> extension host OOM), code anchors (sendStateUpdate, stateJson, subscribeToState, flushStateToWebview), and quantitative evidence (17 MB payloads, ~20 GB serialized, 33 OOM exits). Root cause is strongly indicated though the reporter explicitly notes no heap snapshot to distinguish retention vs churn; this is a normal implementation uncertainty, not a blocker, since the fix direction (delta/partialMessage streaming, excluding clineMessages, size-scaled debounce) is actionable and testable."
+  },
   "119bf7534e5c355339b9092314897a492800df9955a909d1a304878b167d28bd": {
     "confidence": 0.8,
     "contradictions": [],
@@ -135089,6 +135130,42 @@
       "Whether the missing-argument bug is the sole cause of the prefill crash or one of several."
     ],
     "why": "Issue describes a concrete TypeError from a missing-argument call site in ep_scatter_from_psum, but the supplied evidence shows an open PR #39399 with direct code overlap on the same file and same fix, plus PR #37211 with a test file. Duplicate/coverage status is explicitly 'human_review_required', which is a materially blocking unknown for whether independent code work is actionable."
+  },
+  "c0811e4102006ad62eba442e3c33fccd6552aa4cc5190537283a50fb7e32b8f4": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence marks qualified=true with evaluation_method mechanism, but the issue's concrete asks are docs and a preflight check, not an algorithm change",
+      "actionability_evidence shows root_cause_signal=false and probe_ready=false while the issue asserts a specific failure mode"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "lm_eval/models/gguf.py: preflight determinism probe or documented assumption",
+      "gguf backend docs/README: state pre-sampling run-stable logprob requirement"
+    ],
+    "risks": [
+      "Root cause may be entirely upstream in llama.cpp, making a harness change cosmetic",
+      "A preflight probe adds latency and may false-positive on legitimately stochastic servers",
+      "Floating-point/seed variance could be mistaken for a harness bug"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that stubs llama-server responses with varying logprobs and asserts the backend fails loudly or warns",
+      "Reproduce with a fixed seed and repeated identical /v1/completions probes against a local llama-server to confirm variance is server-side, not harness-side"
+    ],
+    "unknowns": [
+      "Whether the nondeterminism is reproducible from the harness side or only upstream",
+      "Whether maintainers consider a preflight determinism check in scope for the gguf backend",
+      "Whether an existing PR (#4450/#3823) already touches the same llama_server logprob path"
+    ],
+    "why": "Issue describes a real silent-failure mode (nondeterministic llama-server logprobs corrupting teacher-forced loglikelihood), but the supplied evidence lacks a harness-side reproduction: the only repro data lives in an upstream llama.cpp issue, and the pre-task evidence explicitly records reproductionPathPlan=false and reproduction_or_validation_missing. The proposed fixes (docs note, preflight determinism probe, version warning) are largely operational/plumbing rather than an algorithm mechanism, and it is unclear whether the root cause is in the harness or in the upstream server, which determines whether code work here is actionable."
   },
   "c08b01e574c27a2ec8e7d2be5f585e6562394df7a422bda6cf4d3525174c65d6": {
     "confidence": 0.55,
