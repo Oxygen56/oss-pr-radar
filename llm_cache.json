@@ -37695,6 +37695,45 @@
     ],
     "why": "Issue reports a rate-limit error from a custom provider, but lacks reproduction steps, code anchors, and root-cause analysis. No maintainer confirmation or design direction. The error is external (rate limit exceeded) and not clearly a code defect in the repository."
   },
+  "37941a9a4ddf2d5af55ffae809daf062da37fe1bf9751e93c7e98669bc3a2b53": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Log shows batch status=success with ingest(success=5,failed=0) yet adjacent logs record document requeue, indicating inconsistent retry/status accounting"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/application/service/wiki_ingest_batch.go: scope retry to failed page/op instead of whole document",
+      "internal/application/service/wiki_ingest.go: reuse completed extraction/classification results across retries; fix slug-lock SetNX deadline handling",
+      "internal/handler/wiki_page.go: table-retention rejection path should not escalate to document-level requeue",
+      "progress/status reporting to distinguish model wait, lock wait, business retry, batch timeout"
+    ],
+    "risks": [
+      "Reporter has not produced a deterministic minimal repro; fix may need synthetic fixtures",
+      "Behavior change to retry granularity could affect existing retry/backoff semantics",
+      "No maintainer design preference confirmed; avoid broad API changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Construct a deterministic fixture: multiple docs sharing an entity/concept page with Markdown tables, force a table-retention rejection, assert only the affected page/op is retried and extraction/classification are not re-executed",
+      "Simulate slug-lock contention >2m and assert deferral does not requeue the whole document",
+      "Regression test that a batch reporting status=success with ingest(success=5,failed=0) does not also emit document requeue for the same ops",
+      "Run targeted unit tests for the wiki ingest package plus static checks"
+    ],
+    "unknowns": [
+      "No deterministic minimal reproduction yet",
+      "Whether #3462/#3468 already cover the retry-amplification mechanism",
+      "Whether upstream model gateway behavior contributes to the slowdown"
+    ],
+    "why": "Issue reports a concrete, user-visible performance/retry amplification bug in the Wiki ingestion path with ordered steps, expected-vs-actual behavior, and code anchors (wiki_page.go table-retention check, wiki_ingest_batch.go slug lock deferral, wiki_ingest.go requeueFailedOps/withSlugLock). The suspected mechanism — page-level failure causing document-level requeue and re-running Map/Reduce — is specific enough to build a failing test and a minimal fix, though the reporter has not constructed a deterministic minimal repro."
+  },
   "37a008458256d7a2fee851cd45f6d4eaf3507aa4497087f0c933075ddf394f90": {
     "confidence": 0.7,
     "contradictions": [
@@ -117793,6 +117832,43 @@
     ],
     "why": "Issue provides a concrete, code-anchored root cause: unconditional creation of transfer_infos[room] in mooncake/conn.py bootstrap thread, ABORT handler not popping the entry, and the only pop path requiring a KV chunk that orphan rooms never receive. Reproduction is a concrete ordered-steps HTTP injection against a 1P1D mooncake_tcp deployment with observed OOMKilled=true and dmesg evidence. Validation path is a reference-vs-implementation test: inject unique bootstrap_room values and assert transfer_infos does not grow unboundedly / orphan rooms are cleaned up. Open PRs #39229 and #32566 share only the bootstrap_room keyword and scheduler.py path, not the root cause (checksum feature and rust-server PD support respectively), so they do not cover this fix."
   },
+  "a70c2f7a9b1bca5a1beb575b2c8b4387962e725786052dd5a207507dad11127a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment marks root_cause_coverage false while issue body clearly states a root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "LLMAssistantAggregator: stop holding the run for a user muted during their current turn",
+      "FunctionCallUserMuteStrategy / user aggregator mute-state interaction",
+      "Regression test covering function call result while user speaking"
+    ],
+    "risks": [
+      "Behavior change to aggregator hold logic may affect other run_llm=True paths (FunctionCallCancelFrame, LLMMessagesAppendFrame, deferred push)",
+      "Overlap with open PR #6390 could cause duplicate work",
+      "Maintainer design preference on mute semantics not yet confirmed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.py on main and confirm 0 LLMContextFrame after the function call result",
+      "After fix, assert exactly 1 LLMContextFrame and _user_speaking handling is correct",
+      "Add regression test in aggregator test suite for muted-during-turn function call result",
+      "Run targeted aggregator and user_mute unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether PR #6390 will be merged before independent work lands",
+      "Maintainer preference on whether muted users should still gate the held run"
+    ],
+    "why": "Issue provides a concrete minimal reproduction, ordered steps, expected/actual output, and a specific root cause: FunctionCallUserMuteStrategy drops the frames that would end the user's turn, so LLMAssistantAggregator's held function-call result never runs. A concrete validation path (repro.py asserting one LLMContextFrame) exists. Open PR #6390 is a proposed fix but is not merged, so competition space remains; its existence is not a blocker."
+  },
   "a70c90dad51c50236d2ea3c0cd2da9b8eee3b0e18ea3313ae8a1384c781e44fa": {
     "confidence": 0.72,
     "contradictions": [
@@ -135670,6 +135746,42 @@
       "Maintainer confirmation on the expected fix approach is missing"
     ],
     "why": "The issue describes a concrete streaming bug in LiteLLM's Anthropic adapter where tool_use is lost during SSE conversion. It provides a clear reproduction and expected behavior, but the root cause is not identified and the track is llm_algorithm, which requires a concrete algorithmic mechanism. The supplied evidence lacks a specific training objective, model mechanism, or numerical method; it is an SDK integration bug. The open PR and related issue lookups failed, so duplicate work cannot be excluded. The gate decision is HUMAN_REVIEW, and the candidate's own category is WAIT_MAINTAINER."
+  },
+  "c1daccc10f3be603d66eb01fc4ad63bf68676d649f43dc8ec75d7e0f00d9ff83": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with pre-review failure 'no_code_surface, reproduction_or_validation_missing', yet the issue body contains a concrete reproduction and a stated validation path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "TypeScript client validate() helper: stop treating schema-defaulted required fields as present when absent from caller content",
+      "Preserve existing applyDefaults() as the explicit opt-in path for defaults",
+      "Regression tests covering one and multiple missing required fields with defaults, plus 0/false provided values"
+    ],
+    "risks": [
+      "Open PR #2954 already targets the same fix, so work may duplicate or conflict",
+      "Behavior change could break callers relying on implicit default filling; must keep applyDefaults() as the explicit path",
+      "Root-cause coverage in the existing PR is flagged as incomplete, so a competing change must demonstrate the failing-then-passing tests"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce validate(params, {}) returning { valid: true } for a required integer field with default 1",
+      "Add failing cases for one and multiple missing required fields with defaults; confirm 2 failed / 2 passed on base 652eb1e",
+      "Assert optional absent fields remain valid and provided 0/false are not treated as missing",
+      "Run targeted client package unit tests and TypeScript typecheck"
+    ],
+    "unknowns": [
+      "Whether PR #2954 already fully resolves the issue or leaves a genuine gap worth competing on",
+      "Whether maintainers have a preferred implementation (e.g., reusing parsed data vs. explicit required-field check)"
+    ],
+    "why": "Issue supplies a concrete reproduction, names the exact mechanism (z.fromJSONSchema(...).safeParse fills defaults and the parsed data is discarded, so required fields with defaults pass validation), and states a validation path: four offline regression cases on base 652eb1e yield 2 failed / 2 passed before the fix. Expected behavior is well-scoped (reject missing required fields with defaults, keep optional fields valid, preserve 0/false)."
   },
   "c1dc244173b9952b8bdbf1bd128c5e14eedf64453160a81817deda0c8f3d60ed": {
     "confidence": 0.7,
@@ -153935,6 +154047,43 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a performance regression with MTP variants on Apple Silicon, but lacks code-level root cause and maintainer confirmation. The gate decision is HUMAN_REVIEW, and the issue is a bug report without a proposed fix or clear implementation path."
   },
+  "d948ccfbe8cc317560bebd83cb39babe5169b6bcd377e07c7e1e05c3d7cf75f8": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while issue body and comment provide concrete root-cause code anchors and a deterministic repro"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add no-shrink guard in SummarizingCompaction.compact() or before_model_request comparing estimated token count of result vs input",
+      "Return original messages when compacted result is not smaller",
+      "Emit compaction.skipped='not_smaller' span attribute",
+      "Make FallbackCompaction fall through to next strategy on non-shrinking result"
+    ],
+    "risks": [
+      "Unresolved design question on whether fallback skip applies to all strategies or only summarization",
+      "Behavior change to FallbackCompaction could affect custom strategies",
+      "Assignment requirement unmet may block contribution acceptance"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's FunctionModel repro and assert request tokens <= uncompacted history tokens",
+      "Add regression test for summary-larger-than-replaced case under both keep_messages and keep_tokens modes",
+      "Add test that FallbackCompaction falls through to SlidingWindowCompaction when summary does not shrink",
+      "Verify skip is visible in tracing"
+    ],
+    "unknowns": [
+      "Whether maintainers will assign the issue given needs_assignment policy",
+      "Maintainer preference on fallback skip scope (all strategies vs summarization only)"
+    ],
+    "why": "Issue provides a deterministic FunctionModel repro showing history grows from ~62 to ~213 tokens, with concrete code anchors in _summarizing_compaction.py and _shared.py. However, the submission policy is needs_assignment and the issue has no assignees, which is a materially blocking unknown for actionability. Additionally, an open API design question (whether fallback should skip any non-shrinking result or only summarization) remains unresolved."
+  },
   "d949e129a6ee9c1b48e745017a7a6d7d03d26c5b778d2138ca576dbf4f21d62b": {
     "confidence": 0.8,
     "contradictions": [
@@ -164821,6 +164970,41 @@
     ],
     "unknowns": [],
     "why": "Issue pinpoints the root cause: parse-git-remote-url.ts derives the repository label from WHATWG URL.pathname, which remains percent-encoded, and the encoded string is passed unchanged to the git control bar and Overview components. Concrete reproduction, expected/actual pair, code anchors, and acceptance criteria (including malformed-escape fallback and link-stays-encoded-once) are supplied, giving a clear reference-vs-implementation validation path."
+  },
+  "e87d67d375bcdb6b8de5dcfff170a36009e75fffa49d1cb57a84d8fa214de3dd": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.why claims high impact and clear merge motivation, but actionability_evidence.root_cause_signal is false and open_pr_assessment rootCauseCoverage is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "generate-cli code generation: avoid naming collisions between generated CLI entrypoint/console/Client/list identifiers and user tool names",
+      "Add regression tests covering tools named app, console, Client, and list"
+    ],
+    "risks": [
+      "Open PR #6056 may already cover the same fix; duplicating it would be low value",
+      "Renaming generated identifiers could change generated CLI surface/behavior",
+      "Root cause not confirmed in supplied evidence; fix location uncertain"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's server.py: run `fastmcp generate-cli server.py cli.py --no-skill` then `python cli.py --help` and confirm the TypeError",
+      "After fix, verify `python cli.py --help` succeeds and `python cli.py call-tool app --name Notes` returns 'opened Notes'",
+      "Add parametrized regression tests for tool names app, console, Client, list"
+    ],
+    "unknowns": [
+      "Whether PR #6056 already fully fixes the identifier-collision root cause",
+      "The exact generate-cli code location responsible for the `app()` collision",
+      "Whether maintainers consider #6056 sufficient or want a different approach"
+    ],
+    "why": "Issue #6055 provides a concrete reproduction (tool named `app` breaks generated CLI, traceback at `app()` call) and a clear expected behavior, but the supplied evidence does not establish the root cause in the generate-cli code path. The candidate's own actionability_evidence has root_cause_signal=false, and open PR #6056 already directly references the issue with 3 test files and 4 changed files, yet its root_cause_coverage is also false. The duplicate status is 'weak_pr_competition_possible' with an unresolved coverage question, which is a materially blocking unknown for deciding whether independent code work is actionable."
   },
   "e88773b4a2ceee557ef860584fa4b49bfc2c7d13d8491fb9d609aecda8c34086": {
     "confidence": 0.85,
