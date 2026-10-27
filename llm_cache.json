@@ -68837,6 +68837,32 @@
     ],
     "why": "Issue is a bare provider error report with no reproduction beyond 'select model, send chat', no root-cause evidence, and no code anchors beyond the error string. The bot comment lists five closely related issues (#48805, #48915, #48741, #48947, #48319) covering the same encrypted_content failure, and the related-issue assessment flags #49247 as a potential duplicate. Two open PRs (#48908, #48918) already target stale encrypted reasoning recovery. Whether any code work is actionable depends on unresolved duplicate/coverage status, which is a materially blocking unknown."
   },
+  "62b2fb7e787d19f4460d7a7444df2b1b406549e13fbd6c08b9220a17d26bfeb8": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "No code change in OpenHands/OpenHands; resolution depends on deploying a software-agent-sdk release containing PR 6155/6197/6259"
+    ],
+    "risks": [
+      "Working on this repo would duplicate already-merged upstream fixes",
+      "Conversations already broken need the repair path from PR 6197, not a new local patch"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Verify after cloud upgrade to a release with the SDK fixes that idle-resume no longer produces 'Unrecognized event file name' / 'Event index gap detected' and 500s on event routes"
+    ],
+    "unknowns": [
+      "Exact cloud deployment timeline for the fixed SDK release"
+    ],
+    "why": "Maintainers identified the root cause in a separate repo (software-agent-sdk issue 6160: secret masking rewrote event ids, causing event index gaps and 500s on reconnect) and the fix is already merged in PR 6155, with follow-ups 6197 and 6259. This OpenHands issue is a downstream deployment/release-tracking report, not an actionable code change in this repo."
+  },
   "62c334ff1ce95fa8b71a926f32a7aa4273919ce8769b472b4f5a9f9fe5dc2377": {
     "confidence": 0.82,
     "contradictions": [
@@ -78155,6 +78181,36 @@
       "Exact desired behavior for session recovery is not specified"
     ],
     "why": "Issue provides a precise root-cause analysis with code references and a clear reproduction path. The bug is in the ACP session lifecycle: session/new swallows provider construction errors, leaving the session in an inconsistent state that cannot recover. This is a high-impact correctness bug in the agent infrastructure, and the fix is well-scoped."
+  },
+  "6e9fd3677a0f32962a6bc268a0fc119c2d17380ed6dc8f99435fae4c61a6441e": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/openai/src/normalize-openai-json-schema.ts: treat omitted propertyNames type as string-compatible so it follows the existing removal/warning normalization path",
+      "Add regression test covering implicit vs explicit string type for both chat and responses"
+    ],
+    "risks": [
+      "Broadening the type check could mask genuinely non-string propertyNames schemas",
+      "Behavior change in schema normalization may affect other providers sharing the path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Port the issue's fetch-stub reproduction into a unit test asserting all four cases reach fetch",
+      "Assert the compatibility warning is emitted when propertyNames is removed",
+      "Run targeted openai package unit tests and type checks"
+    ],
+    "unknowns": [
+      "Whether maintainers want the omitted type treated as string or a different normalization approach"
+    ],
+    "why": "Issue provides a concrete, version-bisected regression: the propertyNames.type !== 'string' check in normalizeOpenAIJsonSchema rejects valid schemas that omit an explicit string type, with a fetch-stub reproduction showing the failure and the passing explicit-type control. The merged PR #20621 introduced the check but is a historical reference, not an open competing fix, so the gap remains actionable."
   },
   "6ea4541a57a95c494a49d4eea11f20ce775d27f5d8bcda1251a6369c8ec84fee": {
     "confidence": 0.7,
@@ -153905,6 +153961,41 @@
       "Whether maintainers have a preferred implementation approach or if the closed PR will be revived."
     ],
     "why": "Issue provides a precise root cause across three code paths, a concrete reproduction, and a suggested fix. The candidate is actionable despite an existing closed PR lacking tests and root-cause coverage."
+  },
+  "d8cfb1265ebbc03458c69c77ceaf87c8517ba6dcc3782b8bb9fbb6ae5898ff6f": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "File-staging/upload-response path for GOOGLEDRIVE_DOWNLOAD_FILE (Apollo/Mercury token handling)",
+      "MCP binary-response handling for authenticated downloadUri artifacts",
+      "Possibly divergent delivery paths between standard download and long-running operation variant"
+    ],
+    "risks": [
+      "Root cause may span multiple subsystems (staging vs MCP binary handling), risking scope creep",
+      "Fixing token handling could mask a broader binary-delivery architecture issue",
+      "No maintainer design preference established for which delivery path should be canonical"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a shared .xlsx: metadata succeeds, GOOGLEDRIVE_DOWNLOAD_FILE fails with staging 401",
+      "Add a regression test asserting the staging path does not require/lose an admin token for a valid connected account",
+      "Verify MCP client receives usable bytes or a documented fetchable artifact for the downloadUri variant"
+    ],
+    "unknowns": [
+      "Root cause of the Apollo/Mercury 401 is not established",
+      "Whether standard download and long-running operation use different delivery paths is unresolved",
+      "Repository requires assignment and the issue has no assignee",
+      "No maintainer confirmation of intended binary-delivery design"
+    ],
+    "why": "The issue documents a reproducible user-visible failure (Apollo/Mercury file-staging HTTP 401 on GOOGLEDRIVE_DOWNLOAD_FILE) with ordered steps and an expected/actual pair, but it explicitly lacks root-cause evidence: it is unknown whether the fault is in the staging upload path, token handling, or MCP binary-response handling. The repository also enforces assignment (policy needs_assignment, no assignees), which is a materially blocking unknown for actionable code work."
   },
   "d8d2647227fade45f8c65bdead241573f70446a0404754bf9fa266ac06a01b9d": {
     "confidence": 0.85,
