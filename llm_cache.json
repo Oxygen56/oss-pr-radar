@@ -9029,6 +9029,42 @@
     ],
     "why": "Issue reports intermittent missing reasoning in multi-turn tool calls for DeepSeek-V4-Flash-0731, but root cause is unclear: could be chat-template handling, reasoning parser, or model behavior. No maintainer confirmation or design direction. The supplied algorithm evidence is inflated by keyword matches (block size, fp8, tensor parallel) that are not central to the reported bug. The issue is a usage/bug report without a concrete algorithm mechanism or validation path."
   },
+  "0e12fc33fa3e41702ec25205d7cf5284ea46ed77fd51134a1d0b17e20689a5ae": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims repeated corruption after correction, but the body states no model interaction tests have been performed and retention status is pending",
+      "Issue lists possible providers and an unverified model identifier while asserting a specific model was used"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until it is determined whether OpenCode context/tooling or the model emits the corrupted path"
+    ],
+    "risks": [
+      "If the corruption is purely model behavior, there is no OpenCode code fix and the candidate is not actionable",
+      "Acting on hypotheses (tokenization, MCP influence, config mismatch) without evidence risks a speculative change",
+      "Possible overlap with #57414, #17828, or #59387 is unresolved"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture a session export (opencode export <sessionID>) showing tool calls and tool results to see whether OpenCode passes the correct path while only model text is wrong",
+      "Record exact provider/model ID and opencode --version",
+      "Run the ordered reproduction steps with a real prompt and directory, then verify whether the correction is retained"
+    ],
+    "unknowns": [
+      "Whether the wrong path comes from OpenCode context/tooling or from the model's own text",
+      "Exact provider/model identifier and version actually in use",
+      "Any captured logs or session export demonstrating the behavior",
+      "Whether this is covered by existing issues #57414, #17828, or #59387"
+    ],
+    "why": "The issue is an unfinished AI-generated draft with no confirmed model/provider identifier, no logs, no session export, and no controlled test results. The maintainer bot explicitly asks whether the wrong path originates from OpenCode or from the model itself, which determines whether any code work is actionable at all. Root cause is unestablished and the reproduction is unverified."
+  },
   "0e1a6f45a47c569db49f40d4c703906a51abc72cc372504f7e7c08088b23505e": {
     "confidence": 0.8,
     "contradictions": [],
@@ -19615,6 +19651,40 @@
       "Whether this is a known plugin bug or model-specific issue"
     ],
     "why": "Issue reports a runtime crash on NPU for a specific model, but root cause is unconfirmed and likely in the NPU plugin or stateful inference, not a clear algorithm defect. No maintainer confirmation or design direction; requires maintainer investigation."
+  },
+  "1d8b001bf048684a41a7b0f89e3de81b7dee47857bbd4484bf6dc1ea7d5f47a0": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/application/service/user.go: add PKCE verifier generation, challenge in authorization URL, and code_verifier in token exchange",
+      "internal/config/config.go: add optional PKCE enable/config option preserving non-PKCE flows",
+      "internal/types/user.go and repository/interfaces: persist verifier bound to state/transaction"
+    ],
+    "risks": [
+      "Verifier storage/binding must be secure and single-use to avoid replay or mismatch",
+      "Backward compatibility for existing non-PKCE IdP integrations",
+      "Merged PR 3729 mentions s256 but has no direct code overlap; confirm it does not already cover user OIDC PKCE"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: authorization URL builder includes code_challenge_method=S256 and BASE64URL(SHA256(verifier)) when PKCE enabled",
+      "Unit test: token exchange includes matching code_verifier for the same transaction",
+      "Regression test: non-PKCE config still produces authorization URL without PKCE params",
+      "Integration-style test with mock IdP rejecting missing PKCE to confirm flow acceptance"
+    ],
+    "unknowns": [
+      "Whether merged PR 3729's s256 overlap touches user OIDC login or only plugin OAuth",
+      "Maintainer preference on config flag vs always-on PKCE"
+    ],
+    "why": "Issue provides concrete code anchors in v0.8.3 (authorization request params, token exchange, config) showing missing code_challenge/code_challenge_method and code_verifier, plus a controlled comparison where adding a valid S256 challenge removes the IdP rejection. This is a well-scoped OIDC PKCE compatibility bug with a clear fix path (generate/store verifier per transaction, send challenge, send verifier at exchange)."
   },
   "1d9b50cc998a6419fa07b7c2b7a9e81a3c242b1d2843e4f93a5b6655eb763a8b": {
     "confidence": 0.85,
@@ -86237,6 +86307,42 @@
       "Maintainer design preference for parameter naming or whether they prefer automatic resolution from credentials; but this is not blocking as the issue is clear."
     ],
     "why": "The issue clearly identifies a missing `project` parameter in `google.STT` that prevents in-memory credentials (e.g., impersonated) from working, with a precise code path and workaround. No competing PR or issue exists, and the fix is a minimal API addition."
+  },
+  "7aa96adf394ac14aa78bc58767be5848a83365b9ceb7afe58068548752811ab3": {
+    "confidence": 0.82,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while the issue body clearly identifies the missing status check as root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "core/rag/extractor/notion_extractor.py: check HTTP status before parsing JSON in _get_notion_database_data and raise on non-success",
+      "Preserve HTTP-200 empty database returning [] and successful pagination output/cursor behavior",
+      "Add offline regression tests through extract() for failed first page, failed later page, empty success, and multi-page success"
+    ],
+    "risks": [
+      "Overlapping open PR #44893 may already address the same fix; compare before implementing to avoid duplicate work",
+      "Raising on HTTP errors could change caller behavior for existing ingestion flows; keep scope to status check without adding retry policy",
+      "Must not alter cursor policy covered by #44491"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with httpx.MockTransport returning 503 on first page; assert extract() raises instead of returning []",
+      "Reproduce with one valid page (has_more=true) then 503 on second page; assert extract() raises rather than returning partial Document",
+      "Assert HTTP-200 empty database still returns []",
+      "Assert successful multi-page pagination preserves existing output and cursor requests",
+      "Run targeted API unit tests for the notion extractor module"
+    ],
+    "unknowns": [
+      "Whether PR #44893 already implements the same status check and tests, which would reduce incremental value"
+    ],
+    "why": "Issue provides a concrete offline reproduction using the production NotionExtractor with httpx.MockTransport, showing 401/429/503 return [] and a later-page 503 returns a partial Document. Root cause is clearly identified: res.json() is parsed without checking HTTP status in _get_notion_database_data. Expected behavior and validation path (failed first/later pages plus successful empty/multi-page controls) are specified. Open PR #44893 covers the same area but lacks root-cause coverage evidence, leaving room for a more complete fix."
   },
   "7aab28238fb858dce419c1809ad7294458e6fee3436e7974ef73e71c533479d0": {
     "confidence": 0.8,
