@@ -81944,6 +81944,37 @@
     "wait_reason": null,
     "why": "Issue describes a concrete regression in CLI daemon forwarding caused by macOS TCC sandbox, with a confirmed root cause and a proposed two-layer fix. The fix is actionable and testable via the existing cli_ls integration test. No competing PR or issue found."
   },
+  "73e39170e2aff40abbeb6c589ca4c919b2af42a6c7f007c54ce4c52792d0b29a": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims bug is unfixed in released CLI, while maintainer bot says v2 already behaves correctly and v1 is maintenance-only"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new implementation recommended; v1 is in maintenance-only mode and v2 already avoids the fallback replacers"
+    ],
+    "risks": [
+      "Modifying v1 edit behavior conflicts with stated maintenance policy",
+      "Duplicate of multiple closed reports/PRs, risking wasted effort",
+      "Changing fallback semantics could affect other languages relying on fuzzy matching"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursued, add a failing test in packages/opencode/src/tool/edit.ts reproducing a 12-space Python body edited with 20-space oldString/newString and assert IndentationError or re-indentation"
+    ],
+    "unknowns": [
+      "Whether maintainers would accept a v1 critical-fix exception",
+      "Whether the benchmark failure is reproducible on v2"
+    ],
+    "why": "The issue describes a real v1 edit-tool bug with a clear root cause (fallback replacers insert newString verbatim), but the maintainer bot states v1 only receives critical fixes and v2 already behaves correctly; the same behavior was reported and closed multiple times (#25953, #14612, #26600, #45491, #44999, #44996, #34424). This is a covered, low-value opportunity for new code work."
+  },
   "73e4f1f91cb58dabd7f4fedb4f61454e7a07c388613c23d782a6732bba4980cd": {
     "confidence": 0.8,
     "contradictions": [],
@@ -153273,6 +153304,45 @@
     ],
     "wait_reason": null,
     "why": "Issue reports a user-visible intermittent bug in streaming usage telemetry with a concrete repro script and clear expected behavior. No competing PR directly addresses this issue; existing PRs are keyword-overlap only. The bug is actionable: likely a truthy-value check dropping cached_tokens=0 during streaming usage reconstruction. Root cause is not fully confirmed (upstream vs proxy), but the issue provides a clear test path and the fix is scoped."
+  },
+  "d7c5e8cccb5a323d3c1cf01c14446cd63ccb98f0ae98b3ffded52b8417547101": {
+    "confidence": 0.8,
+    "contradictions": [
+      "preTaskEvidence policy is needs_assignment with assignmentRequired=true and no assignees, while a contributor comment states they are taking it on"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "SummarizingCompaction.compact()/before_model_request: add no-shrink guard on automatic path",
+      "FallbackCompaction: fall through to next strategy when summary does not shrink history",
+      "Tracing: emit compaction.skipped = not_smaller span attribute",
+      "Discard receipts for rejected attempts"
+    ],
+    "risks": [
+      "Open API question: whether fallback should skip any non-shrinking result or only summarization results, affecting custom strategies",
+      "Merged PR #11394 touches the same compaction files, so rebase/conflict risk exists",
+      "Behavior change for custom strategies if guard is generalized"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's FunctionModel repro and assert request tokens <= uncompacted history tokens",
+      "Add regression test for summary-larger-than-replaced case under keep_messages",
+      "Add regression test for summary-larger-than-replaced case under keep_tokens",
+      "Add FallbackCompaction test asserting fall-through to SlidingWindowCompaction on non-shrinking summary",
+      "Assert skip trace attribute is recorded"
+    ],
+    "unknowns": [
+      "Whether the in-progress PR by the maintainer-associated contributor will land first, making this issue covered",
+      "Whether the repository requires formal assignment before external contribution"
+    ],
+    "why": "Issue provides a deterministic FunctionModel repro showing history grows from ~62 to ~213 tokens, pinpoints the unconditional assignment in before_model_request and the missing size guard in compact(), and a maintainer-associated comment confirms the approach (reject non-shrinking summary, fall through to next strategy) is being taken on. Concrete acceptance criteria and both retention modes are specified."
   },
   "d7ce289506a774319e330e3b62ae7bb1a3f3ca5ef8a4a8cad4189f96c5ed08fd": {
     "confidence": 0.8,
