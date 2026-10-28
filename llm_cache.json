@@ -117565,6 +117565,43 @@
     ],
     "why": "Issue provides a clear, reproducible streaming protocol violation with expected vs actual behavior, multiple independent confirmations, and specific evidence of missing finish_reason and [DONE] terminator. The root cause is localized to the gateway's SSE stream finalization for muse models, making it actionable for a targeted fix."
   },
+  "a5419205c637af574f209aed9732b63176c3b0a01512f2a4c6d2d0e30ddafc6f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states PR #43332 would not touch the dify-agent code path, yet the open-PR assessment flags semantic overlap on api/libs/think_split.py with unresolved coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "dify-agent/src/dify_agent/adapters/llm/model.py: stop re-wrapping ThinkingPart into literal <think> tags in replayed assistant content",
+      "dify-agent/src/dify_agent/adapters/llm/model.py: _EmbeddedThinkingParser should swallow stray </think> outside a thinking block",
+      "api/core/app/apps/agent_app/app_runner.py: prevent stray tag text from being persisted as answer rows"
+    ],
+    "risks": [
+      "Preferred fix (reasoning_content with preserve_thinking=True) requires changes in the separate dify-official-plugins repo, outside this repo's scope",
+      "Open PR #43332 overlaps on think_split.py and may partially cover the output-side leak, risking duplicate work",
+      "Dropping prior-round reasoning entirely may degrade multi-round tool-calling quality"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test _map_model_response_to_prompt_message with a ModelResponse containing ThinkingPart+TextPart+ToolCallPart, asserting no literal <think> tags appear in assistant content",
+      "Unit test _EmbeddedThinkingParser feeding a stray </think> outside a block, asserting no TextPart is emitted",
+      "Regression test on AgentAppRunner recorder asserting a bare </think> is not persisted as an answer-only message_agent_thoughts row"
+    ],
+    "unknowns": [
+      "Whether PR #43332 or another open PR already fixes the dify-agent history-remap trigger",
+      "Whether the tongyi plugin change is required for an in-repo fix to be accepted",
+      "Whether maintainers prefer dropping reasoning vs. carrying reasoning_content"
+    ],
+    "why": "The issue gives a detailed root-cause narrative and a minimal history-remap reproduction, but the actionable scope is materially ambiguous: the trigger lives in dify-agent history remap, while the proper fix depends on the tongyi plugin's preserve_thinking behavior in a separate repository (dify-official-plugins). Open PR #43332 overlaps on api/libs/think_split.py but is not linked to this issue and does not cover the dify-agent path, so duplicate/coverage status is unresolved."
+  },
   "a548b9ad454f3bec0917ec7fcb87124bbe88f452d48f1bfeeeb26e3429b39709": {
     "confidence": 0.8,
     "contradictions": [],
@@ -121034,6 +121071,39 @@
       "Exact maxFiles default not settled (commenter suggests 10,000; issue suggests 50k)"
     ],
     "why": "Issue provides a concrete root cause in extensions/vscode/src/util/FileSearch.ts: unbounded synchronous walkDirs + MiniSearch.addAll() on every activation, with CPU profiles and extension-host logs as evidence. A commenter independently confirms the line and points to an existing maxFiles parameter and listWorkspaceContents API, giving a concrete minimal fix path. Track is agent_ai_infra (not llm_algorithm), so the algorithm-specific rejection rule does not apply; this is a runtime/performance fix on the agent's file-search path."
+  },
+  "ab0ee113f088b20c10d1f459dbcc4af7583991bcc24f5ca227766864553f448d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bump @ai-sdk/anthropic dependency used by the extension bundle to a version that recognizes claude-opus-5-5",
+      "Verify structuredOutputMode 'auto' resolves to native structured output for Opus 5.5 in act/observe/extract",
+      "Rebuild dist/assets/stagehand-extension.zip and dist/extension/service-worker.js"
+    ],
+    "risks": [
+      "Provider bump may change behavior for other Anthropic models or other bundled providers",
+      "Extension bundle rebuild may drift from source lockfile if the bump is applied only to dist artifacts",
+      "No maintainer design preference recorded for how the extension dependency is pinned"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal extract script with anthropic/claude-opus-5-5 and confirm it returns { title: 'Example Domain' } instead of the tool_choice error",
+      "Run the same script with anthropic/claude-opus-4-8 as a regression control",
+      "Add a unit test asserting getModelCapabilities/structuredOutputMode resolution for claude-opus-5-5",
+      "Exercise act and observe against Opus 5.5 to confirm the fix covers all three primitives"
+    ],
+    "unknowns": [
+      "Whether the extension dependency is pinned in a separate package/lockfile from the main SDK",
+      "Whether maintainers prefer a provider bump versus a capability override for Opus 5.5"
+    ],
+    "why": "Issue pinpoints the root cause: the extension bundles @ai-sdk/anthropic 4.0.8, whose getModelCapabilities does not recognize claude-opus-5-5, so structuredOutputMode 'auto' falls back to a forced JSON tool call that Opus 5.5 rejects. It supplies a minimal reproduction script, a contrasting working model (claude-opus-4-8), and a concrete fix (bump the provider to >=4.0.60)."
   },
   "ab15c69b7cdbf554b17b4950f334c107b128753cabacd60499b1c2ad2656f71a": {
     "confidence": 0.85,
@@ -157153,6 +157223,40 @@
     ],
     "why": "Issue reports a user-visible idle/resume connectivity failure with CORS errors and a 404 on an integration endpoint, but the supplied evidence does not establish a code-level root cause. Logs are minified frontend bundles and a commenter explicitly says they could not conclusively establish the root cause; the runtime was healthy after reprovisioning, so the failure may be infrastructure/idle-timeout rather than a fixable code defect."
   },
+  "dc2b32ee680630fd9a266bf2b74a00dedbd24853a41cad0f1d5bcb0d3c0f2f6a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Telegram channel delivery path: persist alias mapping from bot answer/attachment/overflow message IDs to the originating DeerFlow thread",
+      "`_on_text` reply resolution: resolve reply_to_message against stored aliases before falling back to new-thread creation",
+      "`ChannelManager` routing: preserve connection-owner isolation when reusing the mapped thread"
+    ],
+    "risks": [
+      "Alias persistence must not leak threads across connection owners",
+      "Attachment and overflow-chunk replies need the same mapping to avoid partial fix",
+      "Maintainer may prefer a different storage location for aliases (normal design review, not blocking)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: group reply to bot answer routes to original thread (expected ('thread-1', False))",
+      "Add supergroup variant of the same assertion",
+      "Add controls: reply to original user message reuses thread; private-chat exchange unchanged",
+      "Run expanded suite across JSON and SQLite storage backends and user-owned connections"
+    ],
+    "unknowns": [
+      "Exact intended alias storage schema/location is not specified, but a reasonable minimal fix is derivable from the described delivery path"
+    ],
+    "why": "Issue gives a concrete root cause: bot answer message IDs are never mapped back to the originating DeerFlow thread, so `_on_text` treats a reply to the bot as a new topic and `ChannelManager` creates a new thread. Reproduction steps, controls (reply to own message, private chat), and offline production-path regression results (45 failed/13 passed before, 58 passed after) are supplied. No duplicate PR or issue coverage found."
+  },
   "dc59d9d91682447c80859fada61e809f31732567211363d59c3ec112971db119": {
     "confidence": 0.85,
     "contradictions": [],
@@ -174513,6 +174617,38 @@
       "Whether maintainers consider the current FINAL_TRANSCRIPT-only reset intentional"
     ],
     "why": "Issue describes a plausible retry-budget reset bug in RecognizeStream._main_task, but the supplied evidence shows an open PR #7207 with the same title/semantics and overlapping path stt.py, plus 'changes requested'. The duplicate/coverage status is unresolved ('semantic_overlap_requires_review'), which materially determines whether independent code work is actionable."
+  },
+  "f3d7b30c2743bda83744af637d8d9c78ef27eb7a94af013dabf83c7ccb99da3a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Desktop thread activity classifier: treat waiting_human with only synthetic question waits as awaiting input/settled rather than active",
+      "Composer/in-progress row: suppress 'Starting session...' stage and Stop button once turn.completed has arrived with no pending turn"
+    ],
+    "risks": [
+      "Over-broad change could hide legitimate active states for real human waits or goal-loop pauses",
+      "Classifier lives in a shipped client bundle; need to locate the source module rather than patch the bundle",
+      "Maintainer may prefer a specific display label ('waiting for your reply') over generic idle"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test feeding a session-lifecycle state=waiting_human with a synthetic question wait plus turn.completed and assert the thread classifies as idle/awaiting input, not active",
+      "Control test: waiting_human with a real (non-synthetic) human wait still classifies as active",
+      "Run targeted desktop client unit tests and static checks for the classifier module"
+    ],
+    "unknowns": [
+      "Exact source file for the activity classifier is not pinned (only a bundled asset name is given)"
+    ],
+    "why": "Issue provides ordered reproduction, expected/actual pair, event-log evidence, and a concrete classifier code anchor mapping waiting_human to active; maintainer confirmed and traced the cause, distinguishing it from #11419/#11254. Open PR #4420 is keyword-overlap only and addresses a different cause (#11419), so it does not cover this issue."
   },
   "f3dc6764a1e2c1302860bd840ce4451c4fffd04ad5380d784ef9ea9ddf83875b": {
     "confidence": 0.6,
