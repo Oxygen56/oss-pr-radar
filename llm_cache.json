@@ -65124,6 +65124,38 @@
     ],
     "why": "The issue reports a concrete init crash (unify_hybrid_kv_cache_specs ValueError) with a plausible root cause (NixlConnector not SupportsHMA, hybrid KV manager force-disabled), but maintainers explicitly state the report predates upstream HMA-capability and GDN transfer support and have requested retest on current Dynamo/vLLM 0.28.0. Whether the bug still reproduces is unresolved, so the actionable code change is not yet determined."
   },
+  "5d0756c967c415665c0ced20af7fa368197f521274b2c0de9ce77f1ba692a3f5": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body asserts a specific root cause at preprocessor.rs L7008/L5294-L5306, but actionability_evidence records root_cause_signal=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/preprocessor.rs: V2 reasoning-off decision should follow rendered prompt/model output rather than request flag alone",
+      "glm45 reasoning parser gating on the V2 path"
+    ],
+    "risks": [
+      "Changing reasoning-off semantics may alter behavior for other models sharing the V2 path",
+      "PR #17121 touches the same file and could conflict"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's curl against GLM-5.3-Flash with enable_thinking=false and assert reasoning_content is populated and content excludes reasoning",
+      "Regression test comparing DYN_PARSER_VERSION=1 vs default V2 output split for glm45/glm47 parsers"
+    ],
+    "unknowns": [
+      "Whether PR #17121 or any other open PR actually covers this reasoning/content split bug",
+      "Whether maintainers have a preferred fix direction (reject vs. follow rendered prompt)"
+    ],
+    "why": "Issue gives a concrete reproduction, expected/actual tables, and code anchors in preprocessor.rs, but the supplied evidence explicitly records root_cause_signal=false and the only overlapping PR (#17121) is an unrelated image-planner feature with no direct code overlap or issue reference. The duplicate/coverage status is 'semantic_overlap_requires_review', which is an unresolved coverage question that determines whether a fix is actionable."
+  },
   "5d1960f19f1c2fd44e0378a2e8146dafe1ba4eee70c63a77fe781fbe73c6951a": {
     "confidence": 0.6,
     "contradictions": [
@@ -154906,6 +154938,43 @@
     ],
     "why": "Issue provides a concrete, runtime-reproduced SSRF and head-of-line blocking bug: CommonKVManager.try_ensure_parallel_info() builds an HTTP URL from client-supplied bootstrap_host/port and issues a synchronous requests.get with a 5s timeout, confirmed by canary hits, HTTP 500, and an 82.88x latency regression with matched zero-delay controls. Code anchors in conn.py and pd_router.rs are supplied, and the Gateway negative control shows the fix boundary is the direct Decode worker path."
   },
+  "d8815effab51ebd19feb5e435336c914637af74b9701309f94d35c4a475e0a9e": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue lists 5 unqualified injection points while triage reports 12",
+      "Issue lists FixtureHarness(JdbcTemplate) at :3209 as a possible leftover, but triage says it needs no qualifier"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add @Qualifier(\"managedJdbcTemplate\") to the remaining unqualified JdbcTemplate injection points in managed-agent-server test sources",
+      "Optionally make the managed template the default candidate for JdbcTemplate in the test context so unqualified injection cannot resolve to the plain bean",
+      "Leave FixtureHarness(JdbcTemplate) constructor unqualified since its caller already passes the qualified bean"
+    ],
+    "risks": [
+      "Triage could not statically confirm which plain JdbcTemplate bean unqualified injection resolves to, since JdbcTemplateAutoConfiguration is @ConditionalOnMissingBean(JdbcOperations)",
+      "Not all 12 unqualified points necessarily bind String against VARBINARY, so some edits may be no-ops",
+      "Open PR #15802 has semantic overlap in managed-agent test files and should be compared before submitting"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by running the affected managed-agent-server tests (e.g. ManagedAgentServerIntegrationTest, WorkspaceRecoveryTest) under H2 and confirm BadSqlGrammarException before the change",
+      "After qualifying, rerun the targeted module tests and confirm the previously failing classes pass",
+      "Run the SDK Java (fast) / Managed Agent gate contexts to confirm no new reds"
+    ],
+    "unknowns": [
+      "Which plain JdbcTemplate bean unqualified injection actually resolves to in the server test context",
+      "Whether PR #15802 already covers any of the same injection points"
+    ],
+    "why": "Issue documents a concrete test-context bean-wiring defect: unqualified JdbcTemplate injection resolves to a plain template instead of ManagedSchemaJdbcTemplate, skipping the String->VARBINARY coercion in ToolPublicationRetentionStore.boundedParameters and producing H2 BadSqlGrammarException. Triage confirms the five cited injection points verbatim at the stated lines and expands the sweep to 12 points, with code anchors in ManagedAgentPersistenceConfiguration and ManagedSchemaJdbcTemplate. This is test-infrastructure wiring, not an algorithm contribution, but the track is agent_ai_infra and the fix is a bounded, verifiable qualifier sweep."
+  },
   "d8898ac3319240ebd1aad960649b10316da2391693dfda249df71e8fcd56eee1": {
     "confidence": 0.85,
     "contradictions": [],
@@ -181976,6 +182045,46 @@
       "Whether PR #9921's changes overlap the queue-scope fix or only the cancellation-reason path"
     ],
     "why": "Issue provides a precise, code-anchored root cause: permissionRequestTails is a module-level WeakMap keyed on AgentSideConnection (Session.ts), while one daemon child multiplexes N sessions over one connection, so an unanswered ask_user_question on session A blocks session B indefinitely (DEFAULT_PERMISSION_TIMEOUT_MS=0). Triage bot independently verified every code claim on current main, including the test that pins the behavior as expected. Concrete fix (per-session queue scope, bounded wait, observability) and a proposed regression test are supplied."
+  },
+  "fd5803c426e1f0341ffaadc394bd100eac36835f7b0fbcddb313a82c959b046a": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Pre-review gate flagged no_code_surface while actionability evidence lists concrete code anchors and probe_ready=true"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "openhands/sdk/llm/exceptions/classifier.py: add input-side content-block patterns and keep region/hostname 403 as auth/config",
+      "openhands/sdk/llm/exceptions/mapping.py: map request-content block to content-policy violation error",
+      "openhands/sdk/agent/agent.py: recovery path that rewrites/condenses flagged history and carries it forward",
+      "error classification: distinct non-transient 'provider content block' diagnosis naming metadata.patterns"
+    ],
+    "risks": [
+      "Rewrite/condense recovery may alter semantics of legitimate content",
+      "Secret redaction must not leak the literal into diagnostics",
+      "Broadening content-policy matching could misclassify region/hostname 403 as content block",
+      "Scope spans classifier, mapping, and agent recovery; partial fix leaves session unrecoverable"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test in tests/sdk/llm/test_exception_mapping.py using the exact OpenRouter 403 body asserting content-policy mapping and no regression on PermissionDeniedError('Region not allowed')",
+      "Stub provider always raising the block: assert exactly one attempt before recovery, not num_retries",
+      "Agent test asserting next outbound payload differs from flagged one and conversation continues",
+      "Secret-block test asserting literal is redacted and absent from logs/events/telemetry",
+      "Existing tests/sdk/agent/test_agent_content_policy_violation.py remains green"
+    ],
+    "unknowns": [
+      "Whether the SDK condenser-based history-recovery route can neutralize role/system-tag markup without breaking message structure",
+      "Exact bounded recovery attempt count and whether maintainers prefer rewrite vs condense"
+    ],
+    "why": "Issue provides a concrete provider 403 body with metadata.patterns, ordered reproduction, and triage pinpoints the gap: input-side content blocks are not matched by CONTENT_POLICY_PATTERNS and 403 text is misrouted to LLMAuthenticationError, with no rewrite-based recovery. Acceptance criteria define a reference-vs-implementation test path (exact response body mapping, single-attempt retry, rewritten payload carried forward, secret redaction, preserved output-block behavior)."
   },
   "fd5d41c70924600ac55be68afecf8f59d3ebb0c05f65b87d45f8bf6eb779dae6": {
     "confidence": 0.6,
