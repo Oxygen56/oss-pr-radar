@@ -103913,6 +103913,38 @@
     ],
     "why": "Issue provides a clear root cause (read-after-write inconsistency with read replica), a concrete reproduction path, and a validation method (temporarily pointing reader to writer resolves the 500). The existing PR #38580 directly addresses this by pinning the read to the writer DB, but lacks root-cause coverage evidence; the issue's evidence strengthens the case for a targeted fix."
   },
+  "9225e56426ce1725aeffc319c51f062c43305180990544cd1605c0a668c6ade1": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.related_issue_assessment reports no related open issues, but the bot comment cites open duplicate #46358 and open PR #53365"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "plugin/plan.ts allow rule to match location-relative resource",
+      "execute.after error message accuracy"
+    ],
+    "risks": [
+      "Duplicate of #46358; work would overlap open PR #53365",
+      "Only the error-message tweak is novel and is low value"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce from cwd=$HOME: plan agent write to ~/.opencode/plan/foo.md should succeed",
+      "Regression: write outside plan dir still denied with accurate message"
+    ],
+    "unknowns": [
+      "Whether #46358 is still open and unresolved",
+      "Whether PR #53365 will merge and fully cover the fix"
+    ],
+    "why": "The issue has a clear root cause (absolute allow rule vs cwd-relative resource in the plan plugin), but the supplied bot comment identifies it as a duplicate of open issue #46358 and notes open PR #53365 already addresses the absolute/relative matching. The remaining novel part is only the misleading error message, which is low-value and covered by the duplicate tracker."
+  },
   "922fd18c9c15f81738d7e7bcd43cfc2eeabe8b4022ef33b8adda3ec6519eff25": {
     "confidence": 0.55,
     "contradictions": [
