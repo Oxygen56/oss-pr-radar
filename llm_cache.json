@@ -39526,6 +39526,43 @@
     ],
     "why": "The issue's original root cause (Flux stream silently stops sending events) was retracted by the reporter's own direct-service replay: Updates continued while EndOfTurn was withheld, so the proposed inbound-silence watchdog would never fire. The remaining hypothesis (threshold-dependent EndOfTurn withholding) is a Deepgram service behavior, not a pipecat defect, and the only client-side remedies named are draft PR #5584's force_end_turn plus a VAD-gated turn-duration cap. No reproduction, no confirmed root cause, and unresolved overlap with #5584 make code work not yet actionable."
   },
+  "39ee59f7096ff3224bcfa8599387d30c5d757f4f511da275ca299d773991bfc9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue proposes widening column or length-handling synthetic IDs; PR #4830 already implements the widening option"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/types/audit_log.go column width",
+      "migrations/versioned audit_log schema migration",
+      "internal/middleware/embed_auth.go synthetic ID handling",
+      "internal/middleware/mcp_endpoint_auth.go synthetic ID handling"
+    ],
+    "risks": [
+      "Duplicate/overlapping work with open PR #4830",
+      "Widening column vs truncating synthetic IDs is a design choice needing maintainer preference",
+      "Migration must be safe for existing deployments"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Regression test inserting an embed-<uuid> actor_user_id (42 chars) and mcp-<uuid> (40 chars) into audit_logs and asserting success",
+      "Migration up/down test verifying widened column and no truncation",
+      "Reproduce original SQLSTATE 22001 against pre-fix schema to confirm failure"
+    ],
+    "unknowns": [
+      "Whether PR #4830 will be merged or needs replacement",
+      "Maintainer preference between widening schema and truncating synthetic IDs",
+      "Whether PR #4830's lack of tests leaves a distinct contribution gap"
+    ],
+    "why": "Issue gives a concrete root cause (synthetic embed/mcp IDs of 42/40 chars exceed audit_logs.actor_user_id varchar(36)) and a reproduction path, but an open PR #4830 already directly covers the same fix (widening columns to varchar(64)) with direct code overlap on internal/types/audit_log.go. Coverage is unresolved and requires human comparison, so independent implementation space is not established."
+  },
   "39f785ae4c64147a90f0102dd70e8252b3d1480bd0ea1bb7163b93fa84b4d637": {
     "confidence": 0.9,
     "contradictions": [
@@ -66960,6 +66997,49 @@
       "Whether an explicit thinking-mode parameter is required upstream"
     ],
     "why": "Issue documents a clear streaming-vs-non-streaming discrepancy for reasoning_content on the alibabacloud DeepSeek alias, but the root cause is explicitly unresolved: the reporter did not test the upstream provider directly, so it is unknown whether the loss occurs in the upstream adapter, the SSE normalizer, or the provider itself. The issue itself poses open questions rather than identifying a code defect."
+  },
+  "5fe9573e47d8a5c1825ea78611ac6076da8f8a031767ba12a39149f554a163c9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.actionability_evidence.maintainer_approved=true and design_confirmation=false conflict with the maintainer comment approving v4 Design and authorizing T1-T6",
+      "candidate.actionability_evidence.root_cause_signal=false while the issue body and maintainer comments establish a concrete root cause and design"
+    ],
+    "evidence_ids": [
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "plugins/wasm-rust/extensions/ai-data-masking/src/ai_data_masking.rs: add tool_arguments.check / tool_definitions.check / tool_arguments.restore switches with independent protocol state and mapping",
+      "Streaming window: per-(choice, tool_call) argument buffering, name-prefix whitelist matching, text->args->finish release order, [DONE] after pending content",
+      "Config: atomic validation of restore_allowlist (RFC 6901 pointers, duplicate rejection, case-sensitive tool names) and limits (max_call_bytes/max_buffer_bytes/max_calls)",
+      "Dedup: new path owns managed argument byte ranges; old raw/JSONPath/global replace must not rewrite them; cross-boundary rewrites fail"
+    ],
+    "risks": [
+      "Repository requires assignment; issue currently unassigned, so code work may not be actionable",
+      "Open PR #5220 touches the same ai_data_masking.rs path and may overlap or conflict",
+      "Candidate limits 1 MiB/4 MiB/128 are unvalidated; T5 capacity results may change defaults",
+      "Strict fail-closed behavior may reject non-standard upstreams; compatibility must be verified"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "V1: old-config A/B compatibility (unchanged config, explicit false, false+small limits) asserting no new rejections or rewrites",
+      "V2: 8 switch combinations x deny variants (custom words, system_deny, both, none), deny_openai:false isolation, content:null/array/missing",
+      "Streaming: finish_reason empty-string ends, missing/null does not; text->args->finish ordering; single [DONE] after pending content",
+      "Whitelist: JSON Pointer validation, array '-'/'01' rejection, duplicate tool/path rejection, fragmented function.name not authorized on prefix",
+      "Dedup: deny_raw:true and args-targeting deny_jsonpath with hash rules proving single rule-table pass and no H2->H mapping",
+      "Fail-closed: malformed outer request JSON, non-streaming response JSON, SSE data; config load failure retains last valid config"
+    ],
+    "unknowns": [
+      "Whether the repository assignment requirement is satisfied or waived for this issue",
+      "Whether PR #5220 already covers part of the same root cause and how it relates to the authorized T1-T6 scope",
+      "Final approved default values for max_call_bytes/max_buffer_bytes/max_calls pending T5 capacity results"
+    ],
+    "why": "The issue is a design/proposal document for ai-data-masking tool-argument masking, and the maintainer has approved the v4 design and authorized T1-T6 tasks. However, the repository policy requires assignment (assignmentRequired=true, policy=needs_assignment) and the issue has no assignees, which is a materially blocking unknown for whether code work is actionable. Additionally, open PR #5220 overlaps the same plugin path and requires manual comparison before any duplicate work, and the candidate's own gate decision is HUMAN_REVIEW/WAIT_MAINTAINER."
   },
   "5fefcfafa9805475b802a674c9ea4f2465fbad4cbad1be54dff6505ac28672eb": {
     "confidence": 0.8,
