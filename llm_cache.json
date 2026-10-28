@@ -176525,6 +176525,37 @@
     ],
     "why": "Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models. Existing PR #14266 addresses the same root cause but lacks regression tests, leaving room for a materially better PR with tests and minimal fix."
   },
+  "f58bc8a4ccf6f42c2abca52cabd1db1cf3c660fbca52da17b898e26d70590b19": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue provides root-cause mechanism and repro, but open_pr_assessment marks rootCauseCoverage false and duplicate status human_review_required"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "prefill_router: release prefill booking on decode failure before migration retry",
+      "migration: ensure retry re-books remote prefill under same request ID"
+    ],
+    "risks": [
+      "Overlapping with open PR #17455 may duplicate work",
+      "Releasing prefill booking too early could break KV transfer for requests the decode worker actually received"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: route via PrefillRouter::generate with in-flight remote prefill and decode returning ErrorType::CannotConnect, then retry same request ID and assert success",
+      "Regression test preserving #16766 behavior: ambiguous transport errors keep prefill running"
+    ],
+    "unknowns": [
+      "Whether PR #17455 already fully covers the fix and whether maintainers want a separate implementation",
+      "Whether the deterministic repro is committed as a test anywhere"
+    ],
+    "why": "Issue gives a detailed mechanism (prefill booking not released on decode failure during migration) and a deterministic unit-level repro, but the supplied open-PR assessment shows PR #17455 directly references this issue with direct code overlap and the same fix direction, and duplicate status is 'human_review_required'. Whether independent implementation space exists is unresolved, which materially determines actionability."
+  },
   "f58c180645073b9bb3daa8ef1a34b6180de80a0479e56f1be482973b0ab2c652": {
     "confidence": 0.7,
     "contradictions": [],
