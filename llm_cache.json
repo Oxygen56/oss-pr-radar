@@ -13580,6 +13580,45 @@
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and host-cache load-back. The reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "14b245ff8eccf957b6c0c239d557f262265904e0b4bc20ad1c79ee88699194e5": {
+    "confidence": 0.72,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false, but issue_data.issue_body provides a specific root cause and code anchors"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "lib/mocker/src/live.rs: key routes.by_client by per-attempt ID while preserving logical request ID for output metadata",
+      "LiveEngine::cancel semantics for multiple active attempts sharing one logical ID",
+      "lib/llm/src/mocker/handoff.rs: accept and correlate a second attempt for the same logical request ID",
+      "Regression test for same-worker migration retry"
+    ],
+    "risks": [
+      "Cancel-by-logical-ID semantics could change behavior for existing single-attempt callers",
+      "Handoff correlation may misattribute output if attempt IDs are not threaded through",
+      "Potential overlap with related issue #17546 (superseded prefill load accounting) may require coordinated design",
+      "Depends on #17455 landing first; base behavior may shift"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce per issue steps: prefill+decode mockers, SIGSTOP decode A, submit request, SIGKILL decode A, confirm retry currently returns 503 'already active'",
+      "After fix, assert retry is admitted alongside the first attempt and completes under the same logical request ID",
+      "Add unit test in lib/mocker covering two attempts with the same client UUID and distinct scheduler_ids",
+      "Add handoff correlation test ensuring the retry's handoff maps to the correct attempt"
+    ],
+    "unknowns": [
+      "Whether maintainers want cancel(request_id) to cancel all active attempts or only the latest",
+      "Whether #17546 should be fixed in the same change or separately",
+      "Whether #17455 is merged or still open at implementation time"
+    ],
+    "why": "Issue gives a concrete root cause: LiveEngine::prepare_request keys routes.by_client by the logical DirectRequest::uuid, so a migration retry reusing that ID collides with the still-running first attempt and returns 503. It also names code anchors (lib/mocker/src/live.rs, lib/llm/src/mocker/handoff.rs), an ordered reproduction, and a candidate fix direction (per-attempt route key, cancel semantics, handoff session acceptance). This is a mocker fidelity gap, not a production bug, but it is a real, testable defect with a clear validation path."
+  },
   "14bcc050c819c84b5ff4e3cfd0d287356f3e17aca31bd69c15d9954baadd3862": {
     "confidence": 0.7,
     "contradictions": [
@@ -41398,6 +41437,39 @@
       "Whether the overlapping draft PR #58657 has any bearing (evidence indicates no direct code overlap)"
     ],
     "why": "The issue is a UX/feature-request about default collapse state of user-initiated shell rows in web/desktop; the bot explicitly classifies it as a feature request, not a bug, and the root cause is a deliberate design choice (user shell messages share the `shell` timeline category). This is presentation/UI plumbing, not an agent/inference/RAG algorithm contribution, and the candidate's 'algorithm_evidence' is null. The only overlapping PR (#58657) is an unrelated media-URI wire capability draft with no direct code overlap, so it does not cover this issue."
+  },
+  "3c8b9e126931ed6d78c7c3c6d6ea6d8084d3e569e7a48030a1ec9fa4209bb4ea": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "internal/handler/agent.go: call clearResponseWriteDeadline(c) at start of streaming branches (3 SSE responses)",
+      "internal/handler/agent_openai.go and internal/handler/bot.go: apply same helper to SSE handlers",
+      "optionally make server-wide WriteTimeout configurable or documented"
+    ],
+    "risks": [
+      "Clearing the write deadline globally could mask genuinely stuck clients; scope to streaming branches only",
+      "Behavior change to API streaming semantics may need maintainer sign-off",
+      "Other SSE handlers beyond the three named may share the same gap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that streams an SSE response past 180s (or with a shortened WriteTimeout) and asserts the stream is not truncated",
+      "Verify non-streaming agent completions behavior is unchanged",
+      "Run targeted handler package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer per-handler deadline clearing vs a configurable server WriteTimeout",
+      "Whether additional SSE handlers beyond agent.go/agent_openai.go/bot.go also lack the helper"
+    ],
+    "why": "Issue pinpoints a concrete root cause: hard-coded http.Server WriteTimeout of 180s is a whole-response deadline, and the clearResponseWriteDeadline helper added in #15852 is not called in agent.go/agent_openai.go/bot.go SSE handlers. Reproduction (stream cut at exactly 180.0s, sub-180s requests complete) and a concrete fix path are supplied; no competing PR covers the same code path."
   },
   "3c940f250a8eed1611f02e4db538d28270e58925ddbf91fc906b9859ddd805fe": {
     "confidence": 0.8,
@@ -179746,6 +179818,43 @@
       "Whether the proposed fix is already implemented in PR #53367 and if it is complete; the PR lacks tests and has CI failures."
     ],
     "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm with a concrete mechanism (model_architecture, distributed_training) and a validation path via numerical regression or controlled experiment."
+  },
+  "f9c398a9504129a250e58f84348c29e2be2ebd309303fa1b1b887f0a1a22c21d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter attributes regression to upstream merge but admits not reproduced on official image and runs a patched build"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/integrations/langfuse/langfuse_otel.py (candidate OTel attribute accumulation)",
+      "litellm/types/integrations/langfuse_otel.py",
+      "request counter / metrics path if confirmed inflated"
+    ],
+    "risks": [
+      "Reporter's patched build may introduce the regression, not upstream",
+      "Root cause unconfirmed; fix could target wrong subsystem",
+      "No official-image reproduction means fix cannot be validated"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on official v1.106.4 image with langfuse_otel callback and streaming load; measure RSS/CPU over 30 min",
+      "Bisect commits between v1.105.1 and v1.106.4 on official image",
+      "Add regression test asserting OTel attribute dict does not grow unbounded per request"
+    ],
+    "unknowns": [
+      "Whether regression reproduces on official v1.106.4 image",
+      "Which commit between v1.105.1 and v1.106.4 introduced the leak",
+      "Whether OTel attribute overflow is cause or symptom"
+    ],
+    "why": "Issue reports a real regression (memory growth, CPU doubling, OTel attribute overflow) between v1.105.1 and v1.106.4, but the reporter explicitly states they have NOT reproduced on the official image and run a lightly patched build. No public minimal reproduction exists (public_repro_signals=0, reproduction_evidence empty). Root cause is only hypothesized (inflated request counter, OTel attribute overflow) with no confirmed code path; code_anchors are speculative. The only related PR (#38885) is keyword-overlap only and unrelated."
   },
   "f9c4d01f3a78ce65bea97090a85505b5b983efaa2485626849e74d133980a9c7": {
     "confidence": 0.7,
