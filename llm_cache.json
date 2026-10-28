@@ -71373,6 +71373,40 @@
     ],
     "why": "The issue's own reproduction contradicts the proposed root cause: the reporter states GET /api/automation/health returns 200 in the same page load while GET /api/automation/v1 returns 401, yet both routes are claimed to share one axios interceptor that attaches X-Session-API-Key. A collaborator bot and an independent commenter both flag this contradiction and ask for a Network-tab capture showing whether the header is actually present, plus the 401 body (missing vs invalid key). Without that, it is unresolved whether the defect is a missing client header, a reverse-proxy header drop, or a backend auth issue — materially different fixes."
   },
+  "65bc9117160c55b0b6c0306def262d9d5c755b57d20a421e688131cbbe659dd3": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/base_aws_llm.py: stop restoring non-bearer incoming Authorization over the fresh SigV4 signature",
+      "Preserve AWS_BEARER_TOKEN_BEDROCK bearer-token behavior in _sign_request",
+      "Regression test covering strip-and-resign retry on the /v1/messages Bedrock path"
+    ],
+    "risks": [
+      "Changing Authorization handling could affect other SigV4 call sites that rely on header passthrough",
+      "Bearer-token detection via string prefix may miss other auth schemes",
+      "Maintainer may prefer a different fix location (e.g. retry loop) rather than _sign_request"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that calls _sign_request with headers containing a stale SigV4 Authorization and asserts the returned Authorization is the freshly computed signature",
+      "Add a test asserting a Bearer Authorization is still preserved",
+      "Mock the anthropic_messages HTTP error retry: attempt 0 returns 400 invalid thinking signature, attempt 1 must carry a signature computed over the stripped body and succeed",
+      "Run targeted bedrock/llm_http_handler unit tests and static checks"
+    ],
+    "unknowns": [
+      "No maintainer design preference recorded for where the fix should live",
+      "Whether other callers of _sign_request depend on incoming Authorization restoration"
+    ],
+    "why": "Issue pinpoints the root cause in BaseAWSLLM._sign_request: incoming Authorization headers are restored over the fresh SigV4 signature, so the strip-and-resign retry in _async_post_anthropic_messages_with_http_error_retry sends a stale signature over the mutated body. Concrete code anchors, ordered reproduction steps, per-attempt body hashes, and a proposed minimal diff with end-to-end verification are supplied; no competing PR covers this path."
+  },
   "65d29d3a42b5995ae393a1895c3f79808369b4e23b3952be993310c3df587c03": {
     "confidence": 0.85,
     "contradictions": [
@@ -160261,6 +160295,40 @@
       "Whether the fix should be scoped to the unconditional-invalidation defect or the full cross-replica coherence fix"
     ],
     "why": "Issue provides a concrete multi-replica cache-coherence bug with ordered reproduction steps, expected/actual behavior, and specific code anchors (per_user_oauth_store.py, mcp_management_endpoints.py, dual_cache_token_backend.py, auth_cache_invalidation_pubsub.py). A confirming comment reproduces it on v1.103.1 and identifies an additional concrete defect: the DELETE handler only invalidates when the credential row still exists, so repeated DELETEs skip invalidation. Two reasonable fix paths are offered, which is normal implementation uncertainty, not a blocker."
+  },
+  "e0a518ff8db813695ff6f95b721c2bc16fd28b75503d33a0ed86d17cc99a4671": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: validate tools+reasoning_effort combination before request and surface actionable error",
+      "internal/entity/models/openai.go: allow explicit reasoning_effort:none for tool calling via Chat Completions",
+      "optional: Responses API request/response/streaming/tool-call continuation support"
+    ],
+    "risks": [
+      "Responses API support touches request construction, response parsing, streaming, and tool-call continuation, expanding scope",
+      "Behavior change to reasoning defaults could surprise existing users",
+      "Exact effective reasoning_effort in the failing deployment was not captured, so the precise trigger condition needs confirmation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: tools configured + reasoning_effort != none on Chat Completions yields pre-flight validation error, not a raw 400",
+      "Unit test: tools + explicit reasoning_effort:none builds a valid Chat Completions request",
+      "Regression test: Agent node with tools and reasoning enabled routes to a supported endpoint/combination and completes"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Responses API migration vs. explicit reasoning_effort:none validation",
+      "Whether reasoning_effort:none actually succeeds in this deployment (unconfirmed by reporter)"
+    ],
+    "why": "Issue provides a concrete HTTP 400 error, expected/actual pair, reproduction steps, and a named code anchor (internal/entity/models/openai.go) where the Chat Completions request is built. The root cause is well-scoped: the adapter sends function tools with a non-none reasoning_effort to /v1/chat/completions, which the model rejects. A minimal fix (validation plus explicit reasoning_effort:none path, or Responses API support) is actionable and testable. No open PR or duplicate issue covers it."
   },
   "e0c4d271a868d8352aeb29b8c68b47bf9b05c796f53e5aef406b3744bcc9c1b8": {
     "confidence": 0.8,
