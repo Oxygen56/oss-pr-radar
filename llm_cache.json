@@ -2395,6 +2395,45 @@
     ],
     "why": "The issue describes a plausible streaming detokenization bug in the deepseek_r1 reasoning parser, but the supplied evidence is internally contradictory: the candidate is labeled track=llm_algorithm with mechanisms distributed_training/numerics_quantization, while the actual bug is a byte-level BPE detokenization/streaming-parser issue with no training objective, model mechanism, distributed invariant, quantization method, or kernel algorithm. The algorithm_evidence matched terms ('overflow', 'tensor parallel') appear to be incidental keyword matches from the environment dump, not the bug. Additionally, the pre-task policy status is ai_disclosure_conflict and the candidate risk notes a repository AI-disclosure requirement that hard-disables automated public action, which is a materially blocking unknown for whether code work can be submitted."
   },
+  "04736c3bc893bd570dab33c41f17b7f8e410d0c23d44b08d6d3908dba73d61b4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter claims 100% reproducible ~6s retry loop; bot reproduction on v2.2.0 with mock 403 saw a single failure and no retry",
+      "Reporter says refusal is account-level, not workspace-level, yet logs attribute directory paths"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP connection retry/backoff policy in the MCP client transport layer",
+      "User-visible error surfacing for failed MCP servers",
+      "Possibly desktop-app-specific reconnect trigger"
+    ],
+    "risks": [
+      "Retry loop may be desktop-app-specific and not reproducible in the CLI/server path",
+      "403 is server-side account refusal; client fix may only address error surfacing, not the refusal",
+      "Changing retry policy could conflict with related issues #52237/#54378 requesting retries for failed MCP servers"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a mock MCP server returning 403 after OAuth and assert no unbounded retry loop",
+      "Add regression test that a failed MCP connect is surfaced to the user and not retried on a timer",
+      "Verify behavior in both CLI and desktop app paths"
+    ],
+    "unknowns": [
+      "Whether the retry loop occurs in CLI vs only desktop app",
+      "Full unedited retry cycle log lines and MCP config entry",
+      "What UI state was open during retrying",
+      "Whether the 403 is a server-side account issue outside client code"
+    ],
+    "why": "The issue reports a 403 from the opencode_console MCP server plus a ~6s reconnect loop, but the bot's reproduction attempt on v2.2.0 with a mock 403 server did not reproduce the retry loop; the server logged the failure once and stayed failed. The root cause of the retry loop is therefore unestablished, and the 403 itself is an account-level server refusal rather than a clear client bug."
+  },
   "047cd0b1cd62fb0a74ad0e5105c3fa71175bdf19ba37fb93501d3489b31d7773": {
     "confidence": 0.85,
     "contradictions": [],
@@ -74244,6 +74283,42 @@
     ],
     "why": "Issue reports a deterministic, reproducible failure: opencode-go gateway rejects ~148k-token prompts with HTTP 400 while catalog advertises 1M context, so preflight compaction never fires and the 400 is not classified as context overflow, permanently bricking the session. Concrete code anchors and a validation path exist (catalog limit correction, overflow classification, or surfacing the provider body). No direct duplicate or merged fix is established; PR #52651 is keyword-overlap only and not a confirmed covering fix."
   },
+  "6a0248ab9c12eef0dfb4ecd2fd11d19f8250042d229e86806e84213293c3858e": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body asserts a concrete root cause, but actionability evidence sets root_cause_signal=false and open_pr_assessment reports rootCauseCoverage=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Doris vector-store delete path: enumerate real dimension-suffixed tables instead of relying on configured dimension",
+      "Model update validation: block dimension change when referenced by non-empty knowledge bases",
+      "Read path: surface missing-table errors instead of silently returning empty results"
+    ],
+    "risks": [
+      "Open PR #4775 may already cover this fix, making a competing change redundant",
+      "Enumerating tables by name pattern could touch unintended backup tables if pattern is not tightened",
+      "Behavior change to read path error surfacing may affect callers expecting empty results"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: register embedding model with empty dimension, ingest docs, delete knowledge, assert no 'Table <base>_0 is not found'",
+      "Regression test that delete succeeds when configured dimension differs from observed embedding length",
+      "Test that changing dimension on a referenced model is rejected or forces rebuild"
+    ],
+    "unknowns": [
+      "Whether PR #4775 already resolves the delete-path root cause and would make this work duplicate",
+      "Whether maintainers require design confirmation before changing delete/read semantics",
+      "Actual code anchors in the Doris delete path are not confirmed by supplied evidence"
+    ],
+    "why": "The issue gives a plausible root cause (delete path uses configured dimension while write/recall use observed length) and a reproduction, but the supplied evidence marks root_cause_signal=false and rootCauseCoverage=false, and an open PR #4775 already targets the same fix with tests. Whether code work is actionable depends on unresolved duplicate coverage and missing root-cause confirmation."
+  },
   "6a1b7468790a8c73b1b8a0f589f17b22abaf433b0391d66c67c4720a601abc2e": {
     "confidence": 0.8,
     "contradictions": [],
@@ -78784,6 +78859,44 @@
       "Whether maintainers consider this issue covered by existing PRs or want a separate fix"
     ],
     "why": "Issue reports a real, reproducible sandbox attachment staging failure with concrete error signature and code anchors, and a contributor comment traces it to the docker idle sweeper racing with session attachment staging. However, the supplied evidence shows two open PRs (#4220, #3921) with semantic overlap on the same code paths and distinctive error token 'invalid_request', and the duplicate status is explicitly 'semantic_overlap_requires_review'. The comment also states #4220 covers the write path and that the v0.8.3 fix window does not cover the 'stopped but not deleted' case, but the evidence does not establish whether #4220/#3921 already resolve this exact issue or leave a distinct gap. That unresolved duplicate/coverage question materially determines whether new code work is actionable."
+  },
+  "6f4d0a586089594071cceeb7827f1e91991f52910992848ff99945f0a802b071": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate expected_changes describe streaming chunk/finish/tool-call state propagation, but the issue is about credential resolution and error messaging",
+      "Candidate code anchor packages/ai/src/providers/google.ts does not correspond to the opencode/gpt-5.6-luna console-routed model",
+      "Bot states the error originates from the OpenCode gateway, not the app, contradicting an in-repo fix assumption"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "desktop credential resolution for console-routed models",
+      "error mapping from gateway responses to user-facing messages"
+    ],
+    "risks": [
+      "Requires a real OpenCode Console account with no paid balance and the Windows desktop app, which the maintainers' sandbox lacks",
+      "The misleading message may be emitted by the gateway, outside this repository",
+      "Duplicate auth entries and an unestablished console session confound the diagnosis"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a Console account with zero balance in the desktop app and confirm the error text",
+      "Compare desktop vs CLI request headers to the gateway for the same model",
+      "Regression test asserting funding errors surface as 'Insufficient account funds' rather than 'Missing API key'"
+    ],
+    "unknowns": [
+      "Whether the desktop app sends a valid Console credential to the gateway",
+      "Whether the misleading message is generated in this repository or by the gateway",
+      "Whether cleaning duplicate auth entries resolves the error",
+      "Whether a maintainer with a Console account has confirmed the root cause"
+    ],
+    "why": "The issue reports a misleading 'Missing API key' error in the desktop app, but the bot reply states the message originates from the OpenCode gateway, not the app, and the failure could not be reproduced without a real Console account with no paid balance. The root cause is not established: it may be a stale/duplicate credential, a console session not established, or a gateway-side error. The candidate's expected_changes (streaming chunk/finish/tool-call state propagation) do not match the reported symptom, and the code anchor packages/ai/src/providers/google.ts is unrelated to the opencode/gpt-5.6-luna console-routed model."
   },
   "6f4dc1c2f765ca3a855b43f14aa166f51899457375db235aa6dba83281caa609": {
     "confidence": 0.82,
