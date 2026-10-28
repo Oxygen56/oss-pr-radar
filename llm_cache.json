@@ -107650,6 +107650,45 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a gateway OOM/SIGABRT crash on a non-documented configuration path. Maintainer comment indicates a likely fix in 2.2.4 due to ABI mismatch, but no verification from reporter. The issue is not a code contribution; it's a bug report requiring maintainer confirmation and reproduction on the documented path."
   },
+  "975569121db6a3107462dbf9e689a1283de7947e3ed227921c084e621166fc37": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue asserts WAL growth as root cause while commenter states correlation not causality",
+      "Issue proposes TRUNCATE checkpoints while commenter warns against unconditional TRUNCATE"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/session/session_manager.rs: SQLite pool sizing (serialized writer + small reader pool)",
+      "WAL checkpoint policy (wal_autocheckpoint / idle PRAGMA wal_checkpoint)",
+      "bounded SQLITE_BUSY retry at transaction boundary (separate issue #13045)",
+      "ACP session/prompt error detail surfacing"
+    ],
+    "risks": [
+      "Causal link between 163 MB WAL and 'agent stopped before it finished' is unproven",
+      "Unconditional TRUNCATE checkpoints or retrying ambiguous commits could cause data loss",
+      "Multiple overlapping candidate fixes (pool tuning, checkpoint policy, BUSY retry, observability) with no agreed scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build an N-session ACP stress harness (1/4/8/16 sessions) reproducing concurrent session load",
+      "Instrument PRAGMA wal_checkpoint(PASSIVE) busy/log/checkpointed frames, SQLITE_BUSY rates, connection count, p50/p95 commit latency",
+      "Compare baseline vs tuned pool size and idle checkpoint policy to establish causality between WAL growth and turn failures"
+    ],
+    "unknowns": [
+      "Actual internal error behind turn failures (stderr discarded to /dev/null)",
+      "Whether WAL growth or pool contention is the dominant cause",
+      "Maintainer-agreed scope and baseline for the fix",
+      "Assignment requirement (policy needs_assignment) is unmet"
+    ],
+    "why": "The issue reports a plausible WAL-growth/contention story with code anchors in session_manager.rs, but the reporter explicitly states the internal failure was never persisted and that WAL size and failed turns are 'correlated, not yet demonstrated as causal'. A collaborator asked for a concrete proposal and endorsed building a stress harness, so the actionable work is currently a measurement/design task rather than a settled root cause with a concrete fix and validation path."
+  },
   "975c93041a9a2e6c0482cb7888256def9b7376017165de1b28d27fd544f93de1": {
     "confidence": 0.8,
     "contradictions": [
