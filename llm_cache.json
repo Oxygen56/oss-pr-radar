@@ -122699,6 +122699,43 @@
     ],
     "why": "Issue provides a concrete, reproduced UI defect with exact code anchors: toHooksResponse() in src/api/agent-server-adapter.ts drops prompt/system_prompt, the dialog's HookDefinition lacks those fields, and hook-matcher-content.tsx renders only {hook.command}. Server response evidence (POST /api/hooks returning prompt/system_prompt with command:\"\") confirms the data is available client-side, so the fix is bounded and testable. No duplicate or merged fix covers this; the only related PR (#18085) is a docs/feature-map change with no code overlap."
   },
+  "ad5737ade7c0df576aa0a73d7f1c0d1b4954024085bc62aacf14a05f4ad97c9e": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Streaming error handling in the OpenAI Responses provider: retry with backoff on error/response.failed and early stream close when no tool call has executed",
+      "Surface a user-visible error instead of a silent turn end when retries are exhausted",
+      "Add streaming regression tests covering partial-stream failure sequences"
+    ],
+    "risks": [
+      "Retrying after a partial response could duplicate tool calls if the no-tool-call guard is wrong",
+      "Behavior change may conflict with maintainer design preferences for streaming error handling",
+      "Scope creep into broader API behavior changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a failing test that feeds a synthetic stream emitting an error event mid-response and asserts retry behavior",
+      "Test early stream close without response.completed after a successful tool result",
+      "Test retry exhaustion produces a surfaced error rather than a silent end",
+      "Run targeted unit tests for the provider package plus static checks"
+    ],
+    "unknowns": [
+      "No public minimal reproduction or probe is available to confirm the failure sequence",
+      "Root cause location in the streaming state machine is not identified",
+      "Repository requires assignment and none is present",
+      "Whether maintainers have an existing design preference for retry semantics in this provider"
+    ],
+    "why": "The issue describes a real streaming failure mode with concrete error events and a quantified impact, but the supplied evidence contains no public reproduction, no confirmed root cause, and the repository policy requires assignment before work; the code anchors are generic error strings rather than a located state-propagation defect."
+  },
   "ad5a0f00910adbe7b83a93614eef3a4e33155ce2cf36dfcc89da481b27c94b82": {
     "confidence": 0.8,
     "contradictions": [
@@ -137113,6 +137150,39 @@
     ],
     "wait_reason": null,
     "why": "Issue describes a concrete availability bug in the DynamoGraphDeployment operator: rapid updates can restart all decoder pods, violating availability budget. It includes a clear reproduction scenario and expected behavior. No competing PR or issue found. The fix is actionable in the operator's rollout logic, with a clear test path using the provided scenario."
+  },
+  "c1c98e2d1060f2b5637df75793450f4a33949c47b0fa22e89f61583e0683fd1e": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Open PR assessment flags semantic_overlap_requires_review with PR #48563, but that PR is a BigModel provider feature and does not cover the SigV4 stale-signature root cause"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/base_aws_llm.py: stop restoring incoming SigV4 Authorization over a fresh signature; only preserve Bearer tokens",
+      "Retry path in llm_http_handler.py: ensure re-signed request uses fresh signature after body mutation"
+    ],
+    "risks": [
+      "Open PR #48563 touches llm_http_handler.py but is a BigModel provider feature, not a fix for this signing bug; overlap is superficial",
+      "Changing Authorization restore logic could affect non-SigV4 auth paths if not scoped to Bearer only",
+      "No maintainer pre-approval or assignment, but not required per evidence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: sign request, mutate body (strip thinking blocks), re-sign, assert Authorization differs and matches new body",
+      "Unit test that Bearer-token Authorization is still preserved",
+      "Reproduce strip-and-resign retry against mocked Bedrock 400 invalid signature, assert retry succeeds"
+    ],
+    "unknowns": [
+      "Whether any existing PR directly addresses the SigV4 Authorization restore bug"
+    ],
+    "why": "Issue pinpoints the stale SigV4 Authorization restore in BaseAWSLLM._sign_request, explains the retry path in _async_post_anthropic_messages_with_http_error_retry, and provides a concrete diff plus end-to-end verification. This is a provider/runtime signing bug, not an algorithm contribution, so the llm_algorithm rejection rule does not apply; track is agent_ai_infra."
   },
   "c1cc22b223081a242f8b3ddfbf3d9264c802dbdcd2052af99d74af8fb2269a59": {
     "confidence": 0.7,
