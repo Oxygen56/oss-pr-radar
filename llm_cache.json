@@ -5466,6 +5466,42 @@
     ],
     "why": "Issue reports a concrete CUDA graph capture crash (cudaErrorStreamCaptureUnsupported) in MRV2 MTP speculative decoding with a full traceback and repro command, but a recent comment states it is already fixed on main by PR #56447 and can be closed. That unresolved duplicate/merged-fix coverage is a materially blocking unknown for whether new code work is actionable."
   },
+  "088446ba690c1b7a0d1cb671d52aecec4faf54a117f6d4ab6f953db94e532902": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports no error surfaced, but bot states truncation should produce a visible error and auto-continuation, indicating the observed stop may have a different cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tool/plugin/write.ts (only if truncation/continuation handling is confirmed as the fault)",
+      "packages/tui/src/feature-plugins/sidebar/limit.tsx (only if output-limit surfacing is confirmed)"
+    ],
+    "risks": [
+      "Fixing the wrong layer (provider connection vs output-limit continuation vs Windows service restart) would not address the reported behavior",
+      "Large-payload chunking guidance may be a docs/UX change rather than a code fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a minimal large single write call and capture logs around the turn stop",
+      "Add a regression test asserting a truncated tool call surfaces an explicit error and triggers continuation rather than a silent stop",
+      "Verify the three-consecutive-truncation message path fires"
+    ],
+    "unknowns": [
+      "Provider and model used",
+      "Client (TUI, desktop, or opencode run)",
+      "Whether the message ended mid-sentence or mid-tool-call and whether the session stayed busy",
+      "Logs around the turn stop",
+      "Whether any of the listed related issues is the same root cause"
+    ],
+    "why": "The issue reports a silent turn interruption before a large write executes, but the maintainer bot's reply shows the expected truncation-handling behavior (visible error, auto-continuation, explicit 'still truncated' message) did not occur, so the actual failure mode is unknown. Provider/model, client, on-screen state, and logs were requested and are missing; the bot also lists several plausible but unconfirmed related causes (ECONNRESET at 60s, Windows service restart, output-limit truncation). No root cause is established and no code anchor is confirmed."
+  },
   "0888f056a11ecb787bbf36c264a0c1610f44ed778d37d5d27ad1ff991f5d886e": {
     "confidence": 0.72,
     "contradictions": [],
@@ -83385,6 +83421,41 @@
     ],
     "why": "Issue provides a concrete reproduction, measured session/usage data, and code anchors (history.ts isRootSessionRecord, sdk-task-history.ts resume path) establishing that resumed cancelled/failed tasks create a new session with NULL parent_session_id/conversation_id, causing duplicate History roots and re-billed context. A reference-vs-implementation test (single logical conversation -> one History entry, no duplicated usage) is feasible."
   },
+  "75badbb4c9c32c78b300ad550f3317fe99eecf626cdf74844a80083f6043bb68": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Bot states the message comes from the gateway, not the app, while the candidate frames it as a streaming/state-propagation bug in the client",
+      "Reporter reports three different credential verdicts (Missing API key, Invalid or revoked API key, Insufficient account funds) for one action sequence, leaving the failure mode ambiguous"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "desktop credential resolution for Console-routed models (unconfirmed location)",
+      "error mapping from gateway responses to user-facing messages (unconfirmed location)"
+    ],
+    "risks": [
+      "Root cause may be server-side (SSO connector ssoconn_01M5N5PTDHF7T84F7X8KXJ800S) and not fixable in this repo",
+      "Proposed code path may be unrelated, leading to a non-fix PR",
+      "Requires Windows desktop app plus a real zero-balance Console account to validate"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on Windows desktop with a zero-balance Console account and confirm whether the error changes after cleaning duplicate auth entries and reconnecting Console",
+      "Compare desktop vs CLI request headers/credential selection for the same model to identify where the Console credential is dropped"
+    ],
+    "unknowns": [
+      "Whether the desktop error persists after duplicate auth entries are removed and Console is reconnected",
+      "Whether the SSO connector misconfiguration is the actual cause",
+      "Which code path in this repository actually selects the Console credential for desktop requests"
+    ],
+    "why": "The issue describes a misleading error message on the desktop surface, but the supplied evidence does not establish a code-level root cause. The bot reply states the message originates from the OpenCode gateway, not the app, and the reporter's own follow-ups leave the cause as an open hypothesis (stale/duplicate credential selection vs. desktop not reading the same credential store vs. a server-side SSO connector misconfiguration). The proposed code path packages/ai/src/providers/google.ts is not tied to the observed failure by any supplied evidence."
+  },
   "75d7d6b07033b671fe214ffe910f9ecc0c758c6c28f00a32d127ab7faa1aa7cc": {
     "confidence": 0.85,
     "contradictions": [],
@@ -85871,6 +85942,47 @@
       "Whether #6077/#5996/#6081 already cover this defect"
     ],
     "why": "The issue body is truncated mid-sentence ('we can understand when ra...'), so the actual collision mechanism, the offending code path, and the proposed fix are not established. The evidence shows a plausible NVLink one-sided dispatch/combine workspace overlap hypothesis with a concrete reproduction (DP8EP, CUDA graphs, rank 5 acceptance collapse, --enforce-eager removes it), but no root-cause signal (root_cause_signal=false) and no code anchor in the flashinfer dispatch/combine implementation. Related-issue assessment flags potential overlap with #6077/#5996/#6081 based only on shared stack signatures, which is unresolved duplicate coverage."
+  },
+  "7933b2a3c2a7f7b215f3dee190b8b9edb27bd0765b052a073aae3dc51618cd95": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Original report claims account-level 403 across three directories; correction states refusal is workspace-scoped",
+      "Original claims 14 cycles and fixed ~6s loop; correction states 9 attempts with growing/resetting intervals",
+      "Bot could not reproduce the retry loop on v2.2.0 with a mock 403 server",
+      "Original says loop stops only on app restart; correction says logout stops it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP connection retry/backoff policy (bounded retries, non-retryable 403 handling)",
+      "User-visible error surfacing for failed MCP servers",
+      "Possibly desktop-app-specific reconnect trigger"
+    ],
+    "risks": [
+      "Root cause may be server-side workspace authorization, not client code",
+      "Behavior may be desktop-app-specific and not reproducible in CI",
+      "Fixing retry policy could conflict with related issues #52237/#54378 (failed servers never retried)"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a mock MCP server returning 403 to confirm whether the client retries on a timer",
+      "Add a regression test asserting 403 is treated as non-retryable and surfaced to the user",
+      "Verify retry backoff terminates within a bounded window"
+    ],
+    "unknowns": [
+      "Whether the retry loop originates in the desktop app, CLI, or server",
+      "Exact code path that schedules the reconnects",
+      "Whether 403 is intended to be non-retryable by design",
+      "Full unedited retry-cycle log lines requested by the bot"
+    ],
+    "why": "The issue reports a 403 from the Console MCP endpoint with retry/backoff and silent-failure symptoms, but the supplied evidence does not establish a code-level root cause. The bot's reproduction attempt on v2.2.0 (mock 403 server, with and without OAuth) did not reproduce the retry loop, and the reporter's own corrections revise the counts, intervals, and scope (workspace-scoped vs account-level) of the original report. The retry driver is unidentified (desktop app vs CLI vs server), and the 403 is a server-side authorization decision, not a demonstrated client defect. Without a confirmed reproduction or root-cause anchor in the retry/backoff or error-surfacing code, the actionable code change is undetermined."
   },
   "794d96b17284424ea393d8184aec032a0ad61c0b9e60d4a6835e96fef874c171": {
     "confidence": 0.8,
@@ -88879,6 +88991,43 @@
       "Whether the fix should also cover the #15447 Cursor path in the same change"
     ],
     "why": "Maintainer triage on main confirms two concrete root causes: deferred BEGIN in packages/shared/src/nodeSqliteClient.ts causes immediate SQLITE_BUSY on read-to-write upgrade (busy_timeout bypassed), and RunExecutionService.startRootRun never calls ClaudeAdapterV2.interruptTurn on ingest failure, orphaning the provider process. Reproduction and validation paths are concrete (node:sqlite BEGIN IMMEDIATE vs deferred timing test; orphaned-process regression)."
+  },
+  "7d7165f261c334863830113f048a53ff6680b66e0669e72a1d77d72cb74f57ec": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "api/core/app/apps/advanced_chat/app_generator.py: pass durable pause_state_config in single_iteration_generate and single_loop_generate",
+      "api/core/app/apps/workflow/app_generator.py: replace pause_state_config=None in container-debug entry points",
+      "web/app/components/workflow/nodes/_base/hooks/use-one-step-run.ts: register onWorkflowPaused for Iteration/Loop branches",
+      "api/tests/unit_tests/services/test_workflow_run_agg.py: add regression covering debug entry points through two approval rounds"
+    ],
+    "risks": [
+      "Loop reproduction build not independently verified; only Iteration build confirmed",
+      "Workflow app entry points inspected in code but not reproduced",
+      "Frontend onWorkflowPaused wiring may require separate PR scope",
+      "Broadening pause_state_config could alter behavior of other debug paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test invoking single_iteration_generate/single_loop_generate with a nested Human Input node and assert a workflow_pauses row is created",
+      "Run uv run --project api pytest api/tests/unit_tests/services/test_workflow_run_agg.py -k 'pause_publication_persists_summary_and_optional_snapshot or v2_pause_persists_only_checkpoint_references_and_publishes_frozen_form'",
+      "End-to-end: submit v2 form after container single-step pause and assert resume advances to next round rather than 409",
+      "Verify v1 path enqueues resume without 'No pause entity found' log"
+    ],
+    "unknowns": [
+      "Exact released versions affected not established",
+      "Whether maintainers want frontend and backend fixes in one PR or split"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: container single-step debug entry points (single_iteration_generate/single_loop_generate) omit pause_state_config, so WorkflowRunAgg._persist_pause saves PAUSED without creating a workflow_pauses checkpoint, causing the v2 submission service to reject with 409 workflow_not_active. Reproduction steps, DB observations, and a validation command are supplied; no duplicate PR/issue coverage found."
   },
   "7d751fcbb3631f37eee3c5440e45baa5fad3e12f0c05f10aef53019a5f56f5a2": {
     "confidence": 0.8,
@@ -120143,6 +120292,43 @@
       "Exact status of PR #36003 and whether it fully resolves the issue for all writers"
     ],
     "why": "Issue provides a clear root cause (MLA writers overwrite reserved slot 0), a deterministic reproduction, and a concrete fix path (PR #36003) with regression tests. The algorithm mechanism is well-defined and validation is concrete."
+  },
+  "a9cc9797f1db1e08b10000576474ff890500f917f613f78bfbd7b90853f05a4e": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body asserts a specific root cause and stack, but actionability_evidence reports root_cause_signal=false and no reproduction evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "livekit-ffi FfiAudioStream::from_track: move new_session() off the request thread or make NewAudioStream async",
+      "noise_cancellation plugin: add a preload/prewarm API usable without a room handle",
+      "rtc.AudioStream.from_track: allow filter session creation without room info for prewarm"
+    ],
+    "risks": [
+      "Fix likely requires changes in rust-sdks/livekit-ffi, outside the agents repo, so the PR may not be landable here",
+      "Overlaps with open #7441 and possibly #7924, risking duplicate work",
+      "Changing NewAudioStream to async is a broad FFI API change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a SIP participant and BVCTelephony(), measuring event_loop_blocked spans before/after",
+      "Unit test asserting AudioStream.from_track with noise_cancellation does not block the calling loop thread",
+      "Prewarm test: call preload() in setup_fnc and verify no model load occurs at session start"
+    ],
+    "unknowns": [
+      "Which repository the candidate PR would modify (agents vs rust-sdks vs plugin)",
+      "Whether #7441 already covers this and is being worked on",
+      "Whether a minimal reproduction exists that can be turned into a failing test in this repo"
+    ],
+    "why": "The issue gives a plausible stack trace and a concrete hypothesis (synchronous new_session() inside the FFI request handler on the job event loop), but the supplied actionability evidence records public_repro_signals=0, reproduction_evidence=[], root_cause_signal=false, and probe_ready=false, and the pre-review gate already failed with reproduction_or_validation_missing. The proposed fixes span three different repos (livekit-ffi/rust-sdks, python-sdks, plugin), so it is unclear which codebase the candidate PR would target."
   },
   "a9d084361689588e20061ad04cbcfa3f4ec834ab9dba70ac37544e9d716de282": {
     "confidence": 0.85,
@@ -174424,6 +174610,39 @@
       "Maintainer preference on routing vs dropping reasoning_effort; but issue asks to decide and record rationale"
     ],
     "why": "Issue reports a clear user-facing 400 error with a concrete repro and acceptance criteria. A comment provides a detailed root-cause analysis identifying the exact client-selection logic and parameter mapping mismatch, making the fix actionable and localized."
+  },
+  "f429f00a9c36e13429e9f6ce2344ea49e26244f21278efa072d30a4d89181ab8": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "rag/nlp/__init__.py hierarchical_merge heading classification: add length/sentence-punctuation guard or sibling-pattern detection so long numbered paragraphs are treated as body content, not headings",
+      "Ensure section headings may still be prepended but full paragraphs are not duplicated as prefixes across chunks"
+    ],
+    "risks": [
+      "Over-tightening the guard could drop legitimate short headings or change chunk boundaries for existing datasets",
+      "Threshold choice (~50 chars / sentence punctuation) is heuristic and may need tuning against real textbook PDFs",
+      "Behavior change in chunking may affect downstream retrieval expectations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test feeding a synthetic text with a short real heading followed by several ~300-char numbered paragraphs into hierarchical_merge and assert the long paragraph appears in exactly one chunk",
+      "Regression test asserting no chunk prefix equals a full body paragraph and that duplicate-prefix groups are absent for the synthetic input",
+      "Run targeted tests for rag/nlp and static checks"
+    ],
+    "unknowns": [
+      "Exact commit/version where the guard should be applied is stated as 'current main' but base SHA behavior not independently confirmed",
+      "No maintainer preference on minimal guard vs sibling-pattern approach"
+    ],
+    "why": "Issue provides a concrete reproduction (Book chunker, DeepDoc, numbered long paragraphs), an expected-vs-actual pair, and a specific code anchor (rag/nlp/__init__.py hierarchical_merge) with the unguarded heading regex classification as root cause. A minimal guard fix and a regression test are directly derivable."
   },
   "f42d4d51a5456bbca8634d6b637586574c1c7a5728a261b68efb54d2fdf0978b": {
     "confidence": 0.8,
