@@ -152615,6 +152615,42 @@
     ],
     "why": "Issue provides a concrete, reproducible root cause: pinned wolfi-base digest has drifted from current apk python3 packages, causing both the apk trigger failure and the uvloop source-build failure; the suggested fix (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never) is specific and testable via docker build and runtime import check."
   },
+  "d62c08f13994638b62837cc0c67972bb43b938ba0e8d8456f5afbe86fad1094b": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body says the exact hang point requires further investigation, while actionability_evidence lists code_anchors and probe_ready=true, implying a located cause"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "FAQ import worker task execution path (timeout/context handling)",
+      "Redis lock lifecycle for faq_import_running/faq_import_progress",
+      "asynq task entity TTL handling"
+    ],
+    "risks": [
+      "Root cause unconfirmed; a timeout fix may mask rather than fix the hang",
+      "Changing lock TTLs could allow concurrent imports for the same KB",
+      "No reproducible stack trace or failing test currently exists"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by interrupting the app container mid-FAQ-import and assert the worker fails gracefully and releases locks",
+      "Regression test that a hung underlying call is bounded by a context timeout",
+      "Test that orphaned faq_import_running/progress keys expire and do not block new imports"
+    ],
+    "unknowns": [
+      "Actual code location where the worker hangs",
+      "Whether the hang is in the LLM call, Redis lock acquisition, or asynq task handling",
+      "Whether PR #1238's timeout pattern is applicable to the FAQ import path"
+    ],
+    "why": "The issue reports a real user-visible hang in the FAQ import worker, but the reporter explicitly states the exact hang point requires further investigation and no stack traces or error logs were obtainable. The proposed fixes (context timeout, orphan-lock expiry, asynq TTL) are speculative remedies rather than an established root cause, and the code anchors are only Redis key names, not a confirmed faulty code path."
+  },
   "d62ef82751285fecc7e05fdd3f8634497a812a2d9b9ac27f99135284726f1a32": {
     "confidence": 0.55,
     "contradictions": [
@@ -154367,6 +154403,41 @@
       "Exact implementation details of the contributor's patch are not fully provided, but the approach is described sufficiently."
     ],
     "why": "Issue clearly identifies a process-wide global causing incorrect KV head splitting for multiple models, with a concrete root cause and a suggested fix mirroring an existing per-model approach. A contributor has a ready implementation with local regression tests, and the validation path is well-defined."
+  },
+  "d85aa1fb31c963cc1c5aa1896faacee0bad4f524cb195e94528038ac563ceaaf": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment marks PR #4775 technical_complete=true with tests and passing checks but root_cause_coverage=false, while issue claims a clear root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Doris vector-store delete path: enumerate real `<base>_<digits>` tables instead of single configured-dimension table",
+      "Model update validation: block dimension change when referenced by non-empty knowledge base",
+      "Read path: surface missing-table errors instead of silent empty results"
+    ],
+    "risks": [
+      "PR #4775 may already cover the fix, making this redundant",
+      "Enumerating tables could delete unintended tables if name filter is too loose",
+      "Behavior change to read path may surface new errors to users"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: register embedding model without dimension, ingest docs, delete knowledge, assert no `Table <base>_0 is not found`",
+      "Regression: delete with configured dimension mismatched to actual data still removes rows",
+      "Unit test table-name enumeration excludes non-numeric backup tables"
+    ],
+    "unknowns": [
+      "Whether PR #4775 actually resolves the delete-path root cause or only partially addresses it",
+      "No confirmed code anchors in the delete path from supplied evidence"
+    ],
+    "why": "Issue describes a concrete dimension-drift bug with a plausible root cause (delete path uses configured dimension while write/recall use observed length), but the supplied evidence lacks code-level root-cause confirmation (root_cause_signal=false, no codePathsPlan) and an open PR #4775 already claims to fix the same issue with tests and passing checks, leaving unresolved duplicate/coverage uncertainty."
   },
   "d86d7f0a2a07757c38db1697f0826289a0defc62f96f2961d8136c5f7bd05245": {
     "confidence": 0.6,
