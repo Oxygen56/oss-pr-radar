@@ -11067,6 +11067,41 @@
     ],
     "why": "The issue is a feature request for pinning a session/agent model, with a workaround and a bot restatement confirming the plugin hook gap. However, no reproduction evidence, no failing test, and no concrete root-cause code anchor beyond a plugin file the reporter wrote themselves. The candidate's own actionability evidence shows public_repro_signals=0, root_cause_signal=false, probe_ready=false, and pre-review failed on reproduction_or_validation_missing. The requested change is a design-level feature (new permission action or agent option) with no maintainer design confirmation, so the concrete implementation surface is undetermined."
   },
+  "10de7c718fdd86cb58dbcd4bfd1472bfbbedc5bdaf27751abeb920d5b4b8caef": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims repeated observed corruption but states no model interaction tests or logs have been collected",
+      "Issue lists a model identifier as 'expected' while also saying the actual configured identifier is unverified"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "None identifiable until it is determined whether OpenCode passes a wrong path or the model merely misspells it in its own text"
+    ],
+    "risks": [
+      "Likely model-side behavior rather than an OpenCode bug, making any code change inappropriate",
+      "Acting on an unverified draft risks a speculative, non-reproducible fix",
+      "Possible overlap with #57414, #17828, or #59387"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture a session export (opencode export <sessionID>) showing tool calls and tool results to see whether the correct path is supplied by OpenCode",
+      "Record exact provider/model ID and opencode --version",
+      "Reproduce with a minimal prompt in a known working directory and record the raw model output"
+    ],
+    "unknowns": [
+      "Whether the wrong path appears in OpenCode tool calls/results or only in model-generated text",
+      "The exact provider/model identifier actually serving the session",
+      "A concrete reproduction with real output and correction-retention result"
+    ],
+    "why": "The issue is an unfinished AI-generated draft with no controlled tests, no logs, no session export, and an unverified model/provider identifier. The maintainer bot explicitly asks for the prompt, working directory, real output snippet, exact model ID, and whether the wrong path originates from OpenCode or the model itself. Without that, it is unknown whether any code change in this repository is warranted at all."
+  },
   "10e6762a91c3e8b6208edb4e35c473088390d1a278068b33c0013ad371ad30b1": {
     "confidence": 0.85,
     "contradictions": [],
@@ -30182,6 +30217,42 @@
       "Whether original CI run causality is the same as the reproduced plugin-lookup stall"
     ],
     "why": "Triage and a maintainer comment establish a concrete root cause: useCreateConversation awaits an optional installed-plugin lookup after launchConversation returns and before returning the conversation id, so HomeChatLauncher's navigate is gated on that lookup. A deterministic reproduction (35s delay on GET /api/plugins/installed) reproduces the symptom, and acceptance criteria define a clear validation path including unit coverage and full-order e2e."
+  },
+  "2b978dffbd67cbe29f30815ff03b585f7cb4bae2322ec2bb47153338dd159422": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Open PR #44893 is marked technical_complete with tests and successful checks but root_cause_coverage=false, while the issue itself supplies clear root-cause evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "core/rag/extractor/notion_extractor.py: check HTTP status in _get_notion_database_data before parsing JSON and raise on non-success",
+      "Ensure later-page failures do not return partial documents as successful extraction",
+      "Preserve HTTP-200 empty database returning [] and existing pagination/cursor behavior"
+    ],
+    "risks": [
+      "Overlapping open PR #44893 may already cover the same fix; compare before implementing",
+      "Raising on HTTP errors changes extractor error semantics; ensure callers handle exceptions rather than silently degrading",
+      "Must not alter cursor/retry policy or introduce new dependencies"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Offline regression: MockTransport returning 503 on first page must raise, not return []",
+      "Offline regression: 401 and 429 first-page responses must raise",
+      "Offline regression: valid first page with has_more=true followed by 503 on second page must raise instead of returning partial Document",
+      "Control: HTTP-200 empty database still returns []",
+      "Control: successful multi-page pagination preserves output and cursor requests"
+    ],
+    "unknowns": [
+      "Whether PR #44893 already implements the status check and regression tests described in the issue"
+    ],
+    "why": "Issue provides an executed offline reproduction using the production NotionExtractor with httpx.MockTransport, showing 401/429/503 and later-page 503 silently return empty or partial results because res.json() is parsed without checking HTTP status. Expected behavior and a concrete validation path (failed first/later pages plus successful empty/multi-page controls) are specified. Open PR #44893 is directly related but lacks root-cause coverage evidence, leaving room for a focused status-check fix with regression tests."
   },
   "2b9b6f0638984c3e7112427ba619d77bdc81b6623ddba576605eaf1c8252beb6": {
     "confidence": 0.85,
@@ -104718,6 +104789,45 @@
       "Whether a maintainer has a preferred fix approach is unknown."
     ],
     "why": "Issue provides a clear, reproducible bug with multiple configurations isolating the failure to the shared audio routing infrastructure. Maintainer has confirmed the symptom (RoomIO stops receiving audio) and requested a minimal reproducer, which the reporter has provided. Root cause is localized to audio frame delivery in the session, with concrete code paths identified."
+  },
+  "93392b445ec281c0774fa476237fc6b952df49efe7b64135749f37a465f2e427": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "agent-server startup tolerance for missing docker binary (registry cleanup / execute_command)",
+      "server_info Docker availability reporting with reason and short-cache re-check",
+      "specific failure reason instead of generic 502 in docker_runtime/routers.py",
+      "Canvas runtime menu and Settings -> Runtime UI consuming availability status",
+      "launcher default runtime selection and bind behavior",
+      "README and --help documentation"
+    ],
+    "risks": [
+      "Cross-repo change spanning OpenHands and software-agent-sdk; server_info contract shape is SDK's decision",
+      "Bind behavior change on macOS/Windows untested on Linux/Windows",
+      "Raising compatibility.minimumAgentServer depends on SDK contract shipping"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce missing-docker startup crash: run agent-server with docker absent from PATH, assert server stays up",
+      "Reproduce daemon-unreachable case with DOCKER_HOST at dead socket, assert specific reason not generic 502",
+      "Unit test build_server_info availability field and cache re-check",
+      "Frontend test: Docker shown with notice and Send disabled when unavailable",
+      "Regression: Docker running path still creates conversations"
+    ],
+    "unknowns": [
+      "Exact server_info field shape is deferred to SDK maintainers",
+      "Linux/Windows bind behavior untested"
+    ],
+    "why": "Issue provides concrete code anchors and a verified root cause chain: missing docker binary crashes server via cleanup_stale_containers -> execute_command -> Popen FileNotFoundError inside app lifespan; Docker availability gated on OH_CONVERSATION_RUNTIME_SELECTABLE; generic 502 on daemon unreachable. Triage confirms against main in both repos. Acceptance criteria are concrete and testable."
   },
   "9341ce9dac9bf3ea82028a51f24e42304797c332f0a257e79d2f107efda441ed": {
     "confidence": 0.85,
