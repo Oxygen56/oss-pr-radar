@@ -69114,6 +69114,40 @@
     ],
     "why": "The issue provides a detailed root cause analysis with code anchors and a concrete reproduction path for the OAuth2 client_credentials bug. Although recent comments indicate the hydration path may already be fixed on the default branch, the issue also identifies additional bugs (env var resolution, scope over-request) that remain actionable. The candidate is technically valuable and actionable."
   },
+  "6289fec6b74edc36b400c2b7daa8b2e6123cbca92d7437a0412b6d33a44a29c8": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Dosu bot could not locate api/extend/endpoint/agent/workspaces_controller.py in upstream checkout, while the issue cites it as the buggy file"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/extend/endpoint/agent/workspaces_controller.py: pass args.model_type.value instead of args.model_type.name.lower() to get_provider_model_available_credentials",
+      "Add regression test covering a model type whose enum name differs from value (e.g. TEXT_EMBEDDING)"
+    ],
+    "risks": [
+      "Open PR #44053 touches api/core/provider_manager.py but is a pyrefly diagnostics fix, not this credential lookup; overlap is semantic only and should be compared before submitting",
+      "Extension path api/extend/endpoint/agent/workspaces_controller.py was not located by the bot in upstream checkout, so confirm the file exists at the target commit",
+      "Avoid broadening API behavior beyond the enum-value serialization fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: seed ProviderModelCredential with model_type='text-embedding', call the agent workspace credential endpoint with model_type=text-embedding, assert available_credentials is non-empty",
+      "Regression: assert LLM path still returns credentials after the change",
+      "Run targeted API tests for the workspaces controller and provider_manager"
+    ],
+    "unknowns": [
+      "Whether the agent workspace extension controller exists in the main repo at the base SHA or lives in a separate extension"
+    ],
+    "why": "Issue pinpoints a concrete root cause: agent workspace credential lookup passes args.model_type.name.lower() (e.g. 'text_embedding') while credentials are persisted with ModelType.value ('text-embedding'), so the equality query returns empty for all types except LLM. Expected/actual behavior and the exact fix (use .value) are stated, and the console counterpart passing model_type directly corroborates the diagnosis."
+  },
   "628abd1f12241d27a0a83665090615e77e4458c0b74da6275122e83d34152b5d": {
     "confidence": 0.8,
     "contradictions": [],
@@ -157594,6 +157628,43 @@
       "Whether existing storage adapters can support CAS without breaking changes"
     ],
     "why": "The issue is a well-documented concurrency bug with a public minimal reproduction and real production impact. The root cause is clearly identified: lack of atomic claim/CAS in the resume path. However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has not yet confirmed the preferred design (in-process vs storage-backed). The existing PR #20512 is closed and incomplete for multi-instance scenarios. Thus, maintainer guidance is needed before implementation."
+  },
+  "dbabe092ce4f343a607970e9a7e8d7d6ee5981064ee7b9e1f8b9f7ee745bf3bb": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter claims regression is upstream-only change but admits no reproduction on official image",
+      "Pre-review gate reports duplicate_changed while duplicate assessment says status none"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/integrations/langfuse/langfuse_otel.py",
+      "litellm/types/integrations/langfuse_otel.py",
+      "Prometheus request-counter accounting path"
+    ],
+    "risks": [
+      "Reporter's patched build may not reflect upstream behavior",
+      "Root cause unconfirmed; fix could target a symptom",
+      "Pre-review flagged base_sha_changed and duplicate_changed, indicating stale/duplicate context"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on official v1.106.4 image with langfuse_otel callback and streaming traffic; measure RSS/CPU and OTel attribute warnings",
+      "Bisect commits between v1.105.1 and v1.106.4 to isolate the regression",
+      "Add a regression test asserting per-request counter increments once and OTel attribute dict does not overflow"
+    ],
+    "unknowns": [
+      "Whether the regression reproduces on the official v1.106.4 image",
+      "Which specific commit between v1.105.1 and v1.106.4 introduces the leak",
+      "Whether OTel attribute overflow is the cause or a side effect"
+    ],
+    "why": "Issue reports a plausible memory/liveness regression between v1.105.1 and v1.106.4, but the reporter explicitly states they have not reproduced it on the official image and run a patched build. No public minimal reproduction exists (public_repro_signals=0, reproduction_evidence empty), and the root cause is only hypothesized (inflated request counter, OTel attribute overflow) without a confirmed code path. The candidate's own code anchors are speculative and the pre-review gate flagged base_sha_changed and duplicate_changed."
   },
   "dbb0756765d6eae47d66eb18a6c3b0cc08e4ba07adaf4930ba19522eaa5c2d35": {
     "confidence": 0.55,
