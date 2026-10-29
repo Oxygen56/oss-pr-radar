@@ -9053,6 +9053,42 @@
     ],
     "why": "Issue is a clear, well-reproduced bug with an explicit root cause (`score or 1.0` treating 0.0 as falsy) and a concrete fix, but two PRs already cover it: #23430 is open and technically complete with tests, and #23454 (closed) also addressed it. The candidate's own open_pr_assessment marks this as weak_pr_competition_possible with no material competition gaps, so the opportunity is already covered and low-value to duplicate."
   },
+  "0dc844c0c29899c1d30ab4f38477f734da77572ad658a351ae4d1250479adf61": {
+    "confidence": 0.4,
+    "contradictions": [
+      "Issue suggests a pricing/Object referrer but codePathsPlan targets unrelated files with no clear retaining path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Identify the long-lived cache/map/array retaining serialized globalState copies",
+      "Bound or release serialized state after save/serialize completes",
+      "Investigate why in-memory serialization is 11.6MB vs 2.5KB on disk"
+    ],
+    "risks": [
+      "Root cause not localized; fix could target wrong retaining structure",
+      "Heap snapshot contains plaintext API key, complicating safe reproduction artifacts",
+      "Large refactor of state serialization could change persistence behavior"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce heap growth with a custom openAiBaseUrl provider and confirm retained duplicate serialized-state strings",
+      "Add a regression test asserting serialized state is not retained after save completes",
+      "Verify heap stays bounded over extended uptime"
+    ],
+    "unknowns": [
+      "Which concrete code path retains the serialized globalState copies",
+      "Why in-memory serialization is ~11.6MB while on-disk state is 2.5KB",
+      "Whether the leak is in cline-core state persistence or a provider/pricing cache"
+    ],
+    "why": "The issue provides a strong symptom (723 retained ~11.6MB serialized globalState strings, exit 134) but no confirmed root cause: the suggested investigation is speculative ('find where JSON.stringify(globalState) ... results are stored'), and the code anchors are generic tokens (node.exe, JSON.stringify, Object, pricing) rather than a concrete retaining code path. The candidate's own actionability evidence records root_cause_signal=false, and the codePathsPlan lists unrelated files (array.ts, json reporters, node.tsx) that do not obviously contain the leak."
+  },
   "0de81c54f2abae5e8520147aefe55c211eaf2e4c30c5056f9f6341e120852130": {
     "confidence": 0.7,
     "contradictions": [
@@ -128571,6 +128607,40 @@
     ],
     "why": "The issue is a proxy health-check aggregation bug (misattribution of results keyed by litellm_params.model instead of model_id). Although the candidate is labeled track=llm_algorithm, the work is ordinary proxy/API plumbing in litellm/proxy/health_endpoints/_health_endpoints.py, not a training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The algorithm_evidence 'evaluation_method' match is a keyword artifact from 'exact match'/'evaluation' wording, not a real algorithmic mechanism. Additionally, a contributor has already announced a fix branch and PR link in the issue comments, indicating the opportunity is being covered."
   },
+  "b4c2b7a311bd6ec6081d59d7465678b836ec9982d23158afd78d5a0792f60322": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Open PR #48837 is marked technical_complete=true but root_cause_coverage=false, while the issue itself supplies a clear root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Exception mapping/classifier for OpenAI-compatible provider errors to recognize the SGLang 'Requested token count exceeds the model's maximum context length of ... tokens' wording and raise ContextWindowExceededError while preserving HTTP 400 and provider message",
+      "Regression test covering completion and acompletion, streaming and non-streaming, with the injected 400 body"
+    ],
+    "risks": [
+      "Overly broad substring matching could misclassify other BadRequestErrors as context overflow",
+      "Duplicate/overlapping work with open PR #48837",
+      "Behavior change in public exception contract for OpenAI-compatible providers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Inject the reported HTTP 400 JSON body through the OpenAI-compatible mapping path and assert ContextWindowExceededError is raised with status 400 and the original message retained",
+      "Repeat for acompletion and with streaming enabled/disabled",
+      "Run targeted exception-mapping unit tests and confirm existing context-window classification cases still pass"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the existing PR #48837 over a new implementation",
+      "Exact classifier location and whether the fix belongs in shared mapping vs provider-specific code"
+    ],
+    "why": "Issue gives a concrete HTTP 400 body, the exact SGLang wording, the missed classifier phrase, and the expected exception type, with a clear code anchor in exception mapping. This is a narrow, testable classification fix with a reference-vs-implementation test path (inject the 400 body, assert ContextWindowExceededError with HTTP 400 and message preserved). Open PR #48837 covers the same area but is unmerged and lacks root-cause coverage evidence, so it does not close the opportunity."
+  },
   "b4c865ee4f28e46fa5eb1375ba1416e0b94e298336cb0f94e5b180866b839cf9": {
     "confidence": 0.7,
     "contradictions": [
@@ -131581,6 +131651,42 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue is a well-reproduced bug with clear root cause and suggested fix, but PR #7656 overlaps in code paths and semantics, requiring manual comparison to avoid duplicate work. Maintainer has not approved or confirmed design, and the issue is under active investigation by a contributor."
+  },
+  "b8d8fdd6a9b24308fb6e6376f50a7f86f5a16090406f7811027e910740776e44": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Triage comment claims no SIGHUP handler in headless path while noting an interactive-only handler exists; PR #15823 targets the same SIGHUP abort behavior but does not reference the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "coreToolScheduler: persist each tool result on completion rather than at batch end",
+      "turn-interruption/session-recovery: distinguish completed vs unknown-outcome dangling calls and reword placeholder",
+      "nonInteractiveCli: handle SIGHUP like SIGTERM to abort in-flight shell tools"
+    ],
+    "risks": [
+      "Open PR #15823 may already cover the SIGHUP portion, causing duplicate work",
+      "Changing placeholder wording affects model retry behavior under --yolo",
+      "Batch-end recording change could alter transcript ordering semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce case 2: SIGHUP headless run, verify ledger side effect and resumed transcript wording",
+      "Reproduce case 1: parallel shell calls with pty close, verify completed call's real result is recorded",
+      "Regression test asserting unknown-outcome wording replaces 'Treat as failure and retry' for interrupted calls"
+    ],
+    "unknowns": [
+      "Whether PR #15823 fully or partially resolves the SIGHUP root cause",
+      "Full text of the truncated triage comment's fix direction",
+      "Whether maintainers have designated an owner or preferred fix approach"
+    ],
+    "why": "Issue provides a detailed root-cause chain and reproduction, but the supplied evidence is truncated mid-comment and an open PR (#15823) semantically overlaps the SIGHUP path without referencing the issue; duplicate/coverage status is unresolved, which materially determines whether new code work is actionable."
   },
   "b8db458e71146977204aec401aea8df6216a54e7f1902b74743a36ea2fe3a241": {
     "confidence": 0.82,
@@ -171760,6 +171866,36 @@
       "Whether existing PRs fully fix the issue"
     ],
     "why": "Issue reports tool syntax breakage with local Ollama/Qwen after 4.1.x, but root cause is unclear and may be configuration or provider-specific. Existing PRs overlap semantically but none directly fix the reported regression. Gate requires human review."
+  },
+  "ee19ea7d3358de0d40c84a2614178803909e7601e2080508033168033a715cbf": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate open_pr_assessment reports no related open PR, but the bot comment cites open PR #59864 for duplicate #59861"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "TUI footer cost display fallback (already covered by #59864)"
+    ],
+    "risks": [
+      "Duplicate work overlapping open PR #59864",
+      "Behavior is intended per #58562, so a fix may be rejected"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Not applicable: covered by existing PR #59864 for #59861"
+    ],
+    "unknowns": [
+      "Whether #59864 has merged or been closed since the comment"
+    ],
+    "why": "The issue describes a TUI footer display regression, not an algorithm or model-mechanism contribution. The supplied bot comment identifies it as a duplicate of #59861, with an open PR #59864 already implementing the requested opt-in cost-estimate fallback, and explains the $0 is intended behavior since #58562. This is covered and low-value for the agent_ai_infra track."
   },
   "ee22ae01e1b1cb6040e4702281ab4efcaa75d74fe4a28334e6f4d790a7d371da": {
     "confidence": 0.82,
