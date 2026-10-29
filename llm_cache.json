@@ -12864,6 +12864,42 @@
     ],
     "why": "Issue describes a concrete quantization-dispatch failure (INCConfig rejected by Qwen4ExpPLEEmbeddingMethod.from_quant_config) with traceback and a tested workaround, but the supplied evidence contains a materially blocking unknown: open PR #58977 ('Support BF16 INC PLE embeddings in Qwen4Exp') overlaps the exact code paths (qwen4_exp/common/ngram_embedding.py, qwen4_exp/nvidia/ngram_embedding.py) and may already cover the root cause. Duplicate status is 'semantic_overlap_requires_review' and root_cause_coverage is false, so actionability cannot be confirmed without comparing the PR's implementation boundary."
   },
+  "13b1364b512c455d0e639c89ec3ebc9db04f44710f5271011b84b10f384f1e5a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR #45038 is marked technical_complete with tests and CI but root_cause_coverage=false, while the issue itself states a clear root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/app_generate_service.py: remove duplicate rate_limit_context in Workflow and Advanced Chat streaming branches",
+      "api/core/app/features/rate_limiting/rate_limit.py: remove now-unused context helper",
+      "api/libs/rate_limit.py: preserve outer guard and RateLimitGenerator admission/cleanup lifecycle"
+    ],
+    "risks": [
+      "Open PR #45038 already targets the same issue; must compare to avoid duplicate implementation",
+      "Behavior change to streaming admission could affect other streaming app types if context removal is too broad",
+      "Maintainer design preference on helper removal is unconfirmed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing regression test: max concurrency=1, single streaming workflow request must be accepted",
+      "Test that a second concurrent request is rejected while first stream is active",
+      "Test that a new request is accepted after the stream finishes or closes",
+      "Run targeted rate-limiting and app_generate_service unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether PR #45038 already fully resolves the duplicate-context root cause",
+      "Whether maintainers prefer removing the context helper versus keeping it for other callers"
+    ],
+    "why": "Issue provides ordered reproduction, expected/actual behavior, and a concrete root cause: duplicate rate_limit_context calls in streaming branches double-count the same request ID against the concurrency limit, with the inner context also releasing the slot early. Code anchors (AppGenerateService._run_with_guardrails, RateLimit.enter, rate_limit_context, RateLimitGenerator) support a targeted fix and regression test."
+  },
   "13b5c6cd88e33f6324c3e010d266c0dc458805cc7230781d035f9a67b12aebc8": {
     "confidence": 0.85,
     "contradictions": [
@@ -43654,6 +43690,40 @@
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, indicating a generation-level bug in v0.5.17 for Qwen3.5-arch models. Root cause is not yet identified, but the evidence is sufficient to start a bisect and targeted fix. No duplicate or competing PR covers this issue."
   },
+  "402cfa43dc6109ce1a2804adbfa55620c4ec6d9d775630ff39158f3ea56492c9": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: request construction to select Responses API or reasoning_effort=none when tools are enabled",
+      "Response parsing/streaming and tool-call continuation for Responses API path",
+      "Pre-execution validation with actionable error for unsupported model/endpoint/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API adaptation touches streaming and tool-call continuation, widening blast radius",
+      "Silently disabling user-requested reasoning would be a behavior regression",
+      "Exact effective reasoning_effort not captured, so the failing configuration may need confirmation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: gpt-6-luna with tools and reasoning enabled routed through Responses API succeeds",
+      "Regression test: gpt-6-luna with tools and explicit reasoning_effort=none via Chat Completions succeeds",
+      "Validation test: unsupported combination yields clear pre-execution error rather than raw HTTP 400"
+    ],
+    "unknowns": [
+      "Exact effective reasoning_effort value used in the failing run",
+      "Whether reasoning_effort=none actually succeeds in this deployment"
+    ],
+    "why": "Issue provides a concrete HTTP 400 reproduction with expected/actual pair and names the Go adapter (internal/entity/models/openai.go) that builds Chat Completions requests with reasoning_effort plus function tools. Root cause is well-localized to endpoint/reasoning compatibility, though the exact effective reasoning_effort value was not captured and the 'none' workaround is unconfirmed."
+  },
   "40438de7a7113a51e9380be7edf0b058e057f65b9b2932fe917d7deaf511e6d9": {
     "confidence": 0.55,
     "contradictions": [
@@ -43887,6 +43957,39 @@
       "Exact code path where compaction decision is made and whether agent teams bypass prepareTurn; maintainer design preferences."
     ],
     "why": "Issue provides detailed reproduction steps, environment specifics, and evidence that auto-compaction never triggers despite overflow warnings, indicating a clear bug in the compaction trigger logic for native Ollama. Root cause is likely a mismatch between the estimator used for overflow diagnostics and the one used for compaction decisions, or a bypass due to agent teams. Actionable with a concrete test path."
+  },
+  "40a4c872caeac2f65c90603aa75303665d96187770df4e4c3bf918b5425a7d08": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/ripgrep/binary.ts: stop memoizing failures (invalidate cached resolver on failure or re-check disk path per call)",
+      "packages/core/src/ripgrep/binary.ts: add fetch timeout and surface download errors at ERROR level",
+      "packages/core/src/ripgrep.ts: fix module-local Error shadowing so the underlying cause reaches the tool error/log"
+    ],
+    "risks": [
+      "Changing caching semantics may increase repeated disk checks or duplicate downloads under concurrency",
+      "Proxy/WinINET honoring is untested on Windows and may be out of scope for the minimal fix",
+      "Closed PR #51192 overlaps binary.ts but is not merged, so no coverage conflict"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: resolver with failing download, then place valid rg in cache dir, assert second call succeeds without restart",
+      "Test that an interrupted in-flight download does not poison later calls (no 'All fibers interrupted without error')",
+      "Assert mapped tool error includes the underlying download cause rather than only 'ripgrep execution failed'"
+    ],
+    "unknowns": [
+      "Whether maintainers want proxy support in scope or only the cache-invalidation fix"
+    ],
+    "why": "Issue plus two independent reproductions pin the root cause to Effect.cached memoizing the failed/interrupted ripgrep resolver in packages/core/src/ripgrep/binary.ts, with a secondary cause in ripgrep.ts:41 shadowing global Error so the real cause is swallowed. A control run without Effect.cached recovers on the next call, and a Linux repro without Windows/proxy confirms the failure is generic. Concrete code anchors and a validation path exist."
   },
   "40ad962269698172e44078a70005acb7baa10cfa208866a52ca8b3254d9e9233": {
     "confidence": 0.7,
