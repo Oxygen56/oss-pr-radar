@@ -34290,6 +34290,38 @@
     ],
     "why": "The issue is a documentation/design question about whether same-origin redirect enforcement has an escape hatch for reverse-proxy deployments; it supplies no reproduction, no failing behavior trace, and no code anchor beyond a generic `MCPError` mention. The pre-task evidence itself flags no_code_surface and reproduction_or_validation_missing, and the only related PR (#2729) is keyword-overlap-only with no code-path or mechanism overlap, so duplicate/coverage status is unresolved rather than confirmed clear."
   },
+  "32099c6e7145f704873693a1cb9bee86cdee86590725d49b8cbb1ac83be37a75": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue labels include factory/agent-path labels while the issue itself and bot triage classify it as Documentation"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "content/cookbook/05-node/45-stream-object-record-token-usage.mdx: add await result.consumeStream() after constructing result",
+      "Add explanatory sentence that onEnd requires stream consumption"
+    ],
+    "risks": [
+      "Open PR #24198 already implements the same docs fix, so a competing change would be redundant",
+      "Docs-only change has low technical value for an algorithm/infra radar",
+      "PR #24198 reportedly has an unsigned commit, which may block merge independently of content"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the issue's MockLanguageModelV4 reproduction: assert callbacks==0 before consumption and callbacks==1 after consumeStream",
+      "Extract and execute the first MDX TypeScript block with the mock provider and confirm one usage callback with 10 input / 20 output / 30 total tokens"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept PR #24198 as the canonical fix"
+    ],
+    "why": "The issue is a documentation-only defect: the first cookbook MDX example constructs a streamText result but never consumes it, so onEnd never fires. The reporter supplies a deterministic mock-based reproduction and a one-line fix (await result.consumeStream()). This is docs/example plumbing, not an algorithm, training, quantization, kernel, or evaluation contribution, and open PR #24198 already covers the same fix with direct code overlap."
+  },
   "32150a03a57d47438635e97b5147769aabe46dc5d47fe6392eea7a3ac2dab65e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -96328,6 +96360,34 @@
     ],
     "wait_reason": null,
     "why": "Issue reports a concrete user-visible bug: reasoning_content is null when using the sgl-model-gateway with --reasoning-parser qwen3, while the worker-side parser works. Reproduction steps and environment are provided, making it actionable. No competing PR or issue found. The root cause is likely in the gateway's parser implementation or integration, but not yet identified."
+  },
+  "86ed775e722c0fc0bfdca13ce235f6ec792da1e21201b670ffadd05f31258120": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "pyproject.toml dependency pin for outlines/outlines_core",
+      "documentation of Python 3.13 install requirements"
+    ],
+    "risks": [
+      "Bumping outlines may change structured-output behavior in sglang",
+      "Upstream outlines_core may not offer a compatible cp313 wheel, making the fix non-trivial"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Create a Python 3.13 venv without Rust and run pip install sglang==0.5.22 to confirm failure",
+      "After pin change, verify pip install resolves a cp313 wheel or abi3 build without Rust"
+    ],
+    "unknowns": [
+      "Whether a newer outlines release provides cp313 wheels compatible with sglang's usage"
+    ],
+    "why": "The issue is a packaging/dependency-pin problem: outlines==0.1.11 pins outlines_core==0.1.26, which lacks a cp313 wheel and requires a Rust toolchain. This is installation/packaging plumbing, not an algorithm, training objective, kernel, quantization, or evaluation contribution. Track is agent_ai_infra but the work is a dependency-pin/docs fix with no algorithmic surface."
   },
   "86fe5ef1a80df427ff632299ac8ee33ce3f9aaada0bc0df0b24114ee79d5cde0": {
     "confidence": 0.9,
@@ -160540,6 +160600,39 @@
       "Whether the existing open PRs (e.g., #50021) already fix this exact issue, requiring comparison before implementation."
     ],
     "why": "The issue provides a detailed, reproducible bug in the MooncakeStoreConnector save path where NULL_BLOCK_ID recurrent states are published as valid external prefix-cache keys, causing silent output corruption. It includes root-cause evidence, code anchors, and a clear fix direction. The track is llm_algorithm because it involves model architecture (recurrent states) and evaluation methodology (deterministic output comparison)."
+  },
+  "dfd34719720a690fe6106eba3e57e8f7869aeca1c78d8ec45054409f805cc8ba": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue cites api/extend/endpoint/agent/workspaces_controller.py and model_type.name.lower(), but commenter states api/extend/ does not exist and no model_type.name usage exists on main",
+      "Issue claims lookup fails for non-LLM types, but commenter says main passes the enum value and rows match"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Clarify the actual file/commit where the bug exists, or confirm the bug is already absent on main",
+      "If reproducible, change the model_type serialization to use the enum value in the correct controller"
+    ],
+    "risks": [
+      "Fixing a non-existent code path or wrong branch",
+      "Overlapping open PRs touching api/core/provider_manager.py may already alter this behavior"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the credential lookup on the reported commit/image and confirm empty available_credentials",
+      "Add a regression test asserting credentials stored with ModelType.value are returned for text-embedding"
+    ],
+    "unknowns": [
+      "Exact commit/branch/image where the bug reproduces",
+      "Whether the described extension path exists in any maintained tree"
+    ],
+    "why": "The issue's root cause points to api/extend/endpoint/agent/workspaces_controller.py and a model_type.name.lower() call, but a commenter reports that neither the api/extend/ directory nor any model_type.name usage exists on current main; the endpoint on main passes the enum through unchanged, so the described name/value mismatch cannot be reproduced. The claimed code path is unverifiable, making the fix non-actionable as stated."
   },
   "dfd3cb1d1ee639f9f03b6dccae66ada238707644371821e20975acb9f104cee7": {
     "confidence": 0.7,
