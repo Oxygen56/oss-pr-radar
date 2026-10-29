@@ -76247,6 +76247,36 @@
     ],
     "why": "Issue documents a real dead-config bug (--mm-prompt-template parsed but never read) with grep evidence and a shipped recipe depending on it, but the reporter explicitly states the intended direction is undecided: either re-wire the template into the processor or remove the flag plus recipe/docs. The fix shape is a maintainer product decision, and the issue itself asks which path to take before a patch is sent."
   },
+  "6bbdc4d909a133c0ae110c87f1638096360fcd64c7a1bfa08a673b6938cf55dd": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate score 9 and category WAIT_MAINTAINER conflict with pre-review rejection reasons no_code_surface and reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add skill documentation files for Rust build-and-test workflow",
+      "Add skill documentation for hang/crash debugging"
+    ],
+    "risks": [
+      "Work is documentation/skill authoring rather than a code fix, so value is low for a code-contribution radar",
+      "No concrete build/test commands or debugging procedures are specified, making correctness hard to verify"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Not applicable: no code behavior to validate; only doc/skill content could be reviewed for accuracy"
+    ],
+    "unknowns": [
+      "Whether maintainers want these skills and in what format",
+      "Whether existing docs already cover the Rust build/test loop or hang debugging"
+    ],
+    "why": "The issue requests new agent skills (documentation/guidance artifacts) for Rust build-and-test and hang/crash debugging; it provides no reproduction, no code anchors, and no concrete algorithm or code defect. Pre-review also flagged no_code_surface and reproduction_or_validation_missing, so actionability as a code contribution is not established."
+  },
   "6bbe2156f55dda7088b8137cd9948d13eead74965b9cc449c2e691d47009935d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -121722,6 +121752,43 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a clear root cause and a concrete fix location, but an open PR (#13179) by a collaborator overlaps the same code path and semantics, requiring manual comparison before new work starts."
+  },
+  "ab59b15ee586e33046783135ac1f04fa34c0662efa9ceaf64eac042e467dc21d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate marks probe_ready=true and reproduction signals present, but issue body states no minimal fixture or deterministic regression test has been produced",
+      "Candidate gate notes pre-review failure 'no_code_surface' while code_anchors only contain 'Method'/'Docker' UI text, not source locations"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Wiki pipeline revision-write path: detect user revisions created after job start and avoid unconditional overwrite",
+      "Conflict policy surface (preserve/merge, propose generated version, or block editing during generation)"
+    ],
+    "risks": [
+      "Root cause unknown; fix could target the wrong layer (pipeline vs revision store vs UI gating)",
+      "Product policy undecided (merge vs conflict vs edit lock), so implementation may be rejected on design grounds",
+      "Behavior may have changed since v0.8.3; fix could be unnecessary"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic fixture: start rebuild, save a user revision mid-run, assert the pipeline write does not drop the manual marker",
+      "Regression test asserting revision ordering and edit_source transitions (user v2 preserved past pipeline v3)",
+      "Reproduce on current main to confirm the bug still exists before fixing"
+    ],
+    "unknowns": [
+      "Which code path writes pipeline revisions and whether it checks for concurrent user edits",
+      "Whether the bug reproduces on current main (base e8e0d2e)",
+      "Maintainer-preferred conflict policy for manual edits during active generation"
+    ],
+    "why": "The issue documents a real user-visible overwrite with a clear timeline and revision evidence, but it explicitly states no minimal fixture or deterministic regression test exists and it was not reproduced on current main. The root cause is not identified: the report only notes a separate table-row guard exists, without locating the pipeline write path that clobbers user revisions. Actionability for a code fix is therefore materially uncertain."
   },
   "ab5baa1b05283a35cd18882f81b9461d6acf431310749b783453a383cf3e2c41": {
     "confidence": 0.55,
