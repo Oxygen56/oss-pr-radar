@@ -70131,6 +70131,42 @@
     ],
     "why": "Issue provides a concrete reproduction, root cause is clearly identified (model_name not refreshed from terminal event), and a fix approach is proposed with regression tests. The discussion refines the fix to handle continuation merging and usage cost, but the core contribution is actionable."
   },
+  "639304ada4df9ccff9e6289ea9fceffc198322c7ad366045c15da6e6adf73dd3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter states no stream/truncation/provider errors logged near failing turns, yet the bot describes expected visible truncation errors on 2.2.0",
+      "Reporter suspects proxy-closed SSE streams while also noting 7 background-service restarts that day, pointing to #51216"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until root cause is confirmed; candidate paths span provider stream handling, output-token continuation logic, and desktop background-service lifecycle"
+    ],
+    "risks": [
+      "Fixing the wrong layer (e.g. output-token continuation) if the actual cause is proxy-closed SSE streams",
+      "Overlapping with existing issues #56344, #51216, #40146, #59567",
+      "Behavior change to stream error surfacing could affect unrelated provider paths"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture provider-side stream events (or bypass the proxy for the LAN host) on the next occurrence to determine whether the stream ends cleanly, errors, or reports an output limit",
+      "Reproduce with a minimal large single write call and confirm whether a truncation/continuation error is surfaced",
+      "Correlate failing turns with background-service restart timestamps to rule out #51216"
+    ],
+    "unknowns": [
+      "Whether the provider stream ended cleanly, errored, or reported an output limit",
+      "Whether bypassing the proxy for the LAN host eliminates the failure",
+      "Whether the background-service restarts are causally related to the silent turn ends",
+      "Which code path (provider stream handling vs. continuation logic vs. service lifecycle) actually drops the turn"
+    ],
+    "why": "The issue describes silent turn truncation before a large write executes, but the supplied evidence does not establish a root cause. The reporter's own logs show no stream, truncation, or provider errors near the failing turns, and the leading hypothesis (system-wide HTTP_PROXY routing provider SSE traffic through 127.0.0.1:7890, with NO_PROXY not exempting the LAN host) is explicitly unconfirmed. The bot triage also lists several plausible alternative causes (#56344 ECONNRESET, #51216 service restarts, #40146 truncated turns recorded as completions), and the reporter observed 7 service restarts on the failing day. Without a confirmed cause, a concrete code fix cannot be scoped."
+  },
   "639cdbc14f715a29781109d714db1507156d8338ba0871a1acb3fb1613b1f441": {
     "confidence": 0.8,
     "contradictions": [],
@@ -101518,6 +101554,44 @@
     ],
     "why": "Issue describes two distinct bugs: (1) check_provider_endpoint not in LITELLM_SETTINGS_SAFE_DB_OVERRIDES so DB-stored litellm_settings overrides config.yaml, and (2) VertexAIModelInfo.get_models() is a NotImplementedError stub. The supplied open-PR assessment flags semantic overlap with PR #43043 (score 40) and two other PRs, but none directly reference the issue and none cover the root cause, so duplicate/merged-fix coverage is unresolved. The issue itself is a proxy/config plumbing bug, not an algorithm contribution, and the candidate track is agent_ai_infra, so no algorithm evidence is required. However, the unresolved duplicate overlap and the ambiguity of which of the two bugs is the intended fix make the actionable scope uncertain."
   },
+  "8d9adaf6a9070f52ed97b6f6578607b633a674615803e0233c1fc1eea1ab4b8d": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment marks PR #3090 technical_complete=true but root_cause_coverage=false and semantic_overlap=false, while its title directly addresses the same print(file=...) bug"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/smolagents/local_python_executor.py: print branch of evaluate_call must honor file=, sep, end, flush and reject unknown kwargs",
+      "Preserve sys.stdout/sys.stderr routing to _print_outputs",
+      "Add regression tests for StringIO, real file, stdout/stderr, and unknown-keyword error"
+    ],
+    "risks": [
+      "Behavior change for code relying on file= being ignored",
+      "Need to match CPython semantics for sep/end None and flush handling",
+      "Potential overlap with sep/end PRs #3044/#3065/#3083 on the same branch"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue snippet: print('captured', file=io.StringIO()) and assert buffer.getvalue() == 'captured\\n' and logs empty",
+      "Test real file: print('row', file=f) leaves /tmp/out.txt containing 'row' and logs empty",
+      "Test print('a','b',sep='-',file=b) yields 'a-b\\n' in buffer",
+      "Test sys.stdout/sys.stderr still land in _print_outputs",
+      "Test print('x', flushme=True) raises InterpreterError",
+      "Run targeted executor unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the issue author's patch or PR #3090's approach",
+      "Whether sep/end PRs will conflict with this change on the same branch"
+    ],
+    "why": "Issue gives a concrete minimal reproduction, expected-vs-actual output, and a precise root cause: the print branch in evaluate_call ignores keyword args (notably file=) and unconditionally appends to state['_print_outputs']. A ready patch and test plan are described. The open PR #3090 is directly related but is a weak competitor with no root-cause coverage evidence, so it does not block independent work."
+  },
   "8da50c7995fb2498a87b3a3c4a86cb5459eb79bf894ce836dd2d180a90a2165a": {
     "confidence": 0.8,
     "contradictions": [],
@@ -114121,6 +114195,38 @@
       "Whether the closed #24522 fix attempt left partial code that constrains the new fix shape"
     ],
     "why": "Issue provides a concrete, reproducible concurrency bug: overlapping POST /mcp requests cancel each other's in-flight upstream list_tools fetches via the shared StreamableHTTPSessionManager TaskGroup teardown. Traceback, ordered repro steps, and a clear expected behavior are supplied, and the candidate is a NEW_CLEAN_CANDIDATE with no open PR or duplicate coverage. This is agent/inference infrastructure plumbing, not an llm_algorithm track item, so the algorithm-specific bar does not apply."
+  },
+  "9f9b418ad4c1b846047fa01448ef2f273e7b5b0240417a4950b4f35118543163": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/gui-plugins/src/updater/whats-new.tsx: fall back to Desktop sections and avoid markSeen() when the feed is present but unparseable",
+      "changelog.json generator: parse v2 '### Highlights' plus product sections into highlights"
+    ],
+    "risks": [
+      "Fix spans two components (feed generator and desktop updater); a partial fix may still leave users without highlights",
+      "Changing markSeen() behavior could cause repeated dialog prompts if the feed stays unparseable",
+      "Related issues #59152, #57940, #54902 may overlap with the changelog rendering work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the changelog.json generator against the real v2.2.1 release body and assert highlights contains the four items",
+      "Feed the live changelog.json to showWhatsNew with previous=2.2.0, current=2.2.1 and assert the dialog opens and markSeen is not called prematurely",
+      "Regression test that a feed with empty highlights does not silently mark the version as seen"
+    ],
+    "unknowns": [
+      "Whether the changelog.json generator lives in this repository or a separate deploy pipeline",
+      "Whether maintainers prefer fixing the feed generator, the updater fallback, or both"
+    ],
+    "why": "The issue and bot reproduction establish a concrete root cause: the changelog.json generator only parses legacy <highlight> blocks and '## ' headings, so v2 '### Highlights' release notes yield empty highlights/sections, and showWhatsNew then calls markSeen() without showing the dialog. Code anchors and a two-step reproduction (generator on real v2.2.1 body; showWhatsNew with live feed) are supplied, giving a clear reference-vs-implementation validation path."
   },
   "9f9cc5517cf9c86ce9cd45093c2946cba3c0ae12262f014935276f8957ed1b7a": {
     "confidence": 0.85,
@@ -177230,6 +177336,45 @@
       "Resolution of the repository AI-disclosure policy conflict"
     ],
     "why": "The issue reports a real GLM-5.3-Flash degeneration symptom, but the reporter explicitly could not construct a synthetic reproduction and attributes the regression to an unresolved three-way delta (vLLM commit range, FlashInfer 0.6.17→0.6.18, transformers 5.15.1→5.16.1). A maintainer comment asserts it is a known tool-call/frontend issue, but no supplied evidence pins the root cause to a specific code path, and the candidate's own code anchors (collect_env.py, fused_moe/layer.py, glm45.rs) are inconsistent with the frontend/tool-parser hypothesis. The competing PR #56635 claims a parser fix but has root_cause_coverage=false and no confirmed validation, and the related-issue overlap (#56815, #56443, #56790) is based only on generic stack signatures (clang/gcc/nvcc/collect_env.py), which is not evidence of a true duplicate. The AI-disclosure policy conflict is also unresolved."
+  },
+  "f5db38d74d927b3efc541b70dc2294c143b35519e728e54da66d2bba7562fdd3": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment marks duplicate status as semantic_overlap_requires_review while no PR directly references the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/schedule_batch.py: prevent decode from overwriting/advancing the reusable prefill checkpoint in deterministic extra-buffer mode",
+      "Preserve private live decode state while keeping compatible prefill checkpoint reuse enabled",
+      "Add regression test asserting serial/concurrent native logprob equality with a real prefill cache hit"
+    ],
+    "risks": [
+      "Fix trades additional prefill work for determinism; no zero-overhead claim",
+      "Validated only on single-GPU SM120 BF16 TP=1 with graphs and speculative decoding disabled",
+      "PR #45545 and #46683 have semantic overlap and may cover part of the root cause; maintainers may prefer the #46683 prompt-only policy",
+      "Distinguishing genuine numerical incompatibility from acceptable floating-point variation requires fixed fixtures, seed, and tolerance"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run supplied reproducer baseline (serial vs concurrent, fresh engine, empty prefix cache) and confirm 117/119 unequal native scores",
+      "Apply candidate patch and confirm 0/120 unequal scores with a real 192-token prefill cache hit",
+      "Withdraw only the candidate and confirm regression returns",
+      "Run three-request regression confirming a compatible prefill-produced 256-token checkpoint remains reusable",
+      "Run optional --case P cold/warm prefill reuse check to confirm ordinary caching still works"
+    ],
+    "unknowns": [
+      "Whether PR #45545 or #46683 already resolves the decode-state substitution on current main",
+      "Behavior on TP>1, CUDA graphs, speculative decoding, and other SSM models is unqualified"
+    ],
+    "why": "Issue provides a concrete numerical-mechanism root cause: a decode-produced GDN/SSM recurrent state is stored in the prefix cache and later substituted for a prefill-produced state, changing native logprobs under deterministic inference. It includes exact token fixtures, native logprob values, a reproducible serial-vs-concurrent comparison, and a locally validated candidate patch in ScheduleBatch.prepare_for_decode with 117/119 -> 0/120 unequal-score evidence."
   },
   "f5f865e683b56e39b01086fcf2f4cc3f6254456ca732f57f723fc9a0a0fae0d3": {
     "confidence": 0.7,
