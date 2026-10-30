@@ -13392,6 +13392,36 @@
     ],
     "why": "Issue provides directly observed root cause (cmd.exe /C quote-stripping destroying the wrapped argv when a second quoted Program Files path is present), a controlled repro matrix across two kiro-cli versions, a concrete rewriter patch with 8.3 short-path conversion plus an argv guard, a migration/gate fix, and end-to-end live verification. Track is agent_ai_infra, so the algorithm-track restriction does not apply; the work is a concrete runtime/gateway defect with a clear validation path."
   },
+  "145d488ad20c9c91907db30f2371055d60f5f48da2dbe1cc8a31a07821c3e2a1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "web/src/pages/project/~/[[...path]].tsx: require hostnames to differ before crossRegionRedirect fires",
+      "Preserve existing sibling-region redirect behavior"
+    ],
+    "risks": [
+      "Over-broadening the hostname comparison could break legitimate cross-region redirects",
+      "Existing PR #19479 may be preferred by maintainers; coordinate to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: cookie origin https://langfuse.example.com, request http://langfuse.example.com/project/~/traces, assert no absolute HTTPS redirect",
+      "Add reverse-scheme test (http cookie on https request) asserting no protocol change",
+      "Run existing sibling-region redirect tests to confirm no regression"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the existing PR #19479 over a new test-backed fix"
+    ],
+    "why": "Issue provides a concrete reproduction (curl with crafted langfuse.project cookie), names the exact code anchor (web/src/pages/project/~/[[...path]].tsx crossRegionRedirect), and states the root cause: the same-hostname check does not require hostnames to differ, so a scheme mismatch is misclassified as a cross-region origin. A minimal fix (require different hostnames) plus a regression test is well-scoped. An open PR #19479 exists but lacks tests and root-cause coverage, leaving room for a test-backed fix."
+  },
   "146f070edcf2e949c2ac8255e8b48922d01659ba128792efcedfd9f47dde0310": {
     "confidence": 0.55,
     "contradictions": [
@@ -24903,6 +24933,40 @@
     ],
     "why": "Issue provides a detailed, code-anchored root cause: in hub mode, session runtime shutdown is only triggered by session.delete, failed session, non-interactive finalize, or hub stop; interactive turns end in completeInteractiveTurn and session.detach only removes the participant, so per-session stdio MCP servers leak until the hub daemon exits. Reproduction steps are concrete and provider-independent, and the fix path (stop/reap session runtime on clear/detach/idle) is actionable."
   },
+  "2511050158e75c5b05ef346c6d043959da034b14672786f0c5375a1f80340416": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/gui-plugins/src/updater/whats-new.tsx: avoid markSeen() when feed is present but highlights are unparseable, or fall back to Desktop sections",
+      "changelog.json generator: parse v2 '### Highlights' and product sections into highlights"
+    ],
+    "risks": [
+      "Fix spans two components (feed generator and desktop updater); a partial fix may leave the other path broken",
+      "Changing markSeen() semantics could cause repeated popups if the feed stays unparseable",
+      "Related issues #59152, #57940, #54902 touch the same changelog area and may overlap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the changelog.json generator against the real v2.2.1 release body and assert highlights contains the four items",
+      "Feed the live changelog.json to showWhatsNew with previous=2.2.0, current=2.2.1 and assert the dialog opens and seen is not prematurely recorded",
+      "Regression test that a feed with genuinely empty highlights still marks seen without opening the dialog"
+    ],
+    "unknowns": [
+      "Whether the changelog.json generator lives in this repository or a separate deploy pipeline",
+      "Maintainer preference between emitting highlights vs. falling back to sections"
+    ],
+    "why": "The issue and bot reproduction establish a concrete root cause: the changelog.json generator only parses legacy <highlight> blocks and '## ' headings, so v2 '### Highlights' release notes yield empty highlights; showWhatsNew then calls markSeen() and silently consumes the update. Code anchors and a two-step reproduction (generator on real v2.2.1 body, updater with live feed) are supplied, and no open PR or duplicate covers it."
+  },
   "251e3eed1aeadeb6a0b6f460e13f77600f44a015a32e5d74835883d21f55bce0": {
     "confidence": 0.55,
     "contradictions": [
@@ -27866,6 +27930,40 @@
       "Whether maintainers prefer splitting the helper versus a skip flag for SFT's pre-load Cut-CE path (implementation choice, not blocking)."
     ],
     "why": "Issue pins a concrete wiring defect: apply_v028_speed_memory is the sole reader of training.nvfp4/fp8_attention/kernel_auto_compose, is called by 11 trainers, and is absent from trainer/sft.py, so the flags are accepted and silently no-op on the default task. Code anchors, grep evidence, the stale test exemption at tests/test_trainer_coverage_v035.py:358-365, and a parse-level reproduction are supplied, giving a reference-vs-implementation validation path (patch apply_nvfp4/apply_fp8_attention to record calls, assert invocation on a tiny CPU model)."
+  },
+  "28ac1658fab873e1f86ce93ae981ddedc1e746bbe2233b1de197d842663eab53": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: select Responses API vs Chat Completions when tools and reasoning are both enabled",
+      "request construction and response/streaming parsing for Responses API tool-call continuation",
+      "pre-execution validation with actionable error for unsupported model/endpoint/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API adaptation touches streaming and tool-call continuation, widening blast radius beyond a one-line endpoint change",
+      "Behavior change in provider request routing may affect other OpenAI-compatible providers sharing the adapter",
+      "Successful execution with reasoning_effort none is unconfirmed in the reporter's deployment"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: gpt-6-luna with tools and reasoning enabled routes through Responses API and completes tool call",
+      "Regression test: gpt-6-luna with tools and explicit reasoning_effort none uses Chat Completions successfully",
+      "Unit test: unsupported combination yields clear validation error instead of raw HTTP 400 passthrough"
+    ],
+    "unknowns": [
+      "Exact effective reasoning_effort value was not captured, so the precise triggering configuration is inferred from the provider error",
+      "No maintainer design preference on Responses API adoption vs validation-only fix"
+    ],
+    "why": "Issue provides a concrete HTTP 400 with provider error text tying the failure to reasoning_effort combined with function tools on /v1/chat/completions, and names the Go adapter (internal/entity/models/openai.go) as the construction/parsing site. Reproduction steps and expected behavior are explicit, and a validation path (Responses API path plus explicit reasoning_effort none path) is described. Root cause is localized to request construction/endpoint selection rather than fully proven, but actionable."
   },
   "28b27837c598a1565e42f14280c1a6c85ed118791bb7c4db6deb17cdcab01271": {
     "confidence": 0.8,
@@ -114301,6 +114399,40 @@
       "Whether too-old CLI case is in or out of scope for this issue"
     ],
     "why": "Issue provides concrete code anchors showing launch path (launchConversation -> createConversation) never consults existing ACP readiness probes (useAcpAuthStatus, useAcpModelDiscovery), and only ACPAuthRequired gets a specific error header. A collaborator comment confirms the gap and narrows v1 scope to block on unauthenticated, warn on unknown, no probe for cloud/non-ACP. Concrete Vitest suites and validation path are named."
+  },
+  "9f5241deef90c0073512982a2d8e78235765e5df0498aca4b60731e363e6ecf6": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/ripgrep/binary.ts: stop memoizing resolver failures (invalidate cache on failure or re-check disk path per call)",
+      "packages/core/src/ripgrep/binary.ts: add fetch timeout and proxy handling for the download client",
+      "packages/core/src/ripgrep.ts: fix Error shadowing so the underlying cause is logged and surfaced in the tool error"
+    ],
+    "risks": [
+      "Removing Effect.cached may cause repeated download attempts on every call if not guarded",
+      "Proxy/OS-proxy support on Windows is hard to validate in CI and may be out of scope for a minimal fix",
+      "A closed prior PR (#51192) touched the same file; ensure the new change does not duplicate or conflict with its approach"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: simulate a failing download, then place a valid rg in the cache bin dir and assert the next resolver call succeeds without restart",
+      "Regression test: interrupt an in-flight download and assert subsequent calls retry rather than returning 'All fibers interrupted without error'",
+      "Assert the mapped tool error/log includes the underlying download cause instead of only 'ripgrep execution failed'"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer cache invalidation versus per-call disk re-check as the fix shape",
+      "Whether Windows system-proxy support is in scope or only env-var proxy plus timeout"
+    ],
+    "why": "Issue plus two independent reproductions pin the root cause to Effect.cached memoizing the failed ripgrep resolver in packages/core/src/ripgrep/binary.ts, with a secondary cause in ripgrep.ts where a module-local Error shadows the global Error so the real cause is swallowed. A control run without Effect.cached recovers on the next call, and a standalone repro exists, so the fix is concrete and testable."
   },
   "9f56014d00bc17e68f460b2d1b643185db72b637b6cff4202360ce6076790957": {
     "confidence": 0.85,
