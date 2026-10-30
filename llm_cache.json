@@ -64029,6 +64029,45 @@
     ],
     "why": "The issue reports a reproducible Ref2VA-specific snow/noise bug with detailed diagnostics and a minimal repro, but the root cause is not identified and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "5ab859b24d8629f0e2d0b39e84ec4c04fdb20766cbb5738cbc0fa0102e4187d8": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Yuque connector TOC traversal: skip or map non-DOC/group nodes instead of ingesting as documents",
+      "Download path: detect HTML shell content when markdown expected and mark item failed with clear reason",
+      "Markdown ingestion: defensively strip script/style/noscript/comments before chunking",
+      "Yuque export download: surface 401 as explicit authorization-expired error rather than generic failure"
+    ],
+    "risks": [
+      "Root cause is inferred; actual connector code path may differ from the described fallback",
+      "Behavior change to TOC traversal could drop legitimate nodes if node-type detection is wrong",
+      "HTML stripping in markdown path could alter legitimate embedded HTML content",
+      "Scope spans multiple components (connector, download, parser, error handling); may need splitting"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test: TOC with directory/group node produces no document or a folder mapping, not an indexed doc",
+      "Add regression test: HTML shell payload (starting with <!doctype html) is rejected/failed, not chunked",
+      "Add unit test: markdown parser strips script/style/noscript/comments",
+      "Add test: 401 from Yuque export URL yields explicit authorization-expired error and does not archive silently",
+      "Run targeted package unit tests and static checks for connector and docreader paths"
+    ],
+    "unknowns": [
+      "Whether the connector actually falls back to plain GET on empty export (root cause inferred, not confirmed in code)",
+      "Whether maintainers have a preferred design for TOC node handling (skip vs folder mapping)",
+      "Whether existing shell documents require a separate cleanup/migration path"
+    ],
+    "why": "Issue gives a concrete, reproducible user-visible defect: Yuque TOC directory nodes are ingested as documents, and SPA HTML shell is stored as .md, chunked, and indexed, polluting retrieval. Evidence includes expected/actual pairs, ordered steps, and code anchors (appData, file_url, isYuqueMobileApp, document:process). A second symptom (401 on export downloads) is on the same download path. No duplicate or open PR coverage found. Root cause is inferred rather than confirmed in code, but the reproduction and validation path are concrete enough for actionable code work."
+  },
   "5abf5544b263f836e09fc9a31e6d57ef047f8e875f704bbd5f300695bcb5c990": {
     "confidence": 0.7,
     "contradictions": [],
