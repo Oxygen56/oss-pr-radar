@@ -47218,6 +47218,42 @@
     ],
     "why": "Issue reports a user-visible bug with a clear repro, but root cause is ambiguous: the `[1m]` suffix may be invalid upstream or mishandled by LiteLLM. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer confirmation is needed before implementation."
   },
+  "44e59fc713723027299d1b21a8e80ef19662bb6ba8c3b747af2442c5bdd79f42": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/application/repository/retriever/*/repository.go: rewrite generatedQuestionExclusionClause to avoid Var=Var comparison (e.g. starts_with(source_id, chunk_id || '-')) or move exclusion outside BM25 scan",
+      "internal/types/generated_question_retrieval.go: align IsGeneratedQuestionSource semantics with prefix test",
+      "Add regression test covering keyword-only retrieval on KB with question generation disabled"
+    ],
+    "risks": [
+      "starts_with pushdown behavior may vary across ParadeDB versions (0.25.11 vs 0.26.4)",
+      "Changing exclusion clause could alter generated-question filtering semantics if prefix assumption is wrong",
+      "Multiple retriever backends (doris, milvus, neo4j, opensearch) may need consistent handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Standalone ParadeDB SQL repro: confirm failing shape (Var=Var filter + ORDER BY paradedb.score) errors and rewritten clause succeeds",
+      "Integration test: keyword-only search (disable_vector_match=true) on document KB with question_generation_config NULL returns BM25 hits",
+      "Regression: KB with question generation enabled still excludes generated-question rows correctly",
+      "Run targeted package unit tests and static checks for retriever repositories"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer starts_with rewrite vs subquery restructuring",
+      "Whether the same query shape affects non-Postgres retriever backends"
+    ],
+    "why": "Issue provides a concrete regression (v0.9.0 exclusion clause), a standalone ParadeDB SQL repro isolating the Var=Var filter + ORDER BY paradedb.score() shape, and a verified workaround (starts_with) anchored to internal/types/generated_question_retrieval.go and repository.go. Root cause and validation path are established; remaining design preference is normal review, not a blocker."
+  },
   "44fddbf94299575153bceda6e7d03713c5eb1ed2ebc0d055ca825d187599b5b7": {
     "confidence": 0.8,
     "contradictions": [
@@ -90212,6 +90248,38 @@
       "Whether any remaining unfixed code path is responsible after #38346"
     ],
     "why": "The issue's own reporter retracted the QSA kernel bounds root cause and now hypothesizes an overlap-scheduler race between host sequence_lengths snapshot and device row-range derivation; a second independent reporter shows the crash persists with --disable-overlap-schedule and attributes it to merged PR #38346 (compress gather clamp), which is already merged. Root cause is unresolved and duplicate/merged-fix coverage is contradictory, so code work is not yet clearly actionable."
+  },
+  "7dcec1358eb2a65202f47fde744dce96d501d084c7b73238f0fd84fc8eff9853": {
+    "confidence": 0.82,
+    "contradictions": [
+      "candidate.algorithm_evidence marks qualified=true with mechanisms model_architecture/distributed_training/numerics_quantization, but the issue body describes only metrics rank labeling with no algorithmic mechanism"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "kv_events_publisher.py: derive data_parallel_rank via select_kv_publisher_dp_rank",
+      "metrics_collector.py: attach attn_dp_rank-based dp_rank label to scheduler series"
+    ],
+    "risks": [
+      "Changing existing dp_rank label semantics may break dashboards",
+      "Multi-GPU launch required to validate the attention-DP layout"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Launch --tp-size 4 --attn-dp-size 4 with ZMQ kv-events and assert data_parallel_rank values 0..3",
+      "Scrape /metrics and assert sglang:num_running_reqs carries dp_rank 0..3 and joins with radix-cache series",
+      "Regression: pure DP (--dp-size 2) keeps ranks 0,1 and single-GPU keeps 0"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the dp_rank label change acceptable given dashboard compatibility"
+    ],
+    "why": "The issue is well-diagnosed and reproducible, but it is observability/metrics plumbing (a rank field in a ZMQ KvMetrics payload and a missing Prometheus label), not an LLM algorithm contribution. The track=llm_algorithm gate requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; the matched terms (attention, data parallel, fp4, moe, shard) are incidental to a metrics-labeling bug."
   },
   "7dd264936cfc102fb9ad8033ea6f7f7869cb1b4b9550f347ef6e0a4e7775733e": {
     "confidence": 0.82,
