@@ -239,6 +239,44 @@
     ],
     "why": "The issue describes a streaming truncation bug in the chat completion API when both content and tool_calls are present. It is a usage/API behavior issue, not an LLM algorithm mechanism. The suggested fix is to flush pending text tokens before switching to tool calls, which is a streaming logic fix, not a training objective, model mechanism, or numerical method. The track requires concrete algorithm validation, which is absent."
   },
+  "00941f18cb61965d90c5e93bf838912fc4ce55ca30c71b2c195684a1fdd42c30": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Collaborator comment says 'go ahead with a PR' while policy status is needs_assignment with no assignees",
+      "actionability_evidence lists maintainer_approved=true but also needs_confirmation=true and design_confirmation=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/providers/bedrock.rs: converse() returns StopReason",
+      "stream_via_converse() sets message.metadata.output_token_limit_reached for MaxTokens",
+      "ProviderUsage gains finish_reasons from stop_reason",
+      "regression tests for max_tokens vs end_turn on non-streaming Converse"
+    ],
+    "risks": [
+      "Open draft PR #13185 touches the same bedrock.rs path; overlap must be compared before duplicating work",
+      "Behavior of blocking Converse for a toolUse block truncated by maxTokens is unverified; a partial tool request could be emitted",
+      "Changing converse()'s return signature may affect other callers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add the two wiremock tests from the issue and confirm test_converse_max_tokens_marks_output_token_limit fails on main",
+      "Run cargo test -p goose --features aws-providers --lib providers::bedrock",
+      "Run cargo fmt --check and cargo clippy -p goose --features aws-providers --all-targets -- -D warnings"
+    ],
+    "unknowns": [
+      "Whether the repository still requires formal assignment before a PR despite the collaborator go-ahead",
+      "Whether draft PR #13185 already covers this stop_reason gap or only the signature-error retry path"
+    ],
+    "why": "Issue gives a concrete root cause (converse() drops response.stop_reason, so stream_via_converse never sets output_token_limit_reached or finish_reasons), a wiremock reproduction with a failing test, and a proposed diff. However, the repository policy is needs_assignment with assignmentRequired=true and the issue has no assignees, so the required assignment gate is unmet. A collaborator comment says 'go ahead with a PR', but that is not a formal assignment and the supplied evidence does not resolve whether assignment is still required."
+  },
   "00b669f6972deb0bccd4d8bd5444af110fa0b73b7701f9058879d7bf14d1bae6": {
     "confidence": 0.8,
     "contradictions": [
@@ -29349,6 +29387,41 @@
       "Maintainer preference on implementation details, but not blocking."
     ],
     "why": "Issue provides a clear root cause (live references in InMemoryStore), a minimal reproduction showing divergence from SqliteStore, and a concrete fix with performance measurements and regression tests. The fix is actionable and aligns with the store's JSON-serializable contract."
+  },
+  "2ab033ab4ab3d4a3b9c5af6c3c45edc023f517c6945bf10fc259df656dd983b3": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/hooks/use-llm-stream.ts: pass goalTurnActive=false at the two mid-turn steer drain sites while keeping /goal commands draining",
+      "packages/cli/src/ui/hooks/useMessageQueue.ts: allow non-deferred plain text to drain at steer boundaries during an active Goal; keep popNextSubmission priority new-turn gate intact",
+      "packages/cli/src/ui/hooks/useMessageQueue.test.ts: restate the pinning test to cover the steer boundary during an active Goal and keep /model held as non-steerable"
+    ],
+    "risks": [
+      "Maintainers may prefer the alternative product call (keep hold + doc carve-out + visible hold reason), making the lane-split fix rejected",
+      "Steered plain text entering the Goal turn transcript could affect verifier evidence windows in ways not fully covered by static analysis",
+      "Behavior change to a test-pinned intentional gate may require maintainer sign-off despite need-discussion label"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test asserting drainQueue(false, true) returns plain non-deferred text at the steer boundary during an active Goal",
+      "Regression test that /goal commands still drain and non-steerable slash commands like /model remain held",
+      "Regression test that Ctrl+Q deferred entries (deferUntilIdle) are still excluded from mid-turn steer",
+      "Verify popNextSubmission('priority') new-turn admission still holds plain input during an active Goal"
+    ],
+    "unknowns": [
+      "Final maintainer product decision between lane-split fix and doc-carve-out-plus-hold-reason remains open (need-discussion label), though both paths are actionable"
+    ],
+    "why": "Issue provides ordered reproduction, verbatim code anchors, and a byte-confirmed root cause: the shared goalTurnActive flag gates both new-turn admission (defensible) and mid-turn steering (defect), contradicting the documented Enter-steer contract. Collaborator comments confirm the mechanism at current HEAD and close the budget/verifier-accounting open question, establishing a concrete lane-split fix and validation path."
   },
   "2ab46ecaab5cf266a7165a9e2796697ba75216f77399d69dd7bbca4c40375b5a": {
     "confidence": 0.55,
@@ -161541,6 +161614,40 @@
     "wait_reason": null,
     "why": "Issue reports a concrete functional bug in /report navigation for nested subagents, with clear reproduction steps and expected vs actual behavior. No competing PR or related issue found. The fix is likely localized to session-tree traversal logic, making it actionable."
   },
+  "e027fd1ba9c8da759421bd81a21f49817ebae44cf7a911d10ec96a349c2ce502": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/ripgrep/binary.ts: stop memoizing resolver failures (invalidate cache on failure or re-check disk path per call)",
+      "packages/core/src/ripgrep/binary.ts: add fetch timeout and proxy handling for the download client",
+      "packages/core/src/ripgrep.ts: fix Error shadowing so the underlying cause is logged and surfaced in the tool error"
+    ],
+    "risks": [
+      "Proxy/WinINET honoring is environment-specific and hard to validate in CI",
+      "Changing caching semantics could cause repeated download attempts or duplicate concurrent fetches if not guarded",
+      "Closed PR #51192 overlaps binary.ts but is not merged, so no coverage conflict"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: fail the download once, place a valid rg in the cache bin dir, assert the next resolver call succeeds without restart",
+      "Regression test: interrupt the first in-flight download, assert subsequent calls retry rather than returning 'All fibers interrupted without error'",
+      "Assert the mapped tool error/log includes the underlying fetch failure cause"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer cache invalidation vs per-call disk re-check",
+      "Whether OS proxy support is in scope or env-var-only is acceptable"
+    ],
+    "why": "Issue plus two independent reproductions pin the root cause to Effect.cached memoizing the failed/interrupted ripgrep resolver in packages/core/src/ripgrep/binary.ts, with a secondary cause in ripgrep.ts where a module-local Error class shadows the global Error so the real cause is swallowed. A control run without Effect.cached recovers on the next call, and a standalone repro exists, giving a concrete reference-vs-implementation validation path."
+  },
   "e02b2edd770ccd8b560983f296dda7c1c5db30373dc2861c064e09124e371088": {
     "confidence": 0.72,
     "contradictions": [],
@@ -178990,6 +179097,39 @@
       "Whether maintainers consider the issue already covered by #983"
     ],
     "why": "Issue #806 describes a concrete, code-anchored defect: use_flash_attn/use_liger are validated for every task and auto-enabled by autopilot for DPO/GRPO/pretrain, yet only SFT's text path consumes them. However, the supplied evidence shows an open PR #983 ('fix(autopilot): scope use_flash_attn/use_liger to trainers that read them') with 14 semantic overlaps and 3 test files, plus a contributor comment claiming to have taken the fix and scoped it to sft.py/tts.py. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review' and root_cause_coverage is false, so it is unresolved whether #983 already covers the root cause. This materially determines whether new code work is actionable."
+  },
+  "f73db555d0f2523fd0f2b06b3ee91efe40a8f1d9f3362203fb79911a5feab29c": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/faiss.py: validate/convert replacement vector before any delete/persist step in update()",
+      "Ensure failed update leaves in-memory index and persisted files unchanged"
+    ],
+    "risks": [
+      "Fix must not alter valid-update semantics or payload-only update behavior",
+      "Validation ordering change could affect other vector store backends if shared logic is touched",
+      "Reporter states they did not personally reproduce; human review of the repro is still warranted"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: insert 2-dim vector, call update with 1-dim vector, assert raises and get(id) still returns original",
+      "Reload FAISS from same path and assert original record persists",
+      "Add cases for nonnumeric vector and valid update to confirm normal path still works",
+      "Run existing FAISS vector store test suite"
+    ],
+    "unknowns": [
+      "Exact current faiss.py update() implementation at base SHA not shown, though the described call order is specific enough to act on"
+    ],
+    "why": "Issue gives a concrete root cause: FAISS.update() calls delete() (which persists removal) before insert() validates/converts the replacement vector, so a rejected incompatible-dimension update leaves the record deleted on disk. A minimal repro with expected/actual output and a stated validation path (regression cases for wrong dims, nonnumeric values, valid update) are supplied; no duplicate or open PR coverage found."
   },
   "f74c4d2ce5c3561b2c043cd6a9b19ca5ae90148563a67632b7d007a22b8da6ab": {
     "confidence": 0.85,
