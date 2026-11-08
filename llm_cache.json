@@ -3415,6 +3415,39 @@
     ],
     "why": "Issue provides a strong reproduction (1437-request replay, A100/4090, with/without --enable-unified-memory) and a concrete failing code path (alloc_token_slots -> reclaim_plan evicts nothing), but the root cause is explicitly not reduced ('This has not been reduced further'), and open PR #42700 semantically overlaps on alloc_token_slots/scheduler for the same SWA over-admission crash without referencing the issue. Whether that PR already covers this root cause is a materially blocking unknown for deciding whether new code work is actionable."
   },
+  "060990efb228c7ab87170b9df3e875dbb6ac44763b5b7e5a56e1ad37d2e9d871": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/ripgrep/binary.ts: stop memoizing resolver failures (invalidate cache on failure or re-check disk path per call)",
+      "packages/core/src/ripgrep/binary.ts: add fetch timeout so a blackholed proxy fails instead of parking the deferred",
+      "packages/core/src/ripgrep.ts: fix Error shadowing so the underlying cause is logged and surfaced in the tool error"
+    ],
+    "risks": [
+      "Windows system-proxy (WinINET) support is untested in the supplied evidence and may be out of scope for the minimal fix",
+      "Changing cache semantics could cause repeated download attempts on persistent network failure",
+      "Maintainer may prefer a different invalidation strategy"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test mirroring the resolver: first call fails download, place a valid rg in the cache bin dir, assert second call succeeds without restart",
+      "Test that an interrupted in-flight download (abort signal) does not poison subsequent calls",
+      "Assert the mapped tool error/log includes the underlying fetch failure rather than only 'ripgrep execution failed'"
+    ],
+    "unknowns": [
+      "Whether maintainers want OS-proxy support in scope or only the cache-invalidation and error-surfacing fix"
+    ],
+    "why": "Issue plus two independent reproductions pin the root cause to Effect.cached memoizing a failed/pending ripgrep resolver in packages/core/src/ripgrep/binary.ts, with a secondary cause in ripgrep.ts where a module-local Error class shadows the global Error so the real cause is swallowed. A standalone control (same body without Effect.cached) recovers on the next call, giving a concrete reference-vs-implementation validation path. The only related PR (#51192) is CLOSED and does not reference the issue, so it does not cover the work."
+  },
   "060c6680f71fe9945371233edfe4602c08d057611b45d953c5ac6bb225a94b20": {
     "confidence": 0.8,
     "contradictions": [
@@ -73370,6 +73403,42 @@
     ],
     "why": "The issue describes a concrete bug in message history persistence with a clear root cause (incoming duplicate IDs win upsert) and a proposed authority-resolution design. However, the track is llm_algorithm and the supplied evidence does not demonstrate a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The matched term 'adapter' and formula/experiment signals appear spurious; the issue is about message storage semantics, not PEFT. The proposed fix is a design change requiring maintainer confirmation, and the commenter's detailed proposal is not an official maintainer decision. Therefore, work should wait for maintainer assignment or design confirmation."
   },
+  "67814a054936e48a64700de679957ce054c8c065d0e09dd1364aa7c9694b1486": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/entity/models/openai.go: request construction to select Responses API or reasoning_effort none when tools are enabled",
+      "response parsing and streaming for Responses API tool-call continuation",
+      "pre-execution validation for unsupported model/endpoint/reasoning combinations"
+    ],
+    "risks": [
+      "Responses API adaptation touches request construction, response parsing, streaming, and tool-call continuation, expanding blast radius",
+      "The reasoning_effort none path is unconfirmed in the reporter's deployment",
+      "Model gpt-6-luna may not be generally available, limiting reproduction"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing test reproducing GPT-6 Luna + tools + reasoning via Chat Completions returning 400",
+      "Regression test for tools + reasoning routed through Responses API",
+      "Regression test for tools + explicit reasoning_effort none via Chat Completions",
+      "Validation test for unsupported combination producing actionable error"
+    ],
+    "unknowns": [
+      "Whether gpt-6-luna is accessible for reproduction in the maintainer environment",
+      "Whether maintainers prefer Responses API migration vs. reasoning_effort none fallback",
+      "Exact effective reasoning_effort value used in the failing request"
+    ],
+    "why": "Issue provides a concrete HTTP 400 error, expected/actual pair, reproduction steps, and a code anchor (internal/entity/models/openai.go). Root cause is partially established: the adapter uses Chat Completions with reasoning_effort while function tools are configured, which the provider rejects. The fix path (Responses API adaptation or explicit reasoning_effort none) is concrete but the issue itself notes the 'none' workaround is unconfirmed, so the exact minimal fix is not fully pinned down."
+  },
   "67a461b8fa2b95b4436266f820d32363f8dc9fb289cffa61003e9f2391540d26": {
     "confidence": 0.7,
     "contradictions": [],
@@ -106104,6 +106173,39 @@
     ],
     "why": "Issue pins a concrete, code-anchored defect: use_flash_attn/use_liger are consumed only by SFT's _setup_transformers (sft.py:1293, 882, 1351-1356) yet validated for every task at commands/train.py:1192-1214 and auto-enabled by autopilot/decisions.py:344-346 for DPO/GRPO/pretrain, so a DPO run can be refused over a package it never uses. Reproduction is explicit (build_soup_config on cc 12.0 emits both flags for alignment/reasoning/domain-adapt; validators exit 1 without the packages) and acceptance criteria give a reference-vs-implementation test (stub get_attn_implementation returning 'sdpa', assert kwarg reaches from_pretrained, or reject at config load)."
   },
+  "93752348b27192dc4d90788fafe932066f986e5359095e45203115ee87d11043": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/components/features/automations/setup/automation-setup-panel.tsx: stop sending agent_profile_id in draft POST/PATCH bodies or gate the picker",
+      "src/components/features/automations/setup/automation-setup-draft-service.ts: preserve/read draft.agent_profile_id consistently",
+      "Add regression test covering draft save with a selected agent profile"
+    ],
+    "risks": [
+      "Stop-gap option silently loses profile on reload and draft Test run",
+      "Full fix may require bumping pinned automation dependency (OpenHands/automation#615)",
+      "Avoid broad API behavior changes beyond draft body handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: pick Custom kind and an agent profile, Save draft, assert no 422 and draftId returned",
+      "Regression: save draft with profile None returns 201, then PATCH with profile returns 2xx",
+      "Reload draft and assert selected profile persists (or picker is gated when unsupported)",
+      "Draft Test run uses chosen profile; Create Automation still stores agent_profile_id"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers option 1 (bump automation) vs option 2 (Canvas stop-gap)"
+    ],
+    "why": "Issue provides a concrete reproduction, exact 422 error payload, and a clear root cause: Canvas sends agent_profile_id in draft bodies while the pinned automation draft schema forbids extra fields. Code anchors and a validation path (draft save/reload, draft Test run, create still stores profile) are supplied. The maintainer-decision framing is normal implementation choice, not a blocking unknown."
+  },
   "93759b6133b4a2af7d7eb18f590bdcdb3e5fd80d8ea4e9e6d83260c9f34087a2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -130562,6 +130664,42 @@
       "Whether maintainer intends #18515 to land as-is, making any competing PR redundant"
     ],
     "why": "Issue is a CSS/theme contrast fix in src/routes/launch.tsx (raw text-red-400 / bg-blue-600 classes), not an algorithm or agent/inference/RAG mechanism. Track is agent_ai_infra but the work is ordinary frontend styling; also an open maintainer-owned PR #18515 already covers the same file and fix, leaving only test-coverage as a marginal gap."
+  },
+  "b6b2410ba0f2e5e1fac8aad60995bf84fd915d0600228d3b329663a26fa64372": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue states fix is #18377, while open_pr_assessment marks that PR as lacking root-cause coverage evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Anthropic streaming converter: emit usage-bearing ping when wire output tokens lag generated tokens by more than one",
+      "Tool-call hold path: propagate per-chunk usage through buffered tool blocks",
+      "Streaming regression test for held-back tool call with client disconnect and backend error"
+    ],
+    "risks": [
+      "Ping-based usage publication is a protocol-adjacent behavior change; maintainers may prefer a different event",
+      "Duplicate/overlapping work with open PR #18377",
+      "Buffered text after tool blocks may interact with usage ordering"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Scripted token worker streaming a GLM tool call token by token with per-chunk completion_usage; assert last wire usage.output_tokens matches generated tokens on disconnect",
+      "Same stream ending in event: error; assert last usage reflects tokens before error",
+      "Control: plain text stream gains no extra ping events and usage unchanged",
+      "Assert no usage published before first output token"
+    ],
+    "unknowns": [
+      "Whether maintainers accept ping events as the usage carrier",
+      "Whether PR #18377 will be revised or superseded"
+    ],
+    "why": "Issue gives a concrete reproduction (scripted token worker, GLM parsers, SGLang per-chunk usage), expected-vs-actual token counts, and a specific mechanism: the Anthropic converter emits no event while the tool-call parser holds tokens, so usage never reaches the wire. A concrete fix direction (ping events carrying the usage triple) and a validation path (streaming regression test on the converter) are stated. Open PR #18377 covers the same area but is unmerged and lacks root-cause coverage evidence, so it is competition, not a blocker."
   },
   "b6b2a9e3e8944335e7c3a692284ad785b39f33f7b7a9564f48a57be9254f4b48": {
     "confidence": 0.82,
